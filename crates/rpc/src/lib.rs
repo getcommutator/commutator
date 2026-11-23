@@ -355,6 +355,16 @@ pub mod methods {
     /// remove only its untracked, non-ignored paths.
     pub const DISCARD_WORKING_TREE: &str = "DiscardWorkingTree";
     pub const GET_CHECKOUT_FILE_DIFF_TEXT: &str = "GetCheckoutFileDiffText";
+    /// `{chatId}` → `{checkpoints}`: a chat's per-turn git checkpoints
+    /// (`vardoger_proto::checkpoints`), oldest first.
+    pub const LIST_CHECKPOINTS: &str = "ListCheckpoints";
+    /// `{chatId, from, to?}` → `CheckoutDiff`: checkpoint to checkpoint, or
+    /// to the current working tree.
+    pub const GET_CHECKPOINT_DIFF: &str = "GetCheckpointDiff";
+    /// `{chatId, checkpointId}` → `{restored, before, filesRestored,
+    /// filesDeleted}`: the chat's working tree set back to a checkpoint.
+    /// Refused while an agent is active in that working tree.
+    pub const ROLLBACK_TO_CHECKPOINT: &str = "RollbackToCheckpoint";
     // Agent accounts (ControlRpc, relay-forwardable — CLI logins are per-device).
     pub const LIST_AGENT_ACCOUNTS: &str = "ListAgentAccounts";
     pub const ACTIVATE_AGENT_ACCOUNT: &str = "ActivateAgentAccount";
