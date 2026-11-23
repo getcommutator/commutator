@@ -9,7 +9,6 @@ pub mod attachment_mentions;
 pub mod chat_mentions;
 pub mod checkpoints;
 pub mod change_request_assessment;
-pub mod cloud;
 pub mod device_paths;
 pub mod entities;
 pub mod annotation;
@@ -29,7 +28,6 @@ pub mod view;
 pub mod workspace;
 
 pub use agent::*;
-pub use cloud::*;
 pub use entities::*;
 pub use preview::*;
 pub use program_status::*;

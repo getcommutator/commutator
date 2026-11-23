@@ -799,11 +799,6 @@ enum MutateParams {
         name: Option<String>,
         #[serde(default)]
         git_detected: bool,
-        /// A Cloud project (`deviceId` the logical Cloud device): the GitHub
-        /// repository (`owner/name`) its sessions clone. Ignored elsewhere —
-        /// a device stamps its own folders.
-        #[serde(default)]
-        github_repo: Option<String>,
     },
     /// LWW display-name set; `name: None` clears back to basename(path).
     #[serde(rename_all = "camelCase")]
@@ -1839,17 +1834,10 @@ impl EngineRpc {
                 path,
                 name,
                 git_detected,
-                github_repo,
-            } => match github_repo {
-                Some(repo) if device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX) => self
-                    .workspace
-                    .create_cloud_space(&space_id, &device_id, &path, name, &repo)
-                    .map_err(failed),
-                _ => self
-                    .workspace
-                    .create_space(&space_id, &device_id, &path, name, git_detected)
-                    .map_err(failed),
-            },
+            } => self
+                .workspace
+                .create_space(&space_id, &device_id, &path, name, git_detected)
+                .map_err(failed),
             MutateParams::RenameSpace { space_id, name } => self
                 .workspace
                 .rename_space(&space_id, name.as_deref())
@@ -1976,23 +1964,6 @@ impl EngineRpc {
             MutateParams::RemoveDevice { device_id } => {
                 if device_id == self.workspace.device_id() {
                     return Err(RpcError::BadParams("this_device".into()));
-                }
-                // (Cloud's machines are the edge's to retire, with their sessions.)
-                let row = self
-                    .workspace
-                    .read_devices()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|d| d.id == device_id);
-                let cloud = vardoger_proto::is_cloud_device(&device_id, "")
-                    || row.as_ref().is_some_and(|d| {
-                        vardoger_proto::is_cloud_device(&d.id, &d.platform)
-                            || d.capabilities.iter().any(|c| {
-                                c == vardoger_proto::CLOUD_SESSION_CAPABILITY || c == vardoger_proto::CLOUD_ACCOUNT_CAPABILITY
-                            })
-                    });
-                if cloud {
-                    return Err(RpcError::BadParams("cloud_device".into()));
                 }
                 if self.workspace.peer_liveness(&device_id) == vardoger_rpc::PeerLiveness::Live {
                     return Err(RpcError::Failed("device_online".into()));
@@ -2140,8 +2111,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<(), vardoger_harness::HarnessError>>,
 {
-    // A Cloud device registers only Codex + Claude Code; installing anything
-    // else would put a CLI on it that nothing may run (or probe).
+    // A harness this device doesn't register would be a CLI nothing may run.
     if !registry.is_registered(harness) {
         return Err(RpcError::Failed(format!(
             "{harness:?} is not available on this device"
@@ -2283,7 +2253,6 @@ fn forwardable(method: &str) -> bool {
             | methods::LIST_REPOS
             | methods::ADD_REPO
             | methods::CLONE_REPO
-            // Answered by the Cloud device, which holds the GitHub grant.
             | methods::CREATE_REPO
             | methods::LIST_BRANCHES
             | methods::LIST_REFS

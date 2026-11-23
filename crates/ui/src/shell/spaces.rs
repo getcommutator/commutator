@@ -2722,7 +2722,6 @@ enum CrumbTarget {
 
 fn device_glyph(platform: &str) -> &'static str {
     match platform {
-        vardoger_proto::CLOUD_PLATFORM => icons::CLOUD,
         "macos" | "darwin" => icons::LAPTOP,
         "web" => icons::GLOBAL,
         "ios" | "android" => icons::SMARTPHONE,

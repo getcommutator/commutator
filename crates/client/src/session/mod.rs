@@ -536,12 +536,6 @@ impl SessionCore {
         payload: SessionCommandPayload,
     ) -> Result<String> {
         let now = now_ms();
-        // A Cloud machine may be asleep for days: its messages wait a week.
-        let cloud = self
-            .client()
-            .ok()
-            .and_then(|client| client.workspace.chat(&self.chat_id))
-            .is_some_and(|chat| vardoger_proto::is_cloud_device(&chat.device_id, ""));
         let entry = SessionCommandEntry {
             id,
             payload,
@@ -551,7 +545,7 @@ impl SessionCore {
                 turn_id: Some(turn_id),
                 frontier: None,
             }),
-            expires_at: Some(now + vardoger_doc::command_ttl_ms(cloud)),
+            expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
             status: SessionCommandStatus::Pending,
             resolution: None,
         };

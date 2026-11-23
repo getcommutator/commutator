@@ -9366,12 +9366,6 @@ fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement
 /// quiet monochrome character keeps the tile without shipping SVGs).
 /// The glyph for a tool call (vardoger tool-chip.tsx `toolIcon`, Solar set).
 fn tool_icon_path(call: &ToolCall) -> &'static str {
-    // A Cloud machine's own setup: the machine, then its git steps.
-    match vardoger_proto::cloud_setup_step(call) {
-        Some("clone" | "branch") => return crate::icons::GIT_BRANCH,
-        Some(_) => return crate::icons::CLOUD,
-        None => {}
-    }
     match call {
         ToolCall::Exec { .. } => crate::icons::TERMINAL,
         ToolCall::ReadFile { .. } | ToolCall::ApplyPatch { .. } => crate::icons::DOCUMENT,

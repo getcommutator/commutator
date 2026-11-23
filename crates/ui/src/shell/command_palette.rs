@@ -1080,10 +1080,7 @@ impl Shell {
                     (None, None) => None,
                     _ => Some("?"),
                 };
-                // A Cloud chat's own machine isn't a device worth naming.
-                let device = (!vardoger_proto::is_cloud_device(&chat.device_id, ""))
-                    .then(|| state.device_name(&chat.device_id))
-                    .flatten();
+                let device = state.device_name(&chat.device_id);
                 let folder = match (project, device) {
                     (Some(project), Some(device)) => format!("{project} @ {device}"),
                     (Some(project), None) => project.to_string(),

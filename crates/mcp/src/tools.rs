@@ -26,21 +26,6 @@ mod commands;
 
 /// Default and ceiling for the blocking waits.
 const MAX_BATCH: usize = 32;
-/// Cloud runs these agents (every built-in one): a Cloud chat's harness, the
-/// first the default. Mirrors `vardoger_proto::CLOUD_HARNESSES`.
-const CLOUD_HARNESSES: &[HarnessId] = &[
-    HarnessId::ClaudeCode,
-    HarnessId::Codex,
-    HarnessId::Cursor,
-    HarnessId::Devin,
-    HarnessId::Grok,
-    HarnessId::Hermes,
-    HarnessId::Fx,
-    HarnessId::Pi,
-    HarnessId::Opencode,
-    HarnessId::Antigravity,
-    HarnessId::Muse,
-];
 const DEFAULT_WAIT: Duration = Duration::from_secs(600);
 /// A device seen this recently is online (the app's sidebar says the same).
 const ONLINE_SECS: i64 = 70;
@@ -144,7 +129,7 @@ fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "create_chat",
-            description: "Create a child of your chat to delegate work to (kind subagent, the default when you speak from a chat or pass parent: listed under that chat's Subagents and in its transcript's subagent block), a side chat (kind side: only when the person should treat it as a side conversation of their own), or a standalone session (kind chat, no parent). Any connected provider works (see list_harnesses), whichever provider you run on. Delegation is one level deep: a chat that has a parent cannot create chats. With cloud, the chat runs on a Cloud machine of its own (any built-in agent), from a Cloud chat or a project with a GitHub repository. Select a project and/or device; catalogs are validated on that host. Optionally send a first prompt and wait for the reply. For parallel delegation use create_chats, or launch with wait=false and wait only after all chats have started.",
+            description: "Create a child of your chat to delegate work to (kind subagent, the default when you speak from a chat or pass parent: listed under that chat's Subagents and in its transcript's subagent block), a side chat (kind side: only when the person should treat it as a side conversation of their own), or a standalone session (kind chat, no parent). Any connected provider works (see list_harnesses), whichever provider you run on. Delegation is one level deep: a chat that has a parent cannot create chats. Select a project and/or device; catalogs are validated on that host. Optionally send a first prompt and wait for the reply. For parallel delegation use create_chats, or launch with wait=false and wait only after all chats have started.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -161,7 +146,6 @@ fn catalog() -> Vec<ToolDef> {
                     "title": { "type": "string", "description": "Sidebar title. Otherwise the engine titles it from the first exchange." },
                     "branch": { "type": "string", "description": "Branch label to record on the chat." },
                     "cwd": { "type": "string", "description": "Working directory override (an existing worktree path). Defaults to the project folder." },
-                    "cloud": { "type": "boolean", "default": false, "description": "Run on a Cloud machine of its own (cloning the project's GitHub repository) instead of the project's device. From a Cloud chat, the child clones the same repository; without cloud it shares this machine, unless device or project names another of the person's devices." },
                     "prompt": { "type": "string", "description": "First message to send right away." },
                     "wait": { "type": "boolean", "default": false, "description": "With prompt: block until the first turn finishes and return the reply." },
                     "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 600 }
@@ -686,8 +670,6 @@ struct CreateChatArgs {
     title: Option<String>,
     branch: Option<String>,
     cwd: Option<String>,
-    #[serde(default)]
-    cloud: bool,
     prompt: Option<String>,
     #[serde(default)]
     wait: bool,
@@ -1216,16 +1198,6 @@ impl Tools {
             .await?;
         let harnesses = self.vardoger.harnesses_on(Some(&device_id)).await?;
         let harness = match args.harness.as_deref() {
-            // Cloud runs its own agents, with your Cloud accounts.
-            Some(raw) if args.cloud => {
-                let id: HarnessId = parse_enum("harness", raw).map_err(anyhow::Error::msg)?;
-                anyhow::ensure!(
-                    CLOUD_HARNESSES.contains(&id),
-                    "Cloud doesn't run {raw}: it runs the built-in agents only"
-                );
-                id
-            }
-            None if args.cloud => CLOUD_HARNESSES[0],
             Some(raw) => {
                 let id: HarnessId = parse_enum("harness", raw).map_err(anyhow::Error::msg)?;
                 anyhow::ensure!(
@@ -1236,8 +1208,7 @@ impl Tools {
             }
             None => default_harness(&harnesses).with_context(|| format!("device {device_id}"))?,
         };
-        // A Cloud machine's catalog is checked when it runs, not here.
-        if let Some(model) = args.model.as_deref().filter(|_| !args.cloud) {
+        if let Some(model) = args.model.as_deref() {
             let models = self.vardoger.models_on(harness, Some(&device_id)).await?;
             anyhow::ensure!(
                 models.iter().any(|m| m.id == model),
@@ -1275,9 +1246,8 @@ impl Tools {
                 asked_sandbox.label(),
             )
         });
-        // A Cloud machine's catalog is checked when it runs, not here; an
-        // engine predating modes lists none and runs with full access.
-        if let Some(info) = harnesses.iter().find(|h| h.id == harness).filter(|_| !args.cloud) {
+        // An engine predating modes lists none and runs with full access.
+        if let Some(info) = harnesses.iter().find(|h| h.id == harness) {
             let modes = &info.access_modes;
             anyhow::ensure!(
                 access.is_full_access() || modes.contains(&access),
@@ -1336,7 +1306,6 @@ impl Tools {
         // in agreement.
         if space.is_none()
             && cwd.is_none()
-            && !args.cloud
             && self.vardoger.devices().await?.iter().any(|d| {
                 d.id == device_id
                     && d.capabilities
@@ -1352,22 +1321,7 @@ impl Tools {
         if let Some(cwd) = &cwd {
             mutate["cwd"] = json!(cwd);
         }
-        if args.cloud {
-            mutate["cloud"] = json!(true);
-        }
-        let created = self.vardoger.mutate(mutate).await?;
-        // A Cloud chat's machine and checkout come back from the engine.
-        let (device_id, cwd) = if args.cloud {
-            (
-                created["deviceId"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .context("the engine didn't name the Cloud machine")?,
-                created["cwd"].as_str().map(str::to_owned).or(cwd),
-            )
-        } else {
-            (device_id, cwd)
-        };
+        self.vardoger.mutate(mutate).await?;
         if let Some(title) = args
             .title
             .as_deref()
@@ -2033,8 +1987,7 @@ mod tests {
         accounts: Option<Value>,
         remote_accounts: Option<Value>,
         beta_remote: bool,
-        /// `dev-remote` is asleep: every read addressed to it fails, the way
-        /// a dial to a sleeping Cloud machine does.
+        /// `dev-remote` is unreachable: every read addressed to it fails.
         remote_dark: bool,
         extra_chats: Vec<Value>,
         catalog_error: Option<&'static str>,
@@ -2170,19 +2123,10 @@ mod tests {
                     RpcReply::Value(json!({ "id": "img:1", "name": params["name"] }))
                 }
                 methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE => {
-                    // A Cloud chat gets a machine of its own from the engine.
-                    let cloud_create = method == methods::MUTATE
-                        && params["op"] == "createChat"
-                        && params["cloud"] == true;
                     self.writes
                         .lock()
                         .unwrap()
                         .push((method.to_owned(), params));
-                    if cloud_create {
-                        return Ok(RpcReply::Value(json!({
-                            "ok": true, "deviceId": "cloud-child", "cwd": "/home/user/app",
-                        })));
-                    }
                     if method == methods::QUEUE_COMMAND
                         && let Some(barrier) = &self.dispatch_barrier
                     {
@@ -2845,38 +2789,6 @@ mod tests {
                 .iter()
                 .all(|(_, w)| w["parentChatId"] != "chat-beta-2")
         );
-    }
-
-    #[tokio::test]
-    async fn a_cloud_child_runs_on_its_own_machine_with_clouds_agents() {
-        let world = Arc::new(World::default());
-        let alpha = tools(world.clone(), origin("chat-alpha-1"));
-        let created = alpha
-            .call("create_chat", json!({"cloud": true}))
-            .await
-            .unwrap();
-        // The engine names the new machine and its checkout.
-        assert_eq!(created["deviceId"], "cloud-child");
-        assert_eq!(
-            created["harness"], "claude-code",
-            "Cloud's first agent by default"
-        );
-        let sent = world
-            .writes
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|(method, w)| method == methods::MUTATE && w["op"] == "createChat")
-            .map(|(_, w)| w.clone())
-            .unwrap();
-        assert_eq!(sent["cloud"], true);
-        assert_eq!(sent["parentChatId"], "chat-alpha-1");
-        // Every built-in agent runs there; one added from the ACP registry doesn't.
-        let refused = alpha
-            .call("create_chat", json!({"cloud": true, "harness": "acp.gemini"}))
-            .await
-            .unwrap_err();
-        assert!(refused.contains("built-in agents only"), "{refused}");
     }
 
     #[tokio::test]

@@ -2064,13 +2064,6 @@ impl SessionsEngine {
         lock(&self.inner.runs).contains_key(chat_id)
     }
 
-    /// Boot recovery means to bring this chat's killed turn back, and hasn't got
-    /// as far as a run holding the chat. (Not `revivals`: dispatch takes its entry
-    /// before the run is in place, and a row sent in that moment overtakes it.)
-    pub(crate) fn revival_pending(&self, chat_id: &str) -> bool {
-        lock(&self.inner.revivals_starting).contains(chat_id)
-    }
-
     /// Fold an engine-made event (a `show_visual` page, a `show_image` image)
     /// into the chat's live run, after whatever the harness streamed so far.
     /// Returns `false` when the chat has no run on this device.

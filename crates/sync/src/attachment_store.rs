@@ -25,7 +25,7 @@ pub const SHA256_HEADER: &str = "x-vardoger-sha256";
 
 /// A held send never stops trying on its own: only its person removes it. After
 /// this long it tries less often ([`held_backoff_cap`]).
-pub const HELD_SEND_SLOW_AFTER_MS: i64 = vardoger_doc::CLOUD_COMMAND_TTL_MS;
+pub const HELD_SEND_SLOW_AFTER_MS: i64 = 7 * vardoger_doc::COMMAND_DEFAULT_TTL_MS;
 /// The longest wait between tries for a send older than [`HELD_SEND_SLOW_AFTER_MS`].
 pub const HELD_SEND_SLOW_BACKOFF: Duration = Duration::from_secs(15 * 60);
 

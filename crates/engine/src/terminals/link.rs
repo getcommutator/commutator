@@ -45,7 +45,7 @@ impl Service {
 
 /// Whether `peer` may attach to this device's terminals.
 fn peer_allowed(peer: Option<&str>) -> bool {
-    peer.is_some_and(|peer| !vardoger_proto::is_cloud_device(peer, ""))
+    peer.is_some()
 }
 
 #[async_trait::async_trait]
@@ -279,10 +279,6 @@ mod tests {
     fn only_the_owners_own_devices_may_attach() {
         assert!(peer_allowed(Some("laptop-device")));
         assert!(!peer_allowed(None), "no anonymous links");
-        assert!(
-            !peer_allowed(Some(&format!("{}abc", vardoger_proto::CLOUD_DEVICE_PREFIX))),
-            "a Cloud machine must not reach a shell here"
-        );
     }
 
     #[tokio::test]

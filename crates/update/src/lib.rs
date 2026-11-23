@@ -1249,15 +1249,10 @@ pub async fn stage_headless(
     manifest: &Manifest,
     app_root: &Path,
 ) -> anyhow::Result<PathBuf> {
-    stage_headless_on(manifest, app_root, on_cloud()).await
+    stage_headless_on(manifest, app_root).await
 }
 
-/// [`stage_headless`]; on a Cloud machine without [`CLOUD_UNUSED_FILES`].
-async fn stage_headless_on(
-    manifest: &Manifest,
-    app_root: &Path,
-    cloud: bool,
-) -> anyhow::Result<PathBuf> {
+async fn stage_headless_on(manifest: &Manifest, app_root: &Path) -> anyhow::Result<PathBuf> {
     // Reject unsupported targets before creating a stage or making a request.
     require_managed_update_platform()?;
     let version = &manifest.version;
@@ -1294,9 +1289,6 @@ async fn stage_headless_on(
             bail!("tarball {file} did not contain a vardoger binary");
         }
         verify_staged_binary(&unpacked.join("vardoger"), version).await?;
-        if cloud {
-            strip_cloud_unused(&unpacked);
-        }
         match std::fs::rename(&unpacked, &dest) {
             Ok(()) => {}
             // Lost a race with another stager — the staged copy is equivalent.
@@ -1336,63 +1328,9 @@ pub fn apply_headless(app_root: &Path, version: &str) -> anyhow::Result<()> {
 }
 
 /// How many versions older than `current` a managed install keeps once an update
-/// has settled: one, to go back to by hand, except on a Cloud machine. Its disk
-/// is copied back in on every wake, and everything on it is read in alongside
-/// the engine that's starting, so each version kept (about 270 MB) slowed every
-/// wake by seconds. Going back there is a reinstall, which downloads anyway.
+/// has settled: one, to go back to by hand.
 pub fn older_versions_kept() -> usize {
-    older_versions_kept_on(std::env::var("VARDOGER_DEVICE_PLATFORM").ok().as_deref())
-}
-
-fn older_versions_kept_on(platform: Option<&str>) -> usize {
-    if on_cloud_platform(platform) { 0 } else { 1 }
-}
-
-fn on_cloud_platform(platform: Option<&str>) -> bool {
-    platform == Some("cloud")
-}
-
-fn on_cloud() -> bool {
-    on_cloud_platform(std::env::var("VARDOGER_DEVICE_PLATFORM").ok().as_deref())
-}
-
-/// Release files a Cloud machine never runs: none. (`vardoger-engine` was here
-/// until 2026-11-15, when `vardoger headless` linked the engine. Since 0.3.0 the
-/// release's `vardoger` is the zgx app, whose `vardoger headless` runs the
-/// `vardoger-engine` beside it: a machine without it never came online.)
-pub const CLOUD_UNUSED_FILES: &[&str] = &[];
-
-/// Remove [`CLOUD_UNUSED_FILES`] from the version folder `dir`.
-pub fn strip_cloud_unused(dir: &Path) {
-    for name in CLOUD_UNUSED_FILES {
-        let path = dir.join(name);
-        if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file())
-            && let Err(err) = std::fs::remove_file(&path)
-        {
-            tracing::warn!(path = %path.display(), error = %err, "couldn't remove an unused release file");
-        }
-    }
-}
-
-/// On a Cloud machine, every installed version's unused files (the ones
-/// installed before Cloud stopped unpacking them).
-pub fn strip_cloud_unused_installed(app_root: &Path) {
-    if on_cloud() {
-        strip_unused_from_versions(app_root);
-    }
-}
-
-fn strip_unused_from_versions(app_root: &Path) {
-    let Ok(entries) = std::fs::read_dir(app_root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let named_like_a_version =
-            entry.file_name().to_str().is_some_and(|name| parse_version(name).is_some());
-        if named_like_a_version && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            strip_cloud_unused(&entry.path());
-        }
-    }
+    1
 }
 
 /// Remove what a managed install no longer needs from `app_root`: version folders
@@ -1571,77 +1509,30 @@ fn in_service_cgroup(cgroups: &str, unit: &str) -> bool {
         .any(|path| path.split('/').any(|part| part == unit))
 }
 
-/// A Cloud machine's engine: a *system* unit the installer enables
-/// (edge/src/cloud/install-script.ts), because enabled system units are what a
-/// sandbox provider starts again on resume.
-pub const CLOUD_SERVICE_UNIT: &str = "vardoger-cloud.service";
-
 /// The systemd unit this engine runs as. `VARDOGER_SERVICE_UNIT` names another, so
-/// a test install beside a real one can never restart the real one. A Cloud
-/// machine says so in its environment (`VARDOGER_DEVICE_PLATFORM=cloud`, written
-/// by the installer on every machine, so machines already out there need no
-/// reinstall).
+/// a test install beside a real one can never restart the real one.
 pub fn service_unit() -> String {
-    resolve_service_unit(
-        std::env::var("VARDOGER_SERVICE_UNIT").ok().as_deref(),
-        std::env::var("VARDOGER_DEVICE_PLATFORM").ok().as_deref(),
-    )
+    resolve_service_unit(std::env::var("VARDOGER_SERVICE_UNIT").ok().as_deref())
 }
 
-fn resolve_service_unit(unit: Option<&str>, platform: Option<&str>) -> String {
+fn resolve_service_unit(unit: Option<&str>) -> String {
     match unit.filter(|unit| !unit.trim().is_empty()) {
         Some(unit) => unit.to_owned(),
-        None if platform == Some("cloud") => CLOUD_SERVICE_UNIT.to_owned(),
         None => "vardoger.service".to_owned(),
     }
 }
 
-/// Which service manager holds a unit, and so how to talk to it. Worked out
-/// from the unit's name, because an update request names only that, and the
-/// watchdog acting on one may run a version later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServiceScope {
-    /// The login user's manager: `vardoger daemon` and the curl|sh installer.
-    User,
-    /// The system manager: a Cloud machine, whose engine is an unprivileged
-    /// user with passwordless sudo.
-    System,
-}
-
-impl ServiceScope {
-    pub fn of(unit: &str) -> Self {
-        if unit == CLOUD_SERVICE_UNIT {
-            Self::System
-        } else {
-            Self::User
-        }
-    }
-}
-
-/// `systemctl` asking the unit's manager to do something.
-pub fn systemctl_action(unit: &str) -> std::process::Command {
-    match ServiceScope::of(unit) {
-        ServiceScope::User => {
-            let mut command = std::process::Command::new("systemctl");
-            command.arg("--user");
-            command
-        }
-        ServiceScope::System => {
-            let mut command = std::process::Command::new("sudo");
-            // Never wait on a password: nobody is there to type one.
-            command.args(["-n", "systemctl"]);
-            command
-        }
-    }
-}
-
-/// `systemctl` reading the unit's state, which takes no privilege.
-pub fn systemctl_query(unit: &str) -> std::process::Command {
+/// `systemctl` for the login user's manager (`vardoger daemon` and the
+/// curl|sh installer's units), to act on `unit`.
+pub fn systemctl_action(_unit: &str) -> std::process::Command {
     let mut command = std::process::Command::new("systemctl");
-    if ServiceScope::of(unit) == ServiceScope::User {
-        command.arg("--user");
-    }
+    command.arg("--user");
     command
+}
+
+/// `systemctl` reading the unit's state.
+pub fn systemctl_query(unit: &str) -> std::process::Command {
+    systemctl_action(unit)
 }
 
 /// Restart the installed engine service (the same units `vardoger daemon` and the
@@ -3295,42 +3186,6 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
     }
 
-    #[test]
-    fn a_cloud_machine_restarts_its_own_system_unit() {
-        let cloud = resolve_service_unit(None, Some("cloud"));
-        assert_eq!(cloud, CLOUD_SERVICE_UNIT);
-        assert_eq!(ServiceScope::of(&cloud), ServiceScope::System);
-        assert!(in_service_cgroup(
-            "0::/system.slice/vardoger-cloud.service\n",
-            &cloud
-        ));
-
-        let action = systemctl_action(&cloud);
-        assert_eq!(action.get_program(), "sudo");
-        assert_eq!(
-            action.get_args().collect::<Vec<_>>(),
-            ["-n", "systemctl"],
-            "never --user: that's where it logged \"service restart failed\""
-        );
-        let query = systemctl_query(&cloud);
-        assert_eq!(query.get_program(), "systemctl");
-        assert_eq!(query.get_args().count(), 0);
-
-        let laptop = resolve_service_unit(None, None);
-        assert_eq!(laptop, "vardoger.service");
-        assert_eq!(ServiceScope::of(&laptop), ServiceScope::User);
-        let action = systemctl_action(&laptop);
-        assert_eq!(action.get_program(), "systemctl");
-        assert_eq!(action.get_args().collect::<Vec<_>>(), ["--user"]);
-
-        // A test install's own unit wins, on Cloud too.
-        assert_eq!(
-            resolve_service_unit(Some("vardoger-test.service"), Some("cloud")),
-            "vardoger-test.service"
-        );
-        assert_eq!(resolve_service_unit(Some("  "), None), "vardoger.service");
-    }
-
     /// Inside the unit, the restart kills the `systemctl` that asked for it.
     #[test]
     fn a_restart_that_kills_its_own_systemctl_still_counts() {
@@ -3839,25 +3694,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_cloud_machine_keeps_only_the_version_it_runs() {
-        assert_eq!(older_versions_kept_on(Some("cloud")), 0);
-        assert_eq!(older_versions_kept_on(Some("linux")), 1);
-        assert_eq!(older_versions_kept_on(None), 1);
-
-        let tmp = tempfile::tempdir().unwrap();
-        let app_root = tmp.path().join("app");
-        versions_installed(&app_root, &["0.2.155", "0.2.156", "0.2.157", "0.2.158"]);
-        apply_headless(&app_root, "0.2.158").unwrap();
-
-        prune_installed_versions(&app_root, older_versions_kept_on(Some("cloud")), None);
-
-        assert_eq!(folders(&app_root), ["0.2.158", "current"]);
-        // Again: nothing more to do, and nothing breaks.
-        assert!(prune_installed_versions(&app_root, 0, None).is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn a_version_an_update_gave_up_on_goes_but_current_never_does() {
         let tmp = tempfile::tempdir().unwrap();
         let app_root = tmp.path().join("app");
@@ -3883,30 +3719,6 @@ mod tests {
         std::os::unix::fs::symlink(app_root.join("0.2.12"), app_root.join("current")).unwrap();
         assert!(prune_installed_versions(&app_root, 0, None).is_empty());
         assert_eq!(folders(&app_root), ["0.2.10", "0.2.11", "0.2.12", "current"]);
-    }
-
-    /// `vardoger headless` runs the `vardoger-engine` beside it: a Cloud machine
-    /// keeps it in every version (it once left it out, and never came online).
-    #[cfg(unix)]
-    #[test]
-    fn a_cloud_machine_keeps_the_engine_its_headless_runs() {
-        let tmp = tempfile::tempdir().unwrap();
-        let app_root = tmp.path().join("app");
-        versions_installed(&app_root, &["0.2.10", "0.2.11"]);
-        for ver in ["0.2.10", "0.2.11"] {
-            std::fs::write(app_root.join(ver).join("vardoger-engine"), "desktop").unwrap();
-        }
-        std::fs::create_dir_all(app_root.join("notes")).unwrap();
-        std::fs::write(app_root.join("notes").join("vardoger-engine"), "not a version").unwrap();
-        apply_headless(&app_root, "0.2.11").unwrap();
-
-        strip_unused_from_versions(&app_root);
-
-        for ver in ["0.2.10", "0.2.11"] {
-            assert!(app_root.join(ver).join("vardoger-engine").exists(), "{ver}");
-            assert!(app_root.join(ver).join("vardoger").exists(), "{ver}");
-        }
-        assert!(app_root.join("notes").join("vardoger-engine").exists());
     }
 
     #[cfg(target_os = "linux")]
@@ -4460,38 +4272,6 @@ mod tests {
         server.abort();
         assert_eq!(staged, app_root.join("9.9.9"));
         assert!(staged.join("vardoger").is_file());
-    }
-
-    /// The release carries `vardoger-engine`, which `vardoger headless` runs: a
-    /// Cloud machine stages it as anywhere else does.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_cloud_machine_stages_a_release_with_its_engine() {
-        let tmp = tempfile::tempdir().unwrap();
-        let pkg = tmp.path().join("pkg");
-        std::fs::create_dir_all(pkg.join("vardoger-pkg")).unwrap();
-        std::fs::write(pkg.join("vardoger-pkg").join("vardoger-engine"), "desktop").unwrap();
-        let bytes = fake_headless_tarball(&pkg, "9.9.9");
-        let manifest = Manifest {
-            version: "9.9.9".into(),
-            files: [(
-                headless_artifact("9.9.9"),
-                FileMeta {
-                    sha256: Some(format!("{:x}", Sha256::digest(&bytes))),
-                },
-            )]
-            .into(),
-            ..Manifest::default()
-        };
-        for (cloud, kept) in [(true, true), (false, true)] {
-            let app_root = tmp.path().join(format!("app-{cloud}"));
-            std::fs::create_dir_all(&app_root).unwrap();
-            let (base, server) = serve_forever(bytes.clone()).await;
-            let staged = stage_headless_on(&served_from(manifest.clone(), &base), &app_root, cloud).await.unwrap();
-            server.abort();
-            assert!(staged.join("vardoger").is_file(), "cloud {cloud}");
-            assert_eq!(staged.join("vardoger-engine").exists(), kept, "cloud {cloud}");
-        }
     }
 
     #[test]

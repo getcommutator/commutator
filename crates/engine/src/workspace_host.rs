@@ -1050,54 +1050,6 @@ impl WorkspaceHost {
         Ok(())
     }
 
-    /// A project that lives only on Cloud: owned by the logical Cloud device
-    /// (which has no engine to stamp it), so its GitHub repository is set
-    /// here. Every session in it runs on a Cloud machine cloning that
-    /// repository. Idempotent like [`Self::create_space`]; also a no-op when
-    /// Cloud already has a project for the repository.
-    pub fn create_cloud_space(
-        &self,
-        space_id: &str,
-        device_id: &str,
-        path: &str,
-        name: Option<String>,
-        github_repo: &str,
-    ) -> Result<(), EngineError> {
-        if !device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX) {
-            return Err(EngineError::Other(
-                "Only Cloud projects name their repository.".into(),
-            ));
-        }
-        let spaces = self.read(|doc| doc.read_spaces())?;
-        if spaces.iter().any(|s| {
-            s.id == space_id
-                || (s.device_id == device_id
-                    && (s.path == path
-                        || s.github_repo
-                            .as_deref()
-                            .is_some_and(|repo| repo.eq_ignore_ascii_case(github_repo))))
-        }) {
-            return Ok(());
-        }
-        self.mutate(|doc| {
-            doc.upsert_space(&Space {
-                id: space_id.to_string(),
-                device_id: device_id.to_string(),
-                path: path.to_string(),
-                name,
-                git_detected: true,
-                git_checked_at: Some(Utc::now()),
-                checkout_id: None,
-                // Groups with the clones of the repository on other devices.
-                repository_id: Some(vardoger_proto::view::cloud_repository_id(&spaces, github_repo)),
-                github_repo: Some(github_repo.to_string()),
-                icon: None,
-                created_at: Utc::now(),
-            })
-        })?;
-        Ok(())
-    }
-
     pub fn rename_space(&self, space_id: &str, name: Option<&str>) -> Result<bool, EngineError> {
         Ok(self.mutate(|doc| doc.rename_space(space_id, name))?)
     }
@@ -1168,55 +1120,6 @@ impl WorkspaceHost {
             }
             None => Ok(false),
         }
-    }
-
-    /// Cloud projects of `github_repo` that still carry another identity
-    /// than `repository_id` (a full clone's `commit:<root>`) take it, so they
-    /// group with this device's clone. Cloud projects have no engine of their
-    /// own to stamp them; only ever toward the commit form, so a shallow clone
-    /// elsewhere (remote form) can't flip them back. Returns how many moved.
-    pub fn align_cloud_spaces(
-        &self,
-        github_repo: &str,
-        repository_id: &str,
-    ) -> Result<usize, EngineError> {
-        if !repository_id.starts_with("commit:") || repository_id["commit:".len()..].contains(':') {
-            return Ok(0);
-        }
-        let stale: Vec<Space> = self
-            .read(|doc| doc.read_spaces())?
-            .into_iter()
-            .filter(|s| s.device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX))
-            .filter(|s| {
-                s.github_repo
-                    .as_deref()
-                    .is_some_and(|repo| repo.eq_ignore_ascii_case(github_repo))
-            })
-            .filter(|s| {
-                s.repository_id.as_deref() != Some(repository_id)
-                    && !s
-                        .repository_id
-                        .as_deref()
-                        .is_some_and(|id| id.starts_with("commit:"))
-            })
-            .collect();
-        if stale.is_empty() {
-            return Ok(0);
-        }
-        self.mutate(|doc| {
-            for space in &stale {
-                doc.set_space_git(
-                    &space.id,
-                    space.git_detected,
-                    space.checkout_id.as_deref(),
-                    Some(repository_id),
-                    space.github_repo.as_deref(),
-                    space.git_checked_at.unwrap_or_else(Utc::now),
-                )?;
-            }
-            Ok::<_, vardoger_doc::DocError>(true)
-        })?;
-        Ok(stale.len())
     }
 
     pub fn read_spaces(&self) -> Result<Vec<Space>, EngineError> {
@@ -1356,10 +1259,6 @@ impl WorkspaceHostInner {
         if registry_synced {
             self.registry_synced_tx.send_if_modified(|synced| !std::mem::replace(synced, true));
         }
-        // Sidebar pins are viewport state. A Cloud device has no viewport, and
-        // the edge refuses its writes to rows it doesn't own: reconciling here
-        // would rewrite the missing preferences row after every refused push.
-        let owns_sidebar = self.config.platform != vardoger_proto::CLOUD_PLATFORM;
         let mut published = lock(&self.published);
         let mut doc = lock(&self.reg);
         // Each list is rebuilt only when a row of its kind changed since it
@@ -1384,14 +1283,14 @@ impl WorkspaceHostInner {
         // (unchanged) as last published.
         let reconciled = match &chats {
             Some(Ok(chats)) => doc.reconcile_sidebar_pins_with(
-                registry_synced && owns_sidebar,
+                registry_synced,
                 chats.iter().map(|c| c.id.as_str()),
             ),
-            Some(Err(_)) => doc.reconcile_sidebar_pins(registry_synced && owns_sidebar),
+            Some(Err(_)) => doc.reconcile_sidebar_pins(registry_synced),
             None => {
                 let current = self.chats_tx.borrow();
                 doc.reconcile_sidebar_pins_with(
-                    registry_synced && owns_sidebar,
+                    registry_synced,
                     current.iter().map(|c| c.id.as_str()),
                 )
             }

@@ -276,28 +276,6 @@ pub fn project_key(space: &Space) -> String {
     }
 }
 
-/// The repository identity for a Cloud project of `github_repo`. A Cloud
-/// project lives on the logical Cloud device, where no engine runs, so
-/// whoever creates it stamps it: with the identity a clone of the same
-/// repository already has (a full clone's `commit:<root>`), so the two read
-/// as one project, else the normalized remote form. Pure.
-pub fn cloud_repository_id(spaces: &[Space], github_repo: &str) -> String {
-    spaces
-        .iter()
-        .filter(|s| !s.device_id.starts_with(crate::CLOUD_DEVICE_PREFIX))
-        .filter(|s| {
-            s.github_repo
-                .as_deref()
-                .is_some_and(|repo| repo.eq_ignore_ascii_case(github_repo))
-        })
-        .filter_map(|s| s.repository_id.as_deref().map(|id| (s, id)))
-        // The repository itself, not a folder inside it (`<identity>:<path>`).
-        .filter(|(_, id)| !id.strip_prefix("commit:").unwrap_or(id).contains(':'))
-        .min_by_key(|(s, id)| (!id.starts_with("commit:"), s.created_at, s.id.as_str()))
-        .map(|(_, id)| id.to_string())
-        .unwrap_or_else(|| format!("github.com/{}", github_repo.to_lowercase()))
-}
-
 /// The space that speaks for `space`'s whole project: the oldest member, id
 /// tiebreak. Its name and color stand for every member, and the choice is
 /// the same on every device, so a repository looks alike everywhere. Pure.
@@ -368,36 +346,6 @@ mod project_tests {
             icon: None,
             created_at: DateTime::<Utc>::UNIX_EPOCH + chrono::TimeDelta::minutes(minutes),
         }
-    }
-
-    #[test]
-    fn a_cloud_project_takes_the_identity_of_a_clone_of_its_repository() {
-        let github = |mut s: Space, repo: &str| {
-            s.github_repo = Some(repo.into());
-            s
-        };
-        // No clone yet: the remote form.
-        assert_eq!(cloud_repository_id(&[], "Acme/App"), "github.com/acme/app");
-        let spaces = vec![
-            github(
-                space("shallow", "vps", Some("github.com/acme/app"), 0),
-                "acme/app",
-            ),
-            github(space("full", "mac", Some("commit:abc"), 1), "Acme/App"),
-            github(space("sub", "mac", Some("commit:abc:web"), 0), "acme/app"),
-            github(
-                space("cloud", "cloud-1", Some("github.com/acme/app"), 0),
-                "acme/app",
-            ),
-            github(space("other", "mac", Some("commit:def"), 0), "acme/other"),
-        ];
-        // A full clone's commit identity wins over a shallow clone's remote
-        // form; a folder inside the repository and Cloud's own rows don't count.
-        assert_eq!(cloud_repository_id(&spaces, "acme/app"), "commit:abc");
-        assert_eq!(
-            cloud_repository_id(&spaces[..1], "acme/app"),
-            "github.com/acme/app"
-        );
     }
 
     #[test]
@@ -812,10 +760,6 @@ fn tool_chip_content_raw(call: &crate::ToolCall) -> (&'static str, String) {
         // (every native driver's convention): label them "Agent" with the
         // description as the detail — "Tool · Agent: scan repo" read as two
         // labels fighting.
-        // A Cloud machine's own setup ("Cloned acme/app").
-        call @ ToolCall::Unknown { name, .. } if crate::cloud_setup_step(call).is_some() => {
-            ("Cloud", name.clone())
-        }
         ToolCall::Unknown { name, .. } => match name.strip_prefix("Agent: ") {
             Some(description) => ("Agent", description.to_owned()),
             None if name == "Agent" => ("Agent", String::new()),
@@ -830,25 +774,6 @@ fn tool_chip_content_raw(call: &crate::ToolCall) -> (&'static str, String) {
 /// the summary itself is one implementation for both.
 pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
     use crate::ToolCall;
-    // A Cloud machine's setup steps read as what happened to the machine.
-    if !tools.is_empty() {
-        let steps: Option<Vec<&str>> = tools
-            .iter()
-            .map(|(call, _)| crate::cloud_setup_step(call))
-            .collect();
-        if let Some(steps) = steps {
-            let mut summary = if steps.contains(&"wake") {
-                "Woke the Cloud machine".to_string()
-            } else {
-                "Set up the Cloud machine".to_string()
-            };
-            let failed = tools.iter().filter(|(_, is_error)| *is_error).count();
-            if failed > 0 {
-                summary.push_str(&format!(" · {failed} failed"));
-            }
-            return summary;
-        }
-    }
     let mut commands = 0usize;
     let mut edited: Vec<&str> = Vec::new();
     let mut reads = 0usize;
@@ -1347,56 +1272,5 @@ mod input_outcome_tests {
         };
         assert!(parsed[0].answer.ends_with("…”"), "{}", parsed[0].answer);
         assert!(parsed[0].answer.chars().count() <= ANSWER_DISPLAY_MAX + 3);
-    }
-}
-
-#[cfg(test)]
-mod cloud_setup_tests {
-    use super::*;
-    use crate::ToolCall;
-
-    fn step(step: &str, name: &str) -> ToolCall {
-        ToolCall::Unknown {
-            name: name.into(),
-            input: Some(
-                serde_json::json!({ crate::CLOUD_SETUP_KEY: step, "command": "git clone x" }),
-            ),
-        }
-    }
-
-    #[test]
-    fn cloud_setup_steps_read_as_what_happened_to_the_machine() {
-        let start = step("start", "Started a machine");
-        let clone = step("clone", "Cloned acme/app");
-        assert_eq!(crate::cloud_setup_step(&clone), Some("clone"));
-        assert_eq!(
-            tool_chip_content(&clone),
-            ("Cloud", "Cloned acme/app".to_string())
-        );
-        assert_eq!(
-            tool_group_summary(&[(start.clone(), false), (clone.clone(), false)]),
-            "Set up the Cloud machine"
-        );
-        assert_eq!(
-            tool_group_summary(&[(step("wake", "Woke the machine"), false)]),
-            "Woke the Cloud machine"
-        );
-        assert_eq!(
-            tool_group_summary(&[(start, false), (clone.clone(), true)]),
-            "Set up the Cloud machine · 1 failed"
-        );
-        // Mixed with ordinary tools: the ordinary summary.
-        let exec = ToolCall::Exec {
-            command: "ls".into(),
-        };
-        assert_eq!(
-            tool_group_summary(&[(clone, false), (exec, false)]),
-            "Ran 1 command · called 1 tool"
-        );
-        let other = ToolCall::Unknown {
-            name: "x".into(),
-            input: Some(serde_json::json!({"a": 1})),
-        };
-        assert_eq!(crate::cloud_setup_step(&other), None);
     }
 }

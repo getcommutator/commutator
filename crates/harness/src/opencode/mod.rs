@@ -462,15 +462,7 @@ impl OpencodeHarness {
         run_env: &std::collections::BTreeMap<String, String>,
         access: AccessMode,
     ) -> Result<Server, HarnessError> {
-        // A Cloud machine's logins for OpenCode ride the run environment but
-        // never reach the server's process: they're installed through its
-        // credential API once it's up (`credentials`).
-        let mut run_env = run_env.clone();
-        let logins = run_env
-            .remove(credentials::CREDENTIALS_ENV)
-            .map(|raw| credentials::parse(&raw))
-            .transpose()?;
-        let mut server = if let Some(base) = &self.base_url {
+        let server = if let Some(base) = &self.base_url {
             if !extra_mcp.is_empty() {
                 tracing::warn!(
                     target: "vardoger_harness::opencode",
@@ -487,17 +479,11 @@ impl OpencodeHarness {
                 self.startup_timeout,
                 mcp,
                 extra_mcp,
-                &run_env,
+                run_env,
                 access,
             )
             .await?
         };
-        if let Some(logins) = logins
-            && let Err(error) = credentials::install(&server, &logins).await
-        {
-            server.shutdown(self.kill_grace).await;
-            return Err(error);
-        }
         Ok(server)
     }
 
@@ -5655,8 +5641,6 @@ impl SseDecoder {
     }
 }
 
-mod credentials;
-pub use credentials::CREDENTIALS_ENV;
 
 #[cfg(test)]
 mod tests;

@@ -152,12 +152,8 @@ pub struct CodeModeSettings {
 type Factory = Box<dyn Fn() -> Result<Arc<dyn Harness>, HarnessError> + Send + Sync>;
 type InstalledProbe = Box<dyn Fn() -> bool + Send + Sync>;
 
-/// How long a run waits for an expected [`RunEnvironment`]: far longer than the
-/// engine's assembly, on any disk.
-const RUN_ENVIRONMENT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Host-side environment for agent spawns (the Cloud device's credential
-/// broker). Called right before a request reaches the harness; whatever it
+/// Host-side environment for agent spawns (the agent accounts Vardoger
+/// keeps itself). Called right before a request reaches the harness; whatever it
 /// puts in [`vardoger_proto::RunRequest::env`] is never persisted.
 #[async_trait::async_trait]
 pub trait RunEnvironment: Send + Sync {
@@ -217,12 +213,8 @@ pub struct HarnessRegistry {
     gates: Mutex<HashMap<HarnessId, Arc<tokio::sync::RwLock<()>>>>,
     pending_updates: Mutex<std::collections::HashSet<HarnessId>>,
     update_generation: tokio::sync::watch::Sender<u64>,
-    /// Spawn-time environment provider (Cloud runner only).
-    run_environment: Mutex<Option<Arc<dyn RunEnvironment>>>,
-    /// False from [`Self::expect_run_environment`] until it's installed.
-    run_environment_ready: tokio::sync::watch::Sender<bool>,
     /// Spawn-time environment of the agent accounts vardoger keeps itself
-    /// (Muse's per-account roots); after the Cloud broker, never over it.
+    /// (Muse's per-account roots).
     account_environment: Mutex<Option<Arc<dyn RunEnvironment>>>,
 }
 
@@ -323,28 +315,8 @@ impl HarnessRegistry {
             gates: Mutex::new(HashMap::new()),
             pending_updates: Mutex::new(std::collections::HashSet::new()),
             update_generation,
-            run_environment: Mutex::new(None),
-            run_environment_ready: tokio::sync::watch::channel(true).0,
             account_environment: Mutex::new(None),
         }
-    }
-
-    /// Install the spawn-time environment provider (the Cloud runner's
-    /// credential broker). Laptops never set one.
-    pub fn set_run_environment(&self, environment: Arc<dyn RunEnvironment>) {
-        *self
-            .run_environment
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(environment);
-        self.run_environment_ready.send_replace(true);
-    }
-
-    /// One is on its way: runs wait for it rather than start without it. On a
-    /// Cloud machine, boot recovery dispatches a killed turn while the engine
-    /// is still assembling, ahead of the credential broker. Started then, the
-    /// agent has no login and none of its earlier conversations, and it fails.
-    pub fn expect_run_environment(&self) {
-        self.run_environment_ready.send_replace(false);
     }
 
     /// Install the agent accounts' environment provider (every device).
@@ -356,7 +328,7 @@ impl HarnessRegistry {
     }
 
     fn environments(&self) -> Vec<Arc<dyn RunEnvironment>> {
-        [&self.run_environment, &self.account_environment]
+        [&self.account_environment]
             .into_iter()
             .filter_map(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner).clone())
             .collect()
@@ -369,13 +341,6 @@ impl HarnessRegistry {
         chat_id: Option<&str>,
         request: &mut vardoger_proto::RunRequest,
     ) -> Result<(), String> {
-        let mut ready = self.run_environment_ready.subscribe();
-        if tokio::time::timeout(RUN_ENVIRONMENT_WAIT, ready.wait_for(|ready| *ready))
-            .await
-            .is_err()
-        {
-            return Err("This machine's agent logins aren't ready yet. Send again in a moment.".into());
-        }
         for environment in self.environments() {
             environment.prepare(harness, chat_id, request).await?;
         }
@@ -2024,7 +1989,7 @@ mod gate_tests {
             .await
             .unwrap();
         assert!(request.env.is_empty());
-        registry.set_run_environment(Arc::new(Fill));
+        registry.set_account_environment(Arc::new(Fill));
         registry
             .prepare_run(HarnessId::Codex, None, &mut request)
             .await

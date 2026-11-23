@@ -4125,9 +4125,7 @@ impl Shell {
             let Some(harness) = chat.config.as_ref().map(|config| config.harness) else {
                 return;
             };
-            let target = if vardoger_proto::is_cloud_device(&chat.device_id, "") {
-                Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.to_string())
-            } else if state.local_device_id.as_deref() == Some(chat.device_id.as_str()) {
+            let target = if state.local_device_id.as_deref() == Some(chat.device_id.as_str()) {
                 None
             } else {
                 Some(chat.device_id.clone())
@@ -7670,16 +7668,7 @@ impl Shell {
         let remote = host
             .as_deref()
             .is_some_and(|host| self.state.read(cx).local_device_id.as_deref() != Some(host));
-        // A chat on a Cloud session machine wears the cloud, not the generic
-        // remote-device globe.
-        let remote_glyph = if host
-            .as_deref()
-            .is_some_and(|host| vardoger_proto::is_cloud_device(host, ""))
-        {
-            icons::CLOUD
-        } else {
-            icons::REMOTE_SERVER
-        };
+        let remote_glyph = icons::REMOTE_SERVER;
         let project_icon = (project_icon && search_query.is_none())
             .then(|| self.render_project_icon(&id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, selected, cx));
         let corner_hovered = !preview && self.chat_status_hover.as_deref() == Some(row_id.as_str());
@@ -10191,16 +10180,9 @@ impl Shell {
                     .and_then(|c| c.title.clone())
                     .unwrap_or_else(|| "New session".into()),
             );
-            // A Cloud chat's machine goes with it (the engine deletes it).
-            let on_cloud = chat.is_some_and(|c| vardoger_proto::is_cloud_device(&c.device_id, ""));
-            let body = if on_cloud {
-                format!(
-                    "\u{201C}{title}\u{201D} and its Cloud machine will be permanently deleted, \
-                     with anything not pushed from it. This can\u{2019}t be undone."
-                )
-            } else {
-                format!("\u{201C}{title}\u{201D} will be permanently deleted. This can\u{2019}t be undone.")
-            };
+            let body = format!(
+                "\u{201C}{title}\u{201D} will be permanently deleted. This can\u{2019}t be undone."
+            );
             let card = popover::dialog_card(&theme)
                 .child(popover::dialog_title(&theme, "Delete session?"))
                 .child(div().mt(px(6.0)).child(popover::dialog_body(&theme, body)))
