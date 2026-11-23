@@ -3,10 +3,12 @@ resolver = "2"
 members = [
     "apps/vardoger",
     "crates/cli",
+    "crates/client",
     "crates/doc",
     "crates/engine",
     "crates/harness",
     "crates/launch",
+    "crates/markdown",
     "crates/mcp",
     "crates/notify",
     "crates/orb",
@@ -15,7 +17,9 @@ members = [
     "crates/proto",
     "crates/rpc",
     "crates/sync",
+    "crates/syntax",
     "crates/term-link",
+    "crates/text",
     "crates/update",
     "crates/visual",
     "crates/voice-media",
@@ -47,6 +51,10 @@ vardoger-launch = { path = "crates/launch" }
 vardoger-notify = { path = "crates/notify" }
 vardoger-mcp = { path = "crates/mcp" }
 vardoger-visual = { path = "crates/visual" }
+vardoger-client = { path = "crates/client" }
+vardoger-markdown = { path = "crates/markdown" }
+vardoger-syntax = { path = "crates/syntax" }
+vardoger-text = { path = "crates/text" }
 
 # CRDT
 loro = "1.17"
