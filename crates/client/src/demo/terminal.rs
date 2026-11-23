@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::error::{ClientError, Result};
-use crate::live::b64;
+use crate::b64;
 use crate::lock;
 
 const PROMPT_DIR: &str = "\x1b[1;38;5;141m~/vardoger\x1b[0m";

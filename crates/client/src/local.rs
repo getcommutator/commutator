@@ -107,8 +107,30 @@ pub(crate) struct LocalHost {
     cancel: CancellationToken,
 }
 
-fn rpc_err(method: &str, err: vardoger_rpc::RpcError) -> ClientError {
-    crate::live::relay::map_rpc("engine", method, err)
+/// Default unary deadline; long ones below.
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Raw bytes per UploadChunk slice (≈680k base64 chars: under a 1 MiB
+/// WebSocket message with headroom; a multiple of 3 so slices encode alone).
+const UPLOAD_SLICE_BYTES: usize = 510_000;
+
+fn deadline(method: &str) -> Duration {
+    match method {
+        methods::CREATE_WORKTREE => Duration::from_secs(120),
+        methods::LIST_MODELS => Duration::from_secs(100),
+        methods::UPLOAD_COMMIT => Duration::from_secs(150),
+        _ => CALL_TIMEOUT,
+    }
+}
+
+fn rpc_err(method: &str, err: RpcError) -> ClientError {
+    match err {
+        RpcError::UnknownMethod(m) => ClientError::Unsupported(format!("{m} on the engine")),
+        RpcError::BadParams(m) | RpcError::Failed(m) | RpcError::Capability(m) => {
+            ClientError::HostError(format!("{method}: {m}"))
+        }
+        RpcError::Transport(m) => ClientError::HostUnavailable(format!("engine: {m}")),
+        RpcError::Closed => ClientError::HostUnavailable("engine: connection closed".into()),
+    }
 }
 
 impl LocalHost {
@@ -154,6 +176,11 @@ impl LocalHost {
         self.cancel.cancel();
     }
 
+    /// Whether the engine's connection is up.
+    pub(crate) fn connected(&self) -> bool {
+        self.rpc.borrow().is_some()
+    }
+
     /// The engine's device (the host of every chat it runs), once known.
     pub(crate) fn device_id(&self) -> Option<String> {
         lock(&self.device_id).clone()
@@ -169,13 +196,58 @@ impl LocalHost {
         }
     }
 
+    /// The engine's connection, for callers that hold it (voice).
+    pub(crate) async fn rpc_client(&self) -> Result<Arc<RpcClient>> {
+        self.rpc().await
+    }
+
     /// Any host call, straight to the engine.
     pub(crate) async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        self.rpc()
-            .await?
-            .call(method, params)
-            .await
-            .map_err(|e| rpc_err(method, e))
+        let rpc = self.rpc().await?;
+        match tokio::time::timeout(deadline(method), rpc.call(method, params)).await {
+            Ok(reply) => reply.map_err(|e| rpc_err(method, e)),
+            Err(_) => Err(ClientError::HostUnavailable(format!("{method} timed out"))),
+        }
+    }
+
+    /// Chunked upload (`UploadChunk` ×N with `seq`, then `UploadCommit`);
+    /// returns the durable path on the engine. Idempotent per `upload_id`.
+    // ponytail: one slice at a time; a few in parallel if large uploads drag.
+    pub(crate) async fn upload(
+        &self,
+        upload_id: &str,
+        file_name: &str,
+        data: &[u8],
+        progress: Option<crate::rpc::ProgressFn>,
+    ) -> Result<String> {
+        let slices: Vec<&[u8]> = if data.is_empty() {
+            vec![&[][..]]
+        } else {
+            data.chunks(UPLOAD_SLICE_BYTES).collect()
+        };
+        for (seq, slice) in slices.iter().enumerate() {
+            if let Some(progress) = &progress {
+                progress((seq as f64 / slices.len() as f64).min(0.99));
+            }
+            self.call(
+                methods::UPLOAD_CHUNK,
+                json!({ "uploadId": upload_id, "seq": seq, "data": crate::b64::encode(slice) }),
+            )
+            .await?;
+        }
+        let reply = self
+            .call(
+                methods::UPLOAD_COMMIT,
+                json!({ "uploadId": upload_id, "fileName": file_name }),
+            )
+            .await?;
+        if let Some(progress) = &progress {
+            progress(1.0);
+        }
+        reply["path"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| ClientError::HostError("UploadCommit returned no path".into()))
     }
 
     pub(crate) async fn subscribe(
@@ -560,7 +632,7 @@ impl LocalHost {
                 .await?;
             let data = reply["data"].as_str().unwrap_or_default();
             out.extend(
-                crate::live::b64::decode(data)
+                crate::b64::decode(data)
                     .ok_or_else(|| ClientError::HostError("bad attachment chunk".into()))?,
             );
             if reply["done"].as_bool().unwrap_or(true) {

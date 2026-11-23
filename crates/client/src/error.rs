@@ -20,8 +20,7 @@ pub enum ClientError {
     HostError(String),
     #[error("network: {0}")]
     Network(String),
-    /// Credentials rejected / refresh failed. Irrecoverable failures also
-    /// raise [`crate::ClientEvent::AuthExpired`].
+    /// Credentials rejected (the server no longer knows this device).
     #[error("auth: {0}")]
     Auth(String),
     #[error("storage: {0}")]

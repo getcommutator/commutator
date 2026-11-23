@@ -47,7 +47,7 @@ fn a_chat_round_trips_through_a_local_engine() {
         .run(),
     );
 
-    let mut config = ClientConfig::new("http://127.0.0.1:1", client_dir.path());
+    let mut config = ClientConfig::new(client_dir.path());
     config.device_id = "desktop-test".into();
     let client = Client::new(
         config,

@@ -1,8 +1,7 @@
 //! The workspace registry replica and its derived [`WorkspaceSnapshot`].
 //!
-//! The replica is a [`RegistryDoc`] shared (`Arc<Mutex<_>>`) with the
-//! `vardoger_sync::RegistryClient` in live mode; Demo mode's replica is
-//! local-only (writes fold straight into its rows). Reads materialize
+//! The replica is a local-only [`RegistryDoc`] (writes fold straight into
+//! its rows): the engine's watches fill it, or the demo host does. Reads materialize
 //! the rows once per registry *generation* (cached), so the 1 Hz time-driven
 //! re-derivation (staleness, presence expiry, send grace) never re-decodes.
 
@@ -53,11 +52,6 @@ impl WorkspaceStore {
         }
     }
 
-    /// The shared replica (handed to `RegistryClient` in live mode).
-    #[allow(dead_code)] // live registry client
-    pub(crate) fn doc(&self) -> &Arc<Mutex<RegistryDoc>> {
-        &self.doc
-    }
 
     pub(crate) fn mutate<R>(&self, f: impl FnOnce(&mut RegistryDoc) -> R) -> R {
         f(&mut lock(&self.doc))
@@ -105,10 +99,6 @@ impl WorkspaceStore {
         lock(&self.presence).insert(device_id.to_owned(), at_ms);
     }
 
-    #[allow(dead_code)] // live registry client
-    pub(crate) fn replace_presence(&self, presence: HashMap<String, i64>) {
-        *lock(&self.presence) = presence;
-    }
 
     pub(crate) fn presence(&self) -> HashMap<String, i64> {
         lock(&self.presence).clone()

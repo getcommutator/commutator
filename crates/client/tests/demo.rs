@@ -13,7 +13,7 @@ use vardoger_client::{
 
 fn demo(options: DemoOptions) -> (Client, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let mut config = ClientConfig::new("https://edge.invalid", dir.path());
+    let mut config = ClientConfig::new(dir.path());
     config.device_id = "ios-test".into();
     config.device_name = "Test iPhone".into();
     let client = Client::new(config, Credentials::Demo(options), Arc::new(NullListener)).unwrap();
