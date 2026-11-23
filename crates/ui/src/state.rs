@@ -594,6 +594,7 @@ async fn query_engine_info(client: &RpcClient) -> Result<EngineInfo, RpcError> {
                 workspace_scope: WorkspaceScope::Synced,
                 cursor_sdk_version: None,
                 capabilities: Vec::new(),
+                build: None,
             })
         }
         Err(err) => Err(err),
@@ -1895,6 +1896,11 @@ impl AppState {
                     subagent_ref: None,
                     subagent_status: None,
                     subagent_tail: None,
+                    preview_paths: Vec::new(),
+                    exit_code: None,
+                    output_truncated: false,
+                    output_lines: None,
+                    review: None,
                 }],
                 created_at: created_at + 1,
                 device_id: "local".into(),
@@ -2566,10 +2572,10 @@ impl AppState {
         self.signed_in() && self.cloud_status.as_ref().is_some_and(|s| s.available)
     }
 
-    /// [`Self::cloud_offered`], but true while the status is still unknown
-    /// (setup keeps its GitHub step until the edge says otherwise).
+    /// Zeron kept setup's GitHub step while Cloud's status was unknown;
+    /// Vardoger never offers Cloud, so this is [`Self::cloud_offered`].
     pub fn cloud_maybe_offered(&self) -> bool {
-        self.signed_in() && self.cloud_status.as_ref().is_none_or(|s| s.available)
+        self.cloud_offered()
     }
 
     pub fn cloud_enabled(&self) -> bool {
@@ -2704,7 +2710,7 @@ impl AppState {
             let result = engine
                 .client()
                 .call_as::<vardoger_proto::CloudSession>(
-                    vardoger_rpc::methods::CLOUD_SESSION_WAKE,
+                    crate::cloud::methods::CLOUD_SESSION_WAKE,
                     serde_json::json!({ "chatId": session_chat_id }),
                 )
                 .await;
@@ -3678,7 +3684,7 @@ impl AppState {
                 && let Ok(on) = engine
                     .client()
                     .call_as::<vardoger_proto::CloudStatus>(
-                        vardoger_rpc::methods::CLOUD_ENABLE,
+                        crate::cloud::methods::CLOUD_ENABLE,
                         serde_json::json!({}),
                     )
                     .await
@@ -3717,7 +3723,7 @@ impl AppState {
             }
             let repos = engine
                 .client()
-                .call_as::<Listing>(methods::LIST_GITHUB_REPOS, serde_json::json!({}))
+                .call_as::<Listing>(crate::cloud::methods::LIST_GITHUB_REPOS, serde_json::json!({}))
                 .await;
             this.update(cx, |state, cx| {
                 state.cloud_repos_refreshing = false;

@@ -325,7 +325,7 @@ fn language_asset(language: Option<LanguageId>) -> Option<&'static str> {
         LanguageId::Ruby => "ruby",
         LanguageId::Php => "php",
         LanguageId::Sql => "sql",
-        LanguageId::Lua => "lua",
+        LanguageId::Lua | LanguageId::Luau => "lua",
         LanguageId::Dockerfile => "dockerfile",
         LanguageId::Nix => "nix",
         LanguageId::Make => "makefile",

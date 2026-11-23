@@ -8708,6 +8708,7 @@ impl Shell {
             match status {
                 vardoger_proto::ChatIndicator::Working => Some("Working"),
                 vardoger_proto::ChatIndicator::AwaitingInput => Some("Input"),
+                vardoger_proto::ChatIndicator::Waiting => Some("Waiting"),
                 vardoger_proto::ChatIndicator::Errored => Some("Failed"),
                 vardoger_proto::ChatIndicator::Completed => Some("Done"),
                 vardoger_proto::ChatIndicator::Idle => None,

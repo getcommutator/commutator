@@ -159,6 +159,8 @@ impl ResolvedRunConfig {
             reasoning: self.reasoning,
             model_options: self.model_options.clone(),
             sandbox: SandboxLevel::WorkspaceWrite,
+            access: Default::default(),
+            plan: false,
         })
     }
 }
@@ -2021,7 +2023,7 @@ impl Pickers {
                     engine
                         .client()
                         .call(
-                            methods::LIST_CLOUD_BRANCHES,
+                            crate::cloud::methods::LIST_CLOUD_BRANCHES,
                             serde_json::json!({
                                 "repo": repo,
                                 "defaultBranch": default_branch,
@@ -2561,6 +2563,8 @@ impl Pickers {
                             ),
                             reasoning_levels: vec![],
                             options: vec![],
+                            provider: None,
+                            default: false,
                         },
                     },
                 );
@@ -6354,6 +6358,8 @@ pub(crate) fn harness_brand_icon(harness: HarnessId) -> (&'static str, Option<gp
         HarnessId::Opencode => (crate::icons::OPENCODE_MARK, None),
         HarnessId::Antigravity => (crate::icons::ANTIGRAVITY_MARK, None),
         HarnessId::Muse => (crate::icons::MUSE_MARK, Some(crate::icons::muse_brand())),
+        // ponytail: no brand marks for Fx or ACP registry agents yet.
+        HarnessId::Fx | HarnessId::Registry(_) => (crate::icons::TERMINAL, None),
     }
 }
 

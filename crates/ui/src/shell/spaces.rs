@@ -2804,6 +2804,8 @@ pub(crate) fn status_dot_color(status: ChatIndicator, theme: &Theme) -> gpui::Hs
         // Blue: "asking you a question" must read differently from "busy
         // working" at a glance.
         ChatIndicator::AwaitingInput => theme.accent.opacity(0.6),
+        // Not working, not done: background work will wake it.
+        ChatIndicator::Waiting => theme.text_muted.opacity(0.55),
         ChatIndicator::Errored => theme.danger.opacity(0.65),
         // Green: finished-but-unseen reads as "ready for you".
         ChatIndicator::Completed => {
@@ -7011,6 +7013,7 @@ impl Shell {
             device_id: device.id.clone(),
             path: path.clone(),
             name: None,
+            icon: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,

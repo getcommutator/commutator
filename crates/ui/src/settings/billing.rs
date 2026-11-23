@@ -119,7 +119,7 @@ impl BillingPage {
         self.load_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call_as::<BillingStatus>(methods::BILLING_STATUS, serde_json::json!({}))
+                .call_as::<BillingStatus>(crate::cloud::methods::BILLING_STATUS, serde_json::json!({}))
                 .await;
             this.update(cx, |page, cx| {
                 match result {
@@ -233,7 +233,7 @@ impl BillingPage {
     fn subscribe(&mut self, ix: usize, plan: String, cx: &mut Context<Self>) {
         self.open(
             Busy::Plan(ix),
-            methods::BILLING_CHECKOUT,
+            crate::cloud::methods::BILLING_CHECKOUT,
             serde_json::json!({ "kind": "subscription", "plan": plan }),
             cx,
         );
@@ -243,14 +243,14 @@ impl BillingPage {
         let packs = self.packs;
         self.open(
             Busy::Credits,
-            methods::BILLING_CHECKOUT,
+            crate::cloud::methods::BILLING_CHECKOUT,
             serde_json::json!({ "kind": "credits", "packs": packs }),
             cx,
         );
     }
 
     fn manage(&mut self, busy: Busy, cx: &mut Context<Self>) {
-        self.open(busy, methods::BILLING_PORTAL, serde_json::json!({}), cx);
+        self.open(busy, crate::cloud::methods::BILLING_PORTAL, serde_json::json!({}), cx);
     }
 
     fn on_scroll_hovered(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {

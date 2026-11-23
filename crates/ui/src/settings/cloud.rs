@@ -279,7 +279,7 @@ impl CloudPage {
         self.usage_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call_as::<CloudUsage>(methods::CLOUD_USAGE, params)
+                .call_as::<CloudUsage>(crate::cloud::methods::CLOUD_USAGE, params)
                 .await;
             this.update(cx, |page, cx| {
                 if page.usage_range != range {
@@ -316,7 +316,7 @@ impl CloudPage {
         self.vault_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call_as::<VaultStatus>(methods::VAULT_STATUS, serde_json::json!({}))
+                .call_as::<VaultStatus>(crate::cloud::methods::VAULT_STATUS, serde_json::json!({}))
                 .await;
             this.update(cx, |page, cx| {
                 match result {
@@ -405,12 +405,12 @@ impl CloudPage {
             .unwrap_or_default();
         let (method, params) = if others.is_empty() {
             (
-                methods::VAULT_DISCONNECT,
+                crate::cloud::methods::VAULT_DISCONNECT,
                 serde_json::json!({ "provider": provider.as_str() }),
             )
         } else {
             (
-                methods::VAULT_AUTHORIZE,
+                crate::cloud::methods::VAULT_AUTHORIZE,
                 serde_json::json!({ "provider": provider.as_str(), "authorizedDevices": others }),
             )
         };
@@ -428,7 +428,7 @@ impl CloudPage {
         });
         self.vault_call(
             provider.as_str().into(),
-            methods::VAULT_AUTHORIZE,
+            crate::cloud::methods::VAULT_AUTHORIZE,
             params,
             cx,
         );
@@ -480,7 +480,7 @@ impl CloudPage {
             let started = engine
                 .client()
                 .call_as::<GithubDeviceFlow>(
-                    methods::GITHUB_CONNECT_START,
+                    crate::cloud::methods::GITHUB_CONNECT_START,
                     serde_json::json!({ "authorizedDevices": devices }),
                 )
                 .await;
@@ -521,7 +521,7 @@ impl CloudPage {
                 let polled = engine
                     .client()
                     .call_as::<GithubConnectProgress>(
-                        methods::GITHUB_CONNECT_POLL,
+                        crate::cloud::methods::GITHUB_CONNECT_POLL,
                         serde_json::json!({ "flowId": flow_id }),
                     )
                     .await;

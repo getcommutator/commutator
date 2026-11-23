@@ -1,3 +1,7 @@
+//! Vardoger has no Cloud: the engine never reports a Cloud device or
+//! session, so these helpers only ever see local devices, and the reads
+//! below fail. Kept so Zeron's UI compiles; goes with its callers.
+//!
 //! Cloud presentation shared by Settings, the device pickers, the composer,
 //! the panes and the New project flow (docs/design/cloud-device.md "Product
 //! shape", "Devices and ids", "Session lifecycle").
@@ -18,6 +22,27 @@ use vardoger_proto::{
 };
 
 use crate::icons;
+
+/// Cloud RPCs the Vardoger engine does not serve. Every caller sits behind
+/// `AppState::cloud_offered()`, which is never true here, so none is sent.
+// ponytail: kept so the hidden Cloud/Billing pages compile; delete with them.
+pub mod methods {
+    pub const CLOUD_ENABLE: &str = "CloudEnable";
+    pub const CLOUD_DELETE: &str = "CloudDelete";
+    pub const CLOUD_USAGE: &str = "CloudUsage";
+    pub const CLOUD_SESSION_WAKE: &str = "CloudSessionWake";
+    pub const LIST_CLOUD_BRANCHES: &str = "ListCloudBranches";
+    pub const LIST_GITHUB_REPOS: &str = "ListGithubRepos";
+    pub const GITHUB_CONNECT_START: &str = "GithubConnectStart";
+    pub const GITHUB_CONNECT_POLL: &str = "GithubConnectPoll";
+    pub const VAULT_STATUS: &str = "VaultStatus";
+    pub const VAULT_AUTHORIZE: &str = "VaultAuthorize";
+    pub const VAULT_DISCONNECT: &str = "VaultDisconnect";
+    pub const VAULT_PUT_API_KEY: &str = "VaultPutApiKey";
+    pub const BILLING_STATUS: &str = "BillingStatus";
+    pub const BILLING_CHECKOUT: &str = "BillingCheckout";
+    pub const BILLING_PORTAL: &str = "BillingPortal";
+}
 use crate::state::EngineHandle;
 
 /// The label every device list shows for Cloud.
@@ -123,7 +148,7 @@ pub fn session_presence(online: bool, session: Option<&CloudSession>) -> Presenc
         Some(CloudState::Ready) => Presence::Online,
         Some(CloudState::Sleeping | CloudState::Stopping) => Presence::Asleep,
         Some(CloudState::Provisioning | CloudState::Starting) => Presence::Waking,
-        Some(CloudState::Off | CloudState::Deleting | CloudState::Error) => Presence::Offline,
+        Some(CloudState::Off | CloudState::Deleting | CloudState::Error | CloudState::DataExpired | CloudState::Unknown) => Presence::Offline,
         None if online => Presence::Online,
         None => Presence::Asleep,
     }
@@ -199,7 +224,6 @@ pub enum CloudAction {
 
 impl CloudAction {
     pub fn method(self) -> &'static str {
-        use vardoger_rpc::methods;
         match self {
             CloudAction::Enable => methods::CLOUD_ENABLE,
             CloudAction::Delete => methods::CLOUD_DELETE,
@@ -485,20 +509,14 @@ pub fn show_out_of_credits(message: &'static str, cx: &mut gpui::App) {
 
 /// `CloudStatus`, or why it could not be read.
 pub async fn fetch_status(engine: EngineHandle) -> Result<CloudStatus, String> {
-    engine
-        .client()
-        .call_as::<CloudStatus>(vardoger_rpc::methods::CLOUD_STATUS, serde_json::json!({}))
-        .await
-        .map_err(|error| error.to_string())
+    let _ = engine;
+    Err("Cloud is not available".into())
 }
 
 /// `CloudSessions`, or why they could not be read.
 pub async fn fetch_sessions(engine: EngineHandle) -> Result<CloudSessions, String> {
-    engine
-        .client()
-        .call_as::<CloudSessions>(vardoger_rpc::methods::CLOUD_SESSIONS, serde_json::json!({}))
-        .await
-        .map_err(|error| error.to_string())
+    let _ = engine;
+    Err("Cloud is not available".into())
 }
 
 #[cfg(test)]

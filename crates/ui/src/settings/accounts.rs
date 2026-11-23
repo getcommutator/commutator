@@ -1114,7 +1114,7 @@ impl AccountsPage {
         self.action_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call(methods::VAULT_PUT_API_KEY, params)
+                .call(crate::cloud::methods::VAULT_PUT_API_KEY, params)
                 .await;
             this.update(cx, |page, cx| {
                 match result {
