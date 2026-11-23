@@ -2491,9 +2491,9 @@ mod tests {
             }
         }
         assert!(!signs_in(HarnessId::Mock));
-        // Antigravity has no quota to show and keeps a single login.
-        assert!(!reports_usage(HarnessId::Antigravity) && reports_usage(HarnessId::Codex));
-        assert!(keeps_one_login(HarnessId::Antigravity) && !keeps_one_login(HarnessId::Cursor));
+        // Every agent but Fx reports usage, and none keeps a single login.
+        assert!(!reports_usage(HarnessId::Fx) && reports_usage(HarnessId::Antigravity));
+        assert!(!keeps_one_login(HarnessId::Antigravity) && !keeps_one_login(HarnessId::Cursor));
         // Hermes rotates its own pool; vardoger never switches it, and says so.
         assert!(!switches_accounts(HarnessId::Hermes) && switches_accounts(HarnessId::Grok));
         assert!(provider_note(HarnessId::Hermes).is_some_and(|n| n.contains("hermes auth add")));
@@ -2517,7 +2517,7 @@ mod tests {
             .iter()
             .map(|o| o.provider.unwrap())
             .collect();
-        assert_eq!(providers, ["openai-codex", "nous"]);
+        assert_eq!(providers, ["openai-codex", "nous", "xai-oauth"]);
         let flow = LoginFlow {
             provider: Some("openai-codex"),
             ..waiting(HarnessId::Pi, 1)

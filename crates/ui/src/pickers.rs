@@ -10149,7 +10149,7 @@ mod tests {
         );
         assert_eq!(
             models.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
-            vec!["Opus 5.5", "Fable 5", "Sonnet 5", "Haiku 4.5", "Nova 1"]
+            vec!["Opus 5.5", "Fable 5", "Sonnet 5.5", "Haiku 5.5", "Nova 1"]
         );
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
@@ -10334,7 +10334,7 @@ mod tests {
         // Case-insensitive; the length indexes into the NAME's bytes.
         assert_eq!(completion_prefix_len("Documents", "doc"), Some(3));
         assert_eq!(&"Documents"[3..], "uments");
-        assert_eq!(completion_prefix_len("vardoger", "vardoger"), Some(5));
+        assert_eq!(completion_prefix_len("vardoger", "vardoger"), Some(8));
         assert_eq!(completion_prefix_len("vardoger", ""), Some(0));
         assert_eq!(completion_prefix_len("vardoger", "dev"), None);
         // Longer than the name → not a prefix.

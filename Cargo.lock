@@ -11414,6 +11414,7 @@ dependencies = [
  "vardoger-notify",
  "vardoger-rpc",
  "vardoger-sync",
+ "vardoger-ui",
  "vardoger-update",
  "windows-sys 0.61.2",
 ]
