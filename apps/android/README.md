@@ -82,6 +82,6 @@ adb shell am start -n dev.freethinkel.vardoger.android/.MainActivity \
 | `--es companion companions` / `terminal` / `side-chat:<id>` / `subagent:<tool id>` / `model-picker` | With `route chat:<id>`, open the companions sheet, a terminal, a side chat, a subagent or the model picker over it (`model-picker` also works with `route new`) |
 | `--ez terminal-demo true` | The opened terminal types a short script (screenshots) |
 | `--ez signedout true` | Clear stored credentials |
-| `--es account "<server url> <token> <device id>"` `[--es host <machine id>]` | A device token minted on a local server (`cargo run -p vardoger-client --example remote_stack`; from the emulator the server is `http://10.0.2.2:<port>`), as if signed in (debuggable builds) |
+| `--es account "<server url>,<token>,<device id>"` `[--es host <machine id>]` | A device token minted on a local server (`cargo run -p vardoger-client --example remote_stack`; `adb reverse tcp:<port> tcp:<port>` and use `http://127.0.0.1:<port>`), as if signed in (debuggable builds) |
 | `--es wallpaper <path>` / `none` | Set (or clear) the wallpaper from a file the app can read, e.g. `adb push art.jpg /data/local/tmp/ && adb shell run-as dev.freethinkel.vardoger.android cp /data/local/tmp/art.jpg files/` then `--es wallpaper /data/user/0/dev.freethinkel.vardoger.android/files/art.jpg` |
 | `--es wallpaper-effect <none\|dither\|ascii\|halftone\|scanlines>` | Wallpaper effect |

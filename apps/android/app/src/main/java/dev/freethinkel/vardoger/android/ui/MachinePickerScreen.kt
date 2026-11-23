@@ -39,6 +39,7 @@ fun MachinePickerScreen(model: AppModel) {
             // The server no longer knows this phone (removed there).
             model.signOut()
         } catch (e: Exception) {
+            android.util.Log.w("Vardoger", "listing machines failed", e)
             failure = "Couldn't reach your server."
         }
     }

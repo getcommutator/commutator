@@ -69,7 +69,7 @@ data class LaunchOptions(
     val wallpaper: String? = null,
     val wallpaperEffect: String? = null,
     /**
-     * `--es account "<server url> <token> <device id>" [--es host <machine id>]`: a
+     * `--es account "<server url> <token> <device id>"` (spaces or commas) `[--es host <machine id>]`: a
      * device token minted on a local dev server (Google can't sign in a
      * server on localhost; debuggable builds). See crates/client/examples/remote_stack.rs.
      */
@@ -206,7 +206,7 @@ class AppModel(private val app: Application) {
         launch = options
         if (_client.value != null) return
         if (options.signedOut) credentials.clear()
-        options.account?.split(" ")?.takeIf { it.size == 3 }?.let { (url, token, id) ->
+        options.account?.split(' ', ',')?.filter { it.isNotEmpty() }?.takeIf { it.size == 3 }?.let { (url, token, id) ->
             credentials.store(CredentialStore.Account(url, token, id, "dev@localhost", "Local dev"))
             options.host?.let { credentials.host = CredentialStore.Host(it, it) }
         }
