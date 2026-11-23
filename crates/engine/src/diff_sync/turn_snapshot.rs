@@ -79,8 +79,23 @@ impl TreeSnapshot {
 
     /// Point a git command at this snapshot's objects. Without it the tree
     /// does not exist as far as the checkout is concerned.
-    pub(super) fn apply_to(&self, cmd: &mut tokio::process::Command) {
+    pub(crate) fn apply_to(&self, cmd: &mut tokio::process::Command) {
         self.store.apply_to(cmd);
+    }
+
+    /// Untracked paths the snapshot left out (budget), as git spells them.
+    pub(crate) fn skipped(&self) -> &[Vec<u8>] {
+        &self.skipped
+    }
+
+    /// A snapshot written earlier into the kept store at `store_dir` (a bare
+    /// repo whose `objects/info/alternates` names the checkout's objects).
+    pub(crate) fn kept(store_dir: &Path, tree: String, skipped: Vec<Vec<u8>>) -> Self {
+        Self {
+            tree,
+            store: Arc::new(ObjectStore::kept(store_dir)),
+            skipped: Arc::new(skipped),
+        }
     }
 }
 
@@ -94,6 +109,8 @@ struct ObjectStore {
     /// A layered snapshot reads through its base's directory, so the base
     /// has to outlive it.
     _base: Option<Arc<ObjectStore>>,
+    /// A checkpoint store outlives its snapshots: never deleted on drop.
+    keep: bool,
 }
 
 impl ObjectStore {
@@ -156,7 +173,19 @@ impl ObjectStore {
             dir,
             alternates,
             _base: base.cloned(),
+            keep: false,
         })
+    }
+
+    /// A checkpoint store (`crate::checkpoints`): the checkout's objects come
+    /// in through the store's own `objects/info/alternates`.
+    fn kept(dir: &Path) -> Self {
+        Self {
+            dir: dir.to_path_buf(),
+            alternates: std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES").unwrap_or_default(),
+            _base: None,
+            keep: true,
+        }
     }
 
     fn objects_dir(&self) -> PathBuf {
@@ -165,12 +194,18 @@ impl ObjectStore {
 
     fn apply_to(&self, cmd: &mut tokio::process::Command) {
         cmd.env("GIT_OBJECT_DIRECTORY", self.objects_dir());
-        cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &self.alternates);
+        // A kept store names the checkout in its own alternates file.
+        if !self.alternates.is_empty() {
+            cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &self.alternates);
+        }
     }
 }
 
 impl Drop for ObjectStore {
     fn drop(&mut self) {
+        if self.keep {
+            return;
+        }
         let dir = std::mem::take(&mut self.dir);
         // A store can hold thousands of loose objects: delete it off the
         // runtime's worker threads.
@@ -271,7 +306,27 @@ pub(super) async fn snapshot_tree_onto(
     // The git children are `kill_on_drop`: timing out takes them down too.
     // Boxed because the future embeds several 64 KiB git read buffers, which
     // callers would otherwise carry inline in their own frames.
-    let snapshot = Box::pin(write_snapshot(repos, root, base));
+    let snapshot = Box::pin(async {
+        let store = Arc::new(ObjectStore::create(repos, root, base.map(|base| &base.store)).await?);
+        write_snapshot(root, store, base).await
+    });
+    bounded(snapshot).await
+}
+
+/// [`snapshot_tree_onto`] into a kept checkpoint store (see
+/// [`TreeSnapshot::kept`]); `base` must live in the same store.
+pub(crate) async fn snapshot_tree_kept(
+    root: &Path,
+    store_dir: &Path,
+    base: Option<&TreeSnapshot>,
+) -> Result<TreeSnapshot, EngineError> {
+    let store = Arc::new(ObjectStore::kept(store_dir));
+    bounded(Box::pin(write_snapshot(root, store, base))).await
+}
+
+async fn bounded(
+    snapshot: impl Future<Output = Result<TreeSnapshot, EngineError>>,
+) -> Result<TreeSnapshot, EngineError> {
     match tokio::time::timeout(SNAPSHOT_TIMEOUT, snapshot).await {
         Ok(result) => result,
         Err(_) => Err(EngineError::Other(format!(
@@ -282,13 +337,13 @@ pub(super) async fn snapshot_tree_onto(
 }
 
 async fn write_snapshot(
-    repos: &Repos,
     root: &Path,
+    store: Arc<ObjectStore>,
     base: Option<&TreeSnapshot>,
 ) -> Result<TreeSnapshot, EngineError> {
-    let store = Arc::new(ObjectStore::create(repos, root, base.map(|base| &base.store)).await?);
     let mut skipped = untracked_to_skip(root).await?;
-    let index = store.dir.join("index");
+    // Unique: a kept store is shared by every chat of the repository.
+    let index = store.dir.join(format!("index-{}", uuid::Uuid::new_v4()));
     if let Some(base) = base {
         // Start from the base tree and leave out what either side left out:
         // a path skipped on one side only (a directory that crossed the
