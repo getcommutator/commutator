@@ -144,7 +144,7 @@ async fn local_and_synced_profiles_remain_isolated_across_restarts() {
         (device_id, upload)
     };
 
-    let synced_profile = EngineProfile::synced(dir.path(), "cloud-org", "cloud-user");
+    let synced_profile = EngineProfile::development(dir.path(), "cloud-org", "cloud-user");
     {
         let core = assemble(synced_profile.clone());
         assert_eq!(core.device_id, local_upload.0, "device identity is global");
@@ -232,7 +232,7 @@ async fn synced_accounts_isolate_uploads_and_assign_the_legacy_cache_once() {
     let legacy_upload = legacy_root.join("legacy.png");
     std::fs::write(&legacy_upload, b"legacy").expect("legacy attachment");
 
-    let first_profile = EngineProfile::synced(dir.path(), "org-a", "user-a");
+    let first_profile = EngineProfile::development(dir.path(), "org-a", "user-a");
     let first_upload = {
         let core = assemble(first_profile.clone());
         assert_eq!(core.uploads.dir(), first_profile.uploads_root());
@@ -255,7 +255,7 @@ async fn synced_accounts_isolate_uploads_and_assign_the_legacy_cache_once() {
         upload
     };
 
-    let second_profile = EngineProfile::synced(dir.path(), "org-b", "user-b");
+    let second_profile = EngineProfile::development(dir.path(), "org-b", "user-b");
     let second_upload = {
         let core = assemble(second_profile.clone());
         assert_eq!(core.uploads.dir(), second_profile.uploads_root());

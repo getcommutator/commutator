@@ -22,7 +22,6 @@ use vardoger_doc::{
 };
 use vardoger_engine::{
     Auth, AuthState, EngineCore, EngineProfile, HarnessRegistry, RunJournal,
-    WorkspaceScope,
 };
 use vardoger_harness::{Harness, HarnessError, RunControls};
 use vardoger_proto::{
@@ -814,17 +813,14 @@ async fn a_shutdown_mark_over_a_finished_turn_is_ignored() {
     core.shutdown().await;
 }
 
-/// An engine over `dir` in `scope`, its account signed out.
-fn assemble_signed_out(dir: &std::path::Path, scope: WorkspaceScope) -> EngineCore {
+/// An engine over `dir`, its account signed out.
+fn assemble_signed_out(dir: &std::path::Path) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(HoldingHarness {
         ask: false,
         on_interrupt: OnInterrupt::End,
     }));
-    let profile = match scope {
-        WorkspaceScope::Synced => EngineProfile::synced(dir, "dev-org", "dev-user"),
-        _ => EngineProfile::development(dir, "dev-org", "dev-user"),
-    };
+    let profile = EngineProfile::development(dir, "dev-org", "dev-user");
     let core =
         EngineCore::assemble_with_profile(profile, Arc::new(registry), HarnessId::Mock)
             .expect("engine core assembles");
@@ -841,7 +837,7 @@ async fn a_signed_out_local_engine_still_revives_after_shutdown() {
     let dir = data_dir(&tmp);
     // Signed out is a local engine's normal state, not a sign-out.
     let core = hold_a_turn_in(
-        assemble_signed_out(&dir, WorkspaceScope::Development),
+        assemble_signed_out(&dir),
         false,
     )
     .await;

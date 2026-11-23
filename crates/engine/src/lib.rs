@@ -54,7 +54,6 @@ pub mod harness_updates;
 pub(crate) mod home_index;
 mod http_error;
 pub mod instance_lock;
-pub mod local_import;
 pub mod keep_running;
 pub mod heap;
 pub mod managed;
@@ -183,7 +182,6 @@ pub struct EngineCore {
     /// Which app windows are focused (desktop banners hold back while one is).
     pub viewport_focus: desktop_notify::ViewportFocus,
     /// Local→synced profile import (account-scoped runtimes only).
-    pub local_import: Option<local_import::LocalImporter>,
     workspace_scope: WorkspaceScope,
     /// Auth service (attached by [`Engine::run`]; a lazy dev-mode instance otherwise).
     auth: std::sync::Mutex<Option<Auth>>,
@@ -203,7 +201,7 @@ impl EngineCore {
     /// Open stores under `data_dir`, wire sessions ⇄ doc host ⇄ workspace host, and
     /// recover stale journals from a previous crash. Identity comes from
     /// `$VARDOGER_ORG_ID` / `$VARDOGER_USER_ID` (dev defaults `dev-org` / `dev-user`);
-    /// use [`Self::assemble_with_identity`] to pass one explicitly.
+    /// use [`Self::assemble_with_profile`] to pass a profile explicitly.
     pub fn assemble(
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
@@ -212,17 +210,6 @@ impl EngineCore {
         let org_id = env_or("VARDOGER_ORG_ID", DEFAULT_ORG_ID);
         let user_id = env_or("VARDOGER_USER_ID", DEFAULT_USER_ID);
         let profile = EngineProfile::development(data_dir, &org_id, &user_id);
-        Self::assemble_with_profile(profile, registry, default_harness)
-    }
-
-    pub fn assemble_with_identity(
-        data_dir: &Path,
-        registry: Arc<HarnessRegistry>,
-        default_harness: HarnessId,
-        org_id: &str,
-        user_id: &str,
-    ) -> Result<Self, EngineError> {
-        let profile = EngineProfile::synced(data_dir, org_id, user_id);
         Self::assemble_with_profile(profile, registry, default_harness)
     }
 
@@ -264,7 +251,6 @@ impl EngineCore {
         // engine data dir — per-device, like the CLI installs it gates.
         registry.load_prefs(data_dir);
         let store = Arc::new(DocsStore::open(profile.store_root())?);
-        let store_for_import = store.clone();
         let journal = Arc::new(RunJournal::open(profile.store_root().join("journals"))?);
         let sessions = SessionsEngine::new(device_id.clone(), journal, registry.clone());
         let doc_host = DocHost::new(
@@ -330,33 +316,12 @@ impl EngineCore {
             profile.uploads_root(),
             legacy_uploads_root.as_deref(),
         );
-        // A recorded local→synced import grants this account the local
-        // profile's uploads root read-only — transcripts imported earlier
-        // embed absolute paths under it (same shape as the legacy adoption).
-        if profile.scope() != WorkspaceScope::Local
-            && let Some(root) =
-                local_import::marker_grants_read_root(data_dir, profile.org_id(), profile.user_id())
-        {
-            uploads.add_read_only_root(&root);
-        }
         // Queued-attachment support: the doc host resolves `pending://` refs
         // against this store and pushes staged bytes to remote hosts.
         doc_host.set_uploads(uploads.clone());
         let agent_accounts_config = AgentAccountsConfig::detect(data_dir);
         let codex_home = agent_accounts_config.codex_home.clone();
         sessions.set_generated_images(uploads.clone(), codex_home.join("generated_images"));
-        let local_import = (profile.scope() == WorkspaceScope::Synced).then(|| {
-            local_import::LocalImporter::new(
-                data_dir,
-                &device_id,
-                profile.org_id(),
-                profile.user_id(),
-                store_for_import.clone(),
-                profile.store_root().join("journals"),
-                workspace.clone(),
-                uploads.clone(),
-            )
-        });
         // Logins started from another device publish their callback port to
         // the P2P service, which serves it to that device alone.
         let agent_accounts =
@@ -421,7 +386,6 @@ impl EngineCore {
             agent_accounts,
             harness_updates,
             device_id,
-            local_import,
             workspace_scope: profile.scope(),
             auth: std::sync::Mutex::new(None),
             links: std::sync::Mutex::new(None),
@@ -576,9 +540,6 @@ impl EngineCore {
         }
         if let Some(updater) = self.updater() {
             rpc = rpc.with_updater(updater);
-        }
-        if let Some(importer) = self.local_import.clone() {
-            rpc = rpc.with_local_import(importer);
         }
         Arc::new(rpc)
     }

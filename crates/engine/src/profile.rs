@@ -44,11 +44,6 @@ impl EngineProfile {
         })
     }
 
-    /// Resolve an authenticated profile under its account-specific storage root.
-    pub fn synced(data_dir: &Path, org_id: &str, user_id: &str) -> Self {
-        Self::account_scoped(data_dir, org_id, user_id, WorkspaceScope::Synced)
-    }
-
     /// Resolve the explicit development profile under its account-specific storage root.
     pub fn development(data_dir: &Path, org_id: &str, user_id: &str) -> Self {
         Self::account_scoped(data_dir, org_id, user_id, WorkspaceScope::Development)
@@ -339,27 +334,11 @@ mod tests {
     }
 
     #[test]
-    fn synced_profile_uses_account_scoped_roots() {
-        let dir = tempfile::tempdir().unwrap();
-        let profile = EngineProfile::synced(dir.path(), "org/example", "user@example.com");
-
-        assert_eq!(profile.scope(), WorkspaceScope::Synced);
-        assert_eq!(
-            profile.store_root(),
-            dir.path().join("orgs/org_example/user_example_com")
-        );
-        assert_eq!(
-            profile.uploads_root(),
-            dir.path().join("orgs/org_example/user_example_com/uploads")
-        );
-    }
-
-    #[test]
     fn legacy_uploads_are_claimed_by_only_one_account() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("uploads")).unwrap();
-        let first = EngineProfile::synced(dir.path(), "org-a", "user-a");
-        let second = EngineProfile::synced(dir.path(), "org-b", "user-b");
+        let first = EngineProfile::development(dir.path(), "org-a", "user-a");
+        let second = EngineProfile::development(dir.path(), "org-b", "user-b");
 
         assert_eq!(
             first.claim_legacy_uploads_root().unwrap(),

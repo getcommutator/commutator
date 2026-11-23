@@ -209,29 +209,6 @@ pub mod methods {
     // AuthRpc mutations (feature-inventory §2 AuthRpc; IPC-only).
     pub const SIGN_IN: &str = "SignIn";
     pub const SIGN_OUT: &str = "SignOut";
-    /// The signed-in session's current bearer, for a local client that calls
-    /// the edge as the user itself (zgx's account calls): `{}` →
-    /// `{token, expiresAt?}` (unix seconds). Refreshed as the engine's own
-    /// calls refresh; the refresh token never leaves the engine. Local IPC
-    /// only ([`crate::local_only`]): the device-room relay refuses it.
-    pub const ACCESS_TOKEN: &str = "AccessToken";
-    /// `{}` → `{url}`: a fresh interactive sign-in (as `SignIn`) whose
-    /// exchange leaves the engine a one-time step-up ticket, kept in memory
-    /// and never handed out. Needed before `DeleteAccount`.
-    pub const STEP_UP: &str = "StepUp";
-    /// `{confirm}` (the account's email) → `{ok: true}`, or `{ok: false,
-    /// error, message, organization?}`: the engine deletes the account at
-    /// the edge with its step-up ticket. `error` is `step_up_required` (run
-    /// `StepUp`, then retry), `signed_out`, `offline`, `invalid`,
-    /// `last_admin` (with `organization`), `busy` or `upstream`.
-    pub const DELETE_ACCOUNT: &str = "DeleteAccount";
-    pub const LIST_ORGS: &str = "ListOrgs";
-    pub const CREATE_ORG: &str = "CreateOrg";
-    pub const SELECT_ORG: &str = "SelectOrg";
-    /// One-time local→synced profile import: what's importable (unary).
-    pub const LOCAL_IMPORT_STATUS: &str = "LocalImportStatus";
-    /// One-time local→synced profile import: run it (stream of progress items).
-    pub const IMPORT_LOCAL_WORKSPACE: &str = "ImportLocalWorkspace";
     // Repos / worktrees / folders (ControlRpc, relay-forwardable).
     pub const LIST_REPOS: &str = "ListRepos";
     pub const ADD_REPO: &str = "AddRepo";
@@ -431,16 +408,13 @@ pub mod methods {
 pub fn local_only(method: &str) -> bool {
     matches!(
         method,
-        methods::ACCESS_TOKEN
-            | methods::STEP_UP
-            // This device's background engine: whether it outlives its app.
-            | methods::GET_BACKGROUND_SETTINGS
+        // This device's background engine: whether it outlives its app.
+        methods::GET_BACKGROUND_SETTINGS
             | methods::SET_BACKGROUND_SETTINGS
             | methods::QUIT_CHECK
             | methods::APP_QUITTING
             // An API key typed into this device's app: stored here alone.
             | methods::ADD_AGENT_API_KEY
-            | methods::DELETE_ACCOUNT
             | methods::POST_NOTIFICATION
             // Which server and account this machine signs in to.
             | methods::SIGN_IN
@@ -1010,9 +984,6 @@ mod tests {
         let agent = connect_ws(&url, Some(&tokens.agent)).await.unwrap();
         for method in [
             methods::APPLY_UPDATE,
-            methods::ACCESS_TOKEN,
-            methods::STEP_UP,
-            methods::DELETE_ACCOUNT,
             methods::SIGN_IN,
             methods::SIGN_OUT,
             methods::OPEN_TERMINAL,
@@ -1035,7 +1006,7 @@ mod tests {
         assert!(asked.as_str().unwrap().starts_with("Agent"), "{asked}");
 
         let app = connect_ws(&url, Some(&tokens.full)).await.unwrap();
-        for method in [methods::ACCESS_TOKEN] {
+        for method in [methods::SIGN_IN] {
             let asked = app.call(method, serde_json::json!({})).await.unwrap();
             assert_eq!(asked, serde_json::json!("Local"), "{method}");
         }
@@ -1044,7 +1015,7 @@ mod tests {
     /// Credentials stay this device's.
     #[test]
     fn peers_may_not_reach_credentials() {
-        assert!(peer_refused(methods::DELETE_ACCOUNT, &serde_json::json!({})));
+        assert!(peer_refused(methods::SIGN_IN, &serde_json::json!({})));
     }
 
     #[tokio::test]
