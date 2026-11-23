@@ -37,6 +37,8 @@ async-trait.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# A real engine in-process for the local-mode test (tests/local.rs).
+vardoger-engine.workspace = true
 vardoger-visual.workspace = true
 vardoger-sync = { workspace = true, features = ["mock-server"] }
 tokio-tungstenite.workspace = true
