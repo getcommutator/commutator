@@ -75,6 +75,15 @@ pub enum Credentials {
     /// `port` it listens on (27754 by default) and its `data_dir`, where it
     /// writes the `ipc-token` a dial presents.
     Local { port: u16, engine_data_dir: PathBuf },
+    /// An engine on another of the account's machines, through the relay on
+    /// the account's Vardoger server: its URL, this device's bearer `token`
+    /// from its sign-in there, and the machine to drive (`host_device_id`,
+    /// a machine from [`crate::server::devices`]).
+    Remote {
+        server_url: String,
+        token: String,
+        host_device_id: String,
+    },
 }
 
 impl Credentials {
@@ -87,6 +96,7 @@ impl Credentials {
             Credentials::WorkOs { org_id, .. } | Credentials::Dev { org_id, .. } => org_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
+            Credentials::Remote { .. } => "remote",
         }
     }
 
@@ -95,6 +105,7 @@ impl Credentials {
             Credentials::WorkOs { user_id, .. } | Credentials::Dev { user_id, .. } => user_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
+            Credentials::Remote { .. } => "remote",
         }
     }
 }

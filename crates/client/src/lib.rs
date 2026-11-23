@@ -39,6 +39,7 @@ mod local;
 pub mod providers;
 pub mod rpc;
 pub mod runtime;
+pub mod server;
 pub mod session;
 pub mod subagents;
 pub mod terminal;

@@ -643,7 +643,10 @@ impl Client {
         // Live: restore the registry replica + open the docs store first, so
         // the very first snapshot renders the cached workspace (instant).
         let (registry, store) = if credentials.is_demo()
-            || matches!(credentials, Credentials::Local { .. })
+            || matches!(
+                credentials,
+                Credentials::Local { .. } | Credentials::Remote { .. }
+            )
         {
             // Demo has no edge: nothing would ever ack a queued write, so the
             // replica folds writes straight into its rows (as the engine does
@@ -701,6 +704,26 @@ impl Client {
                     data_dir: engine_data_dir.clone(),
                 },
             )),
+            Credentials::Remote {
+                server_url,
+                token,
+                host_device_id,
+            } => {
+                let links = {
+                    let _runtime = crate::runtime::handle().enter();
+                    vardoger_rpc::LinkCache::new(vardoger_rpc::LinkCacheConfig::new(
+                        server_url.trim_end_matches('/'),
+                        Arc::new(vardoger_rpc::StaticToken(token.clone())),
+                    ))
+                };
+                Backend::Local(LocalHost::new(
+                    &inner,
+                    EngineLink::Relay {
+                        links,
+                        device_id: host_device_id.clone(),
+                    },
+                ))
+            }
             _ => Backend::Live(Box::new({
                 catalog::DiskCatalog::new(&inner.config.data_dir).warm_labels();
                 LiveBackend::new(
