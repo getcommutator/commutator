@@ -1,52 +1,15 @@
 import AuthenticationServices
 import UIKit
 
-enum Endpoints {
-    static let edgeURL = URL(string: "https://edge.zeron.sh")!
-    static var workosClientId: String {
-        #if DEBUG
-        if let id = debugOverride("-workos", key: "debugWorkosClientId") { return id }
-        #endif
-        return "client_01KWD0EAKZKD50YCQJNYSRE4BY"
-    }
-    static let callbackScheme = "vardoger"
-
-    #if DEBUG
-    /// A launch argument that sticks: `-edge <url>` / `-workos <client>` point
-    /// the app at another stack (staging) and are remembered, so reopening it
-    /// from the home screen stays there. `-edge prod` goes back.
-    static func debugOverride(_ flag: String, key: String) -> String? {
-        let args = ProcessInfo.processInfo.arguments
-        if let i = args.firstIndex(of: flag), i + 1 < args.count {
-            let value = args[i + 1]
-            if value == "prod" {
-                UserDefaults.standard.removeObject(forKey: key)
-                return nil
-            }
-            UserDefaults.standard.set(value, forKey: key)
-            return value
-        }
-        return UserDefaults.standard.string(forKey: key)
-    }
-    #endif
-
-    static func authorizeURL(state: String) -> URL {
-        var c = URLComponents(string: "https://api.workos.com/user_management/authorize")!
-        c.queryItems = [
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "client_id", value: workosClientId),
-            URLQueryItem(name: "redirect_uri", value: "\(callbackScheme)://callback"),
-            URLQueryItem(name: "provider", value: "authkit"),
-            URLQueryItem(name: "state", value: state),
-        ]
-        return c.url!
-    }
-}
-
-/// Signed out: the welcome page, as on the desktop — the mark, a line, and
-/// "Get started" into the first steps (a look, then logging in).
-final class SignInViewController: UIViewController {
+/// Signed out: the welcome page — the mark, a line, the account's Vardoger
+/// server, and "Continue with Google" (the server's sign-in, in the system
+/// web-auth sheet, coming back to `vardoger://auth`).
+final class SignInViewController: UIViewController, UITextFieldDelegate {
     private let app: AppModel
+    private let server = UITextField()
+    private let status = UILabel()
+    private var start: UIButton!
+    private let signIn = ServerWebSignIn()
 
     init(app: AppModel) {
         self.app = app
@@ -62,7 +25,7 @@ final class SignInViewController: UIViewController {
         wallpaper.frame = view.bounds
         wallpaper.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(wallpaper)
-        let mark = UIImageView(image: CloudUI.vardogerMark)
+        let mark = UIImageView(image: Controls.vardogerMark)
         mark.tintColor = Palette.text
         mark.contentMode = .scaleAspectFit
         mark.translatesAutoresizingMaskIntoConstraints = false
@@ -82,7 +45,31 @@ final class SignInViewController: UIViewController {
         tagline.textColor = Palette.secondary
         tagline.textAlignment = .center
         tagline.numberOfLines = 0
-        let start = CloudUI.primaryButton("Get started") { [weak self] in self?.getStarted() }
+
+        server.text = AppModel.lastServerURL
+        server.placeholder = "https://vardoger.example.com"
+        server.font = Fonts.ui(.sans, 16)
+        server.textColor = Palette.text
+        server.keyboardType = .URL
+        server.autocapitalizationType = .none
+        server.autocorrectionType = .no
+        server.returnKeyType = .go
+        server.clearButtonMode = .whileEditing
+        server.delegate = self
+        server.accessibilityIdentifier = "server-url"
+        server.borderStyle = .roundedRect
+        server.backgroundColor = Palette.background.withAlphaComponent(0.6)
+        let serverLabel = UILabel()
+        serverLabel.text = "Your Vardoger server"
+        serverLabel.font = Fonts.ui(.sansMedium, 13)
+        serverLabel.textColor = Palette.secondary
+
+        status.font = Fonts.ui(.sans, 14)
+        status.textColor = Palette.secondary
+        status.textAlignment = .center
+        status.numberOfLines = 0
+
+        start = Controls.primaryButton("Continue with Google") { [weak self] in self?.go() }
         start.accessibilityIdentifier = "sign-in"
 
         let top = UIStackView(arrangedSubviews: [mark, title, tagline])
@@ -90,47 +77,73 @@ final class SignInViewController: UIViewController {
         top.alignment = .center
         top.spacing = 12
         top.setCustomSpacing(26, after: mark)
-        for v in [top, start] {
+        let bottom = UIStackView(arrangedSubviews: [serverLabel, server, status, start])
+        bottom.axis = .vertical
+        bottom.spacing = 8
+        bottom.setCustomSpacing(16, after: server)
+        bottom.setCustomSpacing(16, after: status)
+        for v in [top, bottom] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
         let guide = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             top.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
-            top.centerYAnchor.constraint(equalTo: guide.centerYAnchor, constant: -40),
+            top.centerYAnchor.constraint(equalTo: guide.centerYAnchor, constant: -80),
             top.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 32),
-            start.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
-            start.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
-            start.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -16),
+            server.heightAnchor.constraint(equalToConstant: 44),
+            bottom.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
+            bottom.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
+            bottom.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -16),
         ])
     }
 
-    private func getStarted() {
-        // The look is this phone's: picked once, then straight to logging in.
-        let seen = UserDefaults.standard.bool(forKey: OnboardingViewController.appearanceSeenKey)
-        let onboarding = OnboardingViewController(app: app, step: seen ? .sync : .appearance)
-        onboarding.modalTransitionStyle = .crossDissolve
-        present(onboarding, animated: true)
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        go()
+        return true
+    }
+
+    private func go() {
+        let url = (server.text ?? "").trimmingCharacters(in: .whitespaces)
+        guard url.hasPrefix("https://") || url.hasPrefix("http://") else {
+            status.text = "Enter your server's address, starting with https://"
+            return
+        }
+        view.endEditing(true)
+        start.isEnabled = false
+        status.text = nil
+        Task { @MainActor in
+            let error = await signIn.run(app: app, serverURL: url, from: self)
+            start.isEnabled = true
+            status.text = error
+        }
     }
 }
 
-/// Sign in with WorkOS (system web auth sheet), then pick an organization
-/// when there are several.
+/// The server's Google sign-in in the system web-auth sheet: the core builds
+/// the PKCE URL, the sheet comes back to `vardoger://auth?code=…`, the core
+/// redeems the code for this phone's token.
 @MainActor
-final class WorkOSSignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
+final class ServerWebSignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
     private weak var host: UIViewController?
 
     /// Signs in; returns why it didn't (nil on success or cancel).
-    func run(app: AppModel, from host: UIViewController) async -> String? {
+    func run(app: AppModel, serverURL: String, from host: UIViewController) async -> String? {
         self.host = host
-        let state = UUID().uuidString
+        let signIn: ServerSignIn
+        do {
+            signIn = try ServerSignIn(serverUrl: serverURL, deviceName: UIDevice.current.name)
+        } catch {
+            return "That server address doesn't look right."
+        }
+        guard let start = URL(string: signIn.url()) else { return "That server address doesn't look right." }
         let url: URL? = await withCheckedContinuation { cont in
-            let s = ASWebAuthenticationSession(url: Endpoints.authorizeURL(state: state), callback: .customScheme(Endpoints.callbackScheme)) { url, error in
+            let s = ASWebAuthenticationSession(url: start, callback: .customScheme(authCallbackScheme())) { url, error in
                 if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
                     return cont.resume(returning: nil)
                 }
-                cont.resume(returning: url ?? URL(string: "vardoger://callback?failed=1"))
+                cont.resume(returning: url ?? URL(string: "vardoger://auth?error=failed"))
             }
             s.presentationContextProvider = self
             s.prefersEphemeralWebBrowserSession = false
@@ -139,29 +152,13 @@ final class WorkOSSignIn: NSObject, ASWebAuthenticationPresentationContextProvid
         }
         session = nil
         guard let url else { return nil }
-        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
-              let code = items.first(where: { $0.name == "code" })?.value,
-              items.first(where: { $0.name == "state" })?.value == state
-        else { return "Sign-in didn't complete. Try again." }
         do {
-            try await app.signIn(code: code) { [weak self] orgs in await self?.pickOrg(orgs) }
+            let account = try await signIn.finish(callbackUrl: url.absoluteString)
+            app.signedIn(account)
             return nil
         } catch {
-            return error.localizedDescription
-        }
-    }
-
-    /// Several organizations: let the user pick (nil = cancelled).
-    private func pickOrg(_ orgs: [AuthOrg]) async -> AuthOrg? {
-        guard let host else { return nil }
-        return await withCheckedContinuation { cont in
-            let sheet = UIAlertController(title: "Choose an organization", message: nil, preferredStyle: .actionSheet)
-            for org in orgs {
-                sheet.addAction(UIAlertAction(title: org.name, style: .default) { _ in cont.resume(returning: org) })
-            }
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in cont.resume(returning: nil) })
-            sheet.popoverPresentationController?.sourceView = host.view
-            host.present(sheet, animated: true)
+            NSLog("sign-in failed: \(error)")
+            return "Sign-in didn't complete. Try again."
         }
     }
 

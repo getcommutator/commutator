@@ -32,6 +32,7 @@ async-trait.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+anyhow.workspace = true
 # A real engine in-process for the local-mode test (tests/local.rs).
 vardoger-engine.workspace = true
 vardoger-visual.workspace = true

@@ -1,21 +1,23 @@
 import XCTest
 
-/// Against a real stack: `wrangler dev` edge (AUTH_MODE=dev) + a headless
-/// engine running the mock harness, both as alice@org1. Skipped unless
-/// `TEST_RUNNER_VARDOGER_LIVE_EDGE=http://localhost:<port>` is set:
+/// Against a real stack: a local vardoger-server and an engine signed in to
+/// it, running the mock harness (crates/client/examples/remote_stack.rs,
+/// which prints the phone's account and machine). Skipped unless
+/// `TEST_RUNNER_VARDOGER_LIVE_ACCOUNT="<server url> <token> <device id>"` and
+/// `TEST_RUNNER_VARDOGER_LIVE_HOST=<machine id>` are set:
 ///
-///   (cd edge && npx wrangler dev --port 27650 --var AUTH_MODE:dev) &
-///   VARDOGER_DATA_DIR=/tmp/e VARDOGER_IPC_PORT=27811 VARDOGER_EDGE_URL=http://localhost:27650 \
-///     VARDOGER_EDGE_TOKEN=alice@org1 VARDOGER_ORG_ID=org1 VARDOGER_HARNESS=mock vardoger headless &
-///   TEST_RUNNER_VARDOGER_LIVE_EDGE=http://localhost:27650 xcodebuild test \
+///   cargo run -p vardoger-client --example remote_stack -- /tmp/stack &
+///   TEST_RUNNER_VARDOGER_LIVE_ACCOUNT=… TEST_RUNNER_VARDOGER_LIVE_HOST=… xcodebuild test \
 ///     -only-testing:VardogerUITests/LiveStackTests …
 final class LiveStackTests: XCTestCase {
     func testSendRoundTripsThroughRealEngine() throws {
-        let edge = try XCTUnwrap(ProcessInfo.processInfo.environment["VARDOGER_LIVE_EDGE"], "set TEST_RUNNER_VARDOGER_LIVE_EDGE")
+        let env = ProcessInfo.processInfo.environment
+        let account = try XCTUnwrap(env["VARDOGER_LIVE_ACCOUNT"], "set TEST_RUNNER_VARDOGER_LIVE_ACCOUNT").split(separator: " ").map(String.init)
+        let host = try XCTUnwrap(env["VARDOGER_LIVE_HOST"], "set TEST_RUNNER_VARDOGER_LIVE_HOST")
         let app = XCUIApplication()
         // The draft's harness wins over the engine's VARDOGER_HARNESS default:
         // pin the mock so the test never starts a real agent.
-        app.launchArguments = ["-signedout", "-dev", "alice", "org1", "-edge", edge, "-harness", "mock"]
+        app.launchArguments = ["-signedout", "-account"] + account + ["-host", host, "-harness", "mock"]
         app.launch()
 
         let accessory = app.buttons["new-session"]

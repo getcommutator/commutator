@@ -2,7 +2,7 @@ import UIKit
 
 /// Root on iPhone: the Sessions list, with a Liquid Glass bottom bar of
 /// native toolbar items — Settings, Search (the system's toolbar-integrated
-/// field), voice, and New session — instead of tabs. A plain container for
+/// field) and New session — instead of tabs. A plain container for
 /// the Sessions navigation stack: a hidden tab bar came back on device
 /// whenever a screen that hides the bottom bar was popped.
 final class MainTabController: UIViewController, AppRouter {
@@ -17,8 +17,6 @@ final class MainTabController: UIViewController, AppRouter {
 
     private lazy var sessionsList = SessionsViewController(app: app)
     private lazy var nav = sessionsNav()
-    private var voiceToken: AnyObject?
-    private var appToken: AnyObject?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -28,9 +26,6 @@ final class MainTabController: UIViewController, AppRouter {
         nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(nav.view)
         nav.didMove(toParent: self)
-        voiceToken = app.voice.observe { [weak self] in self?.updateBottomBar() }
-        // Hosts coming and going decide whether voice is offered.
-        appToken = app.observe { [weak self] in self?.updateBottomBar() }
     }
 
     override var childForStatusBarStyle: UIViewController? { nav }
@@ -51,16 +46,6 @@ final class MainTabController: UIViewController, AppRouter {
         return item
     }()
 
-    /// Voice: a tap calls (or opens the live call); a long press picks the
-    /// host and style.
-    private lazy var voiceItem: UIBarButtonItem = {
-        let item = UIBarButtonItem(title: nil, image: UIImage(systemName: "waveform"), primaryAction: UIAction { [weak self] _ in
-            guard let self else { return }
-            self.openVoice(app: self.app, source: nil)
-        }, menu: voiceMenu(app: app))
-        return item
-    }()
-
     private lazy var composeItem: UIBarButtonItem = {
         let item = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil"), primaryAction: UIAction { [weak self] _ in self?.presentNewSession() })
         item.style = .prominent
@@ -70,24 +55,10 @@ final class MainTabController: UIViewController, AppRouter {
         return item
     }()
 
-    /// The bar: Settings · Search · voice (when a host can run it, or a call
-    /// is live) · New session. Rebuilt only when what it shows changes (the
-    /// voice observer also fires for audio levels mid-call).
-    private var shownBar: (live: Bool, voice: Bool)?
+    /// The bar: Settings · Search · New session.
     private func updateBottomBar() {
-        let voice = app.voice
-        let state = (live: voice.live, voice: voice.live || voice.available)
-        if let shownBar, shownBar == state { return }
-        shownBar = state
-        voiceItem.image = UIImage(systemName: state.live ? "waveform.circle.fill" : "waveform")
-        voiceItem.tintColor = state.live ? Palette.accent : nil
-        voiceItem.accessibilityLabel = state.live ? "Voice call" : "Talk to Codex"
-        voiceItem.accessibilityIdentifier = state.live ? "voice-live" : "bottom-voice"
-        // Holding the live call must not offer to change its host.
-        voiceItem.menu = state.live ? nil : voiceMenu(app: app)
         // Fixed spaces split the glass: each control its own shape.
         var items: [UIBarButtonItem] = [settingsItem, .fixedSpace(0), sessionsList.navigationItem.searchBarPlacementBarButtonItem, .fixedSpace(0)]
-        if state.voice { items += [voiceItem, .fixedSpace(0)] }
         items.append(composeItem)
         // `viewIfLoaded`: loading the list outside its nav controller lays it
         // out without the large title, and it opens collapsed.

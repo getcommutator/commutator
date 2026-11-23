@@ -688,143 +688,6 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * One call's caption. Advance it whenever the caption changes and on every
- * display frame while the last frame was `animating`.
- */
-public protocol CaptionFaderProtocol: AnyObject, Sendable {
-    
-    func frame(item: String?, text: String, reducedMotion: Bool)  -> CaptionFrame
-    
-}
-/**
- * One call's caption. Advance it whenever the caption changes and on every
- * display frame while the last frame was `animating`.
- */
-open class CaptionFader: CaptionFaderProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_vardoger_mobile_fn_clone_captionfader(self.handle, $0) }
-    }
-public convenience init(maxChars: UInt32) {
-    let handle =
-        try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_constructor_captionfader_new(
-        FfiConverterUInt32.lower(maxChars),uniffiCallStatus
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_vardoger_mobile_fn_free_captionfader(handle, $0) }
-    }
-
-    
-
-    
-open func frame(item: String?, text: String, reducedMotion: Bool) -> CaptionFrame  {
-    return try!  FfiConverterTypeCaptionFrame_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_captionfader_frame(
-            self.uniffiCloneHandle(),
-        FfiConverterOptionString.lower(item),
-        FfiConverterString.lower(text),
-        FfiConverterBool.lower(reducedMotion),uniffiCallStatus
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCaptionFader: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = CaptionFader
-
-    public static func lift(_ handle: UInt64) throws -> CaptionFader {
-        return CaptionFader(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: CaptionFader) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CaptionFader {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CaptionFader, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionFader_lift(_ handle: UInt64) throws -> CaptionFader {
-    return try FfiConverterTypeCaptionFader.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionFader_lower(_ value: CaptionFader) -> UInt64 {
-    return FfiConverterTypeCaptionFader.lower(value)
-}
-
-
-
-
-
-
-/**
  * Receives coalesced change events (at most one burst per display frame).
  * Called on a client thread: hop to the main thread and pull there.
  */
@@ -1055,12 +918,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      */
     func closeSession(chatId: String) 
     
-    /**
-     * Cloud's model catalog for `harness`: the edge's list, else the last
-     * one read, else the static list.
-     */
-    func cloudModels(harness: String) async  -> [ModelInfo]
-    
     func connectivity()  -> Connectivity
     
     /**
@@ -1131,12 +988,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func movePin(chatId: String, after: String?, before: String?) throws 
     
     /**
-     * The OS network path changed (another interface or route): direct
-     * connections re-pair now; terminals ride the relay meanwhile.
-     */
-    func networkPathChanged() 
-    
-    /**
      * App is backgrounding: persist now; pause time-driven work.
      */
     func onBackground() 
@@ -1192,12 +1043,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * Attachment bytes (LRU-cached): host paths and own `pending://` refs.
      */
     func readAttachment(deviceId: String, path: String) async throws  -> Data
-    
-    /**
-     * Ask for session notifications on this device (APNs token as hex,
-     * "production" | "sandbox", and which kinds).
-     */
-    func registerPushTarget(token: String, environment: String, prefs: PushPrefs) async throws 
     
     func renameProject(spaceId: String, name: String?) throws 
     
@@ -1266,27 +1111,11 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func unpinSession(chatId: String) throws 
     
     /**
-     * Stop session notifications to this device.
-     */
-    func unregisterPushTarget() async throws 
-    
-    /**
-     * The platform restored/re-signed a newer WorkOS pair.
-     */
-    func updateTokens(tokens: AuthTokens) 
-    
-    /**
      * Chunked upload of one file; returns its durable path on the host.
      */
     func uploadAttachment(deviceId: String, name: String, data: Data, progress: UploadProgress?) async throws  -> String
     
     func userId()  -> String
-    
-    /**
-     * Start pairing with the computer hosting `chat_id` (a terminal is
-     * about to open there), so it starts on the direct link.
-     */
-    func warmDirect(chatId: String) 
     
     /**
      * The whole derived workspace.
@@ -1297,99 +1126,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * Current workspace revision (cheap; compare before pulling).
      */
     func workspaceRevision()  -> UInt64
-    
-    /**
-     * A Stripe Checkout url: a plan (`kind = "subscription"`, `plan`) or
-     * extra credits (`kind = "credits"`, `packs`).
-     */
-    func billingCheckout(kind: String, plan: String?, packs: UInt32?) async throws  -> String
-    
-    /**
-     * The Stripe customer portal url.
-     */
-    func billingPortal() async throws  -> String
-    
-    func billingStatus() async throws  -> BillingInfo
-    
-    /**
-     * Set Cloud up for this account (it's part of every signed-in one).
-     */
-    func cloudEnable() async throws  -> CloudInfo
-    
-    /**
-     * Wake (or put to sleep) a session's machine; `chat_id` is the
-     * session's own chat.
-     */
-    func cloudSessionAction(chatId: String, wake: Bool) async throws  -> CloudSessionInfo
-    
-    func cloudSessions() async throws  -> [CloudSessionInfo]
-    
-    /**
-     * Cloud's status (an edge without Cloud reads as unavailable).
-     */
-    func cloudStatus() async throws  -> CloudInfo
-    
-    /**
-     * Make `repo` (`owner/name`) a project on Cloud alone; returns its id.
-     */
-    func createCloudProject(repo: String) async throws  -> String
-    
-    /**
-     * Start a session on its own Cloud machine in `space_id`; returns the
-     * chat id (send its first message as usual).
-     */
-    func createCloudSession(spaceId: String, config: ChatConfig?, branch: String?, title: String?) async throws  -> String
-    
-    func githubBranches(repo: String) async throws  -> [String]
-    
-    func githubConnectPoll(flowId: String) async throws  -> GithubConnectInfo
-    
-    func githubConnectStart() async throws  -> GithubDeviceFlowInfo
-    
-    /**
-     * The repositories Cloud reaches (empty when GitHub isn't connected).
-     */
-    func githubRepos(query: String?) async throws  -> [GithubRepoInfo]
-    
-    /**
-     * The auth sheet was dismissed.
-     */
-    func providerLoginCancel(loginId: String) 
-    
-    /**
-     * Wait for a started sign-in to land in Cloud's vault.
-     */
-    func providerLoginFinish(loginId: String) async throws 
-    
-    /**
-     * Sign in to `provider` (`claude` · `codex`) for Cloud. The browser is
-     * sent to `done_url` once the provider answers.
-     */
-    func providerLoginStart(provider: String, doneUrl: String) async throws  -> ProviderLoginInfo
-    
-    /**
-     * Every login Cloud keeps for `provider` (`claude` · `codex`).
-     */
-    func vaultAccounts(provider: String) async throws  -> [CloudAccountInfo]
-    
-    /**
-     * Make `slot` the login Cloud uses for `provider`.
-     */
-    func vaultActivate(provider: String, slot: String) async throws  -> [CloudAccountInfo]
-    
-    func vaultForget(provider: String, slot: String) async throws  -> [CloudAccountInfo]
-    
-    /**
-     * Store an API key (`anthropic-key` · `openai-key`) as the one Cloud uses.
-     */
-    func vaultPutApiKey(provider: String, key: String) async throws 
-    
-    func vaultStatus() async throws  -> VaultInfo
-    
-    /**
-     * A Cloud login's plan usage (windows, live plan), read by the vault.
-     */
-    func vaultUsage(provider: String, slot: String) async throws  -> CloudUsageInfo
     
     /**
      * A fresh side chat under `parent_id` (its host, folder and agent).
@@ -1437,12 +1173,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * Offer `harness` on `device_id` or not; the device's fresh catalog.
      */
     func setHarnessEnabled(deviceId: String, harness: String, enabled: Bool) async throws  -> [HarnessInfo]
-    
-    /**
-     * Returns immediately. Callbacks are dispatched on the core runtime; the
-     * platform must hop to its media/UI executor and call complete_media.
-     */
-    func startVoice(hostDeviceId: String, voice: String?, media: VoiceMediaListener, listener: VoiceSessionListener)  -> VoiceCall
     
     /**
      * Follow a terminal opened earlier (its output replays from the host's
@@ -1582,27 +1312,6 @@ open func closeSession(chatId: String)  {try! rustCall() {
         FfiConverterString.lower(chatId),uniffiCallStatus
     )
 }
-}
-    
-    /**
-     * Cloud's model catalog for `harness`: the edge's list, else the last
-     * one read, else the static list.
-     */
-open func cloudModels(harness: String)async  -> [ModelInfo]  {
-    return
-        try!  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_cloud_models(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(harness)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeModelInfo.lift,
-            errorHandler: nil
-            
-        )
 }
     
 open func connectivity() -> Connectivity  {
@@ -1856,18 +1565,6 @@ open func movePin(chatId: String, after: String?, before: String?)throws   {try 
 }
     
     /**
-     * The OS network path changed (another interface or route): direct
-     * connections re-pair now; terminals ride the relay meanwhile.
-     */
-open func networkPathChanged()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_coreclient_network_path_changed(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * App is backgrounding: persist now; pause time-driven work.
      */
 open func onBackground()  {try! rustCall() {
@@ -2028,26 +1725,6 @@ open func readAttachment(deviceId: String, path: String)async throws  -> Data  {
             completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
             freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
             liftFunc: FfiConverterData.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Ask for session notifications on this device (APNs token as hex,
-     * "production" | "sandbox", and which kinds).
-     */
-open func registerPushTarget(token: String, environment: String, prefs: PushPrefs)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_register_push_target(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(token),FfiConverterString.lower(environment),FfiConverterTypePushPrefs_lower(prefs)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_void,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_void,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_void,
-            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -2283,37 +1960,6 @@ open func unpinSession(chatId: String)throws   {try rustCallWithError(FfiConvert
 }
     
     /**
-     * Stop session notifications to this device.
-     */
-open func unregisterPushTarget()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_unregister_push_target(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_void,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_void,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The platform restored/re-signed a newer WorkOS pair.
-     */
-open func updateTokens(tokens: AuthTokens)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_coreclient_update_tokens(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeAuthTokens_lower(tokens),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * Chunked upload of one file; returns its durable path on the host.
      */
 open func uploadAttachment(deviceId: String, name: String, data: Data, progress: UploadProgress?)async throws  -> String  {
@@ -2342,19 +1988,6 @@ open func userId() -> String  {
 }
     
     /**
-     * Start pairing with the computer hosting `chat_id` (a terminal is
-     * about to open there), so it starts on the direct link.
-     */
-open func warmDirect(chatId: String)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_coreclient_warm_direct(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(chatId),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * The whole derived workspace.
      */
 open func workspace() -> WorkspaceSnapshot  {
@@ -2376,400 +2009,6 @@ open func workspaceRevision() -> UInt64  {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
-}
-    
-    /**
-     * A Stripe Checkout url: a plan (`kind = "subscription"`, `plan`) or
-     * extra credits (`kind = "credits"`, `packs`).
-     */
-open func billingCheckout(kind: String, plan: String?, packs: UInt32?)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_billing_checkout(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterOptionString.lower(plan),FfiConverterOptionUInt32.lower(packs)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The Stripe customer portal url.
-     */
-open func billingPortal()async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_billing_portal(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func billingStatus()async throws  -> BillingInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_billing_status(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeBillingInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Set Cloud up for this account (it's part of every signed-in one).
-     */
-open func cloudEnable()async throws  -> CloudInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_cloud_enable(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Wake (or put to sleep) a session's machine; `chat_id` is the
-     * session's own chat.
-     */
-open func cloudSessionAction(chatId: String, wake: Bool)async throws  -> CloudSessionInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_cloud_session_action(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(chatId),FfiConverterBool.lower(wake)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudSessionInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func cloudSessions()async throws  -> [CloudSessionInfo]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_cloud_sessions(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeCloudSessionInfo.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Cloud's status (an edge without Cloud reads as unavailable).
-     */
-open func cloudStatus()async throws  -> CloudInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_cloud_status(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Make `repo` (`owner/name`) a project on Cloud alone; returns its id.
-     */
-open func createCloudProject(repo: String)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_create_cloud_project(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(repo)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Start a session on its own Cloud machine in `space_id`; returns the
-     * chat id (send its first message as usual).
-     */
-open func createCloudSession(spaceId: String, config: ChatConfig?, branch: String?, title: String?)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_create_cloud_session(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(spaceId),FfiConverterOptionTypeChatConfig.lower(config),FfiConverterOptionString.lower(branch),FfiConverterOptionString.lower(title)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func githubBranches(repo: String)async throws  -> [String]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_github_branches(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(repo)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func githubConnectPoll(flowId: String)async throws  -> GithubConnectInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_github_connect_poll(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(flowId)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeGithubConnectInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func githubConnectStart()async throws  -> GithubDeviceFlowInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_github_connect_start(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeGithubDeviceFlowInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The repositories Cloud reaches (empty when GitHub isn't connected).
-     */
-open func githubRepos(query: String?)async throws  -> [GithubRepoInfo]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_github_repos(
-                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(query)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeGithubRepoInfo.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The auth sheet was dismissed.
-     */
-open func providerLoginCancel(loginId: String)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_coreclient_provider_login_cancel(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(loginId),uniffiCallStatus
-    )
-}
-}
-    
-    /**
-     * Wait for a started sign-in to land in Cloud's vault.
-     */
-open func providerLoginFinish(loginId: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_provider_login_finish(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(loginId)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_void,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_void,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Sign in to `provider` (`claude` · `codex`) for Cloud. The browser is
-     * sent to `done_url` once the provider answers.
-     */
-open func providerLoginStart(provider: String, doneUrl: String)async throws  -> ProviderLoginInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_provider_login_start(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider),FfiConverterString.lower(doneUrl)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeProviderLoginInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Every login Cloud keeps for `provider` (`claude` · `codex`).
-     */
-open func vaultAccounts(provider: String)async throws  -> [CloudAccountInfo]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_accounts(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeCloudAccountInfo.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Make `slot` the login Cloud uses for `provider`.
-     */
-open func vaultActivate(provider: String, slot: String)async throws  -> [CloudAccountInfo]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_activate(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider),FfiConverterString.lower(slot)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeCloudAccountInfo.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func vaultForget(provider: String, slot: String)async throws  -> [CloudAccountInfo]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_forget(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider),FfiConverterString.lower(slot)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeCloudAccountInfo.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Store an API key (`anthropic-key` · `openai-key`) as the one Cloud uses.
-     */
-open func vaultPutApiKey(provider: String, key: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_put_api_key(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider),FfiConverterString.lower(key)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_void,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_void,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-open func vaultStatus()async throws  -> VaultInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_status(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeVaultInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * A Cloud login's plan usage (windows, live plan), read by the vault.
-     */
-open func vaultUsage(provider: String, slot: String)async throws  -> CloudUsageInfo  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_method_coreclient_vault_usage(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(provider),FfiConverterString.lower(slot)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudUsageInfo_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
 }
     
     /**
@@ -2945,23 +2184,6 @@ open func setHarnessEnabled(deviceId: String, harness: String, enabled: Bool)asy
             liftFunc: FfiConverterSequenceTypeHarnessInfo.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
-}
-    
-    /**
-     * Returns immediately. Callbacks are dispatched on the core runtime; the
-     * platform must hop to its media/UI executor and call complete_media.
-     */
-open func startVoice(hostDeviceId: String, voice: String?, media: VoiceMediaListener, listener: VoiceSessionListener) -> VoiceCall  {
-    return try!  FfiConverterTypeVoiceCall_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_coreclient_start_voice(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(hostDeviceId),
-        FfiConverterOptionString.lower(voice),
-        FfiConverterTypeVoiceMediaListener_lower(media),
-        FfiConverterTypeVoiceSessionListener_lower(listener),uniffiCallStatus
-    )
-})
 }
     
     /**
@@ -3569,183 +2791,6 @@ public func FfiConverterTypeLayoutListener_lower(_ value: LayoutListener) -> UIn
 
 
 /**
- * One animated orb. Calls are cheap and safe from any thread; drive
- * [`OrbRenderer::next_frame`] from the display link.
- */
-public protocol OrbRendererProtocol: AnyObject, Sendable {
-    
-    /**
-     * Advance to now and return the frame to paint. Time only accumulates
-     * while `animating`; reduced motion shows the static representative frame.
-     */
-    func nextFrame(animating: Bool, reducedMotion: Bool)  -> OrbFrame
-    
-    /**
-     * Normalized 0…1 peaks; they speed the motion up, never the geometry.
-     */
-    func setAudioLevels(microphone: Float, speaker: Float) 
-    
-    func setOrb(orb: VoiceOrb) 
-    
-}
-/**
- * One animated orb. Calls are cheap and safe from any thread; drive
- * [`OrbRenderer::next_frame`] from the display link.
- */
-open class OrbRenderer: OrbRendererProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_vardoger_mobile_fn_clone_orbrenderer(self.handle, $0) }
-    }
-    /**
-     * Crossfades state changes over 300 ms, like the desktop voice orbs.
-     */
-public convenience init(preset: OrbPreset, orb: VoiceOrb) {
-    let handle =
-        try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_constructor_orbrenderer_new(
-        FfiConverterTypeOrbPreset_lower(preset),
-        FfiConverterTypeVoiceOrb_lower(orb),uniffiCallStatus
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_vardoger_mobile_fn_free_orbrenderer(handle, $0) }
-    }
-
-    
-
-    
-    /**
-     * Advance to now and return the frame to paint. Time only accumulates
-     * while `animating`; reduced motion shows the static representative frame.
-     */
-open func nextFrame(animating: Bool, reducedMotion: Bool) -> OrbFrame  {
-    return try!  FfiConverterTypeOrbFrame_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_orbrenderer_next_frame(
-            self.uniffiCloneHandle(),
-        FfiConverterBool.lower(animating),
-        FfiConverterBool.lower(reducedMotion),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Normalized 0…1 peaks; they speed the motion up, never the geometry.
-     */
-open func setAudioLevels(microphone: Float, speaker: Float)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_orbrenderer_set_audio_levels(
-            self.uniffiCloneHandle(),
-        FfiConverterFloat.lower(microphone),
-        FfiConverterFloat.lower(speaker),uniffiCallStatus
-    )
-}
-}
-    
-open func setOrb(orb: VoiceOrb)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_orbrenderer_set_orb(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeVoiceOrb_lower(orb),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOrbRenderer: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = OrbRenderer
-
-    public static func lift(_ handle: UInt64) throws -> OrbRenderer {
-        return OrbRenderer(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: OrbRenderer) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbRenderer {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: OrbRenderer, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbRenderer_lift(_ handle: UInt64) throws -> OrbRenderer {
-    return try FfiConverterTypeOrbRenderer.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbRenderer_lower(_ value: OrbRenderer) -> UInt64 {
-    return FfiConverterTypeOrbRenderer.lower(value)
-}
-
-
-
-
-
-
-/**
  * Measures text the bundled faces can't render (emoji, CJK…) with the
  * platform's own text engine — pretext's "browser as ground truth".
  * Self-describing (face, size, ligatures) because style ids are per-view.
@@ -4021,6 +3066,170 @@ public func FfiConverterTypePlatformMeasurer_lower(_ value: PlatformMeasurer) ->
 
 
 /**
+ * A started sign-in: open `url()` in a web-auth session whose callback
+ * scheme is `auth_callback_scheme()`, then `finish` with the URL it
+ * comes back to.
+ */
+public protocol ServerSignInProtocol: AnyObject, Sendable {
+    
+    /**
+     * Redeem the code `vardoger://auth?code=…` carries.
+     */
+    func finish(callbackUrl: String) async throws  -> ServerAccount
+    
+    func url()  -> String
+    
+}
+/**
+ * A started sign-in: open `url()` in a web-auth session whose callback
+ * scheme is `auth_callback_scheme()`, then `finish` with the URL it
+ * comes back to.
+ */
+open class ServerSignIn: ServerSignInProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_vardoger_mobile_fn_clone_serversignin(self.handle, $0) }
+    }
+    /**
+     * `device_name` is how the account lists this phone.
+     */
+public convenience init(serverUrl: String, deviceName: String)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_vardoger_mobile_fn_constructor_serversignin_new(
+        FfiConverterString.lower(serverUrl),
+        FfiConverterString.lower(deviceName),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_vardoger_mobile_fn_free_serversignin(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Redeem the code `vardoger://auth?code=…` carries.
+     */
+open func finish(callbackUrl: String)async throws  -> ServerAccount  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_vardoger_mobile_fn_method_serversignin_finish(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(callbackUrl)
+                )
+            },
+            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeServerAccount_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func url() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_vardoger_mobile_fn_method_serversignin_url(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServerSignIn: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ServerSignIn
+
+    public static func lift(_ handle: UInt64) throws -> ServerSignIn {
+        return ServerSignIn(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ServerSignIn) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServerSignIn {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ServerSignIn, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerSignIn_lift(_ handle: UInt64) throws -> ServerSignIn {
+    return try FfiConverterTypeServerSignIn.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerSignIn_lower(_ value: ServerSignIn) -> UInt64 {
+    return FfiConverterTypeServerSignIn.lower(value)
+}
+
+
+
+
+
+
+/**
  * One open chat. Obtain via `CoreClient.open_session`.
  */
 public protocol SessionHandleProtocol: AnyObject, Sendable {
@@ -4047,12 +3256,6 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      * interrupts); attachments send now.
      */
     func deliverQueuedNow(id: String) async throws  -> Bool
-    
-    /**
-     * Dismiss the restored-from-server note (for every chat on the machine,
-     * until it is rebuilt again).
-     */
-    func dismissRestoredNote() 
     
     /**
      * Park a message on the shared queue directly. Returns the row id.
@@ -4084,12 +3287,6 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      * Remove a queued row (applied locally after the host acks).
      */
     func removeQueued(id: String) async throws  -> Bool
-    
-    /**
-     * Remove a pending send that's `removable`: it never goes out. `false`
-     * when it already went.
-     */
-    func removeSend(messageId: String) throws  -> Bool
     
     func renewQueuedEdit(lease: QueueEditLease) async  -> Bool
     
@@ -4254,18 +3451,6 @@ open func deliverQueuedNow(id: String)async throws  -> Bool  {
 }
     
     /**
-     * Dismiss the restored-from-server note (for every chat on the machine,
-     * until it is rebuilt again).
-     */
-open func dismissRestoredNote()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_sessionhandle_dismiss_restored_note(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * Park a message on the shared queue directly. Returns the row id.
      */
 open func enqueue(text: String, attachments: [String], holdForTurnEnd: Bool)throws  -> String  {
@@ -4371,20 +3556,6 @@ open func removeQueued(id: String)async throws  -> Bool  {
             liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
-}
-    
-    /**
-     * Remove a pending send that's `removable`: it never goes out. `false`
-     * when it already went.
-     */
-open func removeSend(messageId: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_sessionhandle_remove_send(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(messageId),uniffiCallStatus
-    )
-})
 }
     
 open func renewQueuedEdit(lease: QueueEditLease)async  -> Bool  {
@@ -6324,591 +5495,6 @@ public func FfiConverterTypeVisualSession_lower(_ value: VisualSession) -> UInt6
 
 
 
-
-
-public protocol VoiceCallProtocol: AnyObject, Sendable {
-    
-    /**
-     * Late native callbacks simply miss the retired request. No resume is possible.
-     */
-    func completeMedia(requestId: UInt64, failure: VoiceMediaFailure?, sdp: String?, microphone: UInt16, speaker: UInt16) 
-    
-    func setMuted(muted: Bool) 
-    
-    func stop() 
-    
-}
-open class VoiceCall: VoiceCallProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_vardoger_mobile_fn_clone_voicecall(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_vardoger_mobile_fn_free_voicecall(handle, $0) }
-    }
-
-    
-
-    
-    /**
-     * Late native callbacks simply miss the retired request. No resume is possible.
-     */
-open func completeMedia(requestId: UInt64, failure: VoiceMediaFailure?, sdp: String?, microphone: UInt16, speaker: UInt16)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicecall_complete_media(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt64.lower(requestId),
-        FfiConverterOptionTypeVoiceMediaFailure.lower(failure),
-        FfiConverterOptionString.lower(sdp),
-        FfiConverterUInt16.lower(microphone),
-        FfiConverterUInt16.lower(speaker),uniffiCallStatus
-    )
-}
-}
-    
-open func setMuted(muted: Bool)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicecall_set_muted(
-            self.uniffiCloneHandle(),
-        FfiConverterBool.lower(muted),uniffiCallStatus
-    )
-}
-}
-    
-open func stop()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicecall_stop(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceCall: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = VoiceCall
-
-    public static func lift(_ handle: UInt64) throws -> VoiceCall {
-        return VoiceCall(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: VoiceCall) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCall {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: VoiceCall, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCall_lift(_ handle: UInt64) throws -> VoiceCall {
-    return try FfiConverterTypeVoiceCall.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCall_lower(_ value: VoiceCall) -> UInt64 {
-    return FfiConverterTypeVoiceCall.lower(value)
-}
-
-
-
-
-
-
-public protocol VoiceMediaListener: AnyObject, Sendable {
-    
-    func onRequest(request: VoiceMediaRequest) 
-    
-}
-open class VoiceMediaListenerImpl: VoiceMediaListener, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_vardoger_mobile_fn_clone_voicemedialistener(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_vardoger_mobile_fn_free_voicemedialistener(handle, $0) }
-    }
-
-    
-
-    
-open func onRequest(request: VoiceMediaRequest)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicemedialistener_on_request(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeVoiceMediaRequest_lower(request),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-fileprivate struct UniffiCallbackInterfaceVoiceMediaListener {
-
-    // Create the VTable using a series of closures.
-    // Swift automatically converts these into C callback functions.
-    //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceVoiceMediaListener = UniffiVTableCallbackInterfaceVoiceMediaListener(
-        uniffiFree: { (uniffiHandle: UInt64) -> () in
-            do {
-                try FfiConverterTypeVoiceMediaListener.handleMap.remove(handle: uniffiHandle)
-            } catch {
-                print("Uniffi callback interface VoiceMediaListener: handle missing in uniffiFree")
-            }
-        },
-        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
-            do {
-                return try FfiConverterTypeVoiceMediaListener.handleMap.clone(handle: uniffiHandle)
-            } catch {
-                fatalError("Uniffi callback interface VoiceMediaListener: handle missing in uniffiClone")
-            }
-        },
-        onRequest: { (
-            uniffiHandle: UInt64,
-            request: RustBuffer,
-            uniffiOutReturn: UnsafeMutableRawPointer,
-            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
-        ) in
-            let makeCall = {
-                () throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeVoiceMediaListener.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return uniffiObj.onRequest(
-                     request: try FfiConverterTypeVoiceMediaRequest_lift(request)
-                )
-            }
-
-            
-            let writeReturn = { () }
-            uniffiTraitInterfaceCall(
-                callStatus: uniffiCallStatus,
-                makeCall: makeCall,
-                writeReturn: writeReturn
-            )
-        }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    //
-    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
-    // This is safe because the pointee is initialized once during static init
-    // and never mutated by either side of the FFI.  Its fields are C function pointers.
-    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceVoiceMediaListener> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceVoiceMediaListener>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
-}
-
-private func uniffiCallbackInitVoiceMediaListener() {
-    uniffi_vardoger_mobile_fn_init_callback_vtable_voicemedialistener(UniffiCallbackInterfaceVoiceMediaListener.vtablePtr)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceMediaListener: FfiConverter {
-    fileprivate static let handleMap = UniffiHandleMap<VoiceMediaListener>()
-
-    typealias FfiType = UInt64
-    typealias SwiftType = VoiceMediaListener
-
-    public static func lift(_ handle: UInt64) throws -> VoiceMediaListener {
-        if ((handle & 1) == 0) {
-            // Rust-generated handle, construct a new class that uses the handle to implement the
-            // interface
-            return VoiceMediaListenerImpl(unsafeFromHandle: handle)
-        } else {
-            // Swift-generated handle, get the object from the handle map
-            return try handleMap.remove(handle: handle)
-        }
-    }
-
-    public static func lower(_ value: VoiceMediaListener) -> UInt64 {
-         if let rustImpl = value as? VoiceMediaListenerImpl {
-             // Rust-implemented object.  Clone the handle and return it
-            return rustImpl.uniffiCloneHandle()
-         } else {
-            // Swift object, generate a new vtable handle and return that.
-            return handleMap.insert(obj: value)
-         }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaListener {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: VoiceMediaListener, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaListener_lift(_ handle: UInt64) throws -> VoiceMediaListener {
-    return try FfiConverterTypeVoiceMediaListener.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaListener_lower(_ value: VoiceMediaListener) -> UInt64 {
-    return FfiConverterTypeVoiceMediaListener.lower(value)
-}
-
-
-
-
-
-
-public protocol VoiceSessionListener: AnyObject, Sendable {
-    
-    func onVoiceState(state: VoiceCallState) 
-    
-    /**
-     * Terminal, exactly once. `None` is an orderly end.
-     */
-    func onVoiceClosed(reason: VoiceEndReason?) 
-    
-}
-open class VoiceSessionListenerImpl: VoiceSessionListener, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_vardoger_mobile_fn_clone_voicesessionlistener(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_vardoger_mobile_fn_free_voicesessionlistener(handle, $0) }
-    }
-
-    
-
-    
-open func onVoiceState(state: VoiceCallState)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicesessionlistener_on_voice_state(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeVoiceCallState_lower(state),uniffiCallStatus
-    )
-}
-}
-    
-    /**
-     * Terminal, exactly once. `None` is an orderly end.
-     */
-open func onVoiceClosed(reason: VoiceEndReason?)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_method_voicesessionlistener_on_voice_closed(
-            self.uniffiCloneHandle(),
-        FfiConverterOptionTypeVoiceEndReason.lower(reason),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-fileprivate struct UniffiCallbackInterfaceVoiceSessionListener {
-
-    // Create the VTable using a series of closures.
-    // Swift automatically converts these into C callback functions.
-    //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceVoiceSessionListener = UniffiVTableCallbackInterfaceVoiceSessionListener(
-        uniffiFree: { (uniffiHandle: UInt64) -> () in
-            do {
-                try FfiConverterTypeVoiceSessionListener.handleMap.remove(handle: uniffiHandle)
-            } catch {
-                print("Uniffi callback interface VoiceSessionListener: handle missing in uniffiFree")
-            }
-        },
-        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
-            do {
-                return try FfiConverterTypeVoiceSessionListener.handleMap.clone(handle: uniffiHandle)
-            } catch {
-                fatalError("Uniffi callback interface VoiceSessionListener: handle missing in uniffiClone")
-            }
-        },
-        onVoiceState: { (
-            uniffiHandle: UInt64,
-            state: RustBuffer,
-            uniffiOutReturn: UnsafeMutableRawPointer,
-            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
-        ) in
-            let makeCall = {
-                () throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeVoiceSessionListener.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return uniffiObj.onVoiceState(
-                     state: try FfiConverterTypeVoiceCallState_lift(state)
-                )
-            }
-
-            
-            let writeReturn = { () }
-            uniffiTraitInterfaceCall(
-                callStatus: uniffiCallStatus,
-                makeCall: makeCall,
-                writeReturn: writeReturn
-            )
-        },
-        onVoiceClosed: { (
-            uniffiHandle: UInt64,
-            reason: RustBuffer,
-            uniffiOutReturn: UnsafeMutableRawPointer,
-            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
-        ) in
-            let makeCall = {
-                () throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeVoiceSessionListener.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return uniffiObj.onVoiceClosed(
-                     reason: try FfiConverterOptionTypeVoiceEndReason.lift(reason)
-                )
-            }
-
-            
-            let writeReturn = { () }
-            uniffiTraitInterfaceCall(
-                callStatus: uniffiCallStatus,
-                makeCall: makeCall,
-                writeReturn: writeReturn
-            )
-        }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    //
-    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
-    // This is safe because the pointee is initialized once during static init
-    // and never mutated by either side of the FFI.  Its fields are C function pointers.
-    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceVoiceSessionListener> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceVoiceSessionListener>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
-}
-
-private func uniffiCallbackInitVoiceSessionListener() {
-    uniffi_vardoger_mobile_fn_init_callback_vtable_voicesessionlistener(UniffiCallbackInterfaceVoiceSessionListener.vtablePtr)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceSessionListener: FfiConverter {
-    fileprivate static let handleMap = UniffiHandleMap<VoiceSessionListener>()
-
-    typealias FfiType = UInt64
-    typealias SwiftType = VoiceSessionListener
-
-    public static func lift(_ handle: UInt64) throws -> VoiceSessionListener {
-        if ((handle & 1) == 0) {
-            // Rust-generated handle, construct a new class that uses the handle to implement the
-            // interface
-            return VoiceSessionListenerImpl(unsafeFromHandle: handle)
-        } else {
-            // Swift-generated handle, get the object from the handle map
-            return try handleMap.remove(handle: handle)
-        }
-    }
-
-    public static func lower(_ value: VoiceSessionListener) -> UInt64 {
-         if let rustImpl = value as? VoiceSessionListenerImpl {
-             // Rust-implemented object.  Clone the handle and return it
-            return rustImpl.uniffiCloneHandle()
-         } else {
-            // Swift object, generate a new vtable handle and return that.
-            return handleMap.insert(obj: value)
-         }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceSessionListener {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: VoiceSessionListener, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceSessionListener_lift(_ handle: UInt64) throws -> VoiceSessionListener {
-    return try FfiConverterTypeVoiceSessionListener.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceSessionListener_lower(_ value: VoiceSessionListener) -> UInt64 {
-    return FfiConverterTypeVoiceSessionListener.lower(value)
-}
-
-
-
-
 /**
  * How an agent signs in, from the rules every platform's Providers follows.
  */
@@ -7072,422 +5658,6 @@ public func FfiConverterTypeAppshotLabel_lower(_ value: AppshotLabel) -> RustBuf
 }
 
 
-public struct AuthExchange: Equatable, Hashable {
-    public var user: AuthUser
-    /**
-     * Unscoped pair: refresh with an organization id before use.
-     */
-    public var tokens: AuthTokens
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(user: AuthUser, 
-        /**
-         * Unscoped pair: refresh with an organization id before use.
-         */tokens: AuthTokens) {
-        self.user = user
-        self.tokens = tokens
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AuthExchange: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAuthExchange: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuthExchange {
-        return
-            try AuthExchange(
-                user: FfiConverterTypeAuthUser.read(from: &buf), 
-                tokens: FfiConverterTypeAuthTokens.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AuthExchange, into buf: inout [UInt8]) {
-        FfiConverterTypeAuthUser.write(value.user, into: &buf)
-        FfiConverterTypeAuthTokens.write(value.tokens, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthExchange_lift(_ buf: RustBuffer) throws -> AuthExchange {
-    return try FfiConverterTypeAuthExchange.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthExchange_lower(_ value: AuthExchange) -> RustBuffer {
-    return FfiConverterTypeAuthExchange.lower(value)
-}
-
-
-public struct AuthOrg: Equatable, Hashable {
-    public var id: String
-    public var organizationId: String
-    public var name: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, organizationId: String, name: String) {
-        self.id = id
-        self.organizationId = organizationId
-        self.name = name
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AuthOrg: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAuthOrg: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuthOrg {
-        return
-            try AuthOrg(
-                id: FfiConverterString.read(from: &buf), 
-                organizationId: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AuthOrg, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.organizationId, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthOrg_lift(_ buf: RustBuffer) throws -> AuthOrg {
-    return try FfiConverterTypeAuthOrg.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthOrg_lower(_ value: AuthOrg) -> RustBuffer {
-    return FfiConverterTypeAuthOrg.lower(value)
-}
-
-
-public struct AuthTokens: Equatable, Hashable {
-    public var accessToken: String
-    public var refreshToken: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(accessToken: String, refreshToken: String) {
-        self.accessToken = accessToken
-        self.refreshToken = refreshToken
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AuthTokens: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAuthTokens: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuthTokens {
-        return
-            try AuthTokens(
-                accessToken: FfiConverterString.read(from: &buf), 
-                refreshToken: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AuthTokens, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.accessToken, into: &buf)
-        FfiConverterString.write(value.refreshToken, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthTokens_lift(_ buf: RustBuffer) throws -> AuthTokens {
-    return try FfiConverterTypeAuthTokens.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthTokens_lower(_ value: AuthTokens) -> RustBuffer {
-    return FfiConverterTypeAuthTokens.lower(value)
-}
-
-
-public struct AuthUser: Equatable, Hashable {
-    public var id: String
-    public var email: String?
-    public var firstName: String?
-    public var lastName: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, email: String?, firstName: String?, lastName: String?) {
-        self.id = id
-        self.email = email
-        self.firstName = firstName
-        self.lastName = lastName
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AuthUser: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAuthUser: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuthUser {
-        return
-            try AuthUser(
-                id: FfiConverterString.read(from: &buf), 
-                email: FfiConverterOptionString.read(from: &buf), 
-                firstName: FfiConverterOptionString.read(from: &buf), 
-                lastName: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AuthUser, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterOptionString.write(value.email, into: &buf)
-        FfiConverterOptionString.write(value.firstName, into: &buf)
-        FfiConverterOptionString.write(value.lastName, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthUser_lift(_ buf: RustBuffer) throws -> AuthUser {
-    return try FfiConverterTypeAuthUser.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthUser_lower(_ value: AuthUser) -> RustBuffer {
-    return FfiConverterTypeAuthUser.lower(value)
-}
-
-
-public struct BillingInfo: Equatable, Hashable {
-    /**
-     * Stripe is set up on this server.
-     */
-    public var available: Bool
-    public var plan: BillingPlanInfo?
-    /**
-     * `active` · `trialing` · `past_due` · …
-     */
-    public var planStatus: String?
-    public var periodEndMs: Int64?
-    public var cancelAtPeriodEnd: Bool
-    public var creditsTotal: Double
-    public var creditsMonthly: Double
-    public var creditsMonthlyTotal: Double
-    /**
-     * When this period's plan credits reset (epoch ms).
-     */
-    public var creditsMonthlyEndsMs: Int64?
-    public var creditsExtra: Double
-    public var plans: [BillingPlanInfo]
-    public var packPriceCents: UInt32
-    public var packCredits: Double
-    public var hasCustomer: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Stripe is set up on this server.
-         */available: Bool, plan: BillingPlanInfo?, 
-        /**
-         * `active` · `trialing` · `past_due` · …
-         */planStatus: String?, periodEndMs: Int64?, cancelAtPeriodEnd: Bool, creditsTotal: Double, creditsMonthly: Double, creditsMonthlyTotal: Double, 
-        /**
-         * When this period's plan credits reset (epoch ms).
-         */creditsMonthlyEndsMs: Int64?, creditsExtra: Double, plans: [BillingPlanInfo], packPriceCents: UInt32, packCredits: Double, hasCustomer: Bool) {
-        self.available = available
-        self.plan = plan
-        self.planStatus = planStatus
-        self.periodEndMs = periodEndMs
-        self.cancelAtPeriodEnd = cancelAtPeriodEnd
-        self.creditsTotal = creditsTotal
-        self.creditsMonthly = creditsMonthly
-        self.creditsMonthlyTotal = creditsMonthlyTotal
-        self.creditsMonthlyEndsMs = creditsMonthlyEndsMs
-        self.creditsExtra = creditsExtra
-        self.plans = plans
-        self.packPriceCents = packPriceCents
-        self.packCredits = packCredits
-        self.hasCustomer = hasCustomer
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension BillingInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeBillingInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BillingInfo {
-        return
-            try BillingInfo(
-                available: FfiConverterBool.read(from: &buf), 
-                plan: FfiConverterOptionTypeBillingPlanInfo.read(from: &buf), 
-                planStatus: FfiConverterOptionString.read(from: &buf), 
-                periodEndMs: FfiConverterOptionInt64.read(from: &buf), 
-                cancelAtPeriodEnd: FfiConverterBool.read(from: &buf), 
-                creditsTotal: FfiConverterDouble.read(from: &buf), 
-                creditsMonthly: FfiConverterDouble.read(from: &buf), 
-                creditsMonthlyTotal: FfiConverterDouble.read(from: &buf), 
-                creditsMonthlyEndsMs: FfiConverterOptionInt64.read(from: &buf), 
-                creditsExtra: FfiConverterDouble.read(from: &buf), 
-                plans: FfiConverterSequenceTypeBillingPlanInfo.read(from: &buf), 
-                packPriceCents: FfiConverterUInt32.read(from: &buf), 
-                packCredits: FfiConverterDouble.read(from: &buf), 
-                hasCustomer: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: BillingInfo, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.available, into: &buf)
-        FfiConverterOptionTypeBillingPlanInfo.write(value.plan, into: &buf)
-        FfiConverterOptionString.write(value.planStatus, into: &buf)
-        FfiConverterOptionInt64.write(value.periodEndMs, into: &buf)
-        FfiConverterBool.write(value.cancelAtPeriodEnd, into: &buf)
-        FfiConverterDouble.write(value.creditsTotal, into: &buf)
-        FfiConverterDouble.write(value.creditsMonthly, into: &buf)
-        FfiConverterDouble.write(value.creditsMonthlyTotal, into: &buf)
-        FfiConverterOptionInt64.write(value.creditsMonthlyEndsMs, into: &buf)
-        FfiConverterDouble.write(value.creditsExtra, into: &buf)
-        FfiConverterSequenceTypeBillingPlanInfo.write(value.plans, into: &buf)
-        FfiConverterUInt32.write(value.packPriceCents, into: &buf)
-        FfiConverterDouble.write(value.packCredits, into: &buf)
-        FfiConverterBool.write(value.hasCustomer, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeBillingInfo_lift(_ buf: RustBuffer) throws -> BillingInfo {
-    return try FfiConverterTypeBillingInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeBillingInfo_lower(_ value: BillingInfo) -> RustBuffer {
-    return FfiConverterTypeBillingInfo.lower(value)
-}
-
-
-public struct BillingPlanInfo: Equatable, Hashable {
-    public var id: String
-    public var name: String
-    public var priceCents: UInt32
-    public var monthlyCredits: Double
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, name: String, priceCents: UInt32, monthlyCredits: Double) {
-        self.id = id
-        self.name = name
-        self.priceCents = priceCents
-        self.monthlyCredits = monthlyCredits
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension BillingPlanInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeBillingPlanInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BillingPlanInfo {
-        return
-            try BillingPlanInfo(
-                id: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                priceCents: FfiConverterUInt32.read(from: &buf), 
-                monthlyCredits: FfiConverterDouble.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: BillingPlanInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterUInt32.write(value.priceCents, into: &buf)
-        FfiConverterDouble.write(value.monthlyCredits, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeBillingPlanInfo_lift(_ buf: RustBuffer) throws -> BillingPlanInfo {
-    return try FfiConverterTypeBillingPlanInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeBillingPlanInfo_lower(_ value: BillingPlanInfo) -> RustBuffer {
-    return FfiConverterTypeBillingPlanInfo.lower(value)
-}
-
-
 public struct BoxPrim: Equatable, Hashable {
     public var x: Float
     public var y: Float
@@ -7580,151 +5750,6 @@ public func FfiConverterTypeBoxPrim_lower(_ value: BoxPrim) -> RustBuffer {
 }
 
 
-public struct CaptionFrame: Equatable, Hashable {
-    /**
-     * The tail of the utterance to show (ellipsized in front when long).
-     */
-    public var text: String
-    public var spans: [CaptionSpan]
-    /**
-     * The previous utterance while it fades out, and its opacity.
-     */
-    public var previous: String?
-    public var previousAlpha: Float
-    /**
-     * Something is still fading: ask for the next frame.
-     */
-    public var animating: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The tail of the utterance to show (ellipsized in front when long).
-         */text: String, spans: [CaptionSpan], 
-        /**
-         * The previous utterance while it fades out, and its opacity.
-         */previous: String?, previousAlpha: Float, 
-        /**
-         * Something is still fading: ask for the next frame.
-         */animating: Bool) {
-        self.text = text
-        self.spans = spans
-        self.previous = previous
-        self.previousAlpha = previousAlpha
-        self.animating = animating
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CaptionFrame: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCaptionFrame: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CaptionFrame {
-        return
-            try CaptionFrame(
-                text: FfiConverterString.read(from: &buf), 
-                spans: FfiConverterSequenceTypeCaptionSpan.read(from: &buf), 
-                previous: FfiConverterOptionString.read(from: &buf), 
-                previousAlpha: FfiConverterFloat.read(from: &buf), 
-                animating: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CaptionFrame, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.text, into: &buf)
-        FfiConverterSequenceTypeCaptionSpan.write(value.spans, into: &buf)
-        FfiConverterOptionString.write(value.previous, into: &buf)
-        FfiConverterFloat.write(value.previousAlpha, into: &buf)
-        FfiConverterBool.write(value.animating, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionFrame_lift(_ buf: RustBuffer) throws -> CaptionFrame {
-    return try FfiConverterTypeCaptionFrame.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionFrame_lower(_ value: CaptionFrame) -> RustBuffer {
-    return FfiConverterTypeCaptionFrame.lower(value)
-}
-
-
-/**
- * A veiled UTF-16 range of the caption and its opacity (0..1).
- */
-public struct CaptionSpan: Equatable, Hashable {
-    public var start: UInt32
-    public var end: UInt32
-    public var alpha: Float
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(start: UInt32, end: UInt32, alpha: Float) {
-        self.start = start
-        self.end = end
-        self.alpha = alpha
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CaptionSpan: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCaptionSpan: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CaptionSpan {
-        return
-            try CaptionSpan(
-                start: FfiConverterUInt32.read(from: &buf), 
-                end: FfiConverterUInt32.read(from: &buf), 
-                alpha: FfiConverterFloat.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CaptionSpan, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.start, into: &buf)
-        FfiConverterUInt32.write(value.end, into: &buf)
-        FfiConverterFloat.write(value.alpha, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionSpan_lift(_ buf: RustBuffer) throws -> CaptionSpan {
-    return try FfiConverterTypeCaptionSpan.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCaptionSpan_lower(_ value: CaptionSpan) -> RustBuffer {
-    return FfiConverterTypeCaptionSpan.lower(value)
-}
-
-
 /**
  * A chat's run configuration. Ids are wire strings.
  */
@@ -7809,314 +5834,6 @@ public func FfiConverterTypeChatConfig_lift(_ buf: RustBuffer) throws -> ChatCon
 #endif
 public func FfiConverterTypeChatConfig_lower(_ value: ChatConfig) -> RustBuffer {
     return FfiConverterTypeChatConfig.lower(value)
-}
-
-
-/**
- * One login Cloud keeps for a provider.
- */
-public struct CloudAccountInfo: Equatable, Hashable {
-    public var slot: String
-    public var active: Bool
-    /**
-     * `oauth` (a subscription sign-in) or `key`.
-     */
-    public var kind: String
-    public var email: String?
-    public var displayName: String?
-    public var organization: String?
-    public var plan: String?
-    public var needsReconnect: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(slot: String, active: Bool, 
-        /**
-         * `oauth` (a subscription sign-in) or `key`.
-         */kind: String, email: String?, displayName: String?, organization: String?, plan: String?, needsReconnect: Bool) {
-        self.slot = slot
-        self.active = active
-        self.kind = kind
-        self.email = email
-        self.displayName = displayName
-        self.organization = organization
-        self.plan = plan
-        self.needsReconnect = needsReconnect
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudAccountInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudAccountInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudAccountInfo {
-        return
-            try CloudAccountInfo(
-                slot: FfiConverterString.read(from: &buf), 
-                active: FfiConverterBool.read(from: &buf), 
-                kind: FfiConverterString.read(from: &buf), 
-                email: FfiConverterOptionString.read(from: &buf), 
-                displayName: FfiConverterOptionString.read(from: &buf), 
-                organization: FfiConverterOptionString.read(from: &buf), 
-                plan: FfiConverterOptionString.read(from: &buf), 
-                needsReconnect: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudAccountInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.slot, into: &buf)
-        FfiConverterBool.write(value.active, into: &buf)
-        FfiConverterString.write(value.kind, into: &buf)
-        FfiConverterOptionString.write(value.email, into: &buf)
-        FfiConverterOptionString.write(value.displayName, into: &buf)
-        FfiConverterOptionString.write(value.organization, into: &buf)
-        FfiConverterOptionString.write(value.plan, into: &buf)
-        FfiConverterBool.write(value.needsReconnect, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudAccountInfo_lift(_ buf: RustBuffer) throws -> CloudAccountInfo {
-    return try FfiConverterTypeCloudAccountInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudAccountInfo_lower(_ value: CloudAccountInfo) -> RustBuffer {
-    return FfiConverterTypeCloudAccountInfo.lower(value)
-}
-
-
-public struct CloudInfo: Equatable, Hashable {
-    /**
-     * This account can use Cloud (signed in, an edge with Cloud).
-     */
-    public var available: Bool
-    /**
-     * `off` · `ready` · `deleting` · `error` …
-     */
-    public var state: String
-    public var deviceId: String?
-    /**
-     * Credits left (plan + extra − unmetered use).
-     */
-    public var credits: Double?
-    public var awakeSessions: UInt32
-    public var maxAwakeSessions: UInt32
-    public var error: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * This account can use Cloud (signed in, an edge with Cloud).
-         */available: Bool, 
-        /**
-         * `off` · `ready` · `deleting` · `error` …
-         */state: String, deviceId: String?, 
-        /**
-         * Credits left (plan + extra − unmetered use).
-         */credits: Double?, awakeSessions: UInt32, maxAwakeSessions: UInt32, error: String?) {
-        self.available = available
-        self.state = state
-        self.deviceId = deviceId
-        self.credits = credits
-        self.awakeSessions = awakeSessions
-        self.maxAwakeSessions = maxAwakeSessions
-        self.error = error
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudInfo {
-        return
-            try CloudInfo(
-                available: FfiConverterBool.read(from: &buf), 
-                state: FfiConverterString.read(from: &buf), 
-                deviceId: FfiConverterOptionString.read(from: &buf), 
-                credits: FfiConverterOptionDouble.read(from: &buf), 
-                awakeSessions: FfiConverterUInt32.read(from: &buf), 
-                maxAwakeSessions: FfiConverterUInt32.read(from: &buf), 
-                error: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudInfo, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.available, into: &buf)
-        FfiConverterString.write(value.state, into: &buf)
-        FfiConverterOptionString.write(value.deviceId, into: &buf)
-        FfiConverterOptionDouble.write(value.credits, into: &buf)
-        FfiConverterUInt32.write(value.awakeSessions, into: &buf)
-        FfiConverterUInt32.write(value.maxAwakeSessions, into: &buf)
-        FfiConverterOptionString.write(value.error, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudInfo_lift(_ buf: RustBuffer) throws -> CloudInfo {
-    return try FfiConverterTypeCloudInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudInfo_lower(_ value: CloudInfo) -> RustBuffer {
-    return FfiConverterTypeCloudInfo.lower(value)
-}
-
-
-public struct CloudSessionInfo: Equatable, Hashable {
-    public var chatId: String
-    public var deviceId: String
-    public var state: String
-    public var repo: String?
-    public var error: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(chatId: String, deviceId: String, state: String, repo: String?, error: String?) {
-        self.chatId = chatId
-        self.deviceId = deviceId
-        self.state = state
-        self.repo = repo
-        self.error = error
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudSessionInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudSessionInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudSessionInfo {
-        return
-            try CloudSessionInfo(
-                chatId: FfiConverterString.read(from: &buf), 
-                deviceId: FfiConverterString.read(from: &buf), 
-                state: FfiConverterString.read(from: &buf), 
-                repo: FfiConverterOptionString.read(from: &buf), 
-                error: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudSessionInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.chatId, into: &buf)
-        FfiConverterString.write(value.deviceId, into: &buf)
-        FfiConverterString.write(value.state, into: &buf)
-        FfiConverterOptionString.write(value.repo, into: &buf)
-        FfiConverterOptionString.write(value.error, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudSessionInfo_lift(_ buf: RustBuffer) throws -> CloudSessionInfo {
-    return try FfiConverterTypeCloudSessionInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudSessionInfo_lower(_ value: CloudSessionInfo) -> RustBuffer {
-    return FfiConverterTypeCloudSessionInfo.lower(value)
-}
-
-
-/**
- * A Cloud login's plan usage.
- */
-public struct CloudUsageInfo: Equatable, Hashable {
-    public var windows: [UsageWindowInfo]
-    /**
-     * The live plan ("ChatGPT Plus"), when the reply names it.
-     */
-    public var plan: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(windows: [UsageWindowInfo], 
-        /**
-         * The live plan ("ChatGPT Plus"), when the reply names it.
-         */plan: String?) {
-        self.windows = windows
-        self.plan = plan
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudUsageInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudUsageInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudUsageInfo {
-        return
-            try CloudUsageInfo(
-                windows: FfiConverterSequenceTypeUsageWindowInfo.read(from: &buf), 
-                plan: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudUsageInfo, into buf: inout [UInt8]) {
-        FfiConverterSequenceTypeUsageWindowInfo.write(value.windows, into: &buf)
-        FfiConverterOptionString.write(value.plan, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudUsageInfo_lift(_ buf: RustBuffer) throws -> CloudUsageInfo {
-    return try FfiConverterTypeCloudUsageInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudUsageInfo_lower(_ value: CloudUsageInfo) -> RustBuffer {
-    return FfiConverterTypeCloudUsageInfo.lower(value)
 }
 
 
@@ -8426,10 +6143,6 @@ public func FfiConverterTypeContextUsage_lower(_ value: ContextUsage) -> RustBuf
  */
 public struct CoreConfig: Equatable, Hashable {
     /**
-     * Edge base URL (`auth_production_edge_url()` for prod).
-     */
-    public var edgeUrl: String
-    /**
      * Writable directory for registry/doc snapshots and caches, scoped by
      * the platform to the signed-in identity (sign-out wipes it).
      */
@@ -8447,18 +6160,10 @@ public struct CoreConfig: Equatable, Hashable {
      */
     public var platform: String
     public var appVersion: String
-    /**
-     * Run the relay layer (docs/design/relay-mobile.md). Off, this device sends what
-     * a shipped phone does, and holds its account's chats on stored rows.
-     */
-    public var relayLayer: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
-        /**
-         * Edge base URL (`auth_production_edge_url()` for prod).
-         */edgeUrl: String, 
         /**
          * Writable directory for registry/doc snapshots and caches, scoped by
          * the platform to the signed-in identity (sign-out wipes it).
@@ -8471,18 +6176,12 @@ public struct CoreConfig: Equatable, Hashable {
          */deviceName: String, 
         /**
          * `ios` / `android`.
-         */platform: String, appVersion: String, 
-        /**
-         * Run the relay layer (docs/design/relay-mobile.md). Off, this device sends what
-         * a shipped phone does, and holds its account's chats on stored rows.
-         */relayLayer: Bool = false) {
-        self.edgeUrl = edgeUrl
+         */platform: String, appVersion: String) {
         self.dataDir = dataDir
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.platform = platform
         self.appVersion = appVersion
-        self.relayLayer = relayLayer
     }
 
     
@@ -8501,24 +6200,20 @@ public struct FfiConverterTypeCoreConfig: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreConfig {
         return
             try CoreConfig(
-                edgeUrl: FfiConverterString.read(from: &buf), 
                 dataDir: FfiConverterString.read(from: &buf), 
                 deviceId: FfiConverterString.read(from: &buf), 
                 deviceName: FfiConverterString.read(from: &buf), 
                 platform: FfiConverterString.read(from: &buf), 
-                appVersion: FfiConverterString.read(from: &buf), 
-                relayLayer: FfiConverterBool.read(from: &buf)
+                appVersion: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: CoreConfig, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.edgeUrl, into: &buf)
         FfiConverterString.write(value.dataDir, into: &buf)
         FfiConverterString.write(value.deviceId, into: &buf)
         FfiConverterString.write(value.deviceName, into: &buf)
         FfiConverterString.write(value.platform, into: &buf)
         FfiConverterString.write(value.appVersion, into: &buf)
-        FfiConverterBool.write(value.relayLayer, into: &buf)
     }
 }
 
@@ -9474,211 +7169,6 @@ public func FfiConverterTypeFrontPage_lift(_ buf: RustBuffer) throws -> FrontPag
 #endif
 public func FfiConverterTypeFrontPage_lower(_ value: FrontPage) -> RustBuffer {
     return FfiConverterTypeFrontPage.lower(value)
-}
-
-
-public struct GithubConnectInfo: Equatable, Hashable {
-    /**
-     * `pending` · `connected` · `failed`.
-     */
-    public var state: String
-    public var account: String?
-    public var error: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `pending` · `connected` · `failed`.
-         */state: String, account: String?, error: String?) {
-        self.state = state
-        self.account = account
-        self.error = error
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension GithubConnectInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeGithubConnectInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GithubConnectInfo {
-        return
-            try GithubConnectInfo(
-                state: FfiConverterString.read(from: &buf), 
-                account: FfiConverterOptionString.read(from: &buf), 
-                error: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: GithubConnectInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.state, into: &buf)
-        FfiConverterOptionString.write(value.account, into: &buf)
-        FfiConverterOptionString.write(value.error, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubConnectInfo_lift(_ buf: RustBuffer) throws -> GithubConnectInfo {
-    return try FfiConverterTypeGithubConnectInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubConnectInfo_lower(_ value: GithubConnectInfo) -> RustBuffer {
-    return FfiConverterTypeGithubConnectInfo.lower(value)
-}
-
-
-/**
- * GitHub's device flow: show `user_code`, open `verification_uri`, poll.
- */
-public struct GithubDeviceFlowInfo: Equatable, Hashable {
-    public var flowId: String
-    public var userCode: String
-    public var verificationUri: String
-    public var intervalSecs: UInt64
-    public var expiresAtMs: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(flowId: String, userCode: String, verificationUri: String, intervalSecs: UInt64, expiresAtMs: Int64) {
-        self.flowId = flowId
-        self.userCode = userCode
-        self.verificationUri = verificationUri
-        self.intervalSecs = intervalSecs
-        self.expiresAtMs = expiresAtMs
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension GithubDeviceFlowInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeGithubDeviceFlowInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GithubDeviceFlowInfo {
-        return
-            try GithubDeviceFlowInfo(
-                flowId: FfiConverterString.read(from: &buf), 
-                userCode: FfiConverterString.read(from: &buf), 
-                verificationUri: FfiConverterString.read(from: &buf), 
-                intervalSecs: FfiConverterUInt64.read(from: &buf), 
-                expiresAtMs: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: GithubDeviceFlowInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.flowId, into: &buf)
-        FfiConverterString.write(value.userCode, into: &buf)
-        FfiConverterString.write(value.verificationUri, into: &buf)
-        FfiConverterUInt64.write(value.intervalSecs, into: &buf)
-        FfiConverterInt64.write(value.expiresAtMs, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubDeviceFlowInfo_lift(_ buf: RustBuffer) throws -> GithubDeviceFlowInfo {
-    return try FfiConverterTypeGithubDeviceFlowInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubDeviceFlowInfo_lower(_ value: GithubDeviceFlowInfo) -> RustBuffer {
-    return FfiConverterTypeGithubDeviceFlowInfo.lower(value)
-}
-
-
-public struct GithubRepoInfo: Equatable, Hashable {
-    /**
-     * `owner/name`.
-     */
-    public var fullName: String
-    public var defaultBranch: String
-    public var `private`: Bool
-    public var description: String?
-    public var pushedAtMs: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `owner/name`.
-         */fullName: String, defaultBranch: String, `private`: Bool, description: String?, pushedAtMs: Int64) {
-        self.fullName = fullName
-        self.defaultBranch = defaultBranch
-        self.`private` = `private`
-        self.description = description
-        self.pushedAtMs = pushedAtMs
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension GithubRepoInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeGithubRepoInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GithubRepoInfo {
-        return
-            try GithubRepoInfo(
-                fullName: FfiConverterString.read(from: &buf), 
-                defaultBranch: FfiConverterString.read(from: &buf), 
-                private: FfiConverterBool.read(from: &buf), 
-                description: FfiConverterOptionString.read(from: &buf), 
-                pushedAtMs: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: GithubRepoInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.fullName, into: &buf)
-        FfiConverterString.write(value.defaultBranch, into: &buf)
-        FfiConverterBool.write(value.`private`, into: &buf)
-        FfiConverterOptionString.write(value.description, into: &buf)
-        FfiConverterInt64.write(value.pushedAtMs, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubRepoInfo_lift(_ buf: RustBuffer) throws -> GithubRepoInfo {
-    return try FfiConverterTypeGithubRepoInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeGithubRepoInfo_lower(_ value: GithubRepoInfo) -> RustBuffer {
-    return FfiConverterTypeGithubRepoInfo.lower(value)
 }
 
 
@@ -10666,70 +8156,6 @@ public func FfiConverterTypeNewSession_lower(_ value: NewSession) -> RustBuffer 
 }
 
 
-public struct OrbFrame: Equatable, Hashable {
-    /**
-     * Edge length of the artwork box, in logical points.
-     */
-    public var size: Float
-    public var lines: [Float]
-    public var dots: [Float]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Edge length of the artwork box, in logical points.
-         */size: Float, lines: [Float], dots: [Float]) {
-        self.size = size
-        self.lines = lines
-        self.dots = dots
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension OrbFrame: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOrbFrame: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbFrame {
-        return
-            try OrbFrame(
-                size: FfiConverterFloat.read(from: &buf), 
-                lines: FfiConverterSequenceFloat.read(from: &buf), 
-                dots: FfiConverterSequenceFloat.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: OrbFrame, into buf: inout [UInt8]) {
-        FfiConverterFloat.write(value.size, into: &buf)
-        FfiConverterSequenceFloat.write(value.lines, into: &buf)
-        FfiConverterSequenceFloat.write(value.dots, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbFrame_lift(_ buf: RustBuffer) throws -> OrbFrame {
-    return try FfiConverterTypeOrbFrame.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbFrame_lower(_ value: OrbFrame) -> RustBuffer {
-    return FfiConverterTypeOrbFrame.lower(value)
-}
-
-
 public struct OutgoingAttachment: Equatable, Hashable {
     public var name: String
     public var mimeType: String
@@ -10862,11 +8288,6 @@ public struct PendingSend: Equatable, Hashable {
     public var kind: PendingKind
     public var sentAtMs: Int64
     public var state: SendState
-    /**
-     * Still on this device, failed or uploading: Remove applies
-     * (`SessionHandle::remove_send`), and it then never goes out.
-     */
-    public var removable: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10876,11 +8297,7 @@ public struct PendingSend: Equatable, Hashable {
          */messageId: String, 
         /**
          * Raw content (attachment trailer included).
-         */text: String, visibleText: String, images: [String], kind: PendingKind, sentAtMs: Int64, state: SendState, 
-        /**
-         * Still on this device, failed or uploading: Remove applies
-         * (`SessionHandle::remove_send`), and it then never goes out.
-         */removable: Bool) {
+         */text: String, visibleText: String, images: [String], kind: PendingKind, sentAtMs: Int64, state: SendState) {
         self.messageId = messageId
         self.text = text
         self.visibleText = visibleText
@@ -10888,7 +8305,6 @@ public struct PendingSend: Equatable, Hashable {
         self.kind = kind
         self.sentAtMs = sentAtMs
         self.state = state
-        self.removable = removable
     }
 
     
@@ -10913,8 +8329,7 @@ public struct FfiConverterTypePendingSend: FfiConverterRustBuffer {
                 images: FfiConverterSequenceString.read(from: &buf), 
                 kind: FfiConverterTypePendingKind.read(from: &buf), 
                 sentAtMs: FfiConverterInt64.read(from: &buf), 
-                state: FfiConverterTypeSendState.read(from: &buf), 
-                removable: FfiConverterBool.read(from: &buf)
+                state: FfiConverterTypeSendState.read(from: &buf)
         )
     }
 
@@ -10926,7 +8341,6 @@ public struct FfiConverterTypePendingSend: FfiConverterRustBuffer {
         FfiConverterTypePendingKind.write(value.kind, into: &buf)
         FfiConverterInt64.write(value.sentAtMs, into: &buf)
         FfiConverterTypeSendState.write(value.state, into: &buf)
-        FfiConverterBool.write(value.removable, into: &buf)
     }
 }
 
@@ -11018,14 +8432,6 @@ public struct ProjectView: Equatable, Hashable {
     public var deviceId: String
     public var deviceName: String?
     public var deviceOnline: Bool
-    /**
-     * Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-     */
-    public var isCloud: Bool
-    /**
-     * `owner/name`, when the project has a GitHub repository.
-     */
-    public var githubRepo: String?
     public var gitDetected: Bool
     public var createdAtMs: Int64
     /**
@@ -11048,13 +8454,7 @@ public struct ProjectView: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, name: String, path: String, colorIndex: UInt32, deviceId: String, deviceName: String?, deviceOnline: Bool, 
-        /**
-         * Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-         */isCloud: Bool, 
-        /**
-         * `owner/name`, when the project has a GitHub repository.
-         */githubRepo: String?, gitDetected: Bool, createdAtMs: Int64, 
+    public init(id: String, name: String, path: String, colorIndex: UInt32, deviceId: String, deviceName: String?, deviceOnline: Bool, gitDetected: Bool, createdAtMs: Int64, 
         /**
          * Shared by every checkout of one repository, on any device.
          */groupKey: String, 
@@ -11074,8 +8474,6 @@ public struct ProjectView: Equatable, Hashable {
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.deviceOnline = deviceOnline
-        self.isCloud = isCloud
-        self.githubRepo = githubRepo
         self.gitDetected = gitDetected
         self.createdAtMs = createdAtMs
         self.groupKey = groupKey
@@ -11108,8 +8506,6 @@ public struct FfiConverterTypeProjectView: FfiConverterRustBuffer {
                 deviceId: FfiConverterString.read(from: &buf), 
                 deviceName: FfiConverterOptionString.read(from: &buf), 
                 deviceOnline: FfiConverterBool.read(from: &buf), 
-                isCloud: FfiConverterBool.read(from: &buf), 
-                githubRepo: FfiConverterOptionString.read(from: &buf), 
                 gitDetected: FfiConverterBool.read(from: &buf), 
                 createdAtMs: FfiConverterInt64.read(from: &buf), 
                 groupKey: FfiConverterString.read(from: &buf), 
@@ -11128,8 +8524,6 @@ public struct FfiConverterTypeProjectView: FfiConverterRustBuffer {
         FfiConverterString.write(value.deviceId, into: &buf)
         FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterBool.write(value.deviceOnline, into: &buf)
-        FfiConverterBool.write(value.isCloud, into: &buf)
-        FfiConverterOptionString.write(value.githubRepo, into: &buf)
         FfiConverterBool.write(value.gitDetected, into: &buf)
         FfiConverterInt64.write(value.createdAtMs, into: &buf)
         FfiConverterString.write(value.groupKey, into: &buf)
@@ -11153,65 +8547,6 @@ public func FfiConverterTypeProjectView_lift(_ buf: RustBuffer) throws -> Projec
 #endif
 public func FfiConverterTypeProjectView_lower(_ value: ProjectView) -> RustBuffer {
     return FfiConverterTypeProjectView.lower(value)
-}
-
-
-/**
- * A provider sign-in under way: open `url` in an auth sheet that waits for
- * the `done_url` scheme it was started with, then await
- * `provider_login_finish(login_id)`.
- */
-public struct ProviderLoginInfo: Equatable, Hashable {
-    public var loginId: String
-    public var url: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(loginId: String, url: String) {
-        self.loginId = loginId
-        self.url = url
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension ProviderLoginInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeProviderLoginInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProviderLoginInfo {
-        return
-            try ProviderLoginInfo(
-                loginId: FfiConverterString.read(from: &buf), 
-                url: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ProviderLoginInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.loginId, into: &buf)
-        FfiConverterString.write(value.url, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProviderLoginInfo_lift(_ buf: RustBuffer) throws -> ProviderLoginInfo {
-    return try FfiConverterTypeProviderLoginInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProviderLoginInfo_lower(_ value: ProviderLoginInfo) -> RustBuffer {
-    return FfiConverterTypeProviderLoginInfo.lower(value)
 }
 
 
@@ -11344,67 +8679,6 @@ public func FfiConverterTypePullRequestGroups_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypePullRequestGroups_lower(_ value: PullRequestGroups) -> RustBuffer {
     return FfiConverterTypePullRequestGroups.lower(value)
-}
-
-
-/**
- * Which session notifications this device wants.
- */
-public struct PushPrefs: Equatable, Hashable {
-    public var done: Bool
-    public var input: Bool
-    public var failed: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(done: Bool, input: Bool, failed: Bool) {
-        self.done = done
-        self.input = input
-        self.failed = failed
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension PushPrefs: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePushPrefs: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PushPrefs {
-        return
-            try PushPrefs(
-                done: FfiConverterBool.read(from: &buf), 
-                input: FfiConverterBool.read(from: &buf), 
-                failed: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: PushPrefs, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.done, into: &buf)
-        FfiConverterBool.write(value.input, into: &buf)
-        FfiConverterBool.write(value.failed, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePushPrefs_lift(_ buf: RustBuffer) throws -> PushPrefs {
-    return try FfiConverterTypePushPrefs.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePushPrefs_lower(_ value: PushPrefs) -> RustBuffer {
-    return FfiConverterTypePushPrefs.lower(value)
 }
 
 
@@ -12245,6 +9519,184 @@ public func FfiConverterTypeSendRequest_lower(_ value: SendRequest) -> RustBuffe
 
 
 /**
+ * This phone's sign-in: keep all of it (Keychain / Keystore).
+ */
+public struct ServerAccount: Equatable, Hashable {
+    public var serverUrl: String
+    /**
+     * This device's bearer on the server.
+     */
+    public var token: String
+    /**
+     * This device's id on the server (use it as `CoreConfig.device_id`).
+     */
+    public var deviceId: String
+    public var email: String
+    public var name: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(serverUrl: String, 
+        /**
+         * This device's bearer on the server.
+         */token: String, 
+        /**
+         * This device's id on the server (use it as `CoreConfig.device_id`).
+         */deviceId: String, email: String, name: String?) {
+        self.serverUrl = serverUrl
+        self.token = token
+        self.deviceId = deviceId
+        self.email = email
+        self.name = name
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ServerAccount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServerAccount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServerAccount {
+        return
+            try ServerAccount(
+                serverUrl: FfiConverterString.read(from: &buf), 
+                token: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                email: FfiConverterString.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ServerAccount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.serverUrl, into: &buf)
+        FfiConverterString.write(value.token, into: &buf)
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.email, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerAccount_lift(_ buf: RustBuffer) throws -> ServerAccount {
+    return try FfiConverterTypeServerAccount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerAccount_lower(_ value: ServerAccount) -> RustBuffer {
+    return FfiConverterTypeServerAccount.lower(value)
+}
+
+
+/**
+ * One of the account's devices (`GET /devices`).
+ */
+public struct ServerDevice: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    /**
+     * Runs an engine: can host chats.
+     */
+    public var isMachine: Bool
+    /**
+     * Its engine holds its relay room right now.
+     */
+    public var online: Bool
+    /**
+     * Epoch seconds.
+     */
+    public var lastSeen: Int64
+    /**
+     * This phone.
+     */
+    public var current: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, 
+        /**
+         * Runs an engine: can host chats.
+         */isMachine: Bool, 
+        /**
+         * Its engine holds its relay room right now.
+         */online: Bool, 
+        /**
+         * Epoch seconds.
+         */lastSeen: Int64, 
+        /**
+         * This phone.
+         */current: Bool) {
+        self.id = id
+        self.name = name
+        self.isMachine = isMachine
+        self.online = online
+        self.lastSeen = lastSeen
+        self.current = current
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ServerDevice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServerDevice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServerDevice {
+        return
+            try ServerDevice(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                isMachine: FfiConverterBool.read(from: &buf), 
+                online: FfiConverterBool.read(from: &buf), 
+                lastSeen: FfiConverterInt64.read(from: &buf), 
+                current: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ServerDevice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.isMachine, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterInt64.write(value.lastSeen, into: &buf)
+        FfiConverterBool.write(value.current, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerDevice_lift(_ buf: RustBuffer) throws -> ServerDevice {
+    return try FfiConverterTypeServerDevice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerDevice_lower(_ value: ServerDevice) -> RustBuffer {
+    return FfiConverterTypeServerDevice.lower(value)
+}
+
+
+/**
  * One session row, as every list renders it.
  */
 public struct SessionRow: Equatable, Hashable {
@@ -12266,10 +9718,6 @@ public struct SessionRow: Equatable, Hashable {
     public var deviceId: String
     public var deviceName: String?
     public var deviceOnline: Bool
-    /**
-     * Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-     */
-    public var isCloud: Bool
     /**
      * Wire harness id (`claude-code`).
      */
@@ -12343,9 +9791,6 @@ public struct SessionRow: Equatable, Hashable {
          * `None` = projectless (host's home folder).
          */project: ProjectRef?, deviceId: String, deviceName: String?, deviceOnline: Bool, 
         /**
-         * Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-         */isCloud: Bool, 
-        /**
          * Wire harness id (`claude-code`).
          */harness: String?, harnessLabel: String?, model: String?, modelLabel: String?, 
         /**
@@ -12389,7 +9834,6 @@ public struct SessionRow: Equatable, Hashable {
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.deviceOnline = deviceOnline
-        self.isCloud = isCloud
         self.harness = harness
         self.harnessLabel = harnessLabel
         self.model = model
@@ -12441,7 +9885,6 @@ public struct FfiConverterTypeSessionRow: FfiConverterRustBuffer {
                 deviceId: FfiConverterString.read(from: &buf), 
                 deviceName: FfiConverterOptionString.read(from: &buf), 
                 deviceOnline: FfiConverterBool.read(from: &buf), 
-                isCloud: FfiConverterBool.read(from: &buf), 
                 harness: FfiConverterOptionString.read(from: &buf), 
                 harnessLabel: FfiConverterOptionString.read(from: &buf), 
                 model: FfiConverterOptionString.read(from: &buf), 
@@ -12479,7 +9922,6 @@ public struct FfiConverterTypeSessionRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.deviceId, into: &buf)
         FfiConverterOptionString.write(value.deviceName, into: &buf)
         FfiConverterBool.write(value.deviceOnline, into: &buf)
-        FfiConverterBool.write(value.isCloud, into: &buf)
         FfiConverterOptionString.write(value.harness, into: &buf)
         FfiConverterOptionString.write(value.harnessLabel, into: &buf)
         FfiConverterOptionString.write(value.model, into: &buf)
@@ -13387,12 +10829,6 @@ public struct TranscriptStatus: Equatable, Hashable {
      * Id of the newest entry (host or echo).
      */
     public var lastEntryId: String?
-    /**
-     * The chat's Cloud machine rebuilt its chat store from the server copy
-     * at this Unix ms: show a quiet note ("This chat was restored from its
-     * server copy") until [`SessionHandle::dismiss_restored_note`].
-     */
-    public var restoredAtMs: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13405,12 +10841,7 @@ public struct TranscriptStatus: Equatable, Hashable {
          */entryCount: UInt32, pendingCount: UInt32, streaming: Bool, working: Bool, workingSinceMs: Int64?, 
         /**
          * Id of the newest entry (host or echo).
-         */lastEntryId: String?, 
-        /**
-         * The chat's Cloud machine rebuilt its chat store from the server copy
-         * at this Unix ms: show a quiet note ("This chat was restored from its
-         * server copy") until [`SessionHandle::dismiss_restored_note`].
-         */restoredAtMs: Int64?) {
+         */lastEntryId: String?) {
         self.revision = revision
         self.hydrated = hydrated
         self.entryCount = entryCount
@@ -13419,7 +10850,6 @@ public struct TranscriptStatus: Equatable, Hashable {
         self.working = working
         self.workingSinceMs = workingSinceMs
         self.lastEntryId = lastEntryId
-        self.restoredAtMs = restoredAtMs
     }
 
     
@@ -13445,8 +10875,7 @@ public struct FfiConverterTypeTranscriptStatus: FfiConverterRustBuffer {
                 streaming: FfiConverterBool.read(from: &buf), 
                 working: FfiConverterBool.read(from: &buf), 
                 workingSinceMs: FfiConverterOptionInt64.read(from: &buf), 
-                lastEntryId: FfiConverterOptionString.read(from: &buf), 
-                restoredAtMs: FfiConverterOptionInt64.read(from: &buf)
+                lastEntryId: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -13459,7 +10888,6 @@ public struct FfiConverterTypeTranscriptStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.working, into: &buf)
         FfiConverterOptionInt64.write(value.workingSinceMs, into: &buf)
         FfiConverterOptionString.write(value.lastEntryId, into: &buf)
-        FfiConverterOptionInt64.write(value.restoredAtMs, into: &buf)
     }
 }
 
@@ -13741,145 +11169,6 @@ public func FfiConverterTypeUserInputQuestion_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeUserInputQuestion_lower(_ value: UserInputQuestion) -> RustBuffer {
     return FfiConverterTypeUserInputQuestion.lower(value)
-}
-
-
-/**
- * One provider the vault holds logins for.
- */
-public struct VaultConnectionInfo: Equatable, Hashable {
-    /**
-     * `claude` · `codex` · `github` · `anthropic-key` · `openai-key`.
-     */
-    public var provider: String
-    public var account: String?
-    public var needsReconnect: Bool
-    public var accounts: UInt32
-    public var hasActive: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `claude` · `codex` · `github` · `anthropic-key` · `openai-key`.
-         */provider: String, account: String?, needsReconnect: Bool, accounts: UInt32, hasActive: Bool) {
-        self.provider = provider
-        self.account = account
-        self.needsReconnect = needsReconnect
-        self.accounts = accounts
-        self.hasActive = hasActive
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension VaultConnectionInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVaultConnectionInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultConnectionInfo {
-        return
-            try VaultConnectionInfo(
-                provider: FfiConverterString.read(from: &buf), 
-                account: FfiConverterOptionString.read(from: &buf), 
-                needsReconnect: FfiConverterBool.read(from: &buf), 
-                accounts: FfiConverterUInt32.read(from: &buf), 
-                hasActive: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: VaultConnectionInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.provider, into: &buf)
-        FfiConverterOptionString.write(value.account, into: &buf)
-        FfiConverterBool.write(value.needsReconnect, into: &buf)
-        FfiConverterUInt32.write(value.accounts, into: &buf)
-        FfiConverterBool.write(value.hasActive, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVaultConnectionInfo_lift(_ buf: RustBuffer) throws -> VaultConnectionInfo {
-    return try FfiConverterTypeVaultConnectionInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVaultConnectionInfo_lower(_ value: VaultConnectionInfo) -> RustBuffer {
-    return FfiConverterTypeVaultConnectionInfo.lower(value)
-}
-
-
-public struct VaultInfo: Equatable, Hashable {
-    public var available: Bool
-    public var connections: [VaultConnectionInfo]
-    /**
-     * Where to install the Vardoger GitHub App on more repositories.
-     */
-    public var githubInstallUrl: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(available: Bool, connections: [VaultConnectionInfo], 
-        /**
-         * Where to install the Vardoger GitHub App on more repositories.
-         */githubInstallUrl: String?) {
-        self.available = available
-        self.connections = connections
-        self.githubInstallUrl = githubInstallUrl
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension VaultInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVaultInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultInfo {
-        return
-            try VaultInfo(
-                available: FfiConverterBool.read(from: &buf), 
-                connections: FfiConverterSequenceTypeVaultConnectionInfo.read(from: &buf), 
-                githubInstallUrl: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: VaultInfo, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.available, into: &buf)
-        FfiConverterSequenceTypeVaultConnectionInfo.write(value.connections, into: &buf)
-        FfiConverterOptionString.write(value.githubInstallUrl, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVaultInfo_lift(_ buf: RustBuffer) throws -> VaultInfo {
-    return try FfiConverterTypeVaultInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVaultInfo_lower(_ value: VaultInfo) -> RustBuffer {
-    return FfiConverterTypeVaultInfo.lower(value)
 }
 
 
@@ -14276,201 +11565,6 @@ public func FfiConverterTypeVisualSurface_lower(_ value: VisualSurface) -> RustB
 }
 
 
-/**
- * Everything a call screen shows. Ephemeral: never log or persist captions.
- */
-public struct VoiceCallState: Equatable, Hashable {
-    public var phase: VoiceCallPhase
-    public var orb: VoiceOrb
-    /**
-     * Full id of the host's orchestrator chat (its canonical transcript).
-     */
-    public var chatId: String?
-    public var work: VoiceCallWork
-    public var muted: Bool
-    /**
-     * The assistant's voice is playing.
-     */
-    public var speaking: Bool
-    public var caption: String
-    /**
-     * Set once the caption is a final segment; live partials have none.
-     */
-    public var captionSpeaker: VoiceSpeaker?
-    /**
-     * The utterance the caption belongs to: a change is a new speaker turn.
-     */
-    public var captionItem: String?
-    /**
-     * Normalized 0…1 peaks (microphone is 0 while muted).
-     */
-    public var microphone: Float
-    public var speaker: Float
-    /**
-     * Styles the host offers, once it reports them.
-     */
-    public var voices: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(phase: VoiceCallPhase, orb: VoiceOrb, 
-        /**
-         * Full id of the host's orchestrator chat (its canonical transcript).
-         */chatId: String?, work: VoiceCallWork, muted: Bool, 
-        /**
-         * The assistant's voice is playing.
-         */speaking: Bool, caption: String, 
-        /**
-         * Set once the caption is a final segment; live partials have none.
-         */captionSpeaker: VoiceSpeaker?, 
-        /**
-         * The utterance the caption belongs to: a change is a new speaker turn.
-         */captionItem: String?, 
-        /**
-         * Normalized 0…1 peaks (microphone is 0 while muted).
-         */microphone: Float, speaker: Float, 
-        /**
-         * Styles the host offers, once it reports them.
-         */voices: [String]) {
-        self.phase = phase
-        self.orb = orb
-        self.chatId = chatId
-        self.work = work
-        self.muted = muted
-        self.speaking = speaking
-        self.caption = caption
-        self.captionSpeaker = captionSpeaker
-        self.captionItem = captionItem
-        self.microphone = microphone
-        self.speaker = speaker
-        self.voices = voices
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension VoiceCallState: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceCallState: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallState {
-        return
-            try VoiceCallState(
-                phase: FfiConverterTypeVoiceCallPhase.read(from: &buf), 
-                orb: FfiConverterTypeVoiceOrb.read(from: &buf), 
-                chatId: FfiConverterOptionString.read(from: &buf), 
-                work: FfiConverterTypeVoiceCallWork.read(from: &buf), 
-                muted: FfiConverterBool.read(from: &buf), 
-                speaking: FfiConverterBool.read(from: &buf), 
-                caption: FfiConverterString.read(from: &buf), 
-                captionSpeaker: FfiConverterOptionTypeVoiceSpeaker.read(from: &buf), 
-                captionItem: FfiConverterOptionString.read(from: &buf), 
-                microphone: FfiConverterFloat.read(from: &buf), 
-                speaker: FfiConverterFloat.read(from: &buf), 
-                voices: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: VoiceCallState, into buf: inout [UInt8]) {
-        FfiConverterTypeVoiceCallPhase.write(value.phase, into: &buf)
-        FfiConverterTypeVoiceOrb.write(value.orb, into: &buf)
-        FfiConverterOptionString.write(value.chatId, into: &buf)
-        FfiConverterTypeVoiceCallWork.write(value.work, into: &buf)
-        FfiConverterBool.write(value.muted, into: &buf)
-        FfiConverterBool.write(value.speaking, into: &buf)
-        FfiConverterString.write(value.caption, into: &buf)
-        FfiConverterOptionTypeVoiceSpeaker.write(value.captionSpeaker, into: &buf)
-        FfiConverterOptionString.write(value.captionItem, into: &buf)
-        FfiConverterFloat.write(value.microphone, into: &buf)
-        FfiConverterFloat.write(value.speaker, into: &buf)
-        FfiConverterSequenceString.write(value.voices, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallState_lift(_ buf: RustBuffer) throws -> VoiceCallState {
-    return try FfiConverterTypeVoiceCallState.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallState_lower(_ value: VoiceCallState) -> RustBuffer {
-    return FfiConverterTypeVoiceCallState.lower(value)
-}
-
-
-public struct VoiceMediaRequest: Equatable, Hashable {
-    public var requestId: UInt64
-    public var operation: VoiceMediaOperation
-    public var sdp: String?
-    public var muted: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(requestId: UInt64, operation: VoiceMediaOperation, sdp: String?, muted: Bool) {
-        self.requestId = requestId
-        self.operation = operation
-        self.sdp = sdp
-        self.muted = muted
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension VoiceMediaRequest: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceMediaRequest: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaRequest {
-        return
-            try VoiceMediaRequest(
-                requestId: FfiConverterUInt64.read(from: &buf), 
-                operation: FfiConverterTypeVoiceMediaOperation.read(from: &buf), 
-                sdp: FfiConverterOptionString.read(from: &buf), 
-                muted: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: VoiceMediaRequest, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.requestId, into: &buf)
-        FfiConverterTypeVoiceMediaOperation.write(value.operation, into: &buf)
-        FfiConverterOptionString.write(value.sdp, into: &buf)
-        FfiConverterBool.write(value.muted, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaRequest_lift(_ buf: RustBuffer) throws -> VoiceMediaRequest {
-    return try FfiConverterTypeVoiceMediaRequest.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaRequest_lower(_ value: VoiceMediaRequest) -> RustBuffer {
-    return FfiConverterTypeVoiceMediaRequest.lower(value)
-}
-
-
 public struct Widget: Equatable, Hashable {
     public var id: UInt32
     public var kind: WidgetKind
@@ -14730,80 +11824,6 @@ public func FfiConverterTypeWorktreeSpec_lift(_ buf: RustBuffer) throws -> Workt
 public func FfiConverterTypeWorktreeSpec_lower(_ value: WorktreeSpec) -> RustBuffer {
     return FfiConverterTypeWorktreeSpec.lower(value)
 }
-
-
-
-public enum AuthCallback: Equatable, Hashable {
-    
-    case code(code: String, state: String?
-    )
-    case error(error: String, description: String?
-    )
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AuthCallback: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAuthCallback: FfiConverterRustBuffer {
-    typealias SwiftType = AuthCallback
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuthCallback {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .code(code: try FfiConverterString.read(from: &buf), state: try FfiConverterOptionString.read(from: &buf)
-        )
-        
-        case 2: return .error(error: try FfiConverterString.read(from: &buf), description: try FfiConverterOptionString.read(from: &buf)
-        )
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: AuthCallback, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case let .code(code,state):
-            writeInt(&buf, Int32(1))
-            FfiConverterString.write(code, into: &buf)
-            FfiConverterOptionString.write(state, into: &buf)
-            
-        
-        case let .error(error,description):
-            writeInt(&buf, Int32(2))
-            FfiConverterString.write(error, into: &buf)
-            FfiConverterOptionString.write(description, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthCallback_lift(_ buf: RustBuffer) throws -> AuthCallback {
-    return try FfiConverterTypeAuthCallback.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAuthCallback_lower(_ value: AuthCallback) -> RustBuffer {
-    return FfiConverterTypeAuthCallback.lower(value)
-}
-
 
 
 
@@ -15073,16 +12093,6 @@ public enum ClientEvent: Equatable, Hashable {
     )
     case connectivityChanged(connectivity: Connectivity
     )
-    /**
-     * The WorkOS pair rotated — persist it now (the old refresh token is spent).
-     */
-    case authRefreshed(tokens: AuthTokens
-    )
-    /**
-     * The session can't be refreshed any more — sign out.
-     */
-    case authExpired(reason: String
-    )
 
 
 
@@ -15116,12 +12126,6 @@ public struct FfiConverterTypeClientEvent: FfiConverterRustBuffer {
         case 4: return .connectivityChanged(connectivity: try FfiConverterTypeConnectivity.read(from: &buf)
         )
         
-        case 5: return .authRefreshed(tokens: try FfiConverterTypeAuthTokens.read(from: &buf)
-        )
-        
-        case 6: return .authExpired(reason: try FfiConverterString.read(from: &buf)
-        )
-        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -15150,16 +12154,6 @@ public struct FfiConverterTypeClientEvent: FfiConverterRustBuffer {
         case let .connectivityChanged(connectivity):
             writeInt(&buf, Int32(4))
             FfiConverterTypeConnectivity.write(connectivity, into: &buf)
-            
-        
-        case let .authRefreshed(tokens):
-            writeInt(&buf, Int32(5))
-            FfiConverterTypeAuthTokens.write(tokens, into: &buf)
-            
-        
-        case let .authExpired(reason):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(reason, into: &buf)
             
         }
     }
@@ -15838,7 +12832,7 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case Network(message: String
     )
     /**
-     * Credentials rejected. Irrecoverable cases also raise `AuthExpired`.
+     * Credentials rejected (the server no longer knows this device).
      */
     case Auth(message: String
     )
@@ -15995,20 +12989,18 @@ public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
 
 
 /**
- * How the client authenticates against the edge.
+ * Which engine the client drives.
  */
 
 public enum Credentials: Equatable, Hashable {
     
     /**
-     * WorkOS session scoped to `org_id`.
+     * An engine on one of the account's machines, through the relay on the
+     * account's Vardoger server: its URL, this device's bearer `token` from
+     * its sign-in ([`ServerSignIn`]), and the machine to drive (one of
+     * [`server_devices`]).
      */
-    case workOs(userId: String, orgId: String, tokens: AuthTokens
-    )
-    /**
-     * `AUTH_MODE=dev` edge: the bearer is `userId@orgId`.
-     */
-    case dev(userId: String, orgId: String
+    case remote(serverUrl: String, token: String, hostDeviceId: String
     )
     /**
      * Fully offline dataset with a simulated host.
@@ -16036,13 +13028,10 @@ public struct FfiConverterTypeCredentials: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .workOs(userId: try FfiConverterString.read(from: &buf), orgId: try FfiConverterString.read(from: &buf), tokens: try FfiConverterTypeAuthTokens.read(from: &buf)
+        case 1: return .remote(serverUrl: try FfiConverterString.read(from: &buf), token: try FfiConverterString.read(from: &buf), hostDeviceId: try FfiConverterString.read(from: &buf)
         )
         
-        case 2: return .dev(userId: try FfiConverterString.read(from: &buf), orgId: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 3: return .demo(options: try FfiConverterTypeDemoOptions.read(from: &buf)
+        case 2: return .demo(options: try FfiConverterTypeDemoOptions.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -16053,21 +13042,15 @@ public struct FfiConverterTypeCredentials: FfiConverterRustBuffer {
         switch value {
         
         
-        case let .workOs(userId,orgId,tokens):
+        case let .remote(serverUrl,token,hostDeviceId):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(userId, into: &buf)
-            FfiConverterString.write(orgId, into: &buf)
-            FfiConverterTypeAuthTokens.write(tokens, into: &buf)
-            
-        
-        case let .dev(userId,orgId):
-            writeInt(&buf, Int32(2))
-            FfiConverterString.write(userId, into: &buf)
-            FfiConverterString.write(orgId, into: &buf)
+            FfiConverterString.write(serverUrl, into: &buf)
+            FfiConverterString.write(token, into: &buf)
+            FfiConverterString.write(hostDeviceId, into: &buf)
             
         
         case let .demo(options):
-            writeInt(&buf, Int32(3))
+            writeInt(&buf, Int32(2))
             FfiConverterTypeDemoOptions.write(options, into: &buf)
             
         }
@@ -16578,89 +13561,6 @@ public func FfiConverterTypeMathFace_lift(_ buf: RustBuffer) throws -> MathFace 
 #endif
 public func FfiConverterTypeMathFace_lower(_ value: MathFace) -> RustBuffer {
     return FfiConverterTypeMathFace.lower(value)
-}
-
-
-
-/**
- * The four tuned size presets (inline 20, avatar 64, large 96, hero 128).
- */
-
-public enum OrbPreset: Equatable, Hashable {
-    
-    case inline
-    case avatar
-    case large
-    case hero
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension OrbPreset: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOrbPreset: FfiConverterRustBuffer {
-    typealias SwiftType = OrbPreset
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbPreset {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .inline
-        
-        case 2: return .avatar
-        
-        case 3: return .large
-        
-        case 4: return .hero
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: OrbPreset, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .inline:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .avatar:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .large:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .hero:
-            writeInt(&buf, Int32(4))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbPreset_lift(_ buf: RustBuffer) throws -> OrbPreset {
-    return try FfiConverterTypeOrbPreset.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrbPreset_lower(_ value: OrbPreset) -> RustBuffer {
-    return FfiConverterTypeOrbPreset.lower(value)
 }
 
 
@@ -18624,614 +15524,6 @@ public func FfiConverterTypeVisualShape_lower(_ value: VisualShape) -> RustBuffe
 
 
 
-
-public enum VoiceCallPhase: Equatable, Hashable {
-    
-    case connecting
-    case active
-    case ending
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceCallPhase: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceCallPhase: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceCallPhase
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallPhase {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .connecting
-        
-        case 2: return .active
-        
-        case 3: return .ending
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceCallPhase, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .connecting:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .active:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .ending:
-            writeInt(&buf, Int32(3))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallPhase_lift(_ buf: RustBuffer) throws -> VoiceCallPhase {
-    return try FfiConverterTypeVoiceCallPhase.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallPhase_lower(_ value: VoiceCallPhase) -> RustBuffer {
-    return FfiConverterTypeVoiceCallPhase.lower(value)
-}
-
-
-
-
-public enum VoiceCallWork: Equatable, Hashable {
-    
-    case idle
-    /**
-     * The orchestrator's Codex turn (or a delegation) is running.
-     */
-    case working
-    /**
-     * Codex asked the user something; answer it in the transcript.
-     */
-    case awaitingInput
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceCallWork: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceCallWork: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceCallWork
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallWork {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .idle
-        
-        case 2: return .working
-        
-        case 3: return .awaitingInput
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceCallWork, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .idle:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .working:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .awaitingInput:
-            writeInt(&buf, Int32(3))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallWork_lift(_ buf: RustBuffer) throws -> VoiceCallWork {
-    return try FfiConverterTypeVoiceCallWork.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceCallWork_lower(_ value: VoiceCallWork) -> RustBuffer {
-    return FfiConverterTypeVoiceCallWork.lower(value)
-}
-
-
-
-/**
- * Why a call ended without the user hanging up.
- */
-
-public enum VoiceEndReason: Equatable, Hashable {
-    
-    case microphoneDenied
-    case audioUnavailable
-    /**
-     * Codex on the host must be signed in with ChatGPT.
-     */
-    case signInRequired
-    case usageUnavailable
-    /**
-     * The host already has a voice call.
-     */
-    case busy
-    case hostUnavailable
-    /**
-     * The host's Vardoger is too old or has remote voice disabled.
-     */
-    case hostIncompatible
-    case connectionLost
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceEndReason: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceEndReason: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceEndReason
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceEndReason {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .microphoneDenied
-        
-        case 2: return .audioUnavailable
-        
-        case 3: return .signInRequired
-        
-        case 4: return .usageUnavailable
-        
-        case 5: return .busy
-        
-        case 6: return .hostUnavailable
-        
-        case 7: return .hostIncompatible
-        
-        case 8: return .connectionLost
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceEndReason, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .microphoneDenied:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .audioUnavailable:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .signInRequired:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .usageUnavailable:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .busy:
-            writeInt(&buf, Int32(5))
-        
-        
-        case .hostUnavailable:
-            writeInt(&buf, Int32(6))
-        
-        
-        case .hostIncompatible:
-            writeInt(&buf, Int32(7))
-        
-        
-        case .connectionLost:
-            writeInt(&buf, Int32(8))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceEndReason_lift(_ buf: RustBuffer) throws -> VoiceEndReason {
-    return try FfiConverterTypeVoiceEndReason.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceEndReason_lower(_ value: VoiceEndReason) -> RustBuffer {
-    return FfiConverterTypeVoiceEndReason.lower(value)
-}
-
-
-
-/**
- * Why a platform media operation failed.
- */
-
-public enum VoiceMediaFailure: Equatable, Hashable {
-    
-    case permissionDenied
-    case unavailable
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceMediaFailure: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceMediaFailure: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceMediaFailure
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaFailure {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .permissionDenied
-        
-        case 2: return .unavailable
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceMediaFailure, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .permissionDenied:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .unavailable:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaFailure_lift(_ buf: RustBuffer) throws -> VoiceMediaFailure {
-    return try FfiConverterTypeVoiceMediaFailure.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaFailure_lower(_ value: VoiceMediaFailure) -> RustBuffer {
-    return FfiConverterTypeVoiceMediaFailure.lower(value)
-}
-
-
-
-
-public enum VoiceMediaOperation: Equatable, Hashable {
-    
-    case prepare
-    case offer
-    case applyAnswer
-    case setMuted
-    case levels
-    case close
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceMediaOperation: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceMediaOperation: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceMediaOperation
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaOperation {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .prepare
-        
-        case 2: return .offer
-        
-        case 3: return .applyAnswer
-        
-        case 4: return .setMuted
-        
-        case 5: return .levels
-        
-        case 6: return .close
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceMediaOperation, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .prepare:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .offer:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .applyAnswer:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .setMuted:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .levels:
-            writeInt(&buf, Int32(5))
-        
-        
-        case .close:
-            writeInt(&buf, Int32(6))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaOperation_lift(_ buf: RustBuffer) throws -> VoiceMediaOperation {
-    return try FfiConverterTypeVoiceMediaOperation.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceMediaOperation_lower(_ value: VoiceMediaOperation) -> RustBuffer {
-    return FfiConverterTypeVoiceMediaOperation.lower(value)
-}
-
-
-
-/**
- * What the voice orb is showing, in call terms.
- */
-
-public enum VoiceOrb: Equatable, Hashable {
-    
-    /**
-     * No call: the calm form of a muted orchestrator.
-     */
-    case idle
-    case connecting
-    case listening
-    case speaking
-    case working
-    case awaitingInput
-    case muted
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceOrb: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceOrb: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceOrb
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceOrb {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .idle
-        
-        case 2: return .connecting
-        
-        case 3: return .listening
-        
-        case 4: return .speaking
-        
-        case 5: return .working
-        
-        case 6: return .awaitingInput
-        
-        case 7: return .muted
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceOrb, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .idle:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .connecting:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .listening:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .speaking:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .working:
-            writeInt(&buf, Int32(5))
-        
-        
-        case .awaitingInput:
-            writeInt(&buf, Int32(6))
-        
-        
-        case .muted:
-            writeInt(&buf, Int32(7))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceOrb_lift(_ buf: RustBuffer) throws -> VoiceOrb {
-    return try FfiConverterTypeVoiceOrb.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceOrb_lower(_ value: VoiceOrb) -> RustBuffer {
-    return FfiConverterTypeVoiceOrb.lower(value)
-}
-
-
-
-
-public enum VoiceSpeaker: Equatable, Hashable {
-    
-    case user
-    case assistant
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension VoiceSpeaker: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeVoiceSpeaker: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceSpeaker
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceSpeaker {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .user
-        
-        case 2: return .assistant
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: VoiceSpeaker, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .user:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .assistant:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceSpeaker_lift(_ buf: RustBuffer) throws -> VoiceSpeaker {
-    return try FfiConverterTypeVoiceSpeaker.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeVoiceSpeaker_lower(_ value: VoiceSpeaker) -> RustBuffer {
-    return FfiConverterTypeVoiceSpeaker.lower(value)
-}
-
-
-
 /**
  * Artwork treatment (desktop `NewThreadBackgroundEffect`).
  */
@@ -19875,30 +16167,6 @@ fileprivate struct FfiConverterOptionTypeAppshotLabel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeBillingPlanInfo: FfiConverterRustBuffer {
-    typealias SwiftType = BillingPlanInfo?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeBillingPlanInfo.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeBillingPlanInfo.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeChatConfig: FfiConverterRustBuffer {
     typealias SwiftType = ChatConfig?
 
@@ -20259,30 +16527,6 @@ fileprivate struct FfiConverterOptionTypeWorktreeSpec: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeAuthCallback: FfiConverterRustBuffer {
-    typealias SwiftType = AuthCallback?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeAuthCallback.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeAuthCallback.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeQueueGate: FfiConverterRustBuffer {
     typealias SwiftType = QueueGate?
 
@@ -20323,78 +16567,6 @@ fileprivate struct FfiConverterOptionTypeSendState: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSendState.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeVoiceEndReason: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceEndReason?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeVoiceEndReason.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeVoiceEndReason.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeVoiceMediaFailure: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceMediaFailure?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeVoiceMediaFailure.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeVoiceMediaFailure.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeVoiceSpeaker: FfiConverterRustBuffer {
-    typealias SwiftType = VoiceSpeaker?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeVoiceSpeaker.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeVoiceSpeaker.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -20478,56 +16650,6 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeAuthOrg: FfiConverterRustBuffer {
-    typealias SwiftType = [AuthOrg]
-
-    public static func write(_ value: [AuthOrg], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeAuthOrg.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AuthOrg] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [AuthOrg]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeAuthOrg.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeBillingPlanInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [BillingPlanInfo]
-
-    public static func write(_ value: [BillingPlanInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeBillingPlanInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BillingPlanInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [BillingPlanInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeBillingPlanInfo.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeBoxPrim: FfiConverterRustBuffer {
     typealias SwiftType = [BoxPrim]
 
@@ -20545,81 +16667,6 @@ fileprivate struct FfiConverterSequenceTypeBoxPrim: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeBoxPrim.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCaptionSpan: FfiConverterRustBuffer {
-    typealias SwiftType = [CaptionSpan]
-
-    public static func write(_ value: [CaptionSpan], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCaptionSpan.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CaptionSpan] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CaptionSpan]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCaptionSpan.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCloudAccountInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [CloudAccountInfo]
-
-    public static func write(_ value: [CloudAccountInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCloudAccountInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CloudAccountInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CloudAccountInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCloudAccountInfo.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCloudSessionInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [CloudSessionInfo]
-
-    public static func write(_ value: [CloudSessionInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCloudSessionInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CloudSessionInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CloudSessionInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCloudSessionInfo.read(from: &buf))
         }
         return seq
     }
@@ -20795,31 +16842,6 @@ fileprivate struct FfiConverterSequenceTypeFolderEntry: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFolderEntry.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeGithubRepoInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [GithubRepoInfo]
-
-    public static func write(_ value: [GithubRepoInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeGithubRepoInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [GithubRepoInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [GithubRepoInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeGithubRepoInfo.read(from: &buf))
         }
         return seq
     }
@@ -21228,6 +17250,31 @@ fileprivate struct FfiConverterSequenceTypeSectionView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeServerDevice: FfiConverterRustBuffer {
+    typealias SwiftType = [ServerDevice]
+
+    public static func write(_ value: [ServerDevice], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeServerDevice.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ServerDevice] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ServerDevice]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeServerDevice.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSessionRow: FfiConverterRustBuffer {
     typealias SwiftType = [SessionRow]
 
@@ -21478,31 +17525,6 @@ fileprivate struct FfiConverterSequenceTypeUserInputQuestion: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeVaultConnectionInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [VaultConnectionInfo]
-
-    public static func write(_ value: [VaultConnectionInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeVaultConnectionInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultConnectionInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [VaultConnectionInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeVaultConnectionInfo.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeVisualControl: FfiConverterRustBuffer {
     typealias SwiftType = [VisualControl]
 
@@ -21709,77 +17731,6 @@ public func coreVersion() -> String  {
 })
 }
 /**
- * OAuth callback scheme (`vardoger`).
- */
-public func authCallbackScheme() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_auth_callback_scheme(uniffiCallStatus
-    )
-})
-}
-/**
- * Exchange an authorization code for an (unscoped) token pair.
- */
-public func authExchangeCode(edgeUrl: String, code: String)async throws  -> AuthExchange  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_func_auth_exchange_code(FfiConverterString.lower(edgeUrl),FfiConverterString.lower(code)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeAuthExchange_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-/**
- * Organizations the (unscoped) access token's user belongs to.
- */
-public func authListOrgs(edgeUrl: String, accessToken: String)async throws  -> [AuthOrg]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_func_auth_list_orgs(FfiConverterString.lower(edgeUrl),FfiConverterString.lower(accessToken)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeAuthOrg.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-/**
- * Production edge base URL.
- */
-public func authProductionEdgeUrl() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_auth_production_edge_url(uniffiCallStatus
-    )
-})
-}
-/**
- * Rotate the pair; `organization_id` scopes the access token to an org.
- */
-public func authRefresh(edgeUrl: String, refreshToken: String, organizationId: String?)async throws  -> AuthTokens  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_vardoger_mobile_fn_func_auth_refresh(FfiConverterString.lower(edgeUrl),FfiConverterString.lower(refreshToken),FfiConverterOptionString.lower(organizationId)
-                )
-            },
-            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
-            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
-            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeAuthTokens_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-/**
  * Static harness catalog (the device-unreachable fallback).
  */
 public func fallbackHarnesses() -> [HarnessInfo]  {
@@ -21809,17 +17760,6 @@ public func harnessLabel(harness: String) -> String  {
 })
 }
 /**
- * A JWT's `exp` claim (epoch seconds).
- */
-public func jwtExpiry(jwt: String) -> Int64?  {
-    return try!  FfiConverterOptionInt64.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_jwt_expiry(
-        FfiConverterString.lower(jwt),uniffiCallStatus
-    )
-})
-}
-/**
  * Largest attachment the composer may pick (bytes).
  */
 public func maxAttachmentBytes() -> UInt64  {
@@ -21835,17 +17775,6 @@ public func modelLabel(harness: String, model: String) -> String  {
     uniffi_vardoger_mobile_fn_func_model_label(
         FfiConverterString.lower(harness),
         FfiConverterString.lower(model),uniffiCallStatus
-    )
-})
-}
-/**
- * `code`/`state` (or the provider error) of a `vardoger://callback?…` URL.
- */
-public func parseAuthCallback(url: String) -> AuthCallback?  {
-    return try!  FfiConverterOptionTypeAuthCallback.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_parse_auth_callback(
-        FfiConverterString.lower(url),uniffiCallStatus
     )
 })
 }
@@ -21902,15 +17831,49 @@ public func relativeTimeLabel(atMs: Int64, nowMs: Int64) -> String  {
 })
 }
 /**
- * WorkOS AuthKit authorize URL (start of the web-auth session).
+ * The web-auth callback scheme (`vardoger`).
  */
-public func workosAuthorizeUrl(state: String) -> String  {
+public func authCallbackScheme() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
         uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_workos_authorize_url(
-        FfiConverterString.lower(state),uniffiCallStatus
+    uniffi_vardoger_mobile_fn_func_auth_callback_scheme(uniffiCallStatus
     )
 })
+}
+/**
+ * The account's devices, oldest first.
+ */
+public func serverDevices(serverUrl: String, token: String)async throws  -> [ServerDevice]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_vardoger_mobile_fn_func_server_devices(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token)
+                )
+            },
+            pollFunc: ffi_vardoger_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_vardoger_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_vardoger_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeServerDevice.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+/**
+ * Sign out: remove this device from the account. The platform forgets
+ * the saved sign-in whether or not the server could be reached.
+ */
+public func serverSignOut(serverUrl: String, token: String, deviceId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_vardoger_mobile_fn_func_server_sign_out(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token),FfiConverterString.lower(deviceId)
+                )
+            },
+            pollFunc: ffi_vardoger_mobile_rust_future_poll_void,
+            completeFunc: ffi_vardoger_mobile_rust_future_complete_void,
+            freeFunc: ffi_vardoger_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
 /**
  * [`AgentLoginRules`] for `harness` (`claude-code`, `codex`, …).
@@ -21932,26 +17895,6 @@ public func fileMentionLink(path: String, isDir: Bool) -> String  {
     uniffi_vardoger_mobile_fn_func_file_mention_link(
         FfiConverterString.lower(path),
         FfiConverterBool.lower(isDir),uniffiCallStatus
-    )
-})
-}
-/**
- * Codex voice styles to offer before a host reports its own.
- */
-public func defaultVoiceStyles() -> [String]  {
-    return try!  FfiConverterSequenceString.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_default_voice_styles(uniffiCallStatus
-    )
-})
-}
-/**
- * Hosts advertising this capability accept client-media voice calls.
- */
-public func voiceHostCapability() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_vardoger_mobile_fn_func_voice_host_capability(uniffiCallStatus
     )
 })
 }
@@ -22050,697 +17993,556 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_core_version() != 46096) {
+    if (uniffi_vardoger_mobile_checksum_func_core_version() != 28433) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_auth_callback_scheme() != 8202) {
+    if (uniffi_vardoger_mobile_checksum_func_fallback_harnesses() != 65466) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_auth_exchange_code() != 47073) {
+    if (uniffi_vardoger_mobile_checksum_func_fallback_models() != 39666) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_auth_list_orgs() != 21299) {
+    if (uniffi_vardoger_mobile_checksum_func_harness_label() != 22603) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_auth_production_edge_url() != 61532) {
+    if (uniffi_vardoger_mobile_checksum_func_max_attachment_bytes() != 16586) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_auth_refresh() != 53630) {
+    if (uniffi_vardoger_mobile_checksum_func_model_label() != 24242) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_fallback_harnesses() != 7289) {
+    if (uniffi_vardoger_mobile_checksum_func_parse_user_message() != 51704) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_fallback_models() != 37563) {
+    if (uniffi_vardoger_mobile_checksum_func_project_color_count() != 37863) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_harness_label() != 26297) {
+    if (uniffi_vardoger_mobile_checksum_func_project_color_index() != 36949) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_jwt_expiry() != 29460) {
+    if (uniffi_vardoger_mobile_checksum_func_reasoning_label() != 54022) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_max_attachment_bytes() != 43171) {
+    if (uniffi_vardoger_mobile_checksum_func_relative_time_label() != 48892) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_model_label() != 26905) {
+    if (uniffi_vardoger_mobile_checksum_func_auth_callback_scheme() != 8370) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_parse_auth_callback() != 22318) {
+    if (uniffi_vardoger_mobile_checksum_func_server_devices() != 29379) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_parse_user_message() != 19553) {
+    if (uniffi_vardoger_mobile_checksum_func_server_sign_out() != 7062) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_project_color_count() != 30925) {
+    if (uniffi_vardoger_mobile_checksum_func_agent_login_rules() != 23947) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_project_color_index() != 14874) {
+    if (uniffi_vardoger_mobile_checksum_func_file_mention_link() != 16935) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_reasoning_label() != 22513) {
+    if (uniffi_vardoger_mobile_checksum_func_debug_line_starts() != 5624) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_relative_time_label() != 32740) {
+    if (uniffi_vardoger_mobile_checksum_func_layout_fixture_markdown() != 65180) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_workos_authorize_url() != 35994) {
+    if (uniffi_vardoger_mobile_checksum_func_math_font_data() != 43954) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_agent_login_rules() != 18451) {
+    if (uniffi_vardoger_mobile_checksum_func_wallpaper_render() != 21779) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_file_mention_link() != 14340) {
+    if (uniffi_vardoger_mobile_checksum_func_wallpaper_safe_opacity() != 6163) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_default_voice_styles() != 30650) {
+    if (uniffi_vardoger_mobile_checksum_method_clientlistener_on_event() != 37890) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_voice_host_capability() != 32424) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_archive_session() != 20230) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_debug_line_starts() != 43822) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_archived_sessions() != 17213) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_layout_fixture_markdown() != 37734) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_assign_section() != 33722) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_math_font_data() != 16862) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_child_sessions() != 6432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_wallpaper_render() != 28318) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_close_session() != 58825) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_func_wallpaper_safe_opacity() != 57056) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_connectivity() != 9731) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_captionfader_frame() != 19899) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_project() != 41403) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_clientlistener_on_event() != 55106) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_section() != 15545) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_archive_session() != 22530) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_session() != 27284) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_archived_sessions() != 33517) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_worktree() != 5100) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_assign_section() != 63363) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_project() != 61939) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_child_sessions() != 10159) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_section() != 58782) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_close_session() != 11270) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_session() != 12130) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_cloud_models() != 32016) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_id() != 8191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_connectivity() != 51284) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_devices() != 57953) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_project() != 59427) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_execution_devices() != 7536) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_section() != 53295) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_front_page() != 14044) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_session() != 13340) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_is_demo() != 42901) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_worktree() != 42932) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_folders() != 55113) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_project() != 3844) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_harnesses() != 16713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_section() != 25270) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_models() != 34032) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_delete_session() != 31581) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_refs() != 29107) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_id() != 9469) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_mark_seen() != 42521) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_devices() != 57985) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_move_pin() != 54284) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_execution_devices() != 15578) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_background() != 57107) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_front_page() != 3792) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_background_idle() != 60720) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_is_demo() != 28119) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_foreground() != 37397) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_folders() != 2324) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_open_session() != 44183) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_harnesses() != 2345) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_org_id() != 35797) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_models() != 23103) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_pin_session() != 185) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_list_refs() != 27606) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_pin_session_at() != 19136) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_mark_seen() != 64234) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_place_session() != 957) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_move_pin() != 26081) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_preload_sessions() != 57335) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_network_path_changed() != 38164) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_project() != 40203) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_background() != 34188) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_projectless_sessions() != 31832) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_background_idle() != 33519) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_projects() != 37681) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_on_foreground() != 37345) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_pull_requests() != 40002) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_open_session() != 32134) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_read_attachment() != 28566) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_org_id() != 50248) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_project() != 7428) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_pin_session() != 14361) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_section() != 62692) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_pin_session_at() != 16727) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_session() != 58447) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_place_session() != 55306) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_search() != 37862) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_preload_sessions() != 4026) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_search_files() != 58572) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_project() != 50153) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_session() != 8348) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_projectless_sessions() != 26434) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_session_config() != 25631) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_projects() != 15952) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_session_row() != 41617) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_pull_requests() != 6395) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_network_online() != 46056) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_read_attachment() != 50982) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_section_collapsed() != 1822) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_register_push_target() != 33942) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_session_config() != 10946) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_project() != 6571) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_shutdown() != 12934) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_section() != 28642) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_sleep_session() != 45818) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_rename_session() != 49666) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_stop_waiting() != 431) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_search() != 33140) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_switch_ref() != 2381) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_search_files() != 31096) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_switch_session_ref() != 35930) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_session() != 12772) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_unarchive_session() != 13631) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_session_config() != 4276) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_unpin_session() != 12406) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_session_row() != 10938) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_upload_attachment() != 59723) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_network_online() != 33835) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_user_id() != 1090) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_section_collapsed() != 55017) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_workspace() != 52432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_session_config() != 56055) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_workspace_revision() != 53208) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_shutdown() != 4352) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_side_chat() != 45478) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_sleep_session() != 47154) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_fork_side_chat() != 21694) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_stop_waiting() != 28732) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_activate_account() != 21823) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_switch_ref() != 45706) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_agent_accounts() != 3929) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_switch_session_ref() != 42409) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_forget_account() != 8410) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_unarchive_session() != 9932) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_cancel() != 36005) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_unpin_session() != 9102) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_complete() != 46621) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_unregister_push_target() != 55720) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_poll() != 57065) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_update_tokens() != 39229) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_start() != 21879) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_upload_attachment() != 21501) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_harness_enabled() != 40576) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_user_id() != 27711) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_attach_terminal() != 8074) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_warm_direct() != 53016) {
+    if (uniffi_vardoger_mobile_checksum_method_coreclient_open_terminal() != 50802) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_workspace() != 42501) {
+    if (uniffi_vardoger_mobile_checksum_method_uploadprogress_on_progress() != 5682) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_workspace_revision() != 48105) {
+    if (uniffi_vardoger_mobile_checksum_method_serversignin_finish() != 24663) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_billing_checkout() != 44997) {
+    if (uniffi_vardoger_mobile_checksum_method_serversignin_url() != 15613) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_billing_portal() != 46565) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_subagents() != 3491) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_billing_status() != 46884) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_begin_queued_edit() != 5977) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_cloud_enable() != 14325) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_chat_id() != 18975) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_cloud_session_action() != 15998) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_clear_queue_error() != 37763) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_cloud_sessions() != 26705) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_composer() != 3323) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_cloud_status() != 39260) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_deliver_queued_now() != 63589) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_cloud_project() != 24057) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_enqueue() != 32629) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_cloud_session() != 22992) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_finish_queued_edit() != 54222) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_github_branches() != 21291) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_interrupt() != 38596) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_github_connect_poll() != 35425) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_mark_seen() != 48964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_github_connect_start() != 57895) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_message_text() != 16510) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_github_repos() != 61075) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_move_queued() != 205) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_provider_login_cancel() != 34870) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_move_queued_by() != 33524) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_provider_login_finish() != 22587) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_remove_queued() != 57717) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_provider_login_start() != 44873) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_renew_queued_edit() != 29661) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_accounts() != 18199) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_respond_input() != 49499) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_activate() != 50516) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_retry_delivery() != 60596) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_forget() != 1028) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_send() != 31208) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_put_api_key() != 28404) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_send_queued_now() != 49468) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_status() != 51383) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_set_view_attached() != 21678) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_vault_usage() != 58618) {
+    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_transcript_status() != 58036) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_create_side_chat() != 48923) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_build_micros() != 14681) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_fork_side_chat() != 15467) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_display() != 47177) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_activate_account() != 7247) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_index_at() != 54173) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_agent_accounts() != 45781) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_index_of() != 47193) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_forget_account() != 47260) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_message_text() != 5572) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_cancel() != 47230) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_placement() != 57191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_complete() != 32418) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_plain_text() != 6187) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_poll() != 8555) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_prepared_heap_bytes() != 20216) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_device_login_start() != 47566) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_revision() != 60492) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_set_harness_enabled() != 59215) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_row_count() != 42826) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_start_voice() != 62086) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_rows_in() != 4622) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_attach_terminal() != 239) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_style_count() != 56265) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_coreclient_open_terminal() != 53658) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_styles() != 39005) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_uploadprogress_on_progress() != 40458) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_total_height() != 6891) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_subagents() != 16247) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutframe_width() != 17532) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_begin_queued_edit() != 9014) {
+    if (uniffi_vardoger_mobile_checksum_method_layoutlistener_frame_ready() != 308) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_chat_id() != 51345) {
+    if (uniffi_vardoger_mobile_checksum_method_platformmeasurer_measure() != 39566) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_clear_queue_error() != 4521) {
+    if (uniffi_vardoger_mobile_checksum_method_platformmeasurer_measure_run() != 19697) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_composer() != 12678) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_attach() != 38034) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_deliver_queued_now() != 65003) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_attach_subagent() != 15699) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_dismiss_restored_note() != 26740) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_close() != 4110) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_enqueue() != 37832) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_frame() != 55107) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_finish_queued_edit() != 60901) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_debug_entries() != 2536) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_interrupt() != 42793) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_math() != 24689) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_mark_seen() != 7987) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_viewport() != 3635) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_message_text() != 60913) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_visual_source() != 65422) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_move_queued() != 39105) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_toggle() != 48678) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_move_queued_by() != 49631) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_toggle_detail() != 38345) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_remove_queued() != 25599) {
+    if (uniffi_vardoger_mobile_checksum_method_transcriptview_visual() != 700) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_remove_send() != 18915) {
+    if (uniffi_vardoger_mobile_checksum_method_terminallistener_changed() != 23503) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_renew_queued_edit() != 7655) {
+    if (uniffi_vardoger_mobile_checksum_method_terminallistener_bell() != 33553) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_respond_input() != 8132) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_clear_selection() != 29465) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_retry_delivery() != 40707) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_click() != 27959) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_send() != 6874) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_close() != 59986) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_send_queued_now() != 62831) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_detach() != 43703) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_set_view_attached() != 11843) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_extend_selection() != 25806) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_sessionhandle_transcript_status() != 12910) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_frame() != 19567) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicecall_complete_media() != 130) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_info() != 44245) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicecall_set_muted() != 41942) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_is_direct() != 63260) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicecall_stop() != 33696) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_paste() != 20937) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicemedialistener_on_request() != 10473) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_phase() != 23614) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicesessionlistener_on_voice_state() != 7593) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_press() != 18919) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_voicesessionlistener_on_voice_closed() != 14100) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_resize() != 1634) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_build_micros() != 17231) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_revision() != 10839) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_display() != 61509) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_scroll_to_position() != 51712) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_index_at() != 7764) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_select() != 14780) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_index_of() != 52386) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_selection() != 39597) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_message_text() != 60311) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_set_dark() != 51460) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_placement() != 14501) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_set_focused() != 4220) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_plain_text() != 48003) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_text() != 14466) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_prepared_heap_bytes() != 13545) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_title() != 61771) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_revision() != 35752) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_type_text() != 61779) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_row_count() != 53856) {
+    if (uniffi_vardoger_mobile_checksum_method_terminalsession_wheel() != 23888) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_rows_in() != 18475) {
+    if (uniffi_vardoger_mobile_checksum_method_visuallistener_display() != 54153) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_style_count() != 46371) {
+    if (uniffi_vardoger_mobile_checksum_method_visuallistener_frame() != 49168) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_styles() != 21725) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_activate() != 2110) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_total_height() != 27147) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_attach() != 45556) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutframe_width() != 16219) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_detach() != 32788) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_layoutlistener_frame_ready() != 31990) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_pointer() != 46842) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_platformmeasurer_measure() != 59931) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_set_appearance() != 59107) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_platformmeasurer_measure_run() != 60773) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_slide() != 24002) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_attach() != 3138) {
+    if (uniffi_vardoger_mobile_checksum_method_visualsession_title() != 36385) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_attach_subagent() != 48195) {
+    if (uniffi_vardoger_mobile_checksum_constructor_coreclient_new() != 47596) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_close() != 21021) {
+    if (uniffi_vardoger_mobile_checksum_constructor_serversignin_new() != 16269) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_frame() != 19133) {
+    if (uniffi_vardoger_mobile_checksum_constructor_textsystem_new() != 1075) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_debug_entries() != 54762) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_math() != 28799) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_viewport() != 43528) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_set_visual_source() != 22890) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_toggle() != 51051) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_toggle_detail() != 17098) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_transcriptview_visual() != 55147) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_orbrenderer_next_frame() != 6064) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_orbrenderer_set_audio_levels() != 53067) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_orbrenderer_set_orb() != 18211) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminallistener_changed() != 61898) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminallistener_bell() != 37692) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_clear_selection() != 21594) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_click() != 11833) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_close() != 29698) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_detach() != 65237) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_extend_selection() != 45725) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_frame() != 53573) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_info() != 8072) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_is_direct() != 18472) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_paste() != 28012) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_phase() != 64436) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_press() != 56661) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_resize() != 699) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_revision() != 13209) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_scroll_to_position() != 4743) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_select() != 8881) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_selection() != 61503) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_set_dark() != 45170) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_set_focused() != 3922) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_text() != 16779) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_title() != 3478) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_type_text() != 34975) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_terminalsession_wheel() != 32525) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visuallistener_display() != 33821) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visuallistener_frame() != 6525) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_activate() != 24011) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_attach() != 52504) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_detach() != 6554) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_pointer() != 37846) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_set_appearance() != 2236) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_slide() != 15641) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_method_visualsession_title() != 12743) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_constructor_captionfader_new() != 15591) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_constructor_coreclient_new() != 27504) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_constructor_textsystem_new() != 55727) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_constructor_transcriptview_new() != 26914) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_vardoger_mobile_checksum_constructor_orbrenderer_new() != 46989) {
+    if (uniffi_vardoger_mobile_checksum_constructor_transcriptview_new() != 14396) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -22750,8 +18552,6 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitTerminalListener()
     uniffiCallbackInitUploadProgress()
     uniffiCallbackInitVisualListener()
-    uniffiCallbackInitVoiceMediaListener()
-    uniffiCallbackInitVoiceSessionListener()
     return InitializationResult.ok
 }()
 

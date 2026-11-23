@@ -413,14 +413,11 @@ final class SidebarViewController: UIViewController, UISearchResultsUpdating {
     private let list: SessionsViewController
     private let nav: UINavigationController
     private let search = UISearchController(searchResultsController: nil)
-    private var voiceBar: VoiceBarItem?
     /// A zero-size, invisible toolbar item: where it lands is the middle of
     /// the toolbar's row. iOS 26 draws the toolbar outside `nav.toolbar`
     /// (that view isn't even in the window), so the row can't be measured
     /// any other public way.
     private let toolbarProbe = UIView(frame: .zero)
-    private var voiceToken: AnyObject?
-    private var workspaceToken: AnyObject?
 
     var currentChatId: String? {
         get { list.currentChatId }
@@ -489,19 +486,6 @@ final class SidebarViewController: UIViewController, UISearchResultsUpdating {
         probe.isAccessibilityElement = false
         list.toolbarItems = [settings, options, .flexibleSpace(), probe, compose]
         nav.isToolbarHidden = false
-        // Voice beside compose, once a host can run it.
-        let voiceBar = VoiceBarItem(app: app, host: self)
-        self.voiceBar = voiceBar
-        let syncVoice = { [weak self, weak voiceBar] in
-            guard let self, let voiceBar else { return }
-            let items = voiceBar.visible ? [settings, options, .flexibleSpace(), probe, voiceBar.item, compose] : [settings, options, .flexibleSpace(), probe, compose]
-            if self.list.toolbarItems?.count != items.count {
-                self.list.setToolbarItems(items, animated: self.view.window != nil)
-            }
-        }
-        voiceToken = app.voice.observe(syncVoice)
-        workspaceToken = app.observe(syncVoice)
-        syncVoice()
 
         // A hairline between the sidebar and the main column.
         let edge = UIView()

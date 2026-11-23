@@ -20,8 +20,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
     /// Shown beside another session (the inspector holds a side chat): it
     /// isn't the split's current session.
     var isCompanion = false
-    /// A Cloud chat out of credits says so once, above the composer.
-    private let creditsNotice = CloudCreditsNotice()
     private let bottom = UIStackView()
     private var bottomRest: NSLayoutConstraint?
     private let jump = Glass.circleButton(symbol: "arrow.down", size: 40, pointSize: 15)
@@ -58,27 +56,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         })
         companionsItem.accessibilityLabel = "Agents, side chats and terminals"
         companionsItem.accessibilityIdentifier = "session-companions"
-        // The session has its own composer, so the tab bar's voice control
-        // steps aside with the accessory; the call stays a tap away up here.
-        let voiceBar = VoiceBarItem(app: app, host: self)
-        self.voiceBar = voiceBar
-        // A custom view reads as horizontal-only; on iPhone Duo it joins ⋯ in
-        // the vertical bar.
-        #if compiler(>=6.4)
-        if #available(iOS 27.1, *) { voiceBar.item.axisBehavior = .verticalPreferred }
-        #endif
-        let menu = navigationItem.rightBarButtonItem!
-        let companions = companionsItem!
-        let syncVoice = { [weak self, weak voiceBar] in
-            guard let self, let voiceBar else { return }
-            let items = voiceBar.visible ? [menu, companions, voiceBar.item] : [menu, companions]
-            if self.navigationItem.rightBarButtonItems?.count != items.count {
-                self.navigationItem.setRightBarButtonItems(items, animated: self.view.window != nil)
-            }
-        }
-        voiceToken = app.voice.observe(syncVoice)
-        hostsToken = app.observe(syncVoice)
-        syncVoice()
+        navigationItem.rightBarButtonItems = [navigationItem.rightBarButtonItem!, companionsItem]
 
         list.frame = view.bounds
         list.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -86,16 +64,12 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         list.imageLoader = { [weak self] ref, iv in self?.source.loadImage(ref, into: iv) }
         list.imageFetcher = { [weak self] ref in await self?.source.image(ref) }
         // Hidden while following (the runway glide and tail spring travel).
-        // An error card's "Log in": that provider's sign-in, started at once.
+        // An error card's "Log in". ponytail: the phone's agent-account
+        // screens (Zeron's Providers, tangled with Cloud) were cut; sign the
+        // agent in on the machine until they come back.
         list.onAction = { [weak self] action in
-            guard let self, action == "sign-in", let target = self.source.signInTarget() else { return }
-            let accounts = AgentAccountsViewController(app: self.app, target: target, signIn: true)
-            let nav = UINavigationController(rootViewController: accounts)
-            if let sheet = nav.sheetPresentationController {
-                sheet.detents = [.medium(), .large()]
-                sheet.prefersGrabberVisible = true
-            }
-            self.present(nav, animated: true)
+            guard let self, action == "sign-in" else { return }
+            Toast.show("Sign the agent in on \(self.app.host?.name ?? "the computer")", in: self.view.window)
         }
         list.onSubagent = { [weak self] doc, title, running in
             guard let self else { return }
@@ -145,12 +119,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
             // desktop runway; a message queued behind a live turn keeps the
             // live turn's runway and just follows.
             let queued = self.shown.running && mode == .queue
-            // Out of credits, a Cloud send can't wake its machine: say so
-            // (with a way to add some) instead of a send that never lands.
-            if self.cloudOutOfCredits {
-                self.creditsNotice.nudge()
-                return .kept
-            }
             guard self.source.send(text: text, images: images, mode: mode) else { return .kept }
             // Sending puts the keyboard away (the composer rests as the capsule).
             DispatchQueue.main.async { self.composer.resignFirstResponder() }
@@ -177,12 +145,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
                 self.source.retryDelivery()
             }
         }
-        // Watched whatever the row says now: a just-created Cloud chat's row
-        // may not have arrived yet.
-        cloudToken = app.cloud.observe { [weak self] in
-            guard let self, self.isCloud else { return }
-            self.render(animated: true)
-        }
 
         bottom.axis = .vertical
         bottom.spacing = 8
@@ -193,12 +155,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         pillRow.axis = .horizontal
         pillRow.spacing = 6
         pillRow.alignment = .center
-        creditsNotice.onAddCredits = { [weak self] in
-            guard let self else { return }
-            CloudRoutes.openBilling(app: self.app, from: self)
-        }
-        creditsNotice.isHidden = true
-        for v in [creditsNotice, pillRow, queue, questions, composer] { bottom.addArrangedSubview(v) }
+        for v in [pillRow, queue, questions, composer] { bottom.addArrangedSubview(v) }
         questions.isHidden = true
         queue.isHidden = true
         // Hidden panels start dematerialized so their first appearance grows in.
@@ -397,9 +354,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
     /// shells, so the move doesn't read as closing the session.
     var relocating = false
     private var backgroundObserver: NSObjectProtocol?
-    private var voiceBar: VoiceBarItem?
-    private var voiceToken: AnyObject?
-    private var hostsToken: AnyObject?
 
     deinit {
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
@@ -777,29 +731,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         }
     }
 
-    private var cloudToken: AnyObject?
-
-    private var isCloud: Bool { app.row(chatId)?.isCloud == true }
-
-    /// Out of credits, the chat's Cloud machine can't start or wake.
-    private var cloudOutOfCredits: Bool { isCloud && app.cloud.outOfCredits }
-
-    /// A Cloud chat whose send can't land says why instead of a bare "Not
-    /// delivered": out of credits, the credits notice already does (the
-    /// pill steps aside); a failed machine, the pill names it.
-    private func cloudBanner(_ banner: SessionChrome.Banner) -> SessionChrome.Banner {
-        guard case .notDelivered = banner, isCloud else { return banner }
-        let cloud = app.cloud
-        cloud.refreshSessions()
-        if cloud.outOfCredits {
-            return .none
-        }
-        if let error = cloud.sessionError(chat: chatId, device: app.row(chatId)?.deviceId) {
-            return .failed("Cloud machine: \(error) · Tap to retry")
-        }
-        return banner
-    }
-
     private func render(animated: Bool) {
         let c = source.chrome
         let old = shown
@@ -817,9 +748,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         composer.chipMenus = Dictionary(uniqueKeysWithValues: c.chips.map { chip in
             (chip.id, { [weak self] in self?.source.chipMenu(chip.id) })
         })
-        // One banner for both the row's animation and its contents (the
-        // Cloud reading may turn a "not delivered" into nothing).
-        let banner: SessionChrome.Banner = editingQueueId != nil ? .editing : cloudBanner(c.banner)
+        let banner: SessionChrome.Banner = editingQueueId != nil ? .editing : c.banner
         let changes = {
             let asking = c.questions != nil
             self.questions.isHidden = !asking
@@ -830,7 +759,6 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
             self.pill.isHidden = banner == .none
             self.pill.superview?.isHidden = banner == .none && self.strip.state.isEmpty
             self.pill.banner = banner
-            self.creditsNotice.isHidden = !self.cloudOutOfCredits
             self.bottom.layoutIfNeeded()
             self.view.layoutIfNeeded()
         }
@@ -922,15 +850,13 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
 }
 
 extension UIViewController {
-    /// "Delete session?" — permanent, like the desktop's dialog; a Cloud
-    /// session's machine goes with it. `then` runs after the delete.
+    /// "Delete session?" — permanent, like the desktop's dialog. `then` runs
+    /// after the delete.
     func confirmDelete(app: AppModel?, _ id: String, then: @escaping () -> Void) {
         guard let app else { return }
         let row = app.row(id)
         let title = row.map { $0.hasTitle ? $0.title : "New session" } ?? "This session"
-        let message = row?.isCloud == true
-            ? "\u{201C}\(title)\u{201D} and its Cloud machine will be permanently deleted, with anything not pushed from it. This can\u{2019}t be undone."
-            : "\u{201C}\(title)\u{201D} will be permanently deleted. This can\u{2019}t be undone."
+        let message = "\u{201C}\(title)\u{201D} will be permanently deleted. This can\u{2019}t be undone."
         let alert = UIAlertController(title: "Delete session?", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
@@ -971,69 +897,6 @@ extension UIViewController {
     }
 }
 
-/// "Out of Cloud credits" with its one way forward, above a Cloud chat's
-/// composer while the balance is spent. A send nudges it.
-final class CloudCreditsNotice: UIView {
-    var onAddCredits: (() -> Void)?
-    private let glass = Glass.surface()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glass)
-        let icon = UIImageView(image: CloudUI.symbol("exclamationmark.triangle.fill", 13, weight: .semibold))
-        icon.tintColor = Palette.danger
-        icon.contentMode = .center
-        let label = UILabel()
-        label.text = "Out of Cloud credits"
-        label.font = Fonts.ui(.sansMedium, 14)
-        label.textColor = Palette.text
-        label.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
-        var c = UIButton.Configuration.filled()
-        c.title = "Add credits"
-        c.baseBackgroundColor = Palette.text
-        c.baseForegroundColor = Palette.background
-        c.cornerStyle = .capsule
-        c.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
-        c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
-            var a = a
-            a.font = Fonts.ui(.sansSemibold, 13)
-            return a
-        }
-        let button = UIButton(configuration: c, primaryAction: UIAction { [weak self] _ in self?.onAddCredits?() })
-        button.setContentHuggingPriority(.required, for: .horizontal)
-        button.setContentCompressionResistancePriority(.required, for: .horizontal)
-        button.accessibilityIdentifier = "add-credits"
-        let row = UIStackView(arrangedSubviews: [icon, label, button])
-        row.alignment = .center
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        glass.contentView.addSubview(row)
-        NSLayoutConstraint.activate([
-            glass.topAnchor.constraint(equalTo: topAnchor),
-            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
-            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 6),
-            row.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -6),
-            row.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 14),
-            row.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -6),
-        ])
-        accessibilityIdentifier = "cloud-credits-notice"
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// A send was refused: a short shake and a warning tap point at it.
-    func nudge() {
-        UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        guard !UIAccessibility.isReduceMotionEnabled else { return }
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, -2, 0]
-        shake.duration = 0.4
-        layer.add(shake, forKey: "nudge")
-    }
-}
 
 /// Small glass capsule above the composer: working/elapsed, offline, retry.
 final class StatusPill: UIControl {

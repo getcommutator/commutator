@@ -5,7 +5,7 @@ import XCTest
 /// refuses one anywhere else, leaving an empty chat behind.
 final class NewSessionWorktreeTests: XCTestCase {
     private func project(git: Bool) -> ProjectView {
-        ProjectView(id: "project", name: "notes", path: "/code/notes", colorIndex: 0, deviceId: "mac", deviceName: nil, deviceOnline: true, isCloud: false, githubRepo: nil, gitDetected: git, createdAtMs: 0, groupKey: "notes", groupName: "notes", indicator: .idle, unseenCount: 0, sessions: [])
+        ProjectView(id: "project", name: "notes", path: "/code/notes", colorIndex: 0, deviceId: "mac", deviceName: nil, deviceOnline: true, gitDetected: git, createdAtMs: 0, groupKey: "notes", groupName: "notes", indicator: .idle, unseenCount: 0, sessions: [])
     }
 
     private func draft(worktree: Bool, branch: String? = nil) -> NewSessionDraft {

@@ -6772,6 +6772,7 @@ dependencies = [
 name = "vardoger-client"
 version = "0.3.16"
 dependencies = [
+ "anyhow",
  "async-trait",
  "axum",
  "chrono",

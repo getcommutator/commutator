@@ -1,9 +1,16 @@
 # Vardoger for iOS
 
-A UIKit viewport onto the vardoger mesh, built on the Rust mobile core. The phone
-is a **peer device**: it mirrors the workspace registry, joins per-chat session
-rooms, and drives remote engines through the durable command ledger. No agent
-runs on the phone.
+A UIKit viewport onto one of your machines, built on the Rust mobile core. The
+phone signs in to your Vardoger server (Google, PKCE, back to
+`vardoger://auth`), picks one of the account's machines, and drives that
+machine's engine through the server's relay (`vardoger-client`'s
+`Credentials::Remote`). No agent runs on the phone.
+
+Ported from Zeron's iOS app. Cut, with no backend in Vardoger: Cloud (machines,
+GitHub, billing, vault logins, onboarding), the agent-accounts / Providers
+screens (tangled with Cloud; an error card's "Log in" says to sign in on the
+machine), voice and its Live Activity, push notifications (the server has no
+push API yet), and direct WebRTC terminals (terminals run over the relay).
 
 **Rust decides what to paint and where; Swift paints, scrolls and handles
 gestures.** Everything in Rust is platform-neutral — the future Android app
@@ -50,13 +57,8 @@ Vardoger/
   Threads/     Sessions (foldable sidebar sections)/folder/search lists,
                cells, new-project folder browser
   Shell/       Tab bar (Sessions, Settings, search; "New session" accessory
-               with live summary), sign-in
+               with live summary), sign-in, machine picker
   Debug/       Transcript lab + hitch meter
-VardogerLiveActivity/  Widget extension: the voice call's Live Activity (Dynamic
-               Island + Lock Screen), with the orb's states exported from
-               vardoger-orb as vector assets
-VardogerShared/   Compiled into the app and the extension: the activity's
-               attributes and its mute/end App Intents
 ```
 
 ### Companions
@@ -110,7 +112,7 @@ A session's subagents, side chats and terminals (`Companions/`):
 | `-no-relay-layer` | Behave as a build without the relay layer does: an old phone in an account of new devices (DEBUG) |
 | `-companions` / `-terminal [-terminal-demo]` / `-subagent <tool id>` / `-side-chat <id>` | With `-route chat:<id>`: open its companions panel, a terminal (typing a scripted demo), a subagent, or a side chat (DEBUG) |
 | `-signedout` | Clear stored credentials |
-| `-dev <userId> <orgId> [-edge <url>]` | Dev bearer against an `AUTH_MODE=dev` edge (e.g. `wrangler dev`); not persisted |
+| `-account <server url> <token> <device id> [-host <machine id>]` | A device token minted on a local server (`remote_stack`, below), as if signed in (DEBUG) |
 | `-harness <id>` | Default harness for new sessions (`mock` for live-stack tests) |
 | `-bench` (with `-lab`) | Display-link fling benchmark; writes `Documents/bench.json` |
 | `-measureopen` | Session open latency; writes `Documents/open.json` |
@@ -129,13 +131,15 @@ xcodebuild … -only-testing:VardogerUITests/SessionFlowTests test
 xcodebuild … -only-testing:VardogerUITests/ScrollPerformanceTests test
 ```
 
-Live stack (real edge + headless engine; see `VardogerUITests/LiveStackTests.swift`):
+Live stack (a local vardoger-server + an engine signed in to it, mock harness;
+Google can't sign in a server on localhost, so the example mints the phone's
+token and prints the launch arguments):
 
 ```sh
-(cd edge && npx wrangler dev --port 27650 --var AUTH_MODE:dev) &
-VARDOGER_DATA_DIR=/tmp/e2e VARDOGER_IPC_PORT=27811 VARDOGER_EDGE_URL=http://localhost:27650 \
-  VARDOGER_EDGE_TOKEN=alice@org1 VARDOGER_ORG_ID=org1 VARDOGER_HARNESS=mock target/debug/vardoger headless &
-TEST_RUNNER_VARDOGER_LIVE_EDGE=http://localhost:27650 xcodebuild … -only-testing:VardogerUITests/LiveStackTests test
+cargo run -p vardoger-client --example remote_stack -- /tmp/stack 8797
+# → ios launch args: -account http://127.0.0.1:8797 <token> <id> -host <machine> -harness mock
+TEST_RUNNER_VARDOGER_LIVE_ACCOUNT="http://127.0.0.1:8797 <token> <id>" TEST_RUNNER_VARDOGER_LIVE_HOST=<machine> \
+  xcodebuild … -only-testing:VardogerUITests/LiveStackTests test
 ```
 
 The test launches the app with `-harness mock`: a chat's configured harness
@@ -144,19 +148,9 @@ would run.
 
 ## Session notifications
 
-The edge sends them (`edge/src/push-notify.ts`, `registry-room.ts`): when a
-session's registry row changes it applies the desktop's rule (run finished,
-waiting on your input, run failed) and pushes to every phone that registered
-with `POST /registry/:org/push-target`. The app asks for permission the first
-time a session is started from the phone (or from Settings → Notifications),
-registers its APNs token with the choices from Settings, stays quiet while
-open, and opens the session a notification is tapped for.
-
-Setup once per deployment: an APNs auth key (Apple Developer → Keys →
-Apple Push Notifications service), then `wrangler secret put APNS_KEY_P8` (the
-`.p8` contents) and `wrangler secret put APNS_KEY_ID` in `edge/`. The
-TestFlight workflow enables the Push capability on the App ID itself.
-`/registry/:org/stats` shows registered phones and recent deliveries.
+Not yet: vardoger-server has no push API, so the app registers no APNs token
+(Zeron's PushNotifications.swift and the `aps-environment` entitlement were
+cut).
 
 ## TestFlight release
 

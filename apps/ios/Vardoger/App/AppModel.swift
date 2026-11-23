@@ -85,11 +85,8 @@ final class AppModel {
         var awaiting = 0
     }
 
-    @MainActor lazy var voice = RemoteVoiceController(app: self)
     /// Every chat's terminals (shells on their hosts).
     @MainActor lazy var terminals = TerminalStore(app: self)
-    /// Cloud for this account (status, GitHub, agent logins, billing).
-    @MainActor lazy var cloud = CloudStore(app: self)
     private(set) var client: CoreClient?
     private(set) var frontPage = FrontPage()
     private(set) var archived: [SessionRowVM] = []
@@ -106,9 +103,6 @@ final class AppModel {
     private var refreshScheduled = false
     private var clock: Timer?
     private let path = NWPathMonitor()
-    /// The network path's shape last seen (interfaces in order), so only a
-    /// real change re-pairs direct connections.
-    private var pathShape: String?
 
     var onSignedIn: (() -> Void)?
     var onSignOut: (() -> Void)?
@@ -145,47 +139,51 @@ final class AppModel {
 
     private static let newSessionDraftKey = "new-session"
 
+    /// This phone's sign-in to the account's Vardoger server (Keychain).
+    private(set) var account = SavedAccount.load()
+    /// The machine whose engine this phone drives (one of the account's).
+    private(set) var host: SavedHost? = SavedHost.load()
+
     var isSignedIn: Bool { client != nil }
     var isDemo: Bool { client?.isDemo() ?? false }
 
     init() {
         // Online/offline + interface changes cut sync backoff short.
         path.pathUpdateHandler = { [weak self] p in
-            // What a direct connection's path depends on: the interfaces in
-            // use and their order (Wi-Fi first, or cellular), and whether
-            // there's a route at all. Re-delivered paths with the same shape
-            // must not tear down a healthy direct link.
-            let shape = p.status == .satisfied
-                ? p.availableInterfaces.map { "\($0.type)/\($0.name)" }.joined(separator: ",") + (p.isExpensive ? "!" : "")
-                : ""
             DispatchQueue.main.async {
                 guard let self else { return }
                 #if DEBUG
-                // A simulator shares its Mac's network, so a rig plays airplane mode
-                // with this and an edge URL it can take away.
+                // A simulator shares its Mac's network, so a rig plays
+                // airplane mode with this.
                 if ProcessInfo.processInfo.arguments.contains("-network-offline") {
                     self.client?.setNetworkOnline(online: false)
                     return
                 }
                 #endif
                 self.client?.setNetworkOnline(online: p.status == .satisfied)
-                if let last = self.pathShape, last != shape, !shape.isEmpty {
-                    self.client?.networkPathChanged()
-                }
-                self.pathShape = shape
             }
         }
         path.start(queue: DispatchQueue(label: "dev.freethinkel.vardoger.path"))
         let args = ProcessInfo.processInfo.arguments
         #if DEBUG
-        // Test hooks (never in release builds): wipe the Keychain, or run
-        // against a local dev stack.
+        // Test hooks (never in release builds): wipe the sign-in, or use a
+        // device token minted on a local dev server (`-account <server url>
+        // <token> <device id> [-host <machine id>]`; Google can't sign in a
+        // local server).
         if args.contains("-signedout") {
-            Credentials.clearStored()
+            SavedAccount.clear()
+            SavedHost.clear()
+            account = nil
+            host = nil
         }
-        if let i = args.firstIndex(of: "-dev"), i + 2 < args.count {
-            start(.dev(userId: args[i + 1], orgId: args[i + 2]))
-            return
+        if let i = args.firstIndex(of: "-account"), i + 3 < args.count {
+            let a = SavedAccount(serverUrl: args[i + 1], token: args[i + 2], deviceId: args[i + 3], email: "dev@localhost", name: "Local dev")
+            a.save()
+            account = a
+            if let h = args.firstIndex(of: "-host"), h + 1 < args.count {
+                host = SavedHost(id: args[h + 1], name: args[h + 1])
+                host?.save()
+            }
         }
         #endif
         if args.contains("-demo") {
@@ -201,10 +199,10 @@ final class AppModel {
             // too: nothing folded.
             if i != nil { UserDefaults.standard.removeObject(forKey: "collapsedSections") }
         }
-        if args.contains("-demo") || args.contains("-route") && Credentials.stored() == nil {
+        if args.contains("-demo") || args.contains("-route") && account == nil {
             start(.demo(options: Self.demoOptions()))
-        } else if let stored = Credentials.stored() {
-            start(stored)
+        } else if let account, let host {
+            start(.remote(serverUrl: account.serverUrl, token: account.token, hostDeviceId: host.id))
         }
     }
 
@@ -225,14 +223,11 @@ final class AppModel {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("core", isDirectory: true)
     }
 
-    /// Local docs belong to one identity: another account/org starts from an
-    /// empty store (it must never see — or sync — the last one's cache).
-    private static func claimCoreDir(for credentials: Credentials) {
-        let owner: String
-        switch credentials {
-        case let .workOs(userId, orgId, _), let .dev(userId, orgId): owner = "\(userId)/\(orgId)"
-        case .demo: return
-        }
+    /// Local docs belong to one sign-in: another account (or server) starts
+    /// from an empty store (it must never see the last one's cache). Each
+    /// machine's engine mirrors into its own folder under it.
+    private static func claimCoreDir(for account: SavedAccount) {
+        let owner = "\(account.serverUrl)|\(account.deviceId)"
         let marker = coreDir.appendingPathComponent(".owner")
         if (try? String(contentsOf: marker, encoding: .utf8)) != owner {
             try? FileManager.default.removeItem(at: coreDir)
@@ -244,8 +239,11 @@ final class AppModel {
     @discardableResult
     private func start(_ credentials: Credentials) -> Bool {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = credentials.isDemo ? support.appendingPathComponent("demo", isDirectory: true) : Self.coreDir
-        if !credentials.isDemo { Self.claimCoreDir(for: credentials) }
+        var dir = support.appendingPathComponent("demo", isDirectory: true)
+        if case let .remote(_, _, hostDeviceId) = credentials, let account {
+            Self.claimCoreDir(for: account)
+            dir = Self.coreDir.appendingPathComponent("hosts", isDirectory: true).appendingPathComponent(hostDeviceId, isDirectory: true)
+        }
         // `-fresh-demo`: the demo from its fixtures alone, none of an earlier
         // run's writes (sleeps, archives) carried over.
         if credentials.isDemo, ProcessInfo.processInfo.arguments.contains("-fresh-demo") {
@@ -253,22 +251,17 @@ final class AppModel {
         }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let config = CoreConfig(
-            edgeUrl: Self.edgeURL,
             dataDir: dir.path,
-            deviceId: Self.deviceId,
+            // The server's id for this phone: what the engine sees it as.
+            deviceId: credentials.isDemo ? Self.deviceId : account?.deviceId ?? Self.deviceId,
             deviceName: UIDevice.current.name,
             platform: "ios",
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0",
-            relayLayer: Self.runsRelayLayer
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
         )
         do {
             client = try CoreClient(config: config, credentials: credentials, listener: bridge)
-            // Only real accounts persist; dev bearers come from launch args
-            // (and would be rejected by the production edge next launch).
-            if case .workOs = credentials { Credentials.store(credentials) }
             refreshWorkspace()
             client?.preloadSessions()
-            backfillProfile()
             clock?.invalidate()
             // Relative times ("4m") and 45s staleness age without events.
             clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refreshWorkspace() }
@@ -280,25 +273,6 @@ final class AppModel {
         }
     }
 
-    /// Whether this build follows relayed chats (docs/design/relay-mobile.md). The
-    /// room's answer decides the rest, so an edge with the flag off changes nothing.
-    /// `-no-relay-layer` behaves as a shipped build does, for testing an old phone in
-    /// an account of new devices.
-    static var runsRelayLayer: Bool {
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-no-relay-layer") { return false }
-        #endif
-        return true
-    }
-
-    /// `-edge <url>` points at a local `wrangler dev` edge; otherwise production.
-    static var edgeURL: String {
-        #if DEBUG
-        if let edge = Endpoints.debugOverride("-edge", key: "debugEdgeURL") { return edge }
-        #endif
-        return Endpoints.edgeURL.absoluteString
-    }
-
     static var deviceId: String {
         if let id = UserDefaults.standard.string(forKey: "deviceId") { return id }
         let id = "ios-" + UUID().uuidString.lowercased().prefix(8)
@@ -306,26 +280,57 @@ final class AppModel {
         return id
     }
 
-    /// WorkOS code → tokens → org (the first, or the only one) → client.
-    func signIn(code: String, chooseOrg: @escaping ([AuthOrg]) async -> AuthOrg?) async throws {
-        let edge = Self.edgeURL
-        let exchange = try await authExchangeCode(edgeUrl: edge, code: code)
-        let orgs = try await authListOrgs(edgeUrl: edge, accessToken: exchange.tokens.accessToken)
-        guard !orgs.isEmpty else { throw CoreError.Auth(message: "This account isn't in an organization yet.") }
-        guard let org = orgs.count == 1 ? orgs[0] : await chooseOrg(orgs) else { return }
-        let tokens = try await authRefresh(edgeUrl: edge, refreshToken: exchange.tokens.refreshToken, organizationId: org.organizationId)
-        let user = exchange.user
-        let name = [user.firstName, user.lastName].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " ")
-        AccountProfile(name: name.nonEmpty, email: user.email, orgName: org.name).save()
-        let started = await MainActor.run { start(.workOs(userId: exchange.user.id, orgId: org.organizationId, tokens: tokens)) }
-        guard started else { throw CoreError.Auth(message: "Couldn't open your workspace. Try signing in again.") }
-        await MainActor.run { onSignedIn?() }
+    /// The last server signed in to (the sign-in page's field).
+    static var lastServerURL: String? {
+        get { UserDefaults.standard.string(forKey: "lastServerURL") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastServerURL") }
+    }
+
+    /// Signed in to the server: next, pick the machine.
+    @MainActor func signedIn(_ a: ServerAccount) {
+        let saved = SavedAccount(serverUrl: a.serverUrl, token: a.token, deviceId: a.deviceId, email: a.email, name: a.name)
+        saved.save()
+        account = saved
+        Self.lastServerURL = a.serverUrl
+        onSignedIn?()
+    }
+
+    /// The account's machines (the picker's list), or why not.
+    func machines() async throws -> [ServerDevice] {
+        guard let account else { throw CoreError.Auth(message: "Signed out") }
+        return try await serverDevices(serverUrl: account.serverUrl, token: account.token)
+    }
+
+    /// Drive `machine`'s engine from now on.
+    @MainActor func choose(_ machine: ServerDevice) {
+        guard let account else { return }
+        let h = SavedHost(id: machine.id, name: machine.name)
+        h.save()
+        host = h
+        if start(.remote(serverUrl: account.serverUrl, token: account.token, hostDeviceId: h.id)) {
+            onSignedIn?()
+        }
+    }
+
+    /// Back to the machine picker (Settings › Machine): the account stays.
+    @MainActor func leaveMachine() {
+        terminals.signOut()
+        client?.shutdown()
+        client = nil
+        clock?.invalidate()
+        SavedHost.clear()
+        host = nil
+        resetState()
+        onSignedIn?()
     }
 
     /// The user signing out: this device forgets the account's local docs.
     @MainActor func signOut() {
-        voice.stop()
         forgetOnSignOut = true
+        // The server forgets this phone too; signed out here either way.
+        if let account {
+            Task { try? await serverSignOut(serverUrl: account.serverUrl, token: account.token, deviceId: account.deviceId) }
+        }
         onSignOut?()
     }
 
@@ -335,19 +340,23 @@ final class AppModel {
     private var forgetOnSignOut = false
 
     @MainActor func signOutLocally() {
-        voice.stop()
         terminals.signOut()
         endDeliveryBackgroundTask()
         lastDeliveryActivity = .distantPast
         client?.shutdown()
         client = nil
-        Credentials.clearStored()
-        AccountProfile.clear()
+        SavedAccount.clear()
+        SavedHost.clear()
+        account = nil
+        host = nil
         clock?.invalidate()
         if forgetOnSignOut { try? FileManager.default.removeItem(at: Self.coreDir) }
-        cloud.reset()
         forgetOnSignOut = false
-        // Nothing of the account stays in memory.
+        resetState()
+    }
+
+    /// Nothing of the account (or machine) stays in memory.
+    private func resetState() {
         frontPage = FrontPage()
         archived = []
         rows = [:]
@@ -455,10 +464,6 @@ final class AppModel {
         case let .connectivityChanged(c):
             connectivity = c
             observers.values.forEach { $0() }
-        case let .authRefreshed(tokens):
-            Credentials.updateTokens(tokens)
-        case .authExpired:
-            onSignOut?()
         }
     }
 
@@ -806,40 +811,22 @@ final class AppModel {
 
     // MARK: New session
 
-    /// Who's signed in, by name (never the WorkOS user / org ids).
+    /// Who's signed in, by name.
     var accountName: String {
         if isDemo { return "Demo" }
-        guard client != nil else { return "Signed out" }
-        let p = AccountProfile.load()
-        return p.name ?? p.email ?? "Signed in"
+        guard let account else { return "Signed out" }
+        return account.name ?? account.email
     }
 
     var accountDetail: String {
         if isDemo { return "Offline demo workspace" }
-        let p = AccountProfile.load()
-        return [p.name != nil ? p.email : nil, p.orgName].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "Vardoger account"
-    }
-
-    /// Logins from before profiles were saved: recover the org name (the
-    /// user's name comes back at the next sign-in).
-    private func backfillProfile() {
-        guard case let .workOs(_, orgId, tokens)? = Credentials.stored(), AccountProfile.load().orgName == nil else { return }
-        let edge = Self.edgeURL
-        Task { @MainActor [weak self] in
-            guard let orgs = try? await authListOrgs(edgeUrl: edge, accessToken: tokens.accessToken),
-                  let org = orgs.first(where: { $0.organizationId == orgId })
-            else { return }
-            var p = AccountProfile.load()
-            p.orgName = org.name
-            p.save()
-            self?.observers.values.forEach { $0() }
-        }
+        guard let account else { return "Vardoger account" }
+        let server = URL(string: account.serverUrl)?.host ?? account.serverUrl
+        return [account.name != nil ? account.email : nil, server].compactMap { $0 }.joined(separator: " · ")
     }
 
     @MainActor var projectOptions: [ProjectOption] {
-        // A Cloud project runs only on Cloud: hidden when this account isn't
-        // offered Cloud (or no longer is).
-        rawProjects.filter { !$0.isCloud || isDemo || cloud.available }.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), isCloud: $0.isCloud, githubRepo: $0.githubRepo) }
+        rawProjects.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex)) }
     }
 
     var hostOptions: [HostOption] {
@@ -860,35 +847,6 @@ final class AppModel {
             out += models.map { ModelChoice(harness: h.id, harnessLabel: h.label, id: $0.id, label: $0.label, efforts: $0.reasoningLevels, detail: $0.description) }
         }
         return out
-    }
-
-    /// A Cloud chat created whose first message didn't go out yet.
-    private var unsentCloudChat: (key: String, chatId: String)?
-
-    /// The agents Cloud runs: every built-in one (mirrors
-    /// `vardoger_proto::CLOUD_HARNESSES`).
-    static let cloudHarnesses = [
-        "claude-code", "codex", "cursor", "devin", "grok", "hermes", "fx", "pi", "opencode", "antigravity", "muse",
-    ]
-
-    /// Cloud's models, as the edge lists them (no computer or Cloud machine
-    /// is asked).
-    func cloudModels() async -> [ModelChoice] {
-        guard let client else { return [] }
-        // One request per agent, all at once; the list keeps the agents' order.
-        let lists = await withTaskGroup(of: (Int, [ModelChoice]).self) { group in
-            for (i, h) in Self.cloudHarnesses.enumerated() {
-                group.addTask {
-                    let label = HarnessNames.label(h)
-                    let models = await client.cloudModels(harness: h).map { ModelChoice(harness: h, harnessLabel: label, id: $0.id, label: $0.label, efforts: $0.reasoningLevels, detail: $0.description) }
-                    return (i, models)
-                }
-            }
-            var byIndex: [Int: [ModelChoice]] = [:]
-            for await (i, models) in group { byIndex[i] = models }
-            return byIndex
-        }
-        return Self.cloudHarnesses.indices.flatMap { lists[$0] ?? [] }
     }
 
     func listFolders(deviceId: String, path: String?) async -> FolderListing? {
@@ -917,39 +875,6 @@ final class AppModel {
         guard let client, let p = rawProjects.first(where: { $0.id == projectId }) else { return [] }
         let refs = (try? await client.listRefs(deviceId: p.deviceId, repoPath: p.path)) ?? []
         return refs.sorted { $0.current && !$1.current }.map(\.name)
-    }
-
-    /// A session on its own Cloud machine in `draft.projectId` (a Cloud
-    /// project, or any project whose repository Cloud reaches): the edge
-    /// mints the machine, then the first message is sent as usual — it
-    /// waits in the chat until the machine is up.
-    @MainActor
-    func createCloudSession(draft: NewSessionDraft, text: String, images: [StagedImage]) async throws -> String {
-        guard let client, let spaceId = draft.projectId else { throw CoreError.Closed }
-        let config = ChatConfig(harness: draft.harness, model: draft.model, reasoning: draft.effort, modelOptions: [:], sandbox: .workspaceWrite)
-        // A retry after a failed first send reuses that chat (and machine)
-        // instead of starting a second one.
-        let chatId: String
-        // Only while nothing the chat was made with changed (its project,
-        // branch, provider, model): otherwise that's a different chat.
-        let key = "\(spaceId)|\(draft.branch ?? "")|\(draft.harness)|\(draft.model ?? "")"
-        if let unsent = unsentCloudChat, unsent.key == key, client.sessionRow(chatId: unsent.chatId) != nil {
-            chatId = unsent.chatId
-        } else {
-            chatId = try await client.createCloudSession(spaceId: spaceId, config: config, branch: draft.branch, title: nil)
-            unsentCloudChat = (key, chatId)
-        }
-        let handle = try client.openSession(chatId: chatId)
-        _ = try handle.send(request: SendRequest(text: text, attachments: images.map(\.outgoing), worktree: nil, busy: .queue))
-        unsentCloudChat = nil
-        noteDeliveryActivity()
-        refreshWorkspace()
-        return chatId
-    }
-
-    /// Branches of a Cloud project's repository (GitHub's, through Cloud).
-    func cloudBranches(repo: String) async -> [String] {
-        (try? await client?.githubBranches(repo: repo)) ?? []
     }
 
     /// The worktree a new session starts in. Only a git project can make one:
@@ -1003,55 +928,56 @@ private final class ListenerBridge: ClientListener, @unchecked Sendable {
     }
 }
 
-// MARK: - Credential persistence (Keychain)
+// MARK: - Sign-in persistence (Keychain)
 
 extension Credentials {
     var isDemo: Bool {
         if case .demo = self { return true }
         return false
     }
+}
+
+/// This phone's sign-in to the account's server: its bearer (Keychain).
+struct SavedAccount: Codable, Equatable {
+    var serverUrl: String
+    var token: String
+    var deviceId: String
+    var email: String
+    var name: String?
 
     private static let service = "dev.freethinkel.vardoger.ios"
-    private static let account = "credentials"
+    private static let account = "account"
 
-    static func stored() -> Credentials? {
-        guard let data = Keychain.load(service: service, account: account),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-        else { return nil }
-        switch dict["kind"] {
-        case "workos":
-            guard let u = dict["userId"], let o = dict["orgId"], let a = dict["access"], let r = dict["refresh"] else { return nil }
-            return .workOs(userId: u, orgId: o, tokens: AuthTokens(accessToken: a, refreshToken: r))
-        case "dev":
-            guard let u = dict["userId"], let o = dict["orgId"] else { return nil }
-            return .dev(userId: u, orgId: o)
-        default:
-            return nil
-        }
+    static func load() -> SavedAccount? {
+        Keychain.load(service: service, account: account).flatMap { try? JSONDecoder().decode(SavedAccount.self, from: $0) }
     }
 
-    static func store(_ c: Credentials) {
-        var dict: [String: String] = [:]
-        switch c {
-        case let .workOs(userId, orgId, tokens):
-            dict = ["kind": "workos", "userId": userId, "orgId": orgId, "access": tokens.accessToken, "refresh": tokens.refreshToken]
-        case let .dev(userId, orgId):
-            dict = ["kind": "dev", "userId": userId, "orgId": orgId]
-        case .demo:
-            return
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: dict) {
-            Keychain.save(data, service: service, account: account)
-        }
+    func save() {
+        if let data = try? JSONEncoder().encode(self) { Keychain.save(data, service: Self.service, account: Self.account) }
     }
 
-    static func updateTokens(_ tokens: AuthTokens) {
-        guard case let .workOs(userId, orgId, _) = stored() else { return }
-        store(.workOs(userId: userId, orgId: orgId, tokens: tokens))
-    }
-
-    static func clearStored() {
+    static func clear() {
         Keychain.delete(service: service, account: account)
+    }
+}
+
+/// The machine picked to drive (not a secret: UserDefaults).
+struct SavedHost: Codable, Equatable {
+    var id: String
+    var name: String
+
+    private static let key = "host"
+
+    static func load() -> SavedHost? {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(SavedHost.self, from: $0) }
+    }
+
+    func save() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: Self.key)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
     }
 }
 
@@ -1087,29 +1013,6 @@ enum Keychain {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(q as CFDictionary)
-    }
-}
-
-/// Display identity of the signed-in account (Keychain, next to the
-/// credentials): the client itself only knows ids.
-struct AccountProfile: Codable {
-    var name: String?
-    var email: String?
-    var orgName: String?
-
-    private static let service = "dev.freethinkel.vardoger.ios"
-    private static let account = "profile"
-
-    static func load() -> AccountProfile {
-        Keychain.load(service: service, account: account).flatMap { try? JSONDecoder().decode(AccountProfile.self, from: $0) } ?? AccountProfile()
-    }
-
-    func save() {
-        if let data = try? JSONEncoder().encode(self) { Keychain.save(data, service: Self.service, account: Self.account) }
-    }
-
-    static func clear() {
-        Keychain.delete(service: service, account: account)
     }
 }
 

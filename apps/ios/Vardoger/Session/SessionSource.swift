@@ -102,8 +102,6 @@ protocol SessionSource: AnyObject {
     /// The model picker sheet, when this source has one (else the model
     /// chip's menu).
     func modelPicker() -> UIViewController?
-    /// Where this chat's provider signs in (an error card's "Log in").
-    func signInTarget() -> AgentAccountsViewController.Target?
     func loadImage(_ reference: String, into view: UIImageView)
     /// An attachment's picture, for opening it full size (an image chip).
     func image(_ reference: String) async -> UIImage?
@@ -266,5 +264,4 @@ extension SessionSource {
     /// Nothing was ever sent or queued here.
     var isUnused: Bool { false }
     func modelPicker() -> UIViewController? { nil }
-    func signInTarget() -> AgentAccountsViewController.Target? { nil }
 }
