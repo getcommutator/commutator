@@ -9,9 +9,19 @@
 //! caught on the way (a deep link another app also claims, a pasted code
 //! shoulder-surfed) is useless on its own.
 //!
+//! How each client signs in (all PKCE: the client keeps the verifier):
+//! - a computer, `vardoger login`: `redirect` is a loopback callback; the
+//!   engine redeems the code, then sends the browser on to `/signed-in`
+//!   (`--paste`/SSH: no `redirect`, the code is shown to paste);
+//! - a phone or desktop app: opens `/auth/google?...&kind=client&redirect=
+//!   vardoger://auth` in the system sign-in sheet (iOS
+//!   `ASWebAuthenticationSession`, Android Custom Tabs), which closes on
+//!   that redirect and hands the app `?code=`; the app redeems it.
+//!
 //! Routes:
 //! - `GET  /`: the web page: sign in with Google, see and remove devices
-//!   (`web.rs`; `/auth/web`, `/web/devices/{id}/remove`, `/web/sign-out`).
+//!   (`web.rs`; `/auth/web`, `/web/devices/{id}/remove`, `/web/sign-out`),
+//!   and `/signed-in`, where `vardoger login` leaves the browser.
 //! - `GET  /auth/google?challenge&name&kind[&redirect]`: start sign-in.
 //! - `GET  /auth/google/callback`: Google's redirect; sends the one-time code
 //!   to `redirect`, or shows it to paste.
@@ -292,6 +302,7 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/", get(web::home))
         .route("/auth/web", get(web::start))
+        .route("/signed-in", get(web::signed_in_page))
         .route("/web/devices/:id/remove", post(web::remove_device))
         .route("/web/sign-out", post(web::sign_out))
         .route("/auth/google", get(start_sign_in))

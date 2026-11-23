@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
@@ -97,6 +97,39 @@ pub(crate) async fn start(State(app): State<Arc<App>>) -> Response {
             expires: Instant::now() + SIGN_IN_TTL,
             web: true,
         },
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct SignedInQuery {
+    error: Option<String>,
+}
+
+/// Where a computer's `vardoger login` sends the browser once it has its
+/// token (or failed to get one). Apps on a phone never see it: their
+/// sign-in sheet closes on the `vardoger://` redirect.
+pub(crate) async fn signed_in_page(Query(q): Query<SignedInQuery>) -> Response {
+    let (title, text) = if q.error.is_some() {
+        (
+            "Sign-in didn't finish",
+            "Vardoger couldn't finish signing in. The terminal says why.",
+        )
+    } else {
+        (
+            "You're signed in",
+            "Return to Vardoger. You can close this tab.",
+        )
+    };
+    page(
+        &format!("{title} · Vardoger"),
+        &format!(
+            r#"<main>
+  {LOGO}
+  <h1>{title}</h1>
+  <section class="card"><p class="note first">{text}</p></section>
+</main>
+<script>window.close()</script>"#
+        ),
     )
 }
 
@@ -238,6 +271,7 @@ h1 {{ margin:16px 0 24px; font-size:22px; font-weight:500; letter-spacing:-.01em
 .provider:hover {{ background:var(--hover); }}
 .provider svg {{ width:16px; height:16px; }}
 a:focus-visible, button:focus-visible {{ outline:2px solid var(--focus); outline-offset:2px; }}
+.note.first {{ margin:0; }}
 .note {{ margin:24px 0 0; text-align:center; color:var(--muted); font-size:14px; }}
 ul {{ list-style:none; margin:0; padding:0; }}
 li {{ display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:10px; }}

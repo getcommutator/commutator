@@ -143,17 +143,26 @@ impl SignIn {
             .listener
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this sign-in takes a pasted code"))?;
-        let code = tokio::time::timeout(SIGN_IN_WAIT, async {
+        let (mut stream, code) = tokio::time::timeout(SIGN_IN_WAIT, async {
             loop {
                 let (mut stream, _) = listener.accept().await?;
                 if let Some(code) = callback_code(&mut stream).await {
-                    return Ok::<_, std::io::Error>(code);
+                    return Ok::<_, std::io::Error>((stream, code));
                 }
             }
         })
         .await
         .map_err(|_| anyhow::anyhow!("no sign-in within 10 minutes"))??;
-        self.redeem(&code).await
+        let account = self.redeem(&code).await;
+        // The browser lands on the server's own "signed in" page, which says
+        // whether it worked; the terminal says why not.
+        let page = format!(
+            "{}/signed-in{}",
+            self.server_url,
+            if account.is_ok() { "" } else { "?error=1" }
+        );
+        redirect(&mut stream, &page).await;
+        account
     }
 
     /// Trade the one-time code for this machine's token.
@@ -196,8 +205,9 @@ impl SignIn {
     }
 }
 
-/// Read one HTTP request off a loopback connection; answer it, and return
-/// its `code` if it is the callback.
+/// Read one HTTP request off a loopback connection and return its `code` if
+/// it is the callback, leaving it to be answered ([`redirect`]); anything
+/// else gets a 404 here.
 async fn callback_code(stream: &mut tokio::net::TcpStream) -> Option<String> {
     let mut buf = vec![0u8; 8192];
     let mut len = 0;
@@ -224,22 +234,20 @@ async fn callback_code(stream: &mut tokio::net::TcpStream) -> Option<String> {
                 .map(|(_, v)| v.into_owned())
         })
         .flatten();
-    let body = if code.is_some() {
-        "Signed in to Vardoger. You can close this tab."
-    } else {
-        "Not found"
-    };
-    let status = if code.is_some() {
-        "200 OK"
-    } else {
-        "404 Not Found"
-    };
+    if code.is_none() {
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+            .await;
+    }
+    code
+}
+
+/// Answer the callback by sending the browser on to `location`.
+async fn redirect(stream: &mut tokio::net::TcpStream, location: &str) {
     let response = format!(
-        "HTTP/1.1 {status}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-        body.len()
+        "HTTP/1.1 303 See Other\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
     );
     let _ = stream.write_all(response.as_bytes()).await;
-    code
 }
 
 #[cfg(test)]
@@ -266,8 +274,11 @@ mod tests {
         });
         let (mut stream, _) = listener.accept().await.unwrap();
         assert_eq!(callback_code(&mut stream).await.as_deref(), Some("abc 123"));
+        redirect(&mut stream, "https://vardoger.example/signed-in").await;
         drop(stream);
-        assert!(browser.await.unwrap().starts_with("HTTP/1.1 200"));
+        let reply = browser.await.unwrap();
+        assert!(reply.starts_with("HTTP/1.1 303"), "{reply}");
+        assert!(reply.contains("location: https://vardoger.example/signed-in\r\n"));
     }
 
     #[test]
