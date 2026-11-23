@@ -95,15 +95,6 @@ fn install_hint(harness: HarnessId, enabled: bool, can_install: bool) -> String 
     }
 }
 
-/// "1 account", "3 accounts".
-fn account_count_label(count: usize) -> String {
-    if count == 1 {
-        "1 account".into()
-    } else {
-        format!("{count} accounts")
-    }
-}
-
 fn install_label(name: &str) -> String {
     format!("Installing {name}…")
 }
@@ -324,8 +315,7 @@ impl HarnessesPage {
     }
 
     /// The page header's controls: refresh, then (when `devices`) the device
-    /// switcher — Cloud among the devices manages the accounts every Cloud
-    /// machine uses. First-run setup shows the same controls over its rows.
+    /// switcher. First-run setup shows the same controls over its rows.
     pub(crate) fn render_toolbar(
         &mut self,
         theme: &Theme,
@@ -370,12 +360,10 @@ impl HarnessesPage {
     }
 
     fn toggle_agent_details(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
-        // Cloud's harnesses always open: that's where their accounts are added.
-        let cloud = self.targets_cloud();
         if !self.harnesses.ready().is_some_and(|items| {
             items
                 .iter()
-                .any(|item| item.id == harness && (cloud || descriptor_enabled(item)))
+                .any(|item| item.id == harness && descriptor_enabled(item))
         }) {
             return;
         }
@@ -675,31 +663,7 @@ impl HarnessesPage {
                 }
             })
         });
-        // Cloud's rows say how many accounts each provider has: the same
-        // list the Accounts section shows, shared through its cache.
-        let accounts_params = self
-            .targets_cloud()
-            .then(|| self.with_target(serde_json::json!({ "forceUsage": false })));
-        let accounts_key = self.target_device.clone();
         self.load_task = Some(cx.spawn(async move |this, cx| {
-            if let Some(params) = accounts_params
-                && let Ok(snapshot) = engine
-                    .client()
-                    .call(methods::LIST_AGENT_ACCOUNTS, params)
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|value| {
-                        serde_json::from_value::<vardoger_proto::AgentAccountsSnapshot>(value)
-                            .map_err(|error| error.to_string())
-                    })
-            {
-                this.update(cx, |_, cx| {
-                    cx.default_global::<accounts::AccountsSnapshotCache>()
-                        .0
-                        .insert(accounts_key, snapshot);
-                })
-                .ok();
-            }
             let result = engine.client().call(methods::LIST_HARNESSES, params).await;
             this.update(cx, |page, cx| {
                 page.switching = false;
@@ -938,23 +902,16 @@ impl HarnessesPage {
         }));
     }
 
-    /// Whether the page shows Cloud's providers: the accounts every Cloud
-    /// machine uses, kept by the vault rather than installed on a device.
-    fn targets_cloud(&self) -> bool {
-        self.target_device.as_deref() == Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE)
-    }
-
     /// The page-header device switcher (the Accounts pattern): platform glyph
     /// · name · presence dot · sort glyph, opening a dropdown of every
-    /// registered device, then Cloud as one entry (never its machines).
+    /// registered device.
     fn render_device_switcher(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         use crate::icons::{self, icon};
-        let (mut devices, local_id, cloud) = {
+        let (mut devices, local_id) = {
             let s = self.state.read(cx);
             (
-                s.provider_devices().cloned().collect::<Vec<_>>(),
+                s.listed_devices().cloned().collect::<Vec<_>>(),
                 s.local_device_id.clone(),
-                s.cloud_enabled(),
             )
         };
         devices.sort_by(|a, b| {
@@ -963,13 +920,12 @@ impl HarnessesPage {
                 .then_with(|| a.id.cmp(&b.id))
         });
         let effective = self.target_device.clone().or_else(|| local_id.clone());
-        let now = chrono::Utc::now();
         // Local device = no passthrough (calls stay direct).
         let mut targets: Vec<Option<String>> = Vec::new();
         let mut options = Vec::new();
         for device in &devices {
             let is_local = local_id.as_deref() == Some(device.id.as_str());
-            let glyph = crate::cloud::device_glyph(&device.id, &device.platform);
+            let glyph = crate::icons::device_glyph(&device.platform);
             let muted = theme.text_muted;
             let option = widgets::SelectOption::new(device.name.clone()).leading(move || {
                 icon(glyph)
@@ -978,30 +934,8 @@ impl HarnessesPage {
                     .text_color(muted)
                     .into_any_element()
             });
-            // A sleeping Cloud device says so; it wakes when asked.
-            let presence = self.state.read(cx).device_presence(&device.id, now);
-            options.push(if is_local {
-                option.detail("You")
-            } else if matches!(
-                presence,
-                crate::cloud::Presence::Asleep | crate::cloud::Presence::Waking
-            ) {
-                option.detail(presence.label())
-            } else {
-                option
-            });
+            options.push(if is_local { option.detail("You") } else { option });
             targets.push((!is_local).then(|| device.id.clone()));
-        }
-        if cloud || self.targets_cloud() {
-            let muted = theme.text_muted;
-            options.push(widgets::SelectOption::new("Cloud").leading(move || {
-                icon(icons::CLOUD)
-                    .size(px(16.0))
-                    .flex_none()
-                    .text_color(muted)
-                    .into_any_element()
-            }));
-            targets.push(Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.to_string()));
         }
         let selected = match targets
             .iter()
@@ -1046,9 +980,6 @@ impl HarnessesPage {
             return Vec::new();
         };
         let descriptors = visible_harnesses(list);
-        // Cloud's providers are always on and installed on every machine:
-        // only their accounts are managed here.
-        let cloud = self.targets_cloud();
         let enabled_count = descriptors.iter().filter(|d| descriptor_enabled(d)).count();
         descriptors
             .into_iter()
@@ -1056,14 +987,11 @@ impl HarnessesPage {
             .map(|(ix, descriptor)| {
                 let harness = descriptor.id;
                 let installed = descriptor.installed;
-                // On Cloud, "enabled" means it has an account; every row
-                // still opens to add one.
                 let has_account = descriptor_enabled(&descriptor);
-                let enabled = cloud
-                    || match self.pending_toggle {
-                        Some((pending, on)) if pending == harness => on,
-                        _ => has_account,
-                    };
+                let enabled = match self.pending_toggle {
+                    Some((pending, on)) if pending == harness => on,
+                    _ => has_account,
+                };
                 // The one enabled harness left can't be switched off — the
                 // composer needs something to run — but only when it could
                 // actually run: an uninstalled last harness stays togglable
@@ -1148,23 +1076,6 @@ impl HarnessesPage {
                         );
                     } else if !text.is_empty() {
                         meta.push(div().text_color(color).child(text).into_any_element());
-                    }
-                }
-                if cloud {
-                    let count = cx
-                        .try_global::<accounts::AccountsSnapshotCache>()
-                        .and_then(|cache| cache.0.get(&self.target_device))
-                        .map(|snapshot| accounts::provider_accounts(snapshot, harness).len());
-                    let label = match count {
-                        Some(0) => Some((theme.text_muted.opacity(0.65), "No account".to_string())),
-                        Some(count) => Some((theme.text_muted, account_count_label(count))),
-                        None if !has_account => {
-                            Some((theme.text_muted.opacity(0.65), "No account".to_string()))
-                        }
-                        None => None,
-                    };
-                    if let Some((color, label)) = label {
-                        meta.push(div().text_color(color).child(label).into_any_element());
                     }
                 }
                 // widgets::row_tile with the brand tint honored (the Claude
@@ -1301,8 +1212,7 @@ impl HarnessesPage {
                             // Install / Cancel sit with the row's other
                             // action, before the caret, so carets line up.
                             .when(
-                                !cloud
-                                    && offers_install(harness, installed, descriptor.can_install)
+                                offers_install(harness, installed, descriptor.can_install)
                                     && self.installing != Some(harness),
                                 |el| {
                                     el.child(
@@ -1353,8 +1263,7 @@ impl HarnessesPage {
                                 }),
                             ),
                     )
-                    // Cloud's providers are always on: no switch.
-                    .when(!cloud, |el| {
+                    .map(|el| {
                         el.child(
                             widgets::toggle_switch(
                                 &theme,
@@ -1690,87 +1599,6 @@ mod tests {
             .unwrap();
     }
 
-    /// Providers opened on Cloud: its two harnesses, no toggles or installs,
-    /// and the expanded card's accounts follow the Cloud target.
-    #[gpui::test]
-    fn cloud_target_shows_accounts_without_device_controls(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-        let dir = tempfile::tempdir().unwrap();
-        cx.update(|cx| {
-            crate::settings::init(Default::default(), dir.path(), cx);
-            gpui_base::init(cx);
-            cx.set_global(crate::theme::Theme::default());
-        });
-        let window = cx.add_window(|_, cx| {
-            let state = cx.new(|_| {
-                let mut state = crate::state::AppState::new();
-                state.cloud_status = Some(vardoger_proto::CloudStatus {
-                    state: vardoger_proto::CloudState::Ready,
-                    device_id: Some("cloud-1".into()),
-                    available: true,
-                    ..Default::default()
-                });
-                state
-            });
-            let mut page = super::HarnessesPage::new(state, cx);
-            page.set_target_device(Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.into()), cx);
-            page
-        });
-        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
-            id,
-            name: name.into(),
-            supports_steering: false,
-            steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
-            reasoning_levels: Vec::new(),
-            installed: true,
-            can_install: true,
-            enabled: Some(true),
-        };
-        window
-            .update(cx, |page, _, cx| {
-                assert!(page.targets_cloud());
-                assert!(!page.supports_updates(cx), "Cloud has no harness updates");
-                page.harnesses = super::Loadable::Ready(vec![
-                    descriptor(vardoger_proto::HarnessId::ClaudeCode, "Claude Code"),
-                    descriptor(vardoger_proto::HarnessId::Codex, "Codex"),
-                ]);
-                page.toggle_agent_details(vardoger_proto::HarnessId::Codex, cx);
-                assert!(page.accounts_page.is_some());
-                // Rows count each provider's accounts from the shared list
-                // (drawn below: "1 account" for Claude, "No account" for Codex).
-                let account: vardoger_proto::AgentAccount =
-                    serde_json::from_value(serde_json::json!({
-                        "id": "a", "harness": "claude-code", "email": "a@example.com",
-                        "planLabel": null, "active": true
-                    }))
-                    .unwrap();
-                cx.default_global::<crate::settings::accounts::AccountsSnapshotCache>()
-                    .0
-                    .insert(
-                        Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.into()),
-                        vardoger_proto::AgentAccountsSnapshot {
-                            accounts: vec![account],
-                            warnings: Vec::new(),
-                        },
-                    );
-            })
-            .unwrap();
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
-            .unwrap();
-        window
-            .update(cx, |page, _, cx| {
-                page.set_target_device(None, cx);
-                assert!(!page.targets_cloud());
-            })
-            .unwrap();
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn account_counts_read_naturally() {
-    assert_eq!(account_count_label(1), "1 account");
-    assert_eq!(account_count_label(3), "3 accounts");
 }
 
 #[cfg(test)]

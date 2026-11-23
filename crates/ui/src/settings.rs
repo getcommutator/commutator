@@ -19,8 +19,6 @@ use vardoger_proto::{AuthState, WorkspaceScope};
 pub mod accounts;
 pub mod appearance;
 pub mod archived;
-pub mod billing;
-pub mod cloud;
 pub mod composer;
 pub mod devices;
 pub mod files;

@@ -421,3 +421,13 @@ mod tests {
         assert!(Assets.list("fonts/").unwrap().is_empty());
     }
 }
+
+/// A device's glyph by its platform.
+pub fn device_glyph(platform: &str) -> &'static str {
+    match platform {
+        "macos" | "darwin" => LAPTOP,
+        "web" => GLOBAL,
+        "ios" | "android" => SMARTPHONE,
+        _ => MONITOR,
+    }
+}

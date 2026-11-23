@@ -72,30 +72,12 @@ pub struct DevicesPage {
     task: Option<Task<()>>,
     copy_task: Option<Task<()>>,
     /// One CloudStatus read per visit (kept alive, never polled).
-    _cloud_task: Option<Task<()>>,
     _observe: Subscription,
 }
 
 impl DevicesPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
         let observe = cx.observe(&state, |_, _, cx| cx.notify());
-        // Read the Cloud account once per visit: the Cloud row reads from it
-        // (on while Cloud is enabled), not from a heartbeat.
-        let cloud_task = {
-            let state_ref = state.read(cx);
-            state_ref
-                .cloud_enabled()
-                .then(|| state_ref.engine().cloned())
-                .flatten()
-        }
-        .map(|engine| {
-            let state = state.clone();
-            cx.spawn(async move |_, cx| {
-                if let Ok(status) = crate::cloud::fetch_status(engine).await {
-                    state.update(cx, |state, cx| state.set_cloud_status(status, cx));
-                }
-            })
-        });
         Self {
             state,
             scroll: widgets::PageScroll::default(),
@@ -104,7 +86,6 @@ impl DevicesPage {
             error: None,
             task: None,
             copy_task: None,
-            _cloud_task: cloud_task,
             _observe: observe,
         }
     }
@@ -268,7 +249,6 @@ pub fn platform_label(platform: &str) -> &str {
         "web" => "Web",
         "ios" => "iOS",
         "android" => "Android",
-        vardoger_proto::CLOUD_PLATFORM => crate::cloud::CLOUD_LABEL,
         other => other,
     }
 }
@@ -287,14 +267,12 @@ impl Render for DevicesPage {
         crate::toast::take_error(&mut self.error, cx);
         let theme = Theme::of(cx).for_settings_surface();
         let now = Utc::now();
-        // Cloud's per-session machines are not listed; the Cloud row stands
-        // for them.
         let (devices, local_id, workspace_scope) = {
             let state = self.state.read(cx);
             (
                 state
                     .listed_devices()
-                    .map(|d| (d.clone(), state.device_presence(&d.id, now)))
+                    .map(|d| (d.clone(), state.device_online(&d.id, now)))
                     .collect::<Vec<_>>(),
                 state.local_device_id.clone(),
                 state.workspace_scope,
@@ -309,9 +287,8 @@ impl Render for DevicesPage {
             .enumerate()
             .partition(|(_, (device, _))| local_id.as_deref() == Some(device.id.as_str()));
         let device_row = |ix: usize,
-                          (device, presence): (vardoger_proto::Device, crate::cloud::Presence),
+                          (device, online): (vardoger_proto::Device, bool),
                           first: bool| {
-            let is_cloud = crate::cloud::is_cloud(&device);
             let is_local = local_id.as_deref() == Some(device.id.as_str());
             let id_copied = copied.as_deref() == Some(device.id.as_str());
             let copy_id = device.id.clone();
@@ -319,11 +296,7 @@ impl Render for DevicesPage {
             let rename_name = device.name.clone();
             let mut meta: Vec<AnyElement> = vec![
                 div()
-                    .child(SharedString::from(if is_cloud {
-                        crate::cloud::CLOUD_LABEL.to_string()
-                    } else {
-                        platform_label(&device.platform).to_string()
-                    }))
+                    .child(SharedString::from(platform_label(&device.platform).to_string()))
                     .into_any_element(),
             ];
             if let Some(version) = device.version.as_deref().filter(|v| !v.is_empty()) {
@@ -336,19 +309,10 @@ impl Render for DevicesPage {
             // Presence only says something about other devices.
             if !is_local {
                 meta.push(
-                    if matches!(
-                        presence,
-                        crate::cloud::Presence::Online | crate::cloud::Presence::Available
-                    ) {
+                    if online {
                         div()
                             .text_color(theme.success_muted)
-                            .child(SharedString::from(presence.label()))
-                            .into_any_element()
-                    } else if !presence.warns() {
-                        // A Cloud machine that is asleep or starting answers on
-                        // its own; its last heartbeat is not news.
-                        div()
-                            .child(SharedString::from(presence.label()))
+                            .child(SharedString::from("Online"))
                             .into_any_element()
                     } else {
                         div()
@@ -512,12 +476,6 @@ mod tests {
             format_last_seen(Some(now - TimeDelta::days(2)), now),
             "2d ago"
         );
-    }
-
-    #[test]
-    fn cloud_platform_reads_cloud() {
-        assert_eq!(platform_label("cloud"), "Cloud");
-        assert_eq!(platform_label("darwin"), "macOS");
     }
 
     #[test]

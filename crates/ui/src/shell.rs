@@ -43,8 +43,6 @@ use crate::rail;
 use crate::settings::accounts::AccountsPage;
 use crate::settings::appearance::{AppearancePage, AppearanceSettingsEvent};
 use crate::settings::archived::ArchivedPage;
-use crate::settings::billing::BillingPage;
-use crate::settings::cloud::CloudPage;
 use crate::settings::devices::DevicesPage;
 use crate::settings::files::{FilesSettingsEvent, FilesSettingsPage};
 use crate::settings::harnesses::HarnessesPage;
@@ -532,10 +530,6 @@ pub fn apply_keymap(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsSection {
     Devices,
-    /// The user's Cloud device: lifecycle, its providers, GitHub.
-    Cloud,
-    /// Plan and credits for Cloud (Stripe).
-    Billing,
     /// Which harnesses the composer offers (enable/disable toggles) —
     /// labeled "Providers".
     Harnesses,
@@ -554,15 +548,13 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
-    pub const ALL: [SettingsSection; 11] = [
+    pub const ALL: [SettingsSection; 9] = [
         SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::Notifications,
         SettingsSection::Shortcuts,
         SettingsSection::Harnesses,
         SettingsSection::Devices,
-        SettingsSection::Cloud,
-        SettingsSection::Billing,
         SettingsSection::Files,
         SettingsSection::Appshots,
         SettingsSection::Archived,
@@ -582,17 +574,6 @@ impl SettingsSection {
         self != Self::Agents && (self != Self::Appshots || crate::appshots::is_desktop())
     }
 
-    /// [`Self::visible_in_nav`], plus what depends on the account: Cloud
-    /// and Billing only when the account is offered Cloud.
-    fn shown_in_nav(self, cloud_offered: bool) -> bool {
-        self.visible_in_nav() && (!self.needs_account() || cloud_offered)
-    }
-
-    /// Pages about the signed-in account (they open General when signed out).
-    fn needs_account(self) -> bool {
-        matches!(self, Self::Cloud | Self::Billing)
-    }
-
     /// Where a generic "open Settings" lands for a remembered section: legacy
     /// aliases resolve to their page, and a section this build does not show
     /// (Appshots off macOS/Linux) falls back to General.
@@ -609,8 +590,6 @@ impl SettingsSection {
     fn slug(self) -> &'static str {
         match self {
             SettingsSection::Devices => "devices",
-            SettingsSection::Cloud => "cloud",
-            SettingsSection::Billing => "billing",
             SettingsSection::Harnesses => "providers",
             SettingsSection::Agents => "agents",
             SettingsSection::Appearance => "appearance",
@@ -627,8 +606,6 @@ impl SettingsSection {
     fn from_slug(slug: &str) -> Option<Self> {
         Some(match slug {
             "devices" => SettingsSection::Devices,
-            "cloud" => SettingsSection::Cloud,
-            "billing" => SettingsSection::Billing,
             "providers" | "harnesses" => SettingsSection::Harnesses,
             "agents" => SettingsSection::Agents,
             "appearance" => SettingsSection::Appearance,
@@ -653,8 +630,6 @@ impl SettingsSection {
     pub fn label(self) -> &'static str {
         match self {
             SettingsSection::Devices => "Devices",
-            SettingsSection::Cloud => "Cloud",
-            SettingsSection::Billing => "Billing",
             SettingsSection::Harnesses => "Providers",
             SettingsSection::Agents => "Accounts",
             SettingsSection::Appearance => "Appearance",
@@ -2098,8 +2073,6 @@ pub struct Shell {
     devices_page: Option<Entity<DevicesPage>>,
     /// Rebuilt per visit and dropped on leaving, which stops its GitHub
     /// polling and status re-checks.
-    cloud_page: Option<Entity<CloudPage>>,
-    billing_page: Option<Entity<BillingPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
     files_settings_page: Option<Entity<FilesSettingsPage>>,
@@ -2217,9 +2190,6 @@ pub struct Shell {
     /// render from `onboarding_pending` (a fresh install, or
     /// `VARDOGER_ONBOARDING=<step>`).
     onboarding: Option<Entity<crate::onboarding::Onboarding>>,
-    /// Chats whose explorer showed their Cloud machine asleep: once it is
-    /// up, what failed while it slept is listed again.
-    files_machine_down: std::collections::HashSet<String>,
     onboarding_pending: Option<crate::onboarding::Step>,
     _onboarding_subscriptions: Vec<Subscription>,
     /// The sign-in gate's Log in opened the browser: the gate waits for it
@@ -2606,8 +2576,6 @@ impl Shell {
             pending_pull_request: None,
             pull_request_cache: Default::default(),
             devices_page: None,
-            cloud_page: None,
-            billing_page: None,
             archived_page: None,
             appearance_page: None,
             files_settings_page: None,
@@ -2679,7 +2647,6 @@ impl Shell {
             org: None,
             sync_flow: SyncFlow::Idle,
             onboarding: None,
-            files_machine_down: Default::default(),
             onboarding_pending,
             _onboarding_subscriptions: Vec::new(),
             gate_sign_in_waiting: false,
@@ -5433,30 +5400,12 @@ impl Shell {
     }
 
     pub(crate) fn open_settings(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
-        let mut section = section.canonical();
-        // Signed out, or not offered Cloud: no Cloud or billing to manage.
-        if section.needs_account() && !self.state.read(cx).cloud_offered() {
-            section = SettingsSection::General;
-        }
+        let section = section.canonical();
         self.command_palette = None;
         // Recreate per visit: the page's ListHarnesses load re-probes which
         // CLIs are installed, so installing one shows up on the next open.
         if section == SettingsSection::Harnesses {
             self.harnesses_page = None;
-        }
-        // Cloud status is read once per visit (re-picking the page it already
-        // shows is not a new visit: it would only flash).
-        if section == SettingsSection::Cloud
-            && self.route != Route::Settings(SettingsSection::Cloud)
-        {
-            self.cloud_page = None;
-        }
-        // Billing too: a fresh read per visit (it then follows open Stripe
-        // pages until they land).
-        if section == SettingsSection::Billing
-            && self.route != Route::Settings(SettingsSection::Billing)
-        {
-            self.billing_page = None;
         }
         if !matches!(self.route, Route::Settings(_)) {
             self.settings_focus_pending = true;
@@ -5643,26 +5592,6 @@ impl Shell {
                     self.devices_page = Some(cx.new(|cx| DevicesPage::new(state, cx)));
                 }
                 match &self.devices_page {
-                    Some(page) => page.clone().into_any_element(),
-                    None => Empty.into_any_element(),
-                }
-            }
-            SettingsSection::Cloud => {
-                if self.cloud_page.is_none() {
-                    let state = self.state.clone();
-                    self.cloud_page = Some(cx.new(|cx| CloudPage::new(state, cx)));
-                }
-                match &self.cloud_page {
-                    Some(page) => page.clone().into_any_element(),
-                    None => Empty.into_any_element(),
-                }
-            }
-            SettingsSection::Billing => {
-                if self.billing_page.is_none() {
-                    let state = self.state.clone();
-                    self.billing_page = Some(cx.new(|cx| BillingPage::new(state, cx)));
-                }
-                match &self.billing_page {
                     Some(page) => page.clone().into_any_element(),
                     None => Empty.into_any_element(),
                 }
@@ -8403,11 +8332,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cloud_offered = self.state.read(cx).cloud_offered();
         let section_icon = |item: SettingsSection| match item {
             SettingsSection::Devices => icons::MONITOR,
-            SettingsSection::Cloud => icons::CLOUD,
-            SettingsSection::Billing => icons::WALLET,
             SettingsSection::Harnesses => icons::WIDGET,
             SettingsSection::Agents => icons::KEY_MINIMALISTIC,
             SettingsSection::Appearance => icons::TUNING,
@@ -8441,7 +8367,7 @@ impl Shell {
                         .children(
                             SettingsSection::ALL
                                 .into_iter()
-                                .filter(|item| item.shown_in_nav(cloud_offered))
+                                .filter(|item| item.visible_in_nav())
                                 .map(|item| {
                                     let index = SettingsSection::ALL
                                         .iter()
@@ -8481,7 +8407,7 @@ impl Shell {
                                         move |this, event: &gpui::KeyDownEvent, window, cx| {
                                             let items: Vec<_> = SettingsSection::ALL
                                                 .into_iter()
-                                                .filter(|s| s.shown_in_nav(cloud_offered))
+                                                .filter(|s| s.visible_in_nav())
                                                 .collect();
                                             let current =
                                                 items.iter().position(|s| *s == item).unwrap_or(0);
@@ -13392,15 +13318,6 @@ impl Render for Shell {
             files.update(cx, |files, cx| files.suspend_tree_interactions(cx));
         }
         settings::wallpaper::preload(cx);
-        // Settings → Cloud lives only while shown: dropping it cancels a
-        // GitHub sign-in poll and its slow status re-checks.
-        if self.cloud_page.is_some() && self.route != Route::Settings(SettingsSection::Cloud) {
-            self.cloud_page = None;
-        }
-        // Leaving Billing stops its checks on open Stripe pages.
-        if self.billing_page.is_some() && self.route != Route::Settings(SettingsSection::Billing) {
-            self.billing_page = None;
-        }
         self.navigation_focus
             .remember(&self.shortcut_focus, window, cx);
         if let Some(command) = self.pending_workspace_command.take() {
@@ -13572,9 +13489,6 @@ impl Render for Shell {
                     let active = window.is_window_active();
                     this.state.update(cx, |state, cx| {
                         state.set_viewport_focused(active, cx);
-                        if active {
-                            state.window_activated(cx);
-                        }
                     });
                     if window.is_window_active()
                         && let Some(update) = crate::app_update::AppUpdate::global(cx)
@@ -18719,10 +18633,6 @@ mod settings_modal_regressions {
         });
         window
             .update(cx, |shell, _, cx| {
-                // Signed out, Cloud has nothing to manage: its link opens General.
-                shell.open_settings(SettingsSection::Cloud, cx);
-                assert_eq!(shell.route, Route::Settings(SettingsSection::General));
-                shell.close_settings(cx);
                 sign_in(&shell.state, cx);
                 let history = shell.nav.current().clone();
                 let selected = shell.state.read(cx).selected_chat.clone();
@@ -18825,8 +18735,6 @@ mod settings_modal_regressions {
         );
         for (route, section) in [
             ("settings/devices", SettingsSection::Devices),
-            ("settings/cloud", SettingsSection::Cloud),
-            ("settings/billing", SettingsSection::Billing),
             ("settings/providers", SettingsSection::Harnesses),
             ("settings/agents", SettingsSection::Harnesses),
             ("settings/harnesses", SettingsSection::Harnesses),
@@ -19059,8 +18967,7 @@ mod settings_modal_regressions {
         });
     }
 
-    /// Signed in to an organization the edge offers Cloud (Cloud's settings
-    /// need both).
+    /// Signed in to a Vardoger server.
     fn sign_in(state: &Entity<AppState>, cx: &mut App) {
         state.update(cx, |state, _| {
             state.auth = Some(vardoger_proto::AuthState::SignedIn {
@@ -19071,63 +18978,7 @@ mod settings_modal_regressions {
                 },
                 org_id: Some("org-a".into()),
             });
-            state.cloud_status = Some(vardoger_proto::CloudStatus {
-                available: true,
-                ..Default::default()
-            });
         });
-    }
-
-    /// Settings → Cloud is rebuilt per visit and dropped on leaving, which is
-    /// what stops its GitHub polling and status re-checks.
-    #[gpui::test]
-    fn cloud_settings_page_lives_only_while_shown(cx: &mut TestAppContext) {
-        let dir = tempfile::tempdir().unwrap();
-        init_settings_test(settings::UiSettings::default(), dir.path(), cx);
-        let (shell, cx) = cx.add_window_view(|_, cx| test_shell(dir.path(), cx));
-        shell.update(cx, |shell, cx| {
-            shell.debug_gate = Some(GatePhase::Ready);
-            sign_in(&shell.state, cx);
-            shell.open_settings(SettingsSection::Cloud, cx)
-        });
-        cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
-        let first = shell.read_with(cx, |shell, _| {
-            assert_eq!(shell.route, Route::Settings(SettingsSection::Cloud));
-            shell.cloud_page.clone().expect("Cloud page mounts")
-        });
-        shell.update(cx, |shell, cx| {
-            shell.open_settings(SettingsSection::Devices, cx)
-        });
-        cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
-        shell.read_with(cx, |shell, _| assert!(shell.cloud_page.is_none()));
-        shell.update(cx, |shell, cx| {
-            shell.open_settings(SettingsSection::Cloud, cx)
-        });
-        cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
-        let second = shell.read_with(cx, |shell, _| {
-            let second = shell.cloud_page.clone().expect("Cloud page remounts");
-            assert_ne!(first.entity_id(), second.entity_id());
-            second
-        });
-        // Picking Cloud again while it shows keeps the page (no flash).
-        shell.update(cx, |shell, cx| {
-            shell.open_settings(SettingsSection::Cloud, cx)
-        });
-        cx.run_until_parked();
-        shell.read_with(cx, |shell, _| {
-            assert_eq!(
-                shell.cloud_page.as_ref().map(|page| page.entity_id()),
-                Some(second.entity_id())
-            );
-        });
-        drop((first, second));
-        shell.update(cx, |shell, cx| shell.close_settings(cx));
-        cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
-        shell.read_with(cx, |shell, _| assert!(shell.cloud_page.is_none()));
     }
 
     #[gpui::test]

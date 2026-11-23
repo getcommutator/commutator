@@ -120,9 +120,6 @@ const TOOL_FOLD: motion::MotionSpec = motion::MotionSpec::new(140, motion::EASE_
 const TOOL_GROUP_SHIMMER_DURATION: Duration = Duration::from_millis(3_400);
 const TOOL_GROUP_SHIMMER_HALF_WIDTH: f32 = 0.36;
 const TOOL_GROUP_SHIMMER_STRIP_WIDTH: f32 = 2.0;
-/// A send waiting on its Cloud machine names that in the working line only
-/// after this long: a send from this device shows its setup chip by then.
-const CLOUD_BOOT_WORD_AFTER_MS: i64 = 1_500;
 const TOOL_ROW_REVEAL: motion::MotionSpec = motion::MotionSpec::new(360, motion::EASE_OUT_EXPO);
 /// The connector draws briskly, then eases into the branch tip so its arrival
 /// remains visible without feeling mechanically linear.
@@ -7158,7 +7155,7 @@ impl Transcript {
         // `turn` (the turn's start, ms) keys the rolling word and timer, so a
         // new turn's labels appear fresh instead of rolling from the last
         // turn's final values.
-        let (sending, queued, elapsed_secs, seed, turn, booting) =
+        let (sending, queued, elapsed_secs, seed, turn) =
             if let Some(doc_id) = &self.doc_override {
                 // A subagent doc has no Session row — `indicator_for` would read
                 // the PARENT chat's live state into this tab. Liveness rides the
@@ -7183,7 +7180,6 @@ impl Transcript {
                     elapsed,
                     flavour_seed(doc_id),
                     last.created_at,
-                    None,
                 )
             } else {
                 let chat_id = self.chat_id.clone()?;
@@ -7207,20 +7203,12 @@ impl Transcript {
                             .into_any_element(),
                     );
                 }
-                let (sending, queued, elapsed, turn, booting) = {
+                let (sending, queued, elapsed, turn) = {
                     let state = self.state.read(cx);
                     if state.indicator_for(&chat_id, now) != crate::state::Indicator::Working {
                         return None;
                     }
-                    // The Cloud setup steps say what the send waits on; the
-                    // line under them is the turn's working word, timed from
-                    // the send — setting the machine up is part of the work —
-                    // and keyed on it, so neither restarts when the machine's
-                    // turn begins.
-                    if let Some(sent) = state.cloud_setup_turn_started() {
-                        let elapsed = ((now.timestamp_millis() - sent).max(0) / 1000) as i64;
-                        (false, false, elapsed, sent, None)
-                    } else {
+                    {
                         // During the send→turn window the session row's `started_at`
                         // still belongs to the PREVIOUS turn — a timer based on the
                         // send counted the round-trip and then restarted when the
@@ -7243,19 +7231,7 @@ impl Transcript {
                         // rolls out of that turn's word or an earlier send's.
                         let turn = if sending { send_started } else { turn_started }
                             .map_or(0, |t| t.timestamp_millis());
-                        // The send waits for the chat's own Cloud machine to come up.
-                        // (Past the beat in which this device's own send puts
-                        // up its setup chip, so the words never flash twice.)
-                        let booting = if sending
-                            && send_started.is_some_and(|t| {
-                                now.signed_duration_since(t).num_milliseconds()
-                                    >= CLOUD_BOOT_WORD_AFTER_MS
-                            }) {
-                            state.cloud_machine_booting(&chat_id)
-                        } else {
-                            None
-                        };
-                        (sending, queued, elapsed, turn, booting)
+                        (sending, queued, elapsed, turn)
                     }
                 };
                 (
@@ -7264,7 +7240,6 @@ impl Transcript {
                     elapsed,
                     flavour_seed(&chat_id),
                     turn,
-                    booting,
                 )
             };
         if self.compact_mode && !sending && !queued && elapsed_secs > 0 {
@@ -7289,13 +7264,6 @@ impl Transcript {
         }
         let word = if queued {
             "Queued — will send automatically"
-        } else if let Some(state) = booting {
-            // The send waits for the chat's own Cloud machine.
-            if state == vardoger_proto::CloudState::Provisioning {
-                "Starting a Cloud machine"
-            } else {
-                "Waking the Cloud machine"
-            }
         } else if sending {
             "Sending"
         } else {
