@@ -2801,10 +2801,8 @@ async fn opening_doc_messages_stream(
         .boxed())
 }
 
-/// Authentication-only RPC surface used while the headed app is waiting for a
-/// production WorkOS session. Keeping this independent from [`EngineRpc`] lets
-/// the UI show its sign-in and organization gates before identity-scoped Loro
-/// stores are opened.
+/// The sign-in surface, answered before the profile opens: `AuthStatus`
+/// (stream) and `SignOut`. Signing in is `vardoger login`.
 #[derive(Clone)]
 pub struct AuthRpc {
     auth: Auth,
@@ -2816,138 +2814,17 @@ impl AuthRpc {
     }
 
     pub fn handles(method: &str) -> bool {
-        matches!(
-            method,
-            methods::AUTH_STATUS
-                | methods::SIGN_IN
-                | methods::SIGN_IN_HEADLESS
-                | methods::COMPLETE_SIGN_IN
-                | methods::SIGN_OUT
-                | methods::ACCESS_TOKEN
-                | methods::STEP_UP
-                | methods::DELETE_ACCOUNT
-                | methods::LIST_ORGS
-                | methods::CREATE_ORG
-                | methods::SELECT_ORG
-        )
+        matches!(method, methods::AUTH_STATUS | methods::SIGN_OUT)
     }
 }
 
 #[async_trait]
 impl RpcService for AuthRpc {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
+    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<RpcReply, RpcError> {
         match method {
             methods::AUTH_STATUS => Ok(RpcReply::Stream(watch_stream(self.auth.watch_state()))),
-            methods::SIGN_IN => {
-                // `{screenHint?, fresh?}`; absent (the desktop app's `{}`),
-                // the hosted page opens as it always has.
-                let options: crate::auth::SignInOptions = if params.is_null() {
-                    Default::default()
-                } else {
-                    parse_params(params)?
-                };
-                let url = self
-                    .auth
-                    .start_sign_in_with(options)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::ACCESS_TOKEN => {
-                // Local IPC only: the relay refuses it (`vardoger_rpc::local_only`).
-                let (token, expires_at) = self
-                    .auth
-                    .access_token_with_expiry()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "token": token, "expiresAt": expires_at }))
-            }
-            // Local IPC, the app's token only (agents and the relay are
-            // refused before here): a fresh interactive sign-in whose ticket
-            // stays in the engine, then the deletion it allows (R16).
-            methods::STEP_UP => {
-                let url = self
-                    .auth
-                    .start_step_up()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::DELETE_ACCOUNT => {
-                #[derive(Deserialize)]
-                struct P {
-                    confirm: String,
-                }
-                let p: P = parse_params(params)?;
-                // Answered, not failed: `{ok: true}`, or `{ok: false, error:
-                // <code>, message, organization?}` with a stable code
-                // ([`crate::auth::DeleteAccountError::code`]).
-                match self.auth.delete_account(&p.confirm).await {
-                    Ok(()) => RpcReply::value(&serde_json::json!({ "ok": true })),
-                    Err(error) => {
-                        let mut reply = serde_json::json!({
-                            "ok": false,
-                            "error": error.code(),
-                            "message": error.to_string(),
-                        });
-                        if let crate::auth::DeleteAccountError::Refused { organization: Some(org), .. } = &error {
-                            reply["organization"] = serde_json::json!(org);
-                        }
-                        RpcReply::value(&reply)
-                    }
-                }
-            }
-            methods::SIGN_IN_HEADLESS => {
-                let url = self.auth.start_headless_sign_in();
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::COMPLETE_SIGN_IN => {
-                #[derive(Deserialize)]
-                struct P {
-                    code: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .complete_sign_in(&p.code)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
             methods::SIGN_OUT => {
                 self.auth.sign_out();
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::LIST_ORGS => {
-                let orgs = self
-                    .auth
-                    .list_orgs()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "orgs": orgs }))
-            }
-            methods::CREATE_ORG => {
-                #[derive(Deserialize)]
-                struct P {
-                    name: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .create_org(&p.name)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::SELECT_ORG => {
-                #[derive(Deserialize)]
-                #[serde(rename_all = "camelCase")]
-                struct P {
-                    organization_id: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .select_org(&p.organization_id)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
             }
             _ => Err(RpcError::UnknownMethod(method.to_string())),
@@ -3049,7 +2926,6 @@ impl RpcService for EngineRpc {
         if matches!(
             method,
             methods::SIGN_OUT
-                | methods::SELECT_ORG
                 | methods::COMPLETE_AGENT_LOGIN
                 | methods::ACTIVATE_AGENT_ACCOUNT
                 | methods::FORGET_AGENT_ACCOUNT
@@ -3777,13 +3653,6 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({ "sent": sent }))
             }
             methods::PROBE_SYNC => {
-                // Focus probes remain cheap. An explicit Retry may also allow
-                // one fresh, shared auth attempt before its cooldown expires.
-                if params.get("retry").and_then(serde_json::Value::as_bool) == Some(true)
-                    && let Some(auth) = &self.auth
-                {
-                    auth.retry_refresh();
-                }
                 self.workspace.probe();
                 self.doc_host.probe_open_chats();
                 self.doc_host.probe_edge_reachability();

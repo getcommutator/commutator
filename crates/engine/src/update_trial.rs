@@ -179,35 +179,6 @@ pub(crate) fn prove_and_commit(core: &EngineCore, config: &EngineConfig) {
     });
 }
 
-/// A trial with no profile to open: answering on its port is all it can prove.
-pub(crate) fn commit_without_a_profile(config: &EngineConfig) {
-    if !transaction::in_trial() {
-        return;
-    }
-    let (port, data_dir) = (config.ipc_port, config.data_dir.clone());
-    tokio::spawn(async move {
-        let client = vardoger_rpc::connect_ipc(port, Some(&data_dir)).await;
-        let answered = match client {
-            Ok(client) => client
-                .call(vardoger_rpc::methods::ENGINE_INFO, serde_json::json!({}))
-                .await
-                .map(drop)
-                .map_err(|err| err.to_string()),
-            Err(err) => Err(err.to_string()),
-        };
-        if let Err(why) = answered {
-            fail(&data_dir, &format!("The new version started, but it isn't answering on its port ({why})."));
-        }
-        tokio::time::sleep(SETTLE).await;
-        if let Err(err) = transaction::commit_trial() {
-            tracing::error!(error = %format!("{err:#}"), "couldn't commit the update");
-            fail(&data_dir, "The new version couldn't be saved as the current one.");
-        }
-        tokio::time::sleep(TIDY_AFTER).await;
-        transaction::tidy_latest(&data_dir);
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

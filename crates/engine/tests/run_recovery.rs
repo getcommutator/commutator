@@ -21,7 +21,7 @@ use vardoger_doc::{
     MessagePart, MessageRole, MessageStatus, SessionCommandPayload, SessionDoc, SessionMessageEntry,
 };
 use vardoger_engine::{
-    Auth, AuthConfig, AuthState, EngineCore, EngineProfile, HarnessRegistry, RunJournal,
+    Auth, AuthState, EngineCore, EngineProfile, HarnessRegistry, RunJournal,
     WorkspaceScope,
 };
 use vardoger_harness::{Harness, HarnessError, RunControls};
@@ -829,30 +829,10 @@ fn assemble_signed_out(dir: &std::path::Path, scope: WorkspaceScope) -> EngineCo
         EngineCore::assemble_with_profile(profile, Arc::new(registry), HarnessId::Mock, None)
             .expect("engine core assembles");
     core.sessions.set_ipc_port(27699);
-    let mut config = AuthConfig::new("http://127.0.0.1:9", dir.join("auth"));
-    config.workos_client_id = Some("client_test".into());
-    let auth = Auth::new(config);
+    let auth = Auth::new(dir.join("auth"));
     assert!(matches!(auth.state(), AuthState::SignedOut));
     core.set_auth(auth);
     core
-}
-
-#[tokio::test]
-async fn a_shutdown_after_sign_out_is_not_revived() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = data_dir(&tmp);
-    // The runtime's own shutdown decides, from the auth state: no caller
-    // has to remember to.
-    let core = hold_a_turn_in(assemble_signed_out(&dir, WorkspaceScope::Synced), false).await;
-    core.shutdown().await;
-    drop(core);
-    assert!(journal(&dir).shutdown_interrupts().unwrap().is_empty());
-
-    let requests: RequestLog = Default::default();
-    let core = assemble(&dir, ScriptedHarness::completing(&requests, "hs-held"));
-    settle().await;
-    assert!(requests.lock().unwrap().is_empty());
-    core.shutdown().await;
 }
 
 #[tokio::test]

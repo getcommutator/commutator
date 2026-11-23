@@ -25,7 +25,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use vardoger_rpc::{RpcError, RpcReply, RpcService, methods};
 
-use crate::{Engine, EngineConfig, InstanceLock, WorkspaceScope, deferred, desktop_notify};
+use crate::{Engine, EngineConfig, InstanceLock, deferred, desktop_notify};
 
 // Starting the engine helper is shared with the command line and the zgx
 // app, which don't link the engine (crates/launch).
@@ -46,9 +46,6 @@ pub fn launch(config: &EngineConfig, app_exe: &Path) -> std::io::Result<Child> {
             data_dir: config.data_dir.clone(),
             ipc_port: config.ipc_port,
             edge_url: config.edge_url.clone(),
-            workos_client_id: config.workos_client_id.clone(),
-            edge_token: config.edge_token.clone(),
-            org_id: config.org_id.clone(),
         },
         app_exe,
     )
@@ -443,12 +440,6 @@ impl Engine {
             stopped_for_update.clone(),
         ));
         let uninstalled_stop = stop_tx.clone();
-        // Signed in with no organization chosen, there's no profile to open
-        // (maybe for a long while), and so nothing a trial could migrate:
-        // answering on the port is all it can prove.
-        if !engine.profile_is_resolved {
-            crate::update_trial::commit_without_a_profile(&config);
-        }
         let trial_config = config.clone();
         let boot = engine.spawn_boot(
             config.clone(),
@@ -463,9 +454,7 @@ impl Engine {
             },
         );
 
-        let mut auth_state = engine.auth.watch_state();
         let mut assembly = engine.state();
-        let synced = engine.workspace_scope == WorkspaceScope::Synced;
         // The stop came through `stop_rx` (a restart, `StopEngine`), not a
         // signal or a sign-out: only then may an update bring it back.
         let mut stop_requested = false;
@@ -480,12 +469,6 @@ impl Engine {
                 tracing::info!("the app quit and nothing is pending: stopping");
                 Ok(())
             }
-            _ = crate::wait_for_signed_out(&mut auth_state), if synced => {
-                tracing::info!("signed out; stopping the synced background engine");
-                // A brief reply window for the SignOut RPC itself.
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
-            }
             failure = async {
                 match deferred::wait(&mut assembly).await {
                     Ok(()) => std::future::pending().await,
@@ -496,10 +479,6 @@ impl Engine {
         tracing::info!("background engine shutting down");
         server.abort();
         boot.abort();
-        // Before the data dir is released (with the runtime): no refresh may
-        // be mid-exchange when the next engine takes over the session file.
-        engine.refresh_task.abort();
-        engine.auth.quiesce_refresh(Duration::from_secs(10)).await;
         let runtime = engine.runtime.lock().await.take();
         // The app signs out, then stops the engine: the StopEngine may land
         // before the auth watcher does, so the runtime's shutdown decides
