@@ -16,6 +16,12 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use crate::{App, DeviceView, Kind, SIGN_IN_TTL, SignIn, lock, now, random, sha256_hex, to_google};
 
 const COOKIE: &str = "vardoger_session";
+
+/// Vardoger's mark: a figure and its double.
+const LOGO: &str = r##"<svg class="logo" viewBox="0 0 48 48" aria-label="Vardoger" role="img"><circle cx="20" cy="24" r="11" fill="#ededed"/><circle cx="29" cy="24" r="11" fill="none" stroke="#ededed" stroke-width="2.5" stroke-dasharray="3 3"/></svg>"##;
+
+/// Google's "G", in its own colours.
+const GOOGLE: &str = r##"<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>"##;
 const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 impl App {
@@ -97,12 +103,17 @@ pub(crate) async fn start(State(app): State<Arc<App>>) -> Response {
 pub(crate) async fn home(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let Some(user) = app.web_user(&headers) else {
         return page(
-            "Vardoger",
-            r#"<main class="center">
-  <h1>Vardoger</h1>
-  <p class="muted">Your coding agents, from any of your devices.</p>
-  <a class="button" href="/auth/web">Continue with Google</a>
-</main>"#,
+            "Sign in · Vardoger",
+            &format!(
+                r#"<main>
+  {LOGO}
+  <h1>Sign in</h1>
+  <section class="card">
+    <a class="provider" href="/auth/web">{GOOGLE}<span>Continue with Google</span></a>
+    <p class="note">Your coding agents, from any of your devices.</p>
+  </section>
+</main>"#
+            ),
         );
     };
     let email = app.user_view(&user).map(|u| u.email).unwrap_or_default();
@@ -122,13 +133,13 @@ pub(crate) async fn home(State(app): State<Arc<App>>, headers: HeaderMap) -> Res
     page(
         "Devices · Vardoger",
         &format!(
-            r#"<header>
-  <span class="brand">Vardoger</span>
-  <form method="post" action="/web/sign-out"><span class="muted">{email}</span> <button class="link">Sign out</button></form>
-</header>
-<main>
+            r#"<main>
+  {LOGO}
   <h1>Devices</h1>
-  <ul>{list}</ul>
+  <section class="card list"><ul>{list}</ul></section>
+  <form class="account" method="post" action="/web/sign-out">
+    <span>{email}</span><span aria-hidden="true">·</span><button class="link">Sign out</button>
+  </form>
 </main>"#,
             email = escape(&email),
         ),
@@ -215,33 +226,35 @@ fn page(title: &str, body: &str) -> Response {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
-:root {{ --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff; --accent:#1c1917; --on-accent:#fff; --ok:#16a34a; --danger:#dc2626; color-scheme: light dark; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --bg:#0c0a09; --fg:#f5f5f4; --muted:#a8a29e; --line:#292524; --card:#1c1917; --accent:#f5f5f4; --on-accent:#0c0a09; --ok:#22c55e; --danger:#f87171; }} }}
+:root {{ color-scheme: dark; --bg:#000; --card:#1b1b1b; --line:#2e2e2e; --fg:#ededed; --muted:#8f8f8f; --hover:#262626; --ok:#3ecf8e; --danger:#ff6b6b; --focus:#7c6cf2; }}
 * {{ box-sizing: border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, sans-serif; }}
-header {{ display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid var(--line); }}
-header form {{ margin:0; }}
-.brand {{ font-weight:600; }}
-main {{ max-width:40rem; margin:0 auto; padding:2rem 1.25rem; }}
-main.center {{ min-height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }}
-h1 {{ font-size:1.75rem; margin:0 0 .5rem; letter-spacing:-.01em; }}
-.muted {{ color:var(--muted); }}
-.button {{ display:inline-block; margin-top:1.5rem; padding:.75rem 1.25rem; border-radius:.5rem; background:var(--accent); color:var(--on-accent); text-decoration:none; font-weight:500; }}
-.button:focus-visible, button:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
-ul {{ list-style:none; margin:1.5rem 0 0; padding:0; border:1px solid var(--line); border-radius:.75rem; background:var(--card); }}
-li {{ display:flex; align-items:center; gap:.875rem; padding:.875rem 1rem; }}
-li + li {{ border-top:1px solid var(--line); }}
+body {{ margin:0; min-height:100vh; background:var(--bg); color:var(--fg); font:15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; -webkit-font-smoothing:antialiased; }}
+main {{ width:100%; max-width:440px; margin:0 auto; padding:96px 16px 48px; display:flex; flex-direction:column; align-items:center; }}
+.logo {{ width:48px; height:48px; }}
+h1 {{ margin:16px 0 24px; font-size:22px; font-weight:500; letter-spacing:-.01em; }}
+.card {{ width:100%; background:var(--card); border-radius:16px; padding:48px; }}
+.card.list {{ padding:8px; }}
+.provider {{ display:flex; align-items:center; justify-content:center; gap:10px; height:40px; border:1px solid var(--line); border-radius:6px; color:var(--fg); text-decoration:none; font-weight:500; transition:background .15s; }}
+.provider:hover {{ background:var(--hover); }}
+.provider svg {{ width:16px; height:16px; }}
+a:focus-visible, button:focus-visible {{ outline:2px solid var(--focus); outline-offset:2px; }}
+.note {{ margin:24px 0 0; text-align:center; color:var(--muted); font-size:14px; }}
+ul {{ list-style:none; margin:0; padding:0; }}
+li {{ display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:10px; }}
+li:hover {{ background:var(--hover); }}
 li form {{ margin:0 0 0 auto; }}
 .info {{ display:flex; flex-direction:column; min-width:0; }}
 .info strong {{ font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-.info .muted {{ font-size:.875rem; }}
-.dot {{ flex:none; width:.625rem; height:.625rem; border-radius:50%; background:var(--line); }}
-.dot.on {{ background:var(--ok); }}
-button.link {{ background:none; border:0; padding:.25rem; font:inherit; color:var(--muted); cursor:pointer; }}
+.muted {{ color:var(--muted); font-size:13px; }}
+.dot {{ flex:none; width:8px; height:8px; border-radius:50%; background:#4a4a4a; }}
+.dot.on {{ background:var(--ok); box-shadow:0 0 0 3px rgba(62,207,142,.15); }}
+button.link {{ background:none; border:0; padding:4px; font:inherit; font-size:14px; color:var(--muted); cursor:pointer; }}
 button.link:hover {{ color:var(--fg); }}
 button.danger:hover {{ color:var(--danger); }}
-.empty {{ margin-top:1.5rem; color:var(--muted); }}
-code {{ font:.875rem ui-monospace, monospace; background:var(--line); padding:.125rem .375rem; border-radius:.25rem; }}
+.empty {{ margin:0; padding:32px 24px; text-align:center; color:var(--muted); }}
+code {{ display:inline-block; margin-top:8px; font:13px ui-monospace, SFMono-Regular, monospace; color:var(--fg); background:#000; padding:4px 8px; border-radius:6px; }}
+.account {{ display:flex; gap:8px; align-items:center; margin-top:24px; color:var(--muted); font-size:14px; }}
+@media (max-width:480px) {{ main {{ padding-top:64px; }} .card {{ padding:32px 24px; }} }}
 </style>
 <body>
 {body}
