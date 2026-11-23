@@ -1390,7 +1390,7 @@ mod tests {
     use super::*;
 
     fn descriptor(id: HarnessId, name: &str, installed: bool) -> HarnessDescriptor {
-        HarnessDescriptor {
+        HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: false,

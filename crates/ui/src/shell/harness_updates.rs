@@ -944,7 +944,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn status(phase: Phase) -> HarnessUpdateStatus {
-        HarnessUpdateStatus {
+        HarnessUpdateStatus { wait_reason: Default::default(),
             harness: HarnessId::Codex,
             installed_version: Some("1.0".into()),
             latest_version: Some("2.0".into()),

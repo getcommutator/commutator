@@ -7192,7 +7192,7 @@ mod tests {
     }
 
     fn running_session(chat_id: &str) -> vardoger_proto::Session {
-        vardoger_proto::Session {
+        vardoger_proto::Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             chat_id: chat_id.into(),
             device_id: "local".into(),
@@ -7858,7 +7858,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         cx.update(|cx| cx.set_global(Theme::dark()));
-        let project = |id: &str, repo: Option<&str>| vardoger_proto::Space {
+        let project = |id: &str, repo: Option<&str>| vardoger_proto::Space { icon: Default::default(),
             id: id.into(),
             device_id: "mac".into(),
             path: format!("/code/{id}"),
@@ -7890,7 +7890,7 @@ mod tests {
                     project("other", Some("someone/else")),
                 ];
                 state.selected_space = Some("app".into());
-                state.cloud_repos = Some(vec![vardoger_proto::GithubRepo {
+                state.cloud_repos = Some(vec![vardoger_proto::GithubRepo { account: Default::default(), accounts: Default::default(), installation_id: Default::default(),
                     full_name: "acme/app".into(),
                     clone_url: "https://github.com/acme/app.git".into(),
                     default_branch: "main".into(),
@@ -8036,7 +8036,7 @@ mod tests {
         let state = cx.new(|_| {
             let mut state = AppState::new();
             state.local_device_id = Some("local".into());
-            state.apply_spaces(vec![Space {
+            state.apply_spaces(vec![Space { icon: Default::default(),
                 id: "repo".into(),
                 device_id: "local".into(),
                 path: "/repo".into(),
@@ -8080,7 +8080,7 @@ mod tests {
     }
 
     fn git_space(id: &str, device: &str) -> Space {
-        Space {
+        Space { icon: Default::default(),
             id: id.into(),
             device_id: device.into(),
             path: format!("/{device}/{id}"),
@@ -8261,7 +8261,7 @@ mod tests {
 
     #[gpui::test]
     fn project_picker_lists_repositories_then_their_devices(cx: &mut gpui::TestAppContext) {
-        let space = |id: &str, device: &str, name: &str, repository: Option<&str>, minutes| Space {
+        let space = |id: &str, device: &str, name: &str, repository: Option<&str>, minutes| Space { icon: Default::default(),
             id: id.into(),
             device_id: device.into(),
             path: format!("/{device}/{id}"),
@@ -8369,7 +8369,7 @@ mod tests {
     }
 
     fn bare_model(id: &str, label: &str) -> Model {
-        Model {
+        Model { default: Default::default(), provider: Default::default(),
             id: id.into(),
             label: label.into(),
             description: None,
@@ -9248,7 +9248,7 @@ mod tests {
     }
 
     fn descriptor(id: HarnessId, name: &str) -> HarnessDescriptor {
-        HarnessDescriptor {
+        HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             installed: true,
@@ -10445,14 +10445,14 @@ mod tests {
     #[test]
     fn default_model_is_first_catalog_row() {
         let models = vec![
-            Model {
+            Model { default: Default::default(), provider: Default::default(),
                 id: "flagship".into(),
                 label: "Flagship".into(),
                 description: None,
                 reasoning_levels: vec![],
                 options: vec![],
             },
-            Model {
+            Model { default: Default::default(), provider: Default::default(),
                 id: "fast".into(),
                 label: "Fast".into(),
                 description: None,
@@ -10496,7 +10496,7 @@ mod tests {
 
     #[test]
     fn mock_harness_hidden_unless_alone() {
-        let descriptor = |id: HarnessId, name: &str| HarnessDescriptor {
+        let descriptor = |id: HarnessId, name: &str| HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: true,
@@ -10523,7 +10523,7 @@ mod tests {
 
     #[test]
     fn offered_harnesses_follow_the_catalog_enabled_flags() {
-        let descriptor = |id: HarnessId, name: &str, enabled: Option<bool>| HarnessDescriptor {
+        let descriptor = |id: HarnessId, name: &str, enabled: Option<bool>| HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: true,
@@ -10576,7 +10576,7 @@ mod tests {
     #[test]
     fn offered_harnesses_require_an_installed_cli() {
         let descriptor =
-            |id: HarnessId, name: &str, enabled: Option<bool>, installed: bool| HarnessDescriptor {
+            |id: HarnessId, name: &str, enabled: Option<bool>, installed: bool| HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
                 id,
                 name: name.into(),
                 supports_steering: true,

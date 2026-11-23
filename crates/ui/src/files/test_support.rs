@@ -18,7 +18,7 @@ pub(crate) fn state() -> AppState {
 pub(crate) fn explorer(state: Entity<AppState>, cx: &mut Context<FilesSurface>) -> FilesSurface {
     let mut files = FilesSurface::new_explorer(state, "chat".into(), false, cx);
     files.effective_checkout_id = Some("checkout".into());
-    files.mutation_capabilities = Some(vardoger_proto::WorkspaceMutationCapabilities {
+    files.mutation_capabilities = Some(vardoger_proto::WorkspaceMutationCapabilities { create_entry: Default::default(),
         move_entry: true,
         delete_entry: true,
     });

@@ -528,7 +528,7 @@ impl EngineHandle {
                 data_dir: std::path::PathBuf::new(),
                 lifecycle_task: tokio::sync::Mutex::new(None),
             }),
-            engine_info: EngineInfo {
+            engine_info: EngineInfo { build: Default::default(),
                 device_id: "local".into(),
                 workspace_scope: WorkspaceScope::Local,
                 cursor_sdk_version: None,
@@ -4825,7 +4825,7 @@ mod tests {
         let server = tokio::spawn(vardoger_rpc::serve_ws_listener(
             listener,
             Arc::new(DeferredIdentityRpc {
-                engine_info: EngineInfo {
+                engine_info: EngineInfo { build: Default::default(),
                     device_id: "owner-device".into(),
                     workspace_scope: WorkspaceScope::Local,
                     cursor_sdk_version: None,
@@ -5215,7 +5215,7 @@ mod tests {
         let base = DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
             .unwrap()
             .to_utc();
-        Chat {
+        Chat { child_kind: Default::default(), sleep: Default::default(),
             id: id.into(),
             device_id: "dev".into(),
             title: None,
@@ -5242,7 +5242,7 @@ mod tests {
         let base = DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
             .unwrap()
             .to_utc();
-        Space {
+        Space { icon: Default::default(),
             id: id.into(),
             device_id: device_id.into(),
             path: path.into(),
@@ -5262,7 +5262,7 @@ mod tests {
         updated_secs_ago: i64,
         now: DateTime<Utc>,
     ) -> Session {
-        Session {
+        Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             last_turn_outcome: None,
             terminal_activity: None,
@@ -5390,7 +5390,7 @@ mod tests {
             assert_eq!(state.transcript[0].id, "new-authoritative-row");
             // An authoritative empty reset must still be honored.
             state
-                .apply_transcript_frame(TranscriptFrame::reset(&[]))
+                .apply_transcript_frame(TranscriptFrame::reset::<SessionMessageEntry>(&[]))
                 .unwrap();
             assert!(state.transcript.is_empty());
         });
@@ -5532,7 +5532,7 @@ mod tests {
     fn session_heartbeats_preserve_freshness_without_redrawing_unchanged_status() {
         let mut state = AppState::new();
         let now = Utc::now();
-        let mut row = Session {
+        let mut row = Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             last_turn_outcome: None,
             terminal_activity: None,
@@ -5566,7 +5566,7 @@ mod tests {
     fn unchanged_device_heartbeat_still_retires_stale_session_indicators() {
         let mut state = AppState::new();
         let now = Utc::now();
-        state.sessions = vec![Session {
+        state.sessions = vec![Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             last_turn_outcome: None,
             terminal_activity: None,
@@ -5813,7 +5813,7 @@ mod tests {
         let mut c = chat("c", 0, Some(10));
         c.device_id = "cloud-s1".into();
         s.chats = vec![c];
-        let session = |state| CloudSession {
+        let session = |state| CloudSession { machine: Default::default(), reach: Default::default(), disk: Default::default(), wake_blocked: Default::default(), expires_at: Default::default(), stage: Default::default(), store_recovered_at: Default::default(),
             chat_id: "c".into(),
             device_id: "cloud-s1".into(),
             space_id: "sp".into(),
@@ -5933,7 +5933,7 @@ mod tests {
         s.chats = vec![c];
         s.selected_chat = Some("c".into());
         let session = |state, error: Option<&str>| CloudSessions {
-            sessions: vec![CloudSession {
+            sessions: vec![CloudSession { machine: Default::default(), reach: Default::default(), disk: Default::default(), wake_blocked: Default::default(), expires_at: Default::default(), stage: Default::default(), store_recovered_at: Default::default(),
                 chat_id: "c".into(),
                 device_id: "cloud-s1".into(),
                 space_id: "sp".into(),
@@ -6806,7 +6806,7 @@ mod tests {
         assert!(!state.apply_auth(AuthState::NeedsOrganization { user }));
         assert!(!state.apply_auth_value(serde_json::json!({ "bogus": true })));
 
-        let status = |phase| HarnessUpdateStatus {
+        let status = |phase| HarnessUpdateStatus { wait_reason: Default::default(),
             harness: HarnessId::Codex,
             installed_version: Some("1.0".into()),
             latest_version: Some("2.0".into()),
@@ -6832,7 +6832,7 @@ mod tests {
     fn apply_chat_config_stamps_the_row() {
         let mut state = AppState::new();
         state.apply_chats(vec![chat("a", 0, None), chat("b", 1, None)]);
-        let config = vardoger_proto::ChatConfig {
+        let config = vardoger_proto::ChatConfig { access: Default::default(), plan: Default::default(),
             harness: HarnessId::ClaudeCode,
             model: Some("claude-fable-5".into()),
             reasoning: Some(vardoger_proto::ReasoningLevel::XHigh),
@@ -6856,7 +6856,7 @@ mod tests {
         // Unknown chat: no-op, no panic.
         state.apply_chat_config(
             "missing",
-            vardoger_proto::ChatConfig {
+            vardoger_proto::ChatConfig { access: Default::default(), plan: Default::default(),
                 harness: HarnessId::ClaudeCode,
                 model: None,
                 reasoning: None,
@@ -6997,7 +6997,7 @@ mod tests {
             continuation_of: None,
             duration_ms: None,
         };
-        let row = |id: &str| vardoger_doc::QueuedMessage {
+        let row = |id: &str| vardoger_doc::QueuedMessage { config: Default::default(),
             id: id.into(),
             text: "held".into(),
             attachments: vec![],
@@ -7193,7 +7193,7 @@ mod tests {
         assert!(!state.transcript_replayed);
 
         state
-            .apply_transcript_frame(TranscriptFrame::Delta {
+            .apply_transcript_frame(TranscriptFrame::Delta { parts: Default::default(),
                 upsert: Vec::new(),
                 append: Vec::new(),
                 remove: Vec::new(),

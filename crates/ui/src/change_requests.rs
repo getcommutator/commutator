@@ -445,7 +445,7 @@ mod tests {
     use super::*;
 
     fn chat(id: &str, device: &str, cwd: Option<&str>, checkout: Option<&str>) -> Chat {
-        Chat {
+        Chat { child_kind: Default::default(), sleep: Default::default(),
             id: id.into(),
             device_id: device.into(),
             title: None,
@@ -469,7 +469,7 @@ mod tests {
     }
 
     fn space(device: &str) -> Space {
-        Space {
+        Space { icon: Default::default(),
             id: "space".into(),
             device_id: device.into(),
             path: "/project".into(),
@@ -489,7 +489,7 @@ mod tests {
             device_id: device.into(),
             cwd: cwd.into(),
             branch: "feature/pr".into(),
-            change_request: Some(ChangeRequestSummary {
+            change_request: Some(ChangeRequestSummary { signals: Default::default(),
                 provider: "github".into(),
                 number: 90,
                 title: "Add pull request badges".into(),

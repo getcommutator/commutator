@@ -2528,7 +2528,7 @@ mod tests {
 
     #[test]
     fn a_switch_only_moves_the_live_login_within_its_provider_group() {
-        let row = |id: &str, harness, provider: Option<&str>, active| AgentAccount {
+        let row = |id: &str, harness, provider: Option<&str>, active| AgentAccount { codex_reset_credits: Default::default(),
             id: id.into(),
             harness,
             email: None,
@@ -2590,7 +2590,7 @@ mod tests {
     }
 
     fn poll(status: AgentLoginStatus, message: Option<&str>, url: Option<&str>) -> AgentLoginPoll {
-        AgentLoginPoll {
+        AgentLoginPoll { code: Default::default(),
             status,
             message: message.map(str::to_string),
             url: url.map(str::to_string),
@@ -2676,7 +2676,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let window = page(cx);
-        let row = |id: &str, email: &str, active, switchable| AgentAccount {
+        let row = |id: &str, email: &str, active, switchable| AgentAccount { codex_reset_credits: Default::default(),
             id: id.into(),
             harness: HarnessId::Opencode,
             email: Some(email.into()),
@@ -2754,7 +2754,7 @@ mod tests {
                 page.set_embedded_harness(HarnessId::ClaudeCode, cx);
                 assert!(page.targets_cloud());
                 page.snapshot = Loadable::Ready(AgentAccountsSnapshot {
-                    accounts: vec![AgentAccount {
+                    accounts: vec![AgentAccount { codex_reset_credits: Default::default(),
                         id: "anthropic-key:a1".into(),
                         harness: HarnessId::ClaudeCode,
                         email: None,
@@ -2836,7 +2836,7 @@ mod tests {
 
     #[test]
     fn provider_grouping_keeps_engine_order_even_when_active_is_later() {
-        let account = |id: &str, harness: HarnessId, active: bool| AgentAccount {
+        let account = |id: &str, harness: HarnessId, active: bool| AgentAccount { codex_reset_credits: Default::default(),
             id: id.into(),
             harness,
             email: None,

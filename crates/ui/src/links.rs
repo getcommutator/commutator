@@ -119,7 +119,7 @@ mod tests {
     use super::*;
 
     fn harness_chat(harness: HarnessId) -> Chat {
-        Chat {
+        Chat { child_kind: Default::default(), sleep: Default::default(),
             id: "chat".into(),
             device_id: "device".into(),
             title: None,
@@ -128,7 +128,7 @@ mod tests {
             branch: None,
             checkout_id: None,
             source_context: None,
-            config: Some(vardoger_proto::ChatConfig {
+            config: Some(vardoger_proto::ChatConfig { access: Default::default(), plan: Default::default(),
                 harness,
                 model: None,
                 reasoning: None,

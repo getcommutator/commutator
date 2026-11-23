@@ -11252,7 +11252,7 @@ mod tests {
                 state
                     .receive_transcript_update(
                         vardoger_doc::TranscriptUpdate {
-                            frame: vardoger_doc::TranscriptFrame::reset(&[]),
+                            frame: vardoger_doc::TranscriptFrame::reset::<vardoger_doc::SessionMessageEntry>(&[]),
                             context_usage: None,
                             replay_baseline: Some(Default::default()),
                         },
@@ -13042,7 +13042,7 @@ mod tests {
     }
 
     fn tool_part(id: &str, command: &str) -> MessagePart {
-        MessagePart::Tool {
+        MessagePart::Tool { preview_paths: Default::default(), exit_code: Default::default(), output_truncated: Default::default(), output_lines: Default::default(), review: Default::default(),
             id: id.into(),
             call: ToolCall::Exec {
                 command: command.into(),
@@ -13163,7 +13163,7 @@ mod tests {
     }
 
     fn agent_part(id: &str, description: &str) -> MessagePart {
-        MessagePart::Tool {
+        MessagePart::Tool { preview_paths: Default::default(), exit_code: Default::default(), output_truncated: Default::default(), output_lines: Default::default(), review: Default::default(),
             id: id.into(),
             call: ToolCall::Unknown {
                 name: format!("Agent: {description}"),

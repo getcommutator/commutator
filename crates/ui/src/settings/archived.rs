@@ -599,7 +599,7 @@ mod tests {
     use chrono::Utc;
 
     fn chat(id: &str, archived: bool) -> Chat {
-        Chat {
+        Chat { child_kind: Default::default(), sleep: Default::default(),
             id: id.into(),
             device_id: "d".into(),
             title: None,

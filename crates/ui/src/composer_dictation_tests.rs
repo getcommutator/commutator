@@ -630,11 +630,11 @@ fn dictation_question_takeover_stops_capture_without_losing_draft(cx: &mut TestA
             device_id: "host".into(),
             status: None,
             continuation_of: None,
-            parts: vec![MessagePart::Input {
+            parts: vec![MessagePart::Input { answers: Default::default(),
                 id: "input".into(),
                 request_id: "request".into(),
                 resolved: false,
-                questions: vec![UserInputQuestion {
+                questions: vec![UserInputQuestion { note: Default::default(),
                     id: "q".into(),
                     header: "Choose".into(),
                     question: "Continue?".into(),

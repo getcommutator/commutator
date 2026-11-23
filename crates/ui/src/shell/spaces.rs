@@ -8172,7 +8172,7 @@ mod tests {
     }
 
     fn chat(id: &str) -> vardoger_proto::Chat {
-        vardoger_proto::Chat {
+        vardoger_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
             id: id.into(),
             device_id: "device".into(),
             title: None,

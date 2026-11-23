@@ -608,7 +608,7 @@ mod tests {
             }))
         });
         let engine = crate::state::EngineHandle::from_test_client(rpc.client());
-        let space = |id: &str, device: &str| vardoger_proto::Space {
+        let space = |id: &str, device: &str| vardoger_proto::Space { icon: Default::default(),
             github_repo: None,
             id: id.into(),
             device_id: device.into(),

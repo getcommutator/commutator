@@ -461,7 +461,7 @@ mod tests {
                     "now".into(),
                     "Project".into(),
                     None,
-                    Some(vardoger_proto::ChangeRequestSummary {
+                    Some(vardoger_proto::ChangeRequestSummary { signals: Default::default(),
                         provider: "github".into(),
                         number: 90,
                         title: "Pull request title".into(),

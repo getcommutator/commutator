@@ -12873,7 +12873,7 @@ mod tests {
         let updated = now - TimeDelta::seconds(10);
         let state = cx.new(|cx| {
             let mut state = AppState::new();
-            state.sessions = vec![vardoger_proto::Session {
+            state.sessions = vec![vardoger_proto::Session { background_tasks: Default::default(), waiting: Default::default(),
                 last_completed_turn: None,
                 chat_id: "c".into(),
                 device_id: "remote".into(),
@@ -15413,7 +15413,7 @@ mod tests {
     }
 
     fn question(id: &str, options: &[&str], multi: bool) -> UserInputQuestion {
-        UserInputQuestion {
+        UserInputQuestion { note: Default::default(),
             id: id.into(),
             header: "Header".into(),
             question: format!("Question {id}"),
@@ -16315,7 +16315,7 @@ mod tests {
             vec![SessionMessageEntry {
                 id: "assistant".into(),
                 role: MessageRole::Assistant,
-                parts: vec![MessagePart::Input {
+                parts: vec![MessagePart::Input { answers: Default::default(),
                     id: "input".into(),
                     request_id: id.into(),
                     questions: vec![q],
@@ -16377,7 +16377,7 @@ mod tests {
     #[test]
     fn pending_input_detection() {
         use vardoger_doc::MessageStatus;
-        let input_part = MessagePart::Input {
+        let input_part = MessagePart::Input { answers: Default::default(),
             id: "in-r1".into(),
             request_id: "r1".into(),
             questions: vec![question("q", &["a"], false)],
@@ -16433,7 +16433,7 @@ mod tests {
         ];
         assert!(pending_input_request(&t).is_none());
         // Resolved part → no panel.
-        let resolved = MessagePart::Input {
+        let resolved = MessagePart::Input { answers: Default::default(),
             id: "in-r1".into(),
             request_id: "r1".into(),
             questions: vec![],

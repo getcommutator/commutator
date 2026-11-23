@@ -726,7 +726,7 @@ mod tests {
         doc: Option<&str>,
         status: Option<SubagentStatus>,
     ) -> MessagePart {
-        MessagePart::Tool {
+        MessagePart::Tool { preview_paths: Default::default(), exit_code: Default::default(), output_truncated: Default::default(), output_lines: Default::default(), review: Default::default(),
             id: id.into(),
             call: ToolCall::Unknown {
                 name: name.into(),

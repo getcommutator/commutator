@@ -1581,7 +1581,7 @@ mod tests {
                 page.sign_in(None, vardoger_proto::HarnessId::Codex, cx);
                 assert_eq!(page.expanded_harness, None, "nothing to open yet");
                 page.harnesses =
-                    super::Loadable::Ready(vec![vardoger_engine::registry::HarnessDescriptor {
+                    super::Loadable::Ready(vec![vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
                         id: vardoger_proto::HarnessId::Codex,
                         name: "Codex".into(),
                         supports_steering: false,
@@ -1619,7 +1619,7 @@ mod tests {
             let state = cx.new(|_| crate::state::AppState::new());
             super::HarnessesPage::new(state, cx)
         });
-        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor {
+        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: false,
@@ -1716,7 +1716,7 @@ mod tests {
             page.set_target_device(Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.into()), cx);
             page
         });
-        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor {
+        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: false,

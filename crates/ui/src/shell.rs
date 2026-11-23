@@ -14369,7 +14369,7 @@ mod tests {
         cwd: Option<&str>,
         source: Option<(&str, &str)>,
     ) -> vardoger_proto::Chat {
-        vardoger_proto::Chat {
+        vardoger_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
             id: "chat".into(),
             device_id: "remote-device".into(),
             title: None,
@@ -14707,7 +14707,7 @@ mod tests {
         status: vardoger_proto::SessionStatus,
         updated_at: DateTime<Utc>,
     ) -> vardoger_proto::Session {
-        vardoger_proto::Session {
+        vardoger_proto::Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             chat_id: chat_id.into(),
             device_id: "remote".into(),
@@ -17154,7 +17154,7 @@ mod exit_regressions {
         });
         window
             .update(cx, |shell, _, cx| {
-                let space = |id: &str, device: &str| vardoger_proto::Space {
+                let space = |id: &str, device: &str| vardoger_proto::Space { icon: Default::default(),
                     github_repo: None,
                     id: id.into(),
                     device_id: device.into(),
@@ -17423,7 +17423,7 @@ mod exit_regressions {
         window
             .update(cx, |shell, _, cx| {
                 shell.state.update(cx, |state, _| {
-                    state.apply_spaces(vec![vardoger_proto::Space {
+                    state.apply_spaces(vec![vardoger_proto::Space { icon: Default::default(),
                         id: "repo".into(),
                         device_id: "local".into(),
                         path: "/repo".into(),
@@ -17493,7 +17493,7 @@ mod exit_regressions {
                 cx,
             )
         });
-        let space = |id: &str, device: &str| vardoger_proto::Space {
+        let space = |id: &str, device: &str| vardoger_proto::Space { icon: Default::default(),
             id: id.into(),
             device_id: device.into(),
             path: format!("/{id}"),
@@ -17509,7 +17509,7 @@ mod exit_regressions {
             .update(cx, |shell, _, cx| {
                 shell.state.update(cx, |state, cx| {
                     state.apply_spaces(vec![space("mine", "local"), space("other", "remote")]);
-                    state.apply_chats(vec![vardoger_proto::Chat {
+                    state.apply_chats(vec![vardoger_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
                         id: "elsewhere".into(),
                         device_id: "remote".into(),
                         title: None,
@@ -17579,7 +17579,7 @@ mod exit_regressions {
                 cx,
             )
         });
-        let space = |id: &str| vardoger_proto::Space {
+        let space = |id: &str| vardoger_proto::Space { icon: Default::default(),
             id: id.into(),
             device_id: "local".into(),
             path: format!("/{id}"),
@@ -17850,7 +17850,7 @@ mod exit_regressions {
                 // different file under the linking chat's checkout.
                 let project = dir.path().join("other-project");
                 shell.state.update(cx, |state, _| {
-                    state.apply_spaces(vec![vardoger_proto::Space {
+                    state.apply_spaces(vec![vardoger_proto::Space { icon: Default::default(),
                         id: "other".into(),
                         device_id: "local".into(),
                         path: project.to_string_lossy().into_owned(),

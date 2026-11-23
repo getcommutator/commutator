@@ -3674,7 +3674,7 @@ mod tests {
     }
 
     fn space(id: &str, device: &str, git: bool, created_minutes_ago: i64) -> vardoger_proto::Space {
-        vardoger_proto::Space {
+        vardoger_proto::Space { icon: Default::default(),
             github_repo: None,
             id: id.into(),
             device_id: device.into(),
@@ -3689,7 +3689,7 @@ mod tests {
     }
 
     fn session(space: &str, last_message_at: Option<DateTime<Utc>>) -> vardoger_proto::Chat {
-        vardoger_proto::Chat {
+        vardoger_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
             id: "chat".into(),
             device_id: "local".into(),
             title: None,
@@ -4337,7 +4337,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space {
+            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),
@@ -4521,7 +4521,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space {
+            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),
@@ -4584,7 +4584,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space {
+            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),

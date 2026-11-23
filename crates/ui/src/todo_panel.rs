@@ -718,7 +718,7 @@ mod tests {
     }
 
     fn todo_part(id: &str, list: Vec<TodoItem>) -> MessagePart {
-        MessagePart::Tool {
+        MessagePart::Tool { preview_paths: Default::default(), exit_code: Default::default(), output_truncated: Default::default(), output_lines: Default::default(), review: Default::default(),
             id: id.into(),
             call: ToolCall::Todo { items: list },
             is_error: false,
@@ -974,7 +974,7 @@ mod composer_tests {
         SessionMessageEntry {
             id: "m".into(),
             role: MessageRole::Assistant,
-            parts: vec![MessagePart::Tool {
+            parts: vec![MessagePart::Tool { preview_paths: Default::default(), exit_code: Default::default(), output_truncated: Default::default(), output_lines: Default::default(), review: Default::default(),
                 id: "t".into(),
                 call: ToolCall::Todo { items: list },
                 is_error: false,

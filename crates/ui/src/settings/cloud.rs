@@ -1497,7 +1497,7 @@ mod tests {
             for available in [true, false] {
                 let vault = vaults[ix % vaults.len()].clone();
                 page.update(cx, |page, cx| {
-                    page.status = Loadable::Ready(CloudStatus {
+                    page.status = Loadable::Ready(CloudStatus { machine: Default::default(), machines: Default::default(), reach: Default::default(),
                         state: cloud_state,
                         device_id: Some("cloud-1".into()),
                         error: Some("Sandbox failed to start".into()),

@@ -545,7 +545,7 @@ mod tests {
     }
 
     fn repo(full_name: &str, pushed_at: i64, description: Option<&str>) -> GithubRepo {
-        GithubRepo {
+        GithubRepo { account: Default::default(), accounts: Default::default(), installation_id: Default::default(),
             full_name: full_name.into(),
             clone_url: format!("https://github.com/{full_name}.git"),
             default_branch: "main".into(),
