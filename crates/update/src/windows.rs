@@ -13,6 +13,9 @@ use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
 };
 
+/// Marks an update-managed installation (the installer and the portable
+/// package put it beside `vardoger.exe`). Releases come from GitHub
+/// ([`super::REPOSITORY`]) whatever it says.
 const CONFIG: &str = "vardoger-update.json";
 /// The running image, moved aside during a swap. A running executable can be
 /// renamed but not deleted, so the file survives until the process exits and
@@ -63,11 +66,6 @@ pub fn version_files(directory: &Path, version: &str) -> PathBuf {
     directory.join(BETA).join(version)
 }
 
-#[derive(serde::Deserialize)]
-struct Config {
-    releases_url: String,
-}
-
 pub(super) fn is_managed(exe: &Path) -> bool {
     exe.file_name().is_some_and(|name| name == "vardoger.exe")
         && exe.parent().is_some_and(|dir| dir.join(CONFIG).is_file())
@@ -88,23 +86,6 @@ pub(super) fn managed_directory(exe: &Path) -> Option<PathBuf> {
     }
     let directory = folder.parent()?;
     is_managed(&directory.join("vardoger.exe")).then(|| directory.to_path_buf())
-}
-
-pub(super) fn release_url() -> anyhow::Result<Option<String>> {
-    // A new version on trial runs from beside the installation.
-    let exe = match std::env::var_os(super::INSTALLED_AT_ENV) {
-        Some(directory) => PathBuf::from(directory).join("vardoger.exe"),
-        None => match managed_directory(&std::env::current_exe()?) {
-            Some(directory) => directory.join("vardoger.exe"),
-            None => return Ok(None),
-        },
-    };
-    if !is_managed(&exe) {
-        return Ok(None);
-    }
-    let config: Config = serde_json::from_slice(&std::fs::read(exe.with_file_name(CONFIG))?)
-        .context("reading Windows update configuration")?;
-    super::validate_release_override(&config.releases_url).map(Some)
 }
 
 pub fn artifact(version: &str) -> String {
@@ -163,9 +144,7 @@ async fn verify_staged_version(staged: &Path, version: &str) -> anyhow::Result<(
 
 /// Stage a release from its package: the executable where the single-file
 /// path leaves one (its checksum beside it), the rest in [`PACKAGE`].
-/// From the feed at `base` (a channel's, or one release's own).
 async fn stage_package(
-    base: &str,
     manifest: &super::Manifest,
     directory: &Path,
 ) -> anyhow::Result<PathBuf> {
@@ -175,7 +154,7 @@ async fn stage_package(
         .prefix(".vardoger-update-")
         .tempdir_in(directory)?;
     let archive = temporary.path().join(&file);
-    super::download_release_file_from(base, manifest, &file, &archive).await?;
+    super::download_release_file(manifest, &file, &archive).await?;
     let unpacked = temporary.path().join(PACKAGE);
     std::fs::create_dir(&unpacked)?;
     // Windows' own tar (since Windows 10 1803), by its full path.
@@ -259,27 +238,6 @@ fn remove_whole(dir: &Path) -> bool {
     true
 }
 
-/// An installation the old app's updater moved to the zgx app still names
-/// that app's feed, the GitHub release marked latest, which has no beta
-/// channel beside it: from its first launch as the zgx app it follows the
-/// edge's (stable at its root, beta in `beta/`), as a zgx package names. A
-/// feed someone set themselves stays.
-fn leave_github_feed(directory: &Path) {
-    let config = directory.join(CONFIG);
-    let on_github = std::fs::read(&config)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Config>(&bytes).ok())
-        .is_some_and(|c| c.releases_url.trim().trim_end_matches('/') == GITHUB_LATEST);
-    if !on_github {
-        return;
-    }
-    let new = directory.join(format!(".{CONFIG}.new"));
-    let json = serde_json::json!({ "releases_url": EDGE_FEED }).to_string();
-    if std::fs::write(&new, json).and_then(|()| std::fs::rename(&new, &config)).is_err() {
-        let _ = std::fs::remove_file(&new);
-    }
-}
-
 /// Remove every version's folder but `keep`'s, best-effort: an engine that's
 /// still running keeps its own executable until it stops.
 fn remove_version_files(directory: &Path, keep: Option<&str>) {
@@ -303,7 +261,6 @@ fn remove_version_files(directory: &Path, keep: Option<&str>) {
 /// Each attempt has its own directory, so failed or concurrent downloads cannot
 /// leave a reusable, partially staged executable.
 pub async fn stage(
-    edge_url: &str,
     manifest: &super::Manifest,
     directory: &Path,
 ) -> anyhow::Result<PathBuf> {
@@ -317,8 +274,7 @@ pub async fn stage(
         || packaged()
         || version_files(directory, super::app_version()).is_dir()
     {
-        let base = manifest.channel.base(&super::release_base(edge_url)?);
-        return stage_package(&base, manifest, directory).await;
+        return stage_package(manifest, directory).await;
     }
     let file = artifact(&manifest.version);
     let expected = expected_checksum(manifest, &file)?;
@@ -326,7 +282,7 @@ pub async fn stage(
         .prefix(".vardoger-update-")
         .tempdir_in(directory)?;
     let staged = temporary.path().join("vardoger.exe");
-    super::download_release_file(edge_url, manifest, &file, &staged).await?;
+    super::download_release_file(manifest, &file, &staged).await?;
     std::fs::write(temporary.path().join("sha256"), expected)?;
     std::fs::write(temporary.path().join("version"), &manifest.version)?;
     verify(&staged)?;
@@ -372,15 +328,13 @@ pub fn install_directory(exe: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Bring in this version's folder from the release feed (the one
-/// `vardoger-update.json` names), as an update would: the package, its
-/// checksum from the feed's manifest, unpacked beside the installation.
+/// Bring in this version's folder from its GitHub release, as an update
+/// would: the package, its checksum from the release's manifest, unpacked beside the installation.
 /// When the feed has a newer release by now, that one is installed instead,
 /// `vardoger.exe` with it. Nothing already installed is removed or replaced
 /// unless the whole new version is in place, so a failure leaves things as
 /// they were and the next start tries again.
 pub async fn complete_install(
-    edge_url: &str,
     directory: &Path,
     version: &str,
 ) -> anyhow::Result<Completion> {
@@ -400,8 +354,11 @@ pub async fn complete_install(
     }
     // This version's own package first, wherever the feed keeps one release's
     // files: what `latest` says can be older (a release withdrawn) or newer.
-    match pinned_release(edge_url, version).await {
-        Some((base, manifest)) => match stage_package(&base, &manifest, directory).await {
+    match super::fetch_release(version).await.unwrap_or_else(|err| {
+        tracing::warn!(error = %format!("{err:#}"), "this version's own release couldn't be read");
+        None
+    }) {
+        Some(manifest) => match stage_package(&manifest, directory).await {
             Ok(staged) => {
                 let result = install_version_files(&staged, directory);
                 if let Some(stage) = staged.parent() {
@@ -412,19 +369,17 @@ pub async fn complete_install(
             }
             Err(err) => tracing::warn!(error = %format!("{err:#}"), "this version's own package didn't install; trying the latest"),
         },
-        None => tracing::info!(version, "the feed keeps no package of this version apart; trying the latest"),
+        None => tracing::info!(version, "no release of this version; trying the latest"),
     }
-    let manifest = super::fetch_latest_on(edge_url, super::Channel::of_version(version))
+    let manifest = super::fetch_latest_on(super::Channel::of_version(version))
         .await
-        .with_context(|| {
-            format!("reading the release feed (neither this version's own manifest nor the latest one could be read)")
-        })?;
+        .context("reading the latest release (this version's own couldn't be installed)")?
+        .context("no release has been published to complete this install from")?;
     let latest = manifest.version.trim().to_owned();
     if latest != version && !super::version_newer(&latest, version) {
         bail!("the release feed offers Vardoger {latest}, which is older than this Vardoger {version}");
     }
-    let base = manifest.channel.base(&super::release_base(edge_url)?);
-    let staged = stage_package(&base, &manifest, directory).await?;
+    let staged = stage_package(&manifest, directory).await?;
     // A trial (or anything not run as the installed `vardoger.exe`) can't
     // replace the installation; it installs only its own version's files.
     let installed = directory.join("vardoger.exe");
@@ -448,44 +403,6 @@ pub async fn complete_install(
     // (The lock is this call's already.)
     apply_locked(&staged, directory, false)?;
     Ok(Completion::Updated(latest))
-}
-
-/// The GitHub release marked latest, the feed the old app's Windows installs name.
-const GITHUB_LATEST: &str = "https://github.com/zeronsh/vardoger/releases/latest/download";
-/// The edge's feed, the zgx app's: stable at its root, the beta channel in `beta/`.
-const EDGE_FEED: &str = "https://zeron.sh/releases";
-
-/// Where the feed keeps `version`'s own files, and its manifest: a GitHub
-/// release of its own (`releases/download/v<version>`, whose `manifest.json`
-/// is that release's), or on the edge, the files of every release side by
-/// side with `manifest-<version>.json` (release.yml). `None` when there's
-/// none to be had.
-async fn pinned_release(edge_url: &str, version: &str) -> Option<(String, super::Manifest)> {
-    let channel = super::Channel::of_version(version);
-    let feed = super::release_base(edge_url).ok()?;
-    let (base, manifest_url) = match feed.strip_suffix("/releases/latest/download") {
-        Some(repository) if channel == super::Channel::Stable => {
-            let base = format!("{repository}/releases/download/v{version}");
-            let url = format!("{base}/manifest.json");
-            (base, url)
-        }
-        _ => {
-            let base = channel.base(&feed);
-            let url = format!("{base}/manifest-{version}.json");
-            (base, url)
-        }
-    };
-    let client = super::http_client().ok()?;
-    let response = super::fetch_release_metadata(&client, &manifest_url).await.ok()?;
-    if !response.status.is_success() {
-        return None;
-    }
-    let mut manifest: super::Manifest = serde_json::from_slice(&response.body).ok()?;
-    if manifest.version.trim() != version {
-        return None;
-    }
-    manifest.channel = channel;
-    Some((base, manifest))
 }
 
 /// The completion lock if no one holds it, without waiting.
@@ -753,9 +670,6 @@ pub fn cleanup_previous_image() {
             let own = super::app_version();
             let beta = super::Channel::of_version(own) == super::Channel::Beta;
             remove_version_files(directory, (beta || packaged()).then_some(own));
-            if packaged() {
-                leave_github_feed(directory);
-            }
         }
     }
 }
@@ -1077,18 +991,6 @@ mod tests {
     }
 
     #[test]
-    fn only_the_old_app_s_github_feed_moves_to_the_edge() {
-        let install = tempfile::tempdir().unwrap();
-        let config = install.path().join(CONFIG);
-        std::fs::write(&config, format!(r#"{{"releases_url":"{GITHUB_LATEST}/"}}"#)).unwrap();
-        leave_github_feed(install.path());
-        assert!(std::fs::read_to_string(&config).unwrap().contains(EDGE_FEED));
-        std::fs::write(&config, r#"{"releases_url":"https://example.com/feed"}"#).unwrap();
-        leave_github_feed(install.path());
-        assert!(std::fs::read_to_string(&config).unwrap().contains("example.com"));
-    }
-
-    #[test]
     fn only_a_managed_install_without_its_files_is_incomplete() {
         let install = tempfile::tempdir().unwrap();
         let exe = install.path().join("vardoger.exe");
@@ -1205,7 +1107,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            stage("http://127.0.0.1:1", &manifest, dir.path())
+            stage(&manifest, dir.path())
                 .await
                 .unwrap_err()
                 .to_string()
@@ -1244,9 +1146,14 @@ mod tests {
                 },
             )]
             .into(),
+            assets: [(
+                artifact("1.2.3"),
+                super::super::ReleaseAsset { url: format!("{base}/{}", artifact("1.2.3")), size: 0 },
+            )]
+            .into(),
             ..Default::default()
         };
-        let error = stage(&base, &manifest, dir.path()).await.unwrap_err();
+        let error = stage(&manifest, dir.path()).await.unwrap_err();
         server.join().unwrap();
         assert!(error.to_string().contains("checksum mismatch"));
         assert_eq!(std::fs::read(&installed).unwrap(), b"existing installation");

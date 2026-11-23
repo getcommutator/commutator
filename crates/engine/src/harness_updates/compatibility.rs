@@ -3,13 +3,9 @@
 //! A CLI release can break the protocol vardoger speaks to it (a renamed
 //! stream-json frame, a dropped flag). The policy lists those releases per
 //! CLI, so an update never installs one, and an installed one says so with
-//! the release to go back to. Sources, first match wins:
-//!
-//! 1. `{edge}/releases/harness-compatibility.json` — published on its own,
-//!    so a release that broke this morning is held back today, without a
-//!    vardoger release. Fetched at most hourly; the last good copy is kept in
-//!    `{data_dir}/harness-compatibility.json` for offline starts.
-//! 2. The list built into this vardoger (`compatibility.json`).
+//! the release to go back to. The list is built into this vardoger
+//! (`compatibility.json`); a newly broken CLI release is held back by the
+//! next vardoger release.
 //!
 //! ```json
 //! { "policies": [ {

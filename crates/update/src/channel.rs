@@ -11,8 +11,8 @@
 //! back to Stable. Stable builds there, headless daemons and source builds are
 //! always on stable.
 //!
-//!   stable  `{edge}/releases/manifest.json` (and `latest.txt`), unchanged
-//!   beta    `{edge}/releases/beta/manifest.json`
+//!   stable  the GitHub release marked latest (never a prerelease)
+//!   beta    the newest published GitHub release, prereleases included
 //!
 //! Opting in: a "Get beta updates" choice in the app (`select`), or a beta
 //! download whose first launch claims the channel (`claim_for_beta_build`).
@@ -70,16 +70,6 @@ impl Channel {
         match version.trim().split_once('-') {
             Some((_, pre)) if pre.to_ascii_lowercase().starts_with("beta") => Self::Beta,
             _ => Self::Stable,
-        }
-    }
-
-    /// The release feed's base for this channel, under `stable` (the edge's
-    /// `/releases` or `VARDOGER_RELEASES_URL`).
-    pub fn base(self, stable: &str) -> String {
-        let stable = stable.trim_end_matches('/');
-        match self {
-            Self::Stable => stable.to_owned(),
-            Self::Beta => format!("{stable}/beta"),
         }
     }
 }
@@ -303,12 +293,6 @@ mod tests {
         assert_eq!(Channel::of_version("0.2.136-beta.1"), Channel::Beta);
         assert_eq!(Channel::of_version("0.2.136"), Channel::Stable);
         assert_eq!(Channel::of_version("0.2.136-rc.1"), Channel::Stable);
-    }
-
-    #[test]
-    fn beta_reads_its_own_folder() {
-        assert_eq!(Channel::Stable.base("https://edge.zeron.sh/releases/"), "https://edge.zeron.sh/releases");
-        assert_eq!(Channel::Beta.base("https://edge.zeron.sh/releases"), "https://edge.zeron.sh/releases/beta");
     }
 
     #[test]

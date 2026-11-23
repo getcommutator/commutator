@@ -1,7 +1,6 @@
-//! `vardoger update` — check for and apply a newer release, natively (the same
-//! flow `edge/src/install.sh` performs: download → verify → symlink swap →
-//! service restart). macOS app bundles swap the bundle instead; source builds
-//! are report-only.
+//! `vardoger update` — check GitHub releases for a newer one and apply it
+//! (download → verify sha256 → symlink swap → service restart). macOS app
+//! bundles swap the bundle instead; source builds are report-only.
 
 use anyhow::bail;
 use vardoger_update::{InstallKind, Offer};
@@ -9,10 +8,13 @@ use vardoger_update::{InstallKind, Offer};
 /// `--check` prints the verdict and exits (nonzero when an update is available,
 /// so scripts can gate on it). A macOS app follows its release channel
 /// (`update-channel.json` in the data dir), as the app's own updater does.
-pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
+pub async fn update(check_only: bool) -> anyhow::Result<()> {
     vardoger_update::channel::set_data_dir(&super::paths::data_dir());
-    let manifest = vardoger_update::fetch_latest(edge_url).await?;
     let current = vardoger_update::app_version();
+    let Some(manifest) = vardoger_update::fetch_latest().await? else {
+        println!("vardoger {current}: no release has been published yet.");
+        return Ok(());
+    };
     let running_engine = match vardoger_update::detect_install() {
         InstallKind::MacApp { bundle } => vardoger_update::bundle_engine_version(&bundle),
         _ => None,
@@ -53,7 +55,7 @@ pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
                 vardoger_update::headless_artifact(&manifest.version)
             );
             let data_dir = super::paths::data_dir();
-            vardoger_update::prepare_install(edge_url, &manifest, &app_root, &data_dir).await?;
+            vardoger_update::prepare_install(&manifest, &app_root, &data_dir).await?;
             let from = vardoger_update::installed_version(&InstallKind::Managed {
                 app_root: app_root.clone(),
             })
@@ -83,7 +85,7 @@ pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
                 "downloading {}…",
                 vardoger_update::headless_artifact(&manifest.version)
             );
-            vardoger_update::stage_headless(edge_url, &manifest, &app_root).await?;
+            vardoger_update::stage_headless(&manifest, &app_root).await?;
             vardoger_update::apply_headless(&app_root, &manifest.version)?;
             println!(
                 "installed {} (current → {})",
@@ -104,14 +106,14 @@ pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
                 vardoger_update::mac_app_artifact(&manifest.version)
             );
             let data_dir = super::paths::data_dir();
-            let staged = vardoger_update::stage_mac_app(edge_url, &manifest, &data_dir).await?;
+            let staged = vardoger_update::stage_mac_app(&manifest, &data_dir).await?;
             vardoger_update::apply_mac_app(&staged, &bundle)?;
             println!("updated {} — relaunch Vardoger to finish.", bundle.display());
             Ok(())
         }
         #[cfg(windows)]
         InstallKind::WindowsPortable { directory } => {
-            let staged = vardoger_update::windows::stage(edge_url, &manifest, &directory).await?;
+            let staged = vardoger_update::windows::stage(&manifest, &directory).await?;
             vardoger_update::windows::apply(&staged, &directory, false)?;
             println!(
                 "updated to {} — relaunch Vardoger to finish.",
@@ -122,9 +124,7 @@ pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
         InstallKind::Unmanaged => {
             bail!(
                 "this binary is not update-managed (source build or hand-copied).\n\
-                 Linux: curl -fsSL https://zeron.sh/install.sh | sh, or run install.sh from the release tarball\n\
-                 macOS: download the new Vardoger.app dmg, or rebuild from source.\n\
-                 Windows: install with the Vardoger setup .exe from {}, or rebuild from source.",
+                 Download a release from {}, or rebuild from source.",
                 vardoger_update::LATEST_RELEASE_PAGE
             )
         }

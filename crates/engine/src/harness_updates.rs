@@ -30,11 +30,6 @@ const FIRST_RETRY: Duration = Duration::from_secs(5 * 60);
 mod compatibility;
 mod ownership;
 
-/// How often the published compatibility policy is fetched (see
-/// [`compatibility`]).
-const COMPATIBILITY_REFRESH: Duration = Duration::from_secs(60 * 60);
-const COMPATIBILITY_CACHE: &str = "harness-compatibility.json";
-
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 /// Long enough for a slow link: native updaters download hundreds of megabytes
 /// without printing progress, and stopping one mid-download can leave a
@@ -746,29 +741,6 @@ struct ActiveUpdate {
     previous_phase: HarnessUpdatePhase,
 }
 
-/// The compatibility policy in force: the last published one (fetched or
-/// cached), then the built-in list.
-struct CompatibilityState {
-    published: compatibility::Feed,
-    built_in: compatibility::Feed,
-    /// `{edge}/releases/harness-compatibility.json`; `None` until the engine
-    /// knows its edge (and in tests).
-    url: Option<String>,
-    fetched_at: Option<std::time::Instant>,
-}
-
-impl CompatibilityState {
-    fn verdict(
-        &self,
-        harness: HarnessId,
-        version: &str,
-    ) -> Option<vardoger_proto::HarnessCompatibility> {
-        self.published
-            .verdict(harness, version)
-            .or_else(|| self.built_in.verdict(harness, version))
-    }
-}
-
 struct Inner {
     registry: Arc<HarnessRegistry>,
     /// The harnesses tracked, in Settings' order: the built-in ones from the
@@ -792,10 +764,9 @@ struct Inner {
     /// Who the last completed check found owning each harness's install
     /// ([`UpdatePlan::identity`]). An update refuses to run a different plan.
     checked_plans: Mutex<HashMap<HarnessId, String>>,
-    compatibility: Mutex<CompatibilityState>,
-    /// One policy fetch at a time: concurrent checks share it.
-    compatibility_refresh: tokio::sync::Mutex<()>,
-    data_dir: PathBuf,
+    /// Agent CLI releases known not to work (the list built into this
+    /// vardoger, see [`compatibility`]).
+    compatibility: Mutex<compatibility::Feed>,
     check_slots: tokio::sync::Semaphore,
     shutdown: CancellationToken,
     worker: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -923,17 +894,7 @@ impl HarnessUpdateCoordinator {
                 owner_gates: Mutex::new(HashMap::new()),
                 checked_binaries: Mutex::new(HashMap::new()),
                 checked_plans: Mutex::new(HashMap::new()),
-                compatibility: Mutex::new(CompatibilityState {
-                    published: std::fs::read_to_string(data_dir.join(COMPATIBILITY_CACHE))
-                        .ok()
-                        .and_then(|json| compatibility::Feed::parse(&json).ok())
-                        .unwrap_or_default(),
-                    built_in: compatibility::Feed::built_in(),
-                    url: None,
-                    fetched_at: None,
-                }),
-                compatibility_refresh: tokio::sync::Mutex::new(()),
-                data_dir: data_dir.to_path_buf(),
+                compatibility: Mutex::new(compatibility::Feed::built_in()),
                 check_slots: tokio::sync::Semaphore::new(2),
                 shutdown: CancellationToken::new(),
                 worker: Mutex::new(None),
@@ -1130,63 +1091,6 @@ impl HarnessUpdateCoordinator {
         self.snapshot()
     }
 
-    /// Where the published compatibility policy lives (see [`compatibility`]).
-    pub fn set_compatibility_feed(&self, url: String) {
-        let mut state = lock(&self.inner.compatibility);
-        if state.url.as_deref() != Some(url.as_str()) {
-            state.url = Some(url);
-            state.fetched_at = None;
-        }
-    }
-
-    /// Fetch the published policy when it is due. A missing file (404) is an
-    /// empty policy; any other failure keeps the one in force.
-    async fn refresh_compatibility(&self) {
-        let _refreshing = self.inner.compatibility_refresh.lock().await;
-        let url = {
-            let state = lock(&self.inner.compatibility);
-            match (&state.url, state.fetched_at) {
-                (Some(url), at) if at.is_none_or(|at| at.elapsed() >= COMPATIBILITY_REFRESH) => {
-                    url.clone()
-                }
-                _ => return,
-            }
-        };
-        let feed = match self.inner.client.get(&url).send().await {
-            Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
-                Ok((compatibility::Feed::default(), None))
-            }
-            Ok(response) if response.status().is_success() => match response.text().await {
-                Ok(json) => compatibility::Feed::parse(&json).map(|feed| (feed, Some(json))),
-                Err(error) => Err(error.to_string()),
-            },
-            Ok(response) => Err(format!("HTTP {}", response.status())),
-            Err(error) => Err(error.to_string()),
-        };
-        let mut state = lock(&self.inner.compatibility);
-        match feed {
-            Ok((feed, json)) => {
-                state.published = feed;
-                state.fetched_at = Some(std::time::Instant::now());
-                let cache = self.inner.data_dir.join(COMPATIBILITY_CACHE);
-                let written = match json {
-                    Some(json) => std::fs::write(&cache, json),
-                    None => std::fs::remove_file(&cache).or_else(|error| {
-                        (error.kind() == std::io::ErrorKind::NotFound)
-                            .then_some(())
-                            .ok_or(error)
-                    }),
-                };
-                if let Err(error) = written {
-                    tracing::warn!(%error, "harness compatibility cache write failed");
-                }
-            }
-            Err(error) => {
-                tracing::warn!(%error, %url, "harness compatibility policy unavailable; keeping the last one");
-            }
-        }
-    }
-
     /// Fold the policy into a checked row: the installed release's verdict,
     /// and a newer release it holds back — which is then not available, so
     /// neither the Update button nor an automatic install can reach it.
@@ -1229,7 +1133,6 @@ impl HarnessUpdateCoordinator {
     }
 
     pub async fn check_one(&self, harness: HarnessId) -> Result<(), String> {
-        self.refresh_compatibility().await;
         let checked = self.check_one_inner(harness).await;
         // Even a failed check keeps the installed release's verdict current.
         self.apply_compatibility(harness);
@@ -5743,42 +5646,10 @@ esac
         );
     }
 
-    /// Serves `body` (or 404 for `None`) at every path, counting requests.
+    /// Holds `coordinator` to `policy` in place of the built-in list.
     #[cfg(unix)]
-    async fn policy_server(
-        body: Option<&'static str>,
-    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let url = format!(
-            "http://{}/releases/harness-compatibility.json",
-            listener.local_addr().unwrap()
-        );
-        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = hits.clone();
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let mut request = [0u8; 4096];
-                let _ = socket.read(&mut request).await;
-                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let (status, body) = match body {
-                    Some(body) => ("200 OK", body),
-                    None => ("404 Not Found", "{}"),
-                };
-                let _ = socket
-                    .write_all(
-                        format!(
-                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                            body.len()
-                        )
-                        .as_bytes(),
-                    )
-                    .await;
-            }
-        });
-        (url, hits)
+    fn hold_to(coordinator: &super::HarnessUpdateCoordinator, policy: &str) {
+        *super::lock(&coordinator.inner.compatibility) = super::compatibility::Feed::parse(policy).unwrap();
     }
 
     #[cfg(unix)]
@@ -5800,20 +5671,15 @@ esac
     #[tokio::test]
     async fn a_release_known_not_to_work_is_held_back_and_never_installed() {
         let temp = tempfile::tempdir().unwrap();
-        let (url, hits) = policy_server(Some(
-            r#"{"policies":[{"harness":"grok","recommended":"1.0.4","ranges":[{"range":">=1.0.41","status":"broken","reason":"its stream changed"}]}]}"#,
-        ))
-        .await;
+        let policy = r#"{"policies":[{"harness":"grok","recommended":"1.0.4","ranges":[{"range":">=1.0.41","status":"broken","reason":"its stream changed"}]}]}"#;
         let coordinator =
             super::HarnessUpdateCoordinator::new(temp.path(), grok_fixture(temp.path()));
-        coordinator.set_compatibility_feed(url);
+        hold_to(&coordinator, policy);
         super::lock(&coordinator.inner.prefs).policies.insert(
             HarnessId::Grok,
             vardoger_proto::HarnessUpdatePolicy::AutoWhenIdle,
         );
         coordinator.check_one(HarnessId::Grok).await.unwrap();
-        let fetched = hits.load(std::sync::atomic::Ordering::SeqCst);
-        assert!(fetched >= 1);
         let status = coordinator.status(HarnessId::Grok);
         assert_eq!(status.phase, HarnessUpdatePhase::Current);
         assert_eq!(status.latest_version, None);
@@ -5826,15 +5692,11 @@ esac
             held.message
         );
         assert!(!coordinator.automatic_update_ready(HarnessId::Grok));
-        // Fetched once per refresh window, not per check.
-        coordinator.check_one(HarnessId::Grok).await.unwrap();
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), fetched);
-        assert!(temp.path().join(super::COMPATIBILITY_CACHE).is_file());
 
-        // Offline next start: the cached policy still holds, and even an
-        // explicit update straight at the release is refused.
+        // Even an explicit update straight at the release is refused.
         let restarted =
             super::HarnessUpdateCoordinator::new(temp.path(), grok_fixture(temp.path()));
+        hold_to(&restarted, policy);
         restarted.mutate(HarnessId::Grok, |status| {
             status.installed_version = Some("1.0.4".into());
             status.latest_version = Some("1.0.41".into());
@@ -5852,13 +5714,12 @@ esac
     #[tokio::test]
     async fn an_installed_release_known_not_to_work_says_so_and_a_withdrawn_policy_clears() {
         let temp = tempfile::tempdir().unwrap();
-        let (url, _) = policy_server(Some(
-            r#"{"policies":[{"harness":"grok","recommended":"1.0.3","ranges":[{"range":"=1.0.4","status":"broken"}]}]}"#,
-        ))
-        .await;
         let coordinator =
             super::HarnessUpdateCoordinator::new(temp.path(), grok_fixture(temp.path()));
-        coordinator.set_compatibility_feed(url);
+        hold_to(
+            &coordinator,
+            r#"{"policies":[{"harness":"grok","recommended":"1.0.3","ranges":[{"range":"=1.0.4","status":"broken"}]}]}"#,
+        );
         coordinator.check_one(HarnessId::Grok).await.unwrap();
         let status = coordinator.status(HarnessId::Grok);
         let verdict = status.compatibility.expect("installed release flagged");
@@ -5870,12 +5731,10 @@ esac
         // 1.0.41 isn't listed: still offered.
         assert_eq!(status.phase, HarnessUpdatePhase::Available);
 
-        // The policy is withdrawn (the file deleted): nothing is flagged.
-        let (gone, _) = policy_server(None).await;
-        coordinator.set_compatibility_feed(gone);
+        // The policy is withdrawn: nothing is flagged.
+        hold_to(&coordinator, r#"{"policies":[]}"#);
         coordinator.check_one(HarnessId::Grok).await.unwrap();
         assert_eq!(coordinator.status(HarnessId::Grok).compatibility, None);
-        assert!(!temp.path().join(super::COMPATIBILITY_CACHE).exists());
         coordinator.shutdown().await;
     }
 

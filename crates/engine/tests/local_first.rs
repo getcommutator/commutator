@@ -322,6 +322,11 @@ async fn clean_local_auth_construction_does_not_probe_edge_health() {
 async fn local_runtime_checks_public_releases_without_starting_edge_links() {
     let dir = tempfile::tempdir().unwrap();
     let (edge_url, requests, edge_task) = rejecting_edge().await;
+    // A stand-in for the GitHub API (debug builds only). No other test here
+    // checks for releases.
+    let (releases_url, release_requests, releases_task) = rejecting_edge().await;
+    // SAFETY: no other test in this binary reads it.
+    unsafe { std::env::set_var("VARDOGER_RELEASES_API", &releases_url) };
     let config = config(dir.path(), edge_url, Some("client_test"), None);
     let auth = Engine::build_auth(&config).await;
     let scope = Engine::initial_workspace_scope(&auth);
@@ -339,24 +344,26 @@ async fn local_runtime_checks_public_releases_without_starting_edge_links() {
         .core()
         .updater()
         .expect("local runtime starts the public release checker");
-    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    assert_eq!(release_requests.load(Ordering::SeqCst), 0);
 
     updater.check_now();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while requests.load(Ordering::SeqCst) < 2 {
+        while release_requests.load(Ordering::SeqCst) < 1 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("release checker requested manifest.json and latest.txt");
+    .expect("release checker asked GitHub for the latest release");
     assert!(runtime.core().links().is_none());
+    assert_eq!(requests.load(Ordering::SeqCst), 0, "release checks never touch the edge");
 
     runtime.shutdown().await;
-    let stopped_at = requests.load(Ordering::SeqCst);
+    let stopped_at = release_requests.load(Ordering::SeqCst);
     updater.check_now();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(requests.load(Ordering::SeqCst), stopped_at);
+    assert_eq!(release_requests.load(Ordering::SeqCst), stopped_at);
     edge_task.abort();
+    releases_task.abort();
 }
 
 #[tokio::test]

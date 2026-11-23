@@ -200,8 +200,6 @@ pub struct EngineCore {
     /// Release checker (attached by [`Engine::assemble_runtime`]) — the
     /// UpdateStatus stream + ApplyUpdate.
     updater: std::sync::Mutex<Option<vardoger_update::Updater>>,
-    /// The updater's token-change wake forwarder — owned so shutdown can end it.
-    updater_wake: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Exclusive data-dir lock — held for the engine's lifetime (single-instance).
     /// This process's agents, recorded in the data dir so that whatever
     /// a killed engine leaves running is ended by the next one.
@@ -422,7 +420,6 @@ impl EngineCore {
             auth: std::sync::Mutex::new(None),
             links: std::sync::Mutex::new(None),
             updater: std::sync::Mutex::new(None),
-            updater_wake: std::sync::Mutex::new(None),
             viewport_focus,
             _agent_ledger: agent_ledger,
             _instance_lock: lock,
@@ -484,14 +481,6 @@ impl EngineCore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-    }
-
-    /// Attach the release checker (before building the RPC service).
-    pub fn set_updater_wake(&self, handle: tokio::task::JoinHandle<()>) {
-        *self
-            .updater_wake
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(handle);
     }
 
     pub fn set_updater(&self, updater: vardoger_update::Updater) {
@@ -619,15 +608,6 @@ impl EngineCore {
         // Cancel + await every worker that can reach Edge before flushing: a
         // replaced synced runtime must not keep polling releases or draining
         // the attachment outbox under the old identity after Local boots.
-        let wake = self
-            .updater_wake
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some(wake) = wake {
-            wake.abort();
-            let _ = wake.await;
-        }
         let updater = self
             .updater
             .lock()
@@ -1000,21 +980,16 @@ impl Engine {
             tokens: Arc::new(auth.clone()),
         });
         core.previews.start(projects, preview_signaling).await;
-        // Release checker: polls {edge}/releases hourly (wall clock); headless
+        // Release checker: polls GitHub releases hourly (wall clock); headless
         // installs with VARDOGER_AUTO_UPDATE=1 apply + restart themselves — gated
         // on quiescence so a restart never lands under a live run or open PTY.
-        // Spawned for every install: application updates must not depend on
-        // workspace sync being enabled — the feed is the public release feed
-        // (served without authentication), not an edge feature.
+        // Spawned for every install: application updates don't depend on
+        // workspace sync being enabled.
         let quiescent = core.update_quiescence();
-        core.harness_updates.set_compatibility_feed(format!(
-            "{}/releases/harness-compatibility.json",
-            config.edge_url.trim_end_matches('/')
-        ));
         // The release channel a macOS app install follows lives in the data
         // dir (update-channel.json), so this report follows the app's choice.
         vardoger_update::channel::set_data_dir(&config.data_dir);
-        let updater = vardoger_update::Updater::spawn(config.edge_url.clone(), Some(quiescent));
+        let updater = vardoger_update::Updater::spawn(Some(quiescent));
         // A check that came due while the machine slept runs as it wakes,
         // so the loop needn't look at the clock each minute.
         updater.follow_wakes(vardoger_sync::wake::subscribe());
@@ -1040,15 +1015,6 @@ impl Engine {
             version_change_registry.flush();
             version_change_docs.prepare_for_version_change();
         });
-        if let Some(mut token_changes) = edge.as_ref().and_then(EdgeConfig::token_changes) {
-            let updater_for_tokens = updater.clone();
-            let wake = tokio::spawn(async move {
-                while token_changes.changed().await.is_ok() {
-                    updater_for_tokens.check_now();
-                }
-            });
-            core.set_updater_wake(wake);
-        }
         core.set_updater(updater);
         tracing::info!(device_id = %core.device_id, "engine core assembled");
         // Managed ACP adapters install in the background at boot (agents

@@ -79,17 +79,17 @@ async fn answers_on_its_port(port: u16, data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the servers answer at all. If they don't, the network is the problem
-/// and a new version can't be blamed for not reaching them.
+/// Whether the servers answer at all (any HTTP reply will do). If they don't,
+/// the network is the problem and a new version can't be blamed for not
+/// reaching them.
 async fn edge_answers(edge_url: &str) -> bool {
-    let url = format!("{}/releases/latest.txt", edge_url.trim_end_matches('/'));
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
     else {
         return false;
     };
-    client.get(url).send().await.is_ok_and(|reply| reply.status().is_success())
+    client.get(edge_url).send().await.is_ok()
 }
 
 struct Proof {

@@ -3,11 +3,12 @@
 //! (its own report-only checker, the "Check for Updates…" menu item, the
 //! sidebar update strip, and the desktop install paths).
 //!
-//! Release layout (see `.github/workflows/release.yml` and `edge/src/install.sh`):
-//! artifacts live in the `comet-native-releases` R2 bucket, served pre-auth at
-//! `{edge}/releases/*`. `manifest.json` carries the latest version plus a
-//! sha256 per artifact; `latest.txt` (version only) remains as the fallback for
-//! releases published before the manifest existed.
+//! Releases are GitHub releases of [`REPOSITORY`], tagged `v<version>`, read
+//! anonymously through the GitHub API (`GITHUB_TOKEN` only raises the rate
+//! limit). Each carries a `manifest.json` asset with its version and a sha256
+//! per artifact; a release without one, or an artifact it doesn't list, is
+//! never installed. Nothing is signed yet: the checksums catch a broken
+//! download, not a tampered release.
 //!
 //! Install kinds and their update paths:
 //! - **Managed** (`~/.vardoger/app/<ver>` + `current` symlink — the curl|sh
@@ -85,11 +86,11 @@ pub fn app_version() -> &'static str {
     APP_VERSION.get().map(String::as_str).unwrap_or(current_version())
 }
 
-/// Successful checks repeat this often. The feed is a sub-kilobyte,
-/// edge-cached document, so hourly polling is free and bounds how long a
+/// Successful checks repeat this often: one GitHub API call (well inside the
+/// anonymous limit of 60 an hour), and it bounds how long a
 /// long-running app can sit on a stale release.
 const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
-/// Failed checks (offline boot, captive portal, transient edge error) back off
+/// Failed checks (offline boot, captive portal, transient GitHub error) back off
 /// through these delays, then stay at the last one.
 const CHECK_RETRY: [Duration; 4] = [
     Duration::from_secs(60),
@@ -120,12 +121,13 @@ const RELEASE_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 // Release metadata
 // ---------------------------------------------------------------------------
 
-/// `{edge}/releases/manifest.json` — written by the release workflow.
+/// A release's `manifest.json` asset: its version and the sha256 of every
+/// file it ships. Every download is checked against it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub version: String,
-    /// Artifact file name → metadata. Empty for pre-manifest releases resolved
-    /// via `latest.txt` — downloads then skip checksum verification (with a log).
+    /// Artifact file name → metadata. A file not listed here (or without a
+    /// sha256) is never installed.
     #[serde(default)]
     pub files: BTreeMap<String, FileMeta>,
     /// The engine inside the release's app, when it isn't `version`'s own (a
@@ -136,9 +138,19 @@ pub struct Manifest {
     /// stable app's (beta: [`channel::BETA_MINIMUM_MACOS`]).
     #[serde(default, rename = "minimumMacOS", skip_serializing_if = "Option::is_none")]
     pub minimum_macos: Option<String>,
-    /// The channel this manifest was fetched from: where its files are.
+    /// The channel this manifest was fetched from.
     #[serde(skip)]
     pub channel: Channel,
+    /// The release's files on GitHub, by name.
+    #[serde(skip)]
+    pub assets: BTreeMap<String, ReleaseAsset>,
+}
+
+/// One file attached to a GitHub release.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReleaseAsset {
+    pub url: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -279,7 +291,7 @@ fn parse_version(v: &str) -> Option<Version> {
 
 /// Strictly-newer compare (`0.1.10` > `0.1.9` > `0.1`), semver's for
 /// prereleases: `0.2.135` < `0.2.136-beta.1` < `0.2.136-beta.2` < `0.2.136`.
-/// Unparseable versions never count as newer — a garbage `latest.txt` must not
+/// Unparseable versions never count as newer — a garbage release tag must not
 /// trigger an update loop.
 pub fn version_newer(latest: &str, current: &str) -> bool {
     match (parse_version(latest), parse_version(current)) {
@@ -377,57 +389,185 @@ fn offer_given(
     }
 }
 
-/// Fetch the newest release metadata: `manifest.json`, falling back to
-/// `latest.txt` (version only, no checksums) for pre-manifest releases.
-pub async fn fetch_latest(edge_url: &str) -> anyhow::Result<Manifest> {
-    fetch_latest_on(edge_url, channel::selected()).await
+/// The GitHub repository releases come from, unless `VARDOGER_RELEASES_REPO`
+/// names another (`owner/name`).
+pub const REPOSITORY: &str = "getvardoger/vardoger";
+const GITHUB_API: &str = "https://api.github.com";
+
+/// The newest release on the channel this install follows
+/// ([`channel::selected`]); `None` while that channel has no release yet.
+pub async fn fetch_latest() -> anyhow::Result<Option<Manifest>> {
+    fetch_latest_on(channel::selected()).await
 }
 
-/// [`fetch_latest`] from `channel`'s feed.
-pub async fn fetch_latest_on(edge_url: &str, channel: Channel) -> anyhow::Result<Manifest> {
-    let mut manifest = fetch_latest_from(&channel.base(&release_base(edge_url)?)).await?;
+/// [`fetch_latest`] on `channel`: stable is GitHub's "latest" release (never a
+/// prerelease or a draft); beta is the newest published release, prereleases
+/// included.
+pub async fn fetch_latest_on(channel: Channel) -> anyhow::Result<Option<Manifest>> {
+    let release = match channel {
+        Channel::Stable => github_api::<GithubRelease>("releases/latest").await?,
+        Channel::Beta => github_api::<Vec<GithubRelease>>("releases?per_page=30")
+            .await?
+            .and_then(|releases| {
+                releases
+                    .into_iter()
+                    .filter(|release| !release.draft && release.version().is_some())
+                    .max_by(|a, b| {
+                        let version = |r: &GithubRelease| parse_version(r.version().unwrap_or_default());
+                        version(a).cmp(&version(b))
+                    })
+            }),
+    };
+    match release {
+        Some(release) => release_manifest(release, channel).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The release tagged `v<version>`, `None` when there's no such release.
+pub async fn fetch_release(version: &str) -> anyhow::Result<Option<Manifest>> {
+    match github_api::<GithubRelease>(&format!("releases/tags/v{version}")).await? {
+        Some(release) => release_manifest(release, Channel::of_version(version)).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// A release as the GitHub REST API describes it (only what's used).
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+    #[serde(default)]
+    size: u64,
+}
+
+impl GithubRelease {
+    /// `v1.2.3` → `1.2.3`; `None` for a tag that isn't a version.
+    fn version(&self) -> Option<&str> {
+        let version = self.tag_name.strip_prefix('v').unwrap_or(&self.tag_name);
+        parse_version(version).is_some().then_some(version)
+    }
+}
+
+/// The release's `manifest.json` asset, with where each of its files downloads
+/// from. A release without one, or whose manifest names another version, isn't
+/// installable: its files couldn't be checked.
+async fn release_manifest(release: GithubRelease, channel: Channel) -> anyhow::Result<Manifest> {
+    let version = release
+        .version()
+        .with_context(|| format!("release tag {} is not a version", release.tag_name))?
+        .to_owned();
+    let mut assets = BTreeMap::new();
+    for asset in release.assets {
+        // Over HTTPS only (a debug build's local test server aside).
+        let url = validate_release_override(&asset.browser_download_url)?;
+        assets.insert(asset.name, ReleaseAsset { url, size: asset.size });
+    }
+    let manifest_url = &assets
+        .get("manifest.json")
+        .with_context(|| format!("release v{version} has no manifest.json"))?
+        .url;
+    let response = fetch_release_metadata(&http_client()?, manifest_url)
+        .await
+        .context("fetching manifest.json")?;
+    anyhow::ensure!(
+        response.status.is_success(),
+        "fetching manifest.json: HTTP {}",
+        response.status
+    );
+    let mut manifest: Manifest =
+        serde_json::from_slice(&response.body).context("parsing manifest.json")?;
+    anyhow::ensure!(
+        manifest.version.trim() == version,
+        "manifest.json of release v{version} is for {}",
+        manifest.version
+    );
+    manifest.assets = assets;
     manifest.channel = channel;
     Ok(manifest)
 }
 
-async fn fetch_latest_from(base: &str) -> anyhow::Result<Manifest> {
+/// GET `{api}/repos/{repository}/{path}`; `None` on 404 (no such release, or
+/// no release at all). `GITHUB_TOKEN` (or `GH_TOKEN`), when set, only raises
+/// the rate limit: a token GitHub refuses is dropped and the request made
+/// anonymously.
+async fn github_api<T: serde::de::DeserializeOwned>(path: &str) -> anyhow::Result<Option<T>> {
+    let url = format!("{}/repos/{}/{path}", api_base()?, repository()?);
     let client = http_client()?;
-    let manifest_url = format!("{base}/manifest.json");
-    match fetch_release_metadata(&client, &manifest_url).await {
-        Ok(response) if response.status.is_success() => {
-            let manifest: Manifest =
-                serde_json::from_slice(&response.body).context("parsing manifest.json")?;
-            if manifest.version.trim().is_empty() {
-                bail!("manifest.json has an empty version");
-            }
-            return Ok(manifest);
-        }
-        Ok(response) => {
-            tracing::debug!(status = %response.status, "manifest.json unavailable; trying latest.txt")
-        }
-        Err(err) => tracing::debug!(error = %err, "manifest.json fetch failed; trying latest.txt"),
+    let token = ["GITHUB_TOKEN", "GH_TOKEN"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|token| !token.trim().is_empty()));
+    let mut response = fetch_github_metadata(&client, &url, token.as_deref()).await?;
+    if token.is_some() && response.status == reqwest::StatusCode::UNAUTHORIZED {
+        tracing::debug!("GitHub refused the token; checking for releases anonymously");
+        response = fetch_github_metadata(&client, &url, None).await?;
     }
-    let latest_url = format!("{base}/latest.txt");
-    let response = fetch_release_metadata(&client, &latest_url)
-        .await
-        .context("fetching latest.txt")?;
-    anyhow::ensure!(
-        response.status.is_success(),
-        "fetching latest.txt: HTTP {}",
-        response.status
-    );
-    let version = std::str::from_utf8(&response.body)
-        .context("reading latest.txt as UTF-8")?
-        .trim()
-        .to_string();
-    if version.is_empty() {
-        bail!("latest.txt is empty");
+    if response.status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
     }
-    Ok(Manifest {
-        version,
-        ..Manifest::default()
-    })
+    anyhow::ensure!(response.status.is_success(), "fetching {url}: HTTP {}", response.status);
+    serde_json::from_slice(&response.body)
+        .with_context(|| format!("parsing {url}"))
+        .map(Some)
 }
+
+async fn fetch_github_metadata(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> anyhow::Result<ReleaseMetadataResponse> {
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    if let Some(token) = token {
+        request = request.bearer_auth(token.trim());
+    }
+    fetch_release_metadata_with_limits(
+        request,
+        url,
+        RELEASE_METADATA_TIMEOUT,
+        RELEASE_METADATA_MAX_BYTES,
+    )
+    .await
+}
+
+fn repository() -> anyhow::Result<String> {
+    let Ok(repository) = std::env::var("VARDOGER_RELEASES_REPO") else {
+        return Ok(REPOSITORY.to_owned());
+    };
+    let repository = repository.trim();
+    let valid = repository.split_once('/').is_some_and(|(owner, name)| {
+        [owner, name].iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+    });
+    anyhow::ensure!(valid, "VARDOGER_RELEASES_REPO must be owner/name");
+    Ok(repository.to_owned())
+}
+
+/// The GitHub API, or in a debug build a test's local stand-in
+/// (`VARDOGER_RELEASES_API`).
+fn api_base() -> anyhow::Result<String> {
+    if cfg!(debug_assertions)
+        && let Ok(url) = std::env::var("VARDOGER_RELEASES_API")
+        && !url.trim().is_empty()
+    {
+        return validate_release_override(&url);
+    }
+    Ok(GITHUB_API.to_owned())
+}
+
 
 #[derive(Debug)]
 struct ReleaseMetadataResponse {
@@ -440,7 +580,7 @@ async fn fetch_release_metadata(
     url: &str,
 ) -> anyhow::Result<ReleaseMetadataResponse> {
     fetch_release_metadata_with_limits(
-        client,
+        client.get(url),
         url,
         RELEASE_METADATA_TIMEOUT,
         RELEASE_METADATA_MAX_BYTES,
@@ -449,17 +589,15 @@ async fn fetch_release_metadata(
 }
 
 async fn fetch_release_metadata_with_limits(
-    client: &reqwest::Client,
+    request: reqwest::RequestBuilder,
     url: &str,
     timeout: Duration,
     max_bytes: usize,
 ) -> anyhow::Result<ReleaseMetadataResponse> {
     let request = async {
-        let response = client
-            .get(url)
-            // Intermediaries must revalidate: the edge already bounds its own
-            // cache to a minute, and a proxy holding an old manifest for
-            // longer is exactly the "prompt appears late" failure.
+        let response = request
+            // Intermediaries must revalidate: a proxy holding an old release
+            // for long is exactly the "prompt appears late" failure.
             .header(reqwest::header::CACHE_CONTROL, "no-cache")
             .send()
             .await
@@ -543,24 +681,12 @@ fn validate_release_override(value: &str) -> anyhow::Result<String> {
 /// The project's GitHub releases page — the advisory update strip opens this
 /// for unmanaged installs (source builds, hand-copied binaries), where no
 /// updater flow exists to drive.
-pub const RELEASES_PAGE: &str = "https://github.com/zeronsh/vardoger/releases";
+pub const RELEASES_PAGE: &str = "https://github.com/getvardoger/vardoger/releases";
 
 /// The newest release's page — the download destination offered when this
 /// installation cannot replace itself.
-pub const LATEST_RELEASE_PAGE: &str = "https://github.com/zeronsh/vardoger/releases/latest";
+pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getvardoger/vardoger/releases/latest";
 
-fn release_base(edge_url: &str) -> anyhow::Result<String> {
-    if let Ok(url) = std::env::var("VARDOGER_RELEASES_URL")
-        && !url.trim().is_empty()
-    {
-        return validate_release_override(&url);
-    }
-    #[cfg(windows)]
-    if let Some(url) = windows::release_url()? {
-        return Ok(url.trim_end_matches('/').to_owned());
-    }
-    Ok(format!("{}/releases", edge_url.trim_end_matches('/')))
-}
 
 // ---------------------------------------------------------------------------
 // Install-kind detection
@@ -575,8 +701,8 @@ pub enum InstallKind {
     Managed { app_root: PathBuf },
     /// Running out of a macOS `.app` bundle.
     MacApp { bundle: PathBuf },
-    /// Windows installer or portable package with an explicit update-feed
-    /// configuration.
+    /// Windows installer or portable package (marked by
+    /// `vardoger-update.json`).
     #[cfg(windows)]
     WindowsPortable { directory: PathBuf },
     /// Source build or hand-copied binary — updates are report-only.
@@ -662,18 +788,17 @@ impl InstallKind {
 
     pub async fn stage_desktop(
         &self,
-        edge_url: &str,
         manifest: &Manifest,
         data_dir: &Path,
     ) -> anyhow::Result<PathBuf> {
         match self {
-            Self::MacApp { .. } => stage_mac_app(edge_url, manifest, data_dir).await,
+            Self::MacApp { .. } => stage_mac_app(manifest, data_dir).await,
             Self::Managed { app_root } if self.supports_desktop_update() => {
-                stage_headless(edge_url, manifest, app_root).await
+                stage_headless(manifest, app_root).await
             }
             #[cfg(windows)]
             Self::WindowsPortable { directory } => {
-                windows::stage(edge_url, manifest, directory).await
+                windows::stage(manifest, directory).await
             }
             _ => bail!("this installation does not support desktop updates"),
         }
@@ -802,7 +927,6 @@ pub struct UpdateAbility {
 }
 
 /// The one command that installs Vardoger on Linux.
-const LINUX_INSTALL_COMMAND: &str = "curl -fsSL https://zeron.sh/install.sh | sh";
 
 impl UpdateAbility {
     fn refused(
@@ -877,7 +1001,8 @@ impl UpdateAbility {
             InstallKind::Unmanaged => Self::refused(
                 InstallMethod::Unmanaged,
                 "This copy of Vardoger wasn't installed by the installer, so it can't replace itself.",
-                (os == "linux").then_some(LINUX_INSTALL_COMMAND),
+                // No installer yet: there's no command to offer instead.
+                None,
             ),
         }
     }
@@ -1027,37 +1152,24 @@ fn plist_string(plist: &str, key: &str) -> Option<String> {
 // Download + verify
 // ---------------------------------------------------------------------------
 
-/// Stream `{edge}/releases/<file>` to `dest`, verifying the manifest sha256 when
-/// present. Writes through a `.partial` sidecar so an interrupted download never
-/// leaves a plausible-looking artifact behind.
-pub async fn download_release_file(
-    edge_url: &str,
-    manifest: &Manifest,
-    file: &str,
-    dest: &Path,
-) -> anyhow::Result<()> {
-    // From the feed the manifest came from: a beta's files are beta's.
-    download_release_file_from(&manifest.channel.base(&release_base(edge_url)?), manifest, file, dest).await
-}
-
-/// [`download_release_file`] from the feed at `base`.
-pub(crate) async fn download_release_file_from(
-    base: &str,
-    manifest: &Manifest,
-    file: &str,
-    dest: &Path,
-) -> anyhow::Result<()> {
-    let url = format!("{base}/{file}");
-    let expected = manifest.files.get(file).and_then(|m| m.sha256.as_deref());
-    if expected.is_none() {
-        tracing::warn!(
-            file,
-            "no checksum in release metadata; skipping verification"
-        );
-    }
+/// Stream the release's `file` to `dest`, checked against the manifest's
+/// sha256: a file the manifest doesn't vouch for isn't downloaded. Writes
+/// through a `.partial` sidecar so an interrupted download never leaves a
+/// plausible-looking artifact behind.
+pub async fn download_release_file(manifest: &Manifest, file: &str, dest: &Path) -> anyhow::Result<()> {
+    let expected = manifest
+        .files
+        .get(file)
+        .and_then(|meta| meta.sha256.as_deref())
+        .with_context(|| format!("release {} has no checksum for {file}", manifest.version))?;
+    let url = &manifest
+        .assets
+        .get(file)
+        .with_context(|| format!("release {} has no {file}", manifest.version))?
+        .url;
     let partial = dest.with_extension("partial");
     let resp = http_client()?
-        .get(&url)
+        .get(url)
         .send()
         .await
         .with_context(|| format!("downloading {url}"))?
@@ -1075,12 +1187,10 @@ pub(crate) async fn download_release_file_from(
     }
     out.flush().await.context("flushing download")?;
     drop(out);
-    if let Some(expected) = expected {
-        let actual = format!("{:x}", hasher.finalize());
-        if !actual.eq_ignore_ascii_case(expected.trim()) {
-            tokio::fs::remove_file(&partial).await.ok();
-            bail!("checksum mismatch for {file}: expected {expected}, got {actual}");
-        }
+    let actual = format!("{:x}", hasher.finalize());
+    if !actual.eq_ignore_ascii_case(expected.trim()) {
+        tokio::fs::remove_file(&partial).await.ok();
+        bail!("checksum mismatch for {file}: expected {expected}, got {actual}");
     }
     tokio::fs::rename(&partial, dest)
         .await
@@ -1136,16 +1246,14 @@ async fn verify_staged_binary(binary: &Path, version: &str) -> anyhow::Result<()
 /// `app_root` ([`managed_dir`]; idempotent —
 /// an already-staged version is reused). Returns the versioned dir.
 pub async fn stage_headless(
-    edge_url: &str,
     manifest: &Manifest,
     app_root: &Path,
 ) -> anyhow::Result<PathBuf> {
-    stage_headless_on(edge_url, manifest, app_root, on_cloud()).await
+    stage_headless_on(manifest, app_root, on_cloud()).await
 }
 
 /// [`stage_headless`]; on a Cloud machine without [`CLOUD_UNUSED_FILES`].
 async fn stage_headless_on(
-    edge_url: &str,
     manifest: &Manifest,
     app_root: &Path,
     cloud: bool,
@@ -1167,7 +1275,7 @@ async fn stage_headless_on(
     std::fs::create_dir_all(&stage).with_context(|| format!("creating {}", stage.display()))?;
     let result = async {
         let tarball = stage.join(&file);
-        download_release_file(edge_url, manifest, &file, &tarball).await?;
+        download_release_file(manifest, &file, &tarball).await?;
         let unpacked = stage.join("unpacked");
         std::fs::create_dir_all(&unpacked)?;
         // Tarball root is the versioned stage dir (see scripts/package-linux.sh);
@@ -1588,7 +1696,6 @@ fn restart_outcome(code: Option<i32>, stderr: &[u8]) -> anyhow::Result<()> {
 /// only after its binary answers with the expected version, so an interrupted
 /// unpack can never be mistaken for a staged update. Returns the staged bundle.
 pub async fn stage_mac_app(
-    edge_url: &str,
     manifest: &Manifest,
     data_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
@@ -1611,7 +1718,7 @@ pub async fn stage_mac_app(
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let file = mac_app_artifact(version);
     let tarball = dir.join(&file);
-    download_release_file(edge_url, manifest, &file, &tarball).await?;
+    download_release_file(manifest, &file, &tarball).await?;
     let unpack = dir.join(".unpack");
     std::fs::create_dir_all(&unpack)?;
     let unpacked = run(
@@ -1914,12 +2021,11 @@ fn auto_update_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// `VARDOGER_AUTO_UPDATE=0|false|no` — the desktop app then only reports: no
-/// background download and no install on quit. Unset means on.
+/// `VARDOGER_AUTO_UPDATE=1|true|yes` — the desktop app downloads releases in
+/// the background and installs them on quit. Unset, it only reports.
+// ponytail: opt-in until Vardoger has published releases; flip to opt-out then.
 pub fn desktop_auto_update_enabled() -> bool {
-    std::env::var("VARDOGER_AUTO_UPDATE")
-        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
-        .unwrap_or(true)
+    auto_update_enabled()
 }
 
 /// "Nothing would be interrupted by a restart right now" — wired by the engine
@@ -1936,7 +2042,7 @@ enum Role {
     Desktop,
 }
 
-/// Background release checker: polls `{edge}/releases` hourly on a wall-clock
+/// Background release checker: polls GitHub releases hourly on a wall-clock
 /// schedule (so sleep/wake cannot stretch it), backs off on failure, and
 /// publishes [`UpdateStatus`] over a watch channel. In the engine, managed
 /// installs with `VARDOGER_AUTO_UPDATE` set stage + apply + service restart on
@@ -1944,7 +2050,6 @@ enum Role {
 /// the apply defers and re-probes every [`IDLE_RECHECK`].
 #[derive(Clone)]
 pub struct Updater {
-    edge_url: String,
     role: Arc<Role>,
     /// The version releases are compared with: the engine's own, or the app's
     /// ([`app_version`]).
@@ -1974,17 +2079,17 @@ pub struct Updater {
 
 impl Updater {
     /// Spawn the engine's check loop (must run on a tokio runtime).
-    pub fn spawn(edge_url: String, quiescent: Option<QuiescentCheck>) -> Self {
-        Self::spawn_role(edge_url, Role::Engine { quiescent })
+    pub fn spawn(quiescent: Option<QuiescentCheck>) -> Self {
+        Self::spawn_role(Role::Engine { quiescent })
     }
 
     /// Spawn the desktop app's report-only check loop (must run on a tokio
     /// runtime).
-    pub fn spawn_desktop(edge_url: String) -> Self {
-        Self::spawn_role(edge_url, Role::Desktop)
+    pub fn spawn_desktop() -> Self {
+        Self::spawn_role(Role::Desktop)
     }
 
-    fn spawn_role(edge_url: String, role: Role) -> Self {
+    fn spawn_role(role: Role) -> Self {
         let initial_delay = match role {
             Role::Engine { .. } => ENGINE_INITIAL_DELAY,
             Role::Desktop => DESKTOP_INITIAL_DELAY,
@@ -2006,7 +2111,6 @@ impl Updater {
         let (wake_tx, _) = watch::channel(0);
         let (shutdown_tx, _) = watch::channel(false);
         let updater = Self {
-            edge_url,
             role: Arc::new(role),
             version,
             status_tx: Arc::new(status_tx),
@@ -2030,7 +2134,7 @@ impl Updater {
     }
 
     /// Stop the check loop and wait for it to exit — a replaced runtime must
-    /// not keep polling `{edge}/releases` (or auto-applying) in the background.
+    /// not keep polling GitHub releases (or auto-applying) in the background.
     /// Idempotent, and callable from any clone.
     pub async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
@@ -2119,9 +2223,13 @@ impl Updater {
     /// One user-requested check, awaited: publishes the result like a
     /// scheduled check and returns it.
     pub async fn check(&self) -> anyhow::Result<UpdateStatus> {
-        match fetch_latest(&self.edge_url).await {
-            Ok(manifest) => {
+        match fetch_latest().await {
+            Ok(Some(manifest)) => {
                 self.publish(manifest);
+                Ok(self.status_tx.borrow().clone())
+            }
+            Ok(None) => {
+                self.publish_no_release();
                 Ok(self.status_tx.borrow().clone())
             }
             Err(err) => {
@@ -2196,9 +2304,9 @@ impl Updater {
     /// idle→restart gap to well under a second.
     async fn auto_apply_when_idle(&self) {
         if let InstallKind::Managed { app_root } = detect_install() {
-            match fetch_latest(&self.edge_url).await {
-                Ok(manifest) if version_newer(&manifest.version, current_version()) => {
-                    if let Err(err) = stage_headless(&self.edge_url, &manifest, &app_root).await {
+            match fetch_latest().await {
+                Ok(Some(manifest)) if version_newer(&manifest.version, current_version()) => {
+                    if let Err(err) = stage_headless(&manifest, &app_root).await {
                         tracing::warn!(error = %err, "auto-update staging failed");
                         return;
                     }
@@ -2301,14 +2409,30 @@ impl Updater {
         self.status_tx.send_replace(status);
     }
 
+    /// The channel has no release yet: nothing to offer, and nothing wrong.
+    fn publish_no_release(&self) {
+        self.status_tx.send_modify(|status| {
+            status.latest_version = None;
+            status.update_available = false;
+            status.checked_at = Some(now_ms());
+            status.error = None;
+            status.held = None;
+            status.switch = false;
+        });
+    }
+
     /// One check; returns false on fetch failure (retry sooner).
     async fn check_once(&self) -> bool {
         if let InstallKind::MacApp { bundle } = detect_install() {
             prune_retired_mac_bundles(&bundle);
         }
-        match fetch_latest(&self.edge_url).await {
-            Ok(manifest) => {
+        match fetch_latest().await {
+            Ok(Some(manifest)) => {
                 self.publish(manifest);
+                true
+            }
+            Ok(None) => {
+                self.publish_no_release();
                 true
             }
             Err(err) => {
@@ -2346,7 +2470,9 @@ impl Updater {
     /// Is there anything to update to, before this engine starts work? Bound it
     /// from outside: this waits on the network.
     pub async fn check_at_boot(&self) -> anyhow::Result<BootCheck> {
-        let manifest = fetch_latest(&self.edge_url).await?;
+        let Some(manifest) = fetch_latest().await? else {
+            return Ok(BootCheck::Current);
+        };
         let data_dir = channel::data_dir().context("this engine has no data directory")?;
         let last = transaction::read(data_dir);
         let skip = read_boot_skip(data_dir);
@@ -2376,7 +2502,7 @@ impl Updater {
         let data_dir = channel::data_dir()
             .context("this engine has no data directory")?
             .to_path_buf();
-        install_release_within(&self.edge_url, manifest, &app_root, &data_dir, limit).await?;
+        install_release_within(manifest, &app_root, &data_dir, limit).await?;
         let from = installed_version(&InstallKind::Managed {
             app_root: app_root.clone(),
         })
@@ -2480,9 +2606,9 @@ impl Updater {
         if transaction::read(&data_dir).is_some_and(|last| last.in_progress()) {
             bail!("An update is already in progress on this device.");
         }
-        let manifest = fetch_latest(&self.edge_url).await?;
+        let manifest = fetch_latest().await?.context("no release has been published yet")?;
         let Some(prepared) =
-            prepare_this_install(&self.edge_url, &manifest, &data_dir).await?
+            prepare_this_install(&manifest, &data_dir).await?
         else {
             bail!("already up to date ({})", current_version());
         };
@@ -2551,7 +2677,6 @@ struct PreparedInstall {
 /// newer to install. A release that isn't installable here is an error, in words
 /// for the person.
 async fn prepare_this_install(
-    edge_url: &str,
     manifest: &Manifest,
     data_dir: &Path,
 ) -> anyhow::Result<Option<PreparedInstall>> {
@@ -2560,7 +2685,7 @@ async fn prepare_this_install(
             if !version_newer(&manifest.version, current_version()) {
                 return Ok(None);
             }
-            prepare_install(edge_url, manifest, &app_root, data_dir).await?;
+            prepare_install(manifest, &app_root, data_dir).await?;
             let from = installed_version(&InstallKind::Managed {
                 app_root: app_root.clone(),
             })
@@ -2586,14 +2711,13 @@ async fn prepare_this_install(
                 Offer::Current => return Ok(None),
             }
             let parent = bundle.parent().context("app bundle has no parent directory")?;
-            let download = artifact_size(edge_url, manifest, &mac_app_artifact(&manifest.version))
-                .await
+            let download = artifact_size(manifest, &mac_app_artifact(&manifest.version))
                 .unwrap_or(transaction::UNKNOWN_ARTIFACT_BYTES);
             // A staged copy and the one beside the installed app.
             if let Err(why) = transaction::ensure_room(data_dir, parent, download.saturating_mul(2)) {
                 bail!(why);
             }
-            let staged = stage_mac_app(edge_url, manifest, data_dir).await?;
+            let staged = stage_mac_app(manifest, data_dir).await?;
             let name = bundle.file_name().context("app bundle has no name")?.to_string_lossy();
             let incoming = parent.join(format!(".{name}.new-{}", transaction::new_id()));
             // Everything that can fail about installing it happens here, with
@@ -2619,13 +2743,12 @@ async fn prepare_this_install(
             if !version_newer(&manifest.version, &from) {
                 return Ok(None);
             }
-            let download = artifact_size(edge_url, manifest, &windows::artifact(&manifest.version))
-                .await
+            let download = artifact_size(manifest, &windows::artifact(&manifest.version))
                 .unwrap_or(transaction::UNKNOWN_ARTIFACT_BYTES);
             if let Err(why) = transaction::ensure_room(data_dir, &directory, download) {
                 bail!(why);
             }
-            let incoming = windows::stage(edge_url, manifest, &directory).await?;
+            let incoming = windows::stage(manifest, &directory).await?;
             Ok(Some(PreparedInstall {
                 from,
                 layout: Some(transaction::Layout::WindowsFolder { directory, incoming }),
@@ -2762,16 +2885,15 @@ pub struct PreparedBootUpdate {
 /// its thread, which a timeout beside it couldn't interrupt. Cut off, it can't
 /// finish later, and its partial stage is removed once it has really stopped.
 async fn install_release_within(
-    edge_url: &str,
     manifest: &Manifest,
     app_root: &Path,
     data_dir: &Path,
     limit: Duration,
 ) -> anyhow::Result<()> {
     let task = {
-        let (edge_url, manifest) = (edge_url.to_owned(), manifest.clone());
+        let manifest = manifest.clone();
         let (app_root, data_dir) = (app_root.to_path_buf(), data_dir.to_path_buf());
-        tokio::spawn(async move { prepare_install(&edge_url, &manifest, &app_root, &data_dir).await })
+        tokio::spawn(async move { prepare_install(&manifest, &app_root, &data_dir).await })
     };
     let abort = task.abort_handle();
     let mut task = task;
@@ -2801,7 +2923,6 @@ pub struct AppliedUpdate {
 /// Everything before an update has to stop anything: refuse if there's no room,
 /// then download, verify and unpack the release beside the running one.
 pub async fn prepare_install(
-    edge_url: &str,
     manifest: &Manifest,
     app_root: &Path,
     data_dir: &Path,
@@ -2809,23 +2930,19 @@ pub async fn prepare_install(
     let download = if app_root.join(&manifest.version).join("vardoger").exists() {
         0
     } else {
-        artifact_size(edge_url, manifest, &headless_artifact(&manifest.version))
-            .await
+        artifact_size(manifest, &headless_artifact(&manifest.version))
             .unwrap_or(transaction::UNKNOWN_ARTIFACT_BYTES)
     };
     if let Err(why) = transaction::ensure_room(data_dir, app_root, download) {
         bail!(why);
     }
-    stage_headless(edge_url, manifest, app_root).await?;
+    stage_headless(manifest, app_root).await?;
     Ok(())
 }
 
-/// What the feed says the release's download weighs, if it says.
-async fn artifact_size(edge_url: &str, manifest: &Manifest, file: &str) -> Option<u64> {
-    let base = manifest.channel.base(&release_base(edge_url).ok()?);
-    let url = format!("{base}/{file}");
-    let response = http_client().ok()?.head(&url).send().await.ok()?;
-    response.status().is_success().then(|| response.content_length())?
+/// What the release says the download weighs, if it says.
+fn artifact_size(manifest: &Manifest, file: &str) -> Option<u64> {
+    manifest.assets.get(file).map(|asset| asset.size).filter(|size| *size > 0)
 }
 
 /// Wall-clock check deadlines with failure backoff.
@@ -3043,25 +3160,26 @@ mod tests {
         assert_eq!(skip.until, 5 + BOOT_RETRY_AFTER.as_millis() as i64);
     }
 
-    /// What a boot's look for a release costs: `fetch_latest`, client and all. Run by
-    /// hand, with `VARDOGER_BENCH_EDGE` for a real feed (TLS, and the fallback when a
-    /// feed has no manifest).
+    /// What a boot's look for a release costs: `fetch_latest` against GitHub,
+    /// client and all. Run by hand (it uses the network).
     #[tokio::test]
     #[ignore = "benchmark"]
     async fn bench_boot_check() {
-        let (base, server) = serve_forever(br#"{"version":"0.0.1","files":{}}"#.to_vec()).await;
-        let mut targets = vec![base];
-        if let Ok(edge) = std::env::var("VARDOGER_BENCH_EDGE") {
-            targets.push(edge);
+        for run in 0..5 {
+            let started = std::time::Instant::now();
+            let found = fetch_latest().await.map(|manifest| manifest.map(|m| m.version));
+            println!("run {run}: {:?} {found:?}", started.elapsed());
         }
-        for target in targets {
-            for run in 0..5 {
-                let started = std::time::Instant::now();
-                let found = fetch_latest(&target).await.map(|manifest| manifest.version);
-                println!("{target} run {run}: {:?} {found:?}", started.elapsed());
-            }
-        }
-        server.abort();
+    }
+
+    /// `manifest` with each of its files served from `base`.
+    fn served_from(mut manifest: Manifest, base: &str) -> Manifest {
+        manifest.assets = manifest
+            .files
+            .keys()
+            .map(|file| (file.clone(), ReleaseAsset { url: format!("{base}/{file}"), size: 0 }))
+            .collect();
+        manifest
     }
 
     /// Accepts connections and never answers.
@@ -3085,9 +3203,14 @@ mod tests {
         std::fs::create_dir_all(&app_root).unwrap();
         std::fs::create_dir_all(&data).unwrap();
         let (base, server) = serve_nothing().await;
-        let manifest = Manifest { version: "9.9.9".into(), ..Manifest::default() };
+        let manifest = Manifest {
+            version: "9.9.9".into(),
+            files: [(headless_artifact("9.9.9"), FileMeta { sha256: Some("0".repeat(64)) })].into(),
+            ..Manifest::default()
+        };
+        let manifest = served_from(manifest, &base);
         let started = std::time::Instant::now();
-        let error = install_release_within(&base, &manifest, &app_root, &data, Duration::from_millis(300))
+        let error = install_release_within(&manifest, &app_root, &data, Duration::from_millis(300))
             .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("took longer"), "{error:#}");
@@ -3123,15 +3246,19 @@ mod tests {
 
         // Bytes that aren't what the feed promised.
         let (base, server) = serve_forever(b"truncated".to_vec()).await;
-        assert!(install_release_within(&base, &manifest(&good), &app_root, &data, limit).await.is_err());
+        assert!(install_release_within(&served_from(manifest(&good), &base), &app_root, &data, limit).await.is_err());
         server.abort();
         assert!(!app_root.join("9.9.9").exists());
 
         // Nothing there at all.
-        assert!(install_release_within("http://127.0.0.1:1", &manifest(&good), &app_root, &data, limit).await.is_err());
+        let nowhere = served_from(manifest(&good), "http://127.0.0.1:1");
+        assert!(install_release_within(&nowhere, &app_root, &data, limit).await.is_err());
+        // A release that doesn't vouch for the file isn't downloaded at all.
+        let unchecked = Manifest { files: BTreeMap::new(), ..manifest(&good) };
+        assert!(install_release_within(&unchecked, &app_root, &data, limit).await.is_err());
 
         let (base, server) = serve_forever(good.clone()).await;
-        install_release_within(&base, &manifest(&good), &app_root, &data, limit).await.unwrap();
+        install_release_within(&served_from(manifest(&good), &base), &app_root, &data, limit).await.unwrap();
         server.abort();
         assert!(app_root.join("9.9.9").join("vardoger").is_file());
     }
@@ -3269,7 +3396,7 @@ mod tests {
 
         let source = UpdateAbility::decide(&InstallKind::Unmanaged, "linux", false, false, None);
         assert_eq!(source.install, InstallMethod::Unmanaged);
-        assert_eq!(source.manual_command.as_deref(), Some(LINUX_INSTALL_COMMAND));
+        assert_eq!(source.manual_command, None);
         let mac_source = UpdateAbility::decide(&InstallKind::Unmanaged, "macos", false, false, None);
         assert_eq!(mac_source.manual_command, None);
     }
@@ -3405,7 +3532,7 @@ mod tests {
         let client =
             http_client_with_timeouts(Duration::from_secs(1), Duration::from_secs(1)).unwrap();
         let error = fetch_release_metadata_with_limits(
-            &client,
+            client.get(format!("http://{address}")),
             &format!("http://{address}"),
             Duration::from_secs(1),
             10,
@@ -3428,7 +3555,7 @@ mod tests {
                 .unwrap();
         });
         let error = fetch_release_metadata_with_limits(
-            &client,
+            client.get(format!("http://{address}")),
             &format!("http://{address}"),
             Duration::from_secs(1),
             10,
@@ -3458,7 +3585,7 @@ mod tests {
             }
         });
         let error = fetch_release_metadata_with_limits(
-            &client,
+            client.get(format!("http://{address}")),
             &format!("http://{address}"),
             Duration::from_millis(80),
             100,
@@ -4160,16 +4287,112 @@ mod tests {
         (base, server)
     }
 
+    /// A stand-in for the GitHub API and release downloads: `routes(base)`
+    /// gives each path's body; anything else is a 404.
+    async fn serve_github(
+        routes: impl FnOnce(&str) -> Vec<(String, String)>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let routes: Arc<BTreeMap<String, String>> = Arc::new(routes(&base).into_iter().collect());
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    let mut request = [0; 4096];
+                    let read = socket.read(&mut request).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&request[..read]);
+                    let path = request.split_whitespace().nth(1).unwrap_or("");
+                    let (status, body) = match routes.get(path) {
+                        Some(body) => ("200 OK", body.as_str()),
+                        None => ("404 Not Found", ""),
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(body.as_bytes()).await;
+                });
+            }
+        });
+        (base, server)
+    }
+
+    fn github_release(base: &str, tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({
+            "tag_name": tag, "draft": false, "prerelease": prerelease,
+            "assets": [{
+                "name": "manifest.json",
+                "browser_download_url": format!("{base}/{tag}/manifest.json"),
+                "size": 10,
+            }],
+        })
+    }
+
+    /// The only test that points the checker at a stand-in API
+    /// (`VARDOGER_RELEASES_API` is process-wide): every case runs here.
     #[tokio::test]
-    async fn desktop_checker_reports_a_newer_release_on_demand() {
-        let (base, server) = serve_forever(br#"{"version":"999.0.0","files":{}}"#.to_vec()).await;
-        let updater = Updater::spawn_desktop(base);
+    async fn github_releases_feed_the_checker() {
+        let repo = format!("/repos/{REPOSITORY}");
+        let (base, server) = serve_github(|base| {
+            let manifest = |version: &str| format!(r#"{{"version":"{version}","files":{{}}}}"#);
+            vec![
+                (format!("{repo}/releases/latest"), github_release(base, "v999.0.0", false).to_string()),
+                (
+                    format!("{repo}/releases?per_page=30"),
+                    serde_json::json!([
+                        github_release(base, "v999.0.0", false),
+                        github_release(base, "v999.1.0-beta.2", true),
+                        github_release(base, "v999.1.0-beta.10", true),
+                        github_release(base, "nightly", true),
+                    ])
+                    .to_string(),
+                ),
+                (format!("{repo}/releases/tags/v1.0.0"), github_release(base, "v1.0.0", false).to_string()),
+                ("/v999.0.0/manifest.json".into(), manifest("999.0.0")),
+                ("/v999.1.0-beta.10/manifest.json".into(), manifest("999.1.0-beta.10")),
+                // A manifest that isn't its release's.
+                ("/v1.0.0/manifest.json".into(), manifest("2.0.0")),
+            ]
+        })
+        .await;
+        // SAFETY: no other test reads this variable.
+        unsafe { std::env::set_var("VARDOGER_RELEASES_API", &base) };
+
+        let stable = fetch_latest_on(Channel::Stable).await.unwrap().unwrap();
+        assert_eq!(stable.version, "999.0.0");
+        assert_eq!(stable.assets["manifest.json"].url, format!("{base}/v999.0.0/manifest.json"));
+        let beta = fetch_latest_on(Channel::Beta).await.unwrap().unwrap();
+        assert_eq!(beta.version, "999.1.0-beta.10");
+        assert_eq!(beta.channel, Channel::Beta);
+        assert!(fetch_release("1.0.0").await.is_err(), "a manifest for another version");
+        assert!(fetch_release("3.0.0").await.unwrap().is_none(), "no such release");
+
+        let updater = Updater::spawn_desktop();
         let status = updater.check().await.unwrap();
         assert!(status.update_available);
         assert_eq!(status.latest_version.as_deref(), Some("999.0.0"));
         assert_eq!(status.current_version, current_version());
         assert!(status.checked_at.is_some());
         assert_eq!(*updater.watch().borrow(), status);
+        updater.shutdown().await;
+        server.abort();
+
+        // No release published yet: nothing on offer, and nothing wrong.
+        let (base, server) = serve_github(|_| Vec::new()).await;
+        // SAFETY: as above.
+        unsafe { std::env::set_var("VARDOGER_RELEASES_API", &base) };
+        assert!(fetch_latest_on(Channel::Stable).await.unwrap().is_none());
+        let updater = Updater::spawn_desktop();
+        let status = updater.check().await.unwrap();
+        assert!(!status.update_available);
+        assert_eq!(status.latest_version, None);
+        assert_eq!(status.error, None);
         updater.shutdown().await;
         server.abort();
     }
@@ -4218,7 +4441,7 @@ mod tests {
 
         let wrong = fake_headless_tarball(&tmp.path().join("wrong"), "1.0.0");
         let (base, server) = serve_forever(wrong.clone()).await;
-        let error = stage_headless(&base, &manifest(&wrong), &app_root)
+        let error = stage_headless(&served_from(manifest(&wrong), &base), &app_root)
             .await
             .unwrap_err();
         server.abort();
@@ -4231,7 +4454,7 @@ mod tests {
 
         let right = fake_headless_tarball(&tmp.path().join("right"), "9.9.9");
         let (base, server) = serve_forever(right.clone()).await;
-        let staged = stage_headless(&base, &manifest(&right), &app_root)
+        let staged = stage_headless(&served_from(manifest(&right), &base), &app_root)
             .await
             .unwrap();
         server.abort();
@@ -4264,7 +4487,7 @@ mod tests {
             let app_root = tmp.path().join(format!("app-{cloud}"));
             std::fs::create_dir_all(&app_root).unwrap();
             let (base, server) = serve_forever(bytes.clone()).await;
-            let staged = stage_headless_on(&base, &manifest, &app_root, cloud).await.unwrap();
+            let staged = stage_headless_on(&served_from(manifest.clone(), &base), &app_root, cloud).await.unwrap();
             server.abort();
             assert!(staged.join("vardoger").is_file(), "cloud {cloud}");
             assert_eq!(staged.join("vardoger-engine").exists(), kept, "cloud {cloud}");
