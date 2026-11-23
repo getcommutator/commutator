@@ -811,7 +811,7 @@ impl Onboarding {
                     .line_height(px(21.0))
                     .text_color(theme.text_muted)
                     .child(SharedString::from(
-                        "Run your coding agents side by side — on this computer, your other devices, or in the cloud.",
+                        "Run your coding agents side by side — on this computer, or from your other devices.",
                     )),
             )
             .child(
@@ -1043,8 +1043,8 @@ impl Onboarding {
             .flex_col()
             .child(heading(
                 theme,
-                "Sync your work",
-                "Log in to keep your chats, projects and settings in step everywhere you use Vardoger.",
+                "Reach this machine",
+                "Log in so your phone and other computers can reach the agents on this one. Your chats and projects stay here.",
             ))
             .child(
                 widgets::section_card(theme)
@@ -1052,7 +1052,7 @@ impl Onboarding {
                         theme,
                         true,
                         icons::SMARTPHONE,
-                        "On every device",
+                        "From every device",
                         "Pick up a chat on your phone or another computer, right where you left it.",
                     ))
                     .child(benefit(
@@ -1061,13 +1061,6 @@ impl Onboarding {
                         icons::REMOTE_SERVER,
                         "Run agents anywhere",
                         "Start work on any of your machines from whichever one you're at.",
-                    ))
-                    .child(benefit(
-                        theme,
-                        false,
-                        icons::CLOUD,
-                        "Vardoger Cloud",
-                        "Hand chats to cloud machines that keep going while your computer sleeps.",
                     )),
             )
             .child(status_block(

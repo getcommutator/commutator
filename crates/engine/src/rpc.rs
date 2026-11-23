@@ -2802,7 +2802,7 @@ async fn opening_doc_messages_stream(
 }
 
 /// The sign-in surface, answered before the profile opens: `AuthStatus`
-/// (stream) and `SignOut`. Signing in is `vardoger login`.
+/// (stream), `SignIn` (`{server?}` → `{url}` to open) and `SignOut`.
 #[derive(Clone)]
 pub struct AuthRpc {
     auth: Auth,
@@ -2814,15 +2814,24 @@ impl AuthRpc {
     }
 
     pub fn handles(method: &str) -> bool {
-        matches!(method, methods::AUTH_STATUS | methods::SIGN_OUT)
+        matches!(method, methods::AUTH_STATUS | methods::SIGN_IN | methods::SIGN_OUT)
     }
 }
 
 #[async_trait]
 impl RpcService for AuthRpc {
-    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<RpcReply, RpcError> {
+    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
         match method {
             methods::AUTH_STATUS => Ok(RpcReply::Stream(watch_stream(self.auth.watch_state()))),
+            methods::SIGN_IN => {
+                let server = params["server"].as_str().map(str::to_owned);
+                let url = self
+                    .auth
+                    .sign_in(server)
+                    .await
+                    .map_err(|err| RpcError::Failed(format!("{err:#}")))?;
+                RpcReply::value(&serde_json::json!({ "url": url }))
+            }
             methods::SIGN_OUT => {
                 self.auth.sign_out();
                 RpcReply::value(&serde_json::json!({ "ok": true }))

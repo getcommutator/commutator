@@ -208,8 +208,6 @@ pub mod methods {
     pub const AUTH_STATUS: &str = "AuthStatus";
     // AuthRpc mutations (feature-inventory §2 AuthRpc; IPC-only).
     pub const SIGN_IN: &str = "SignIn";
-    pub const SIGN_IN_HEADLESS: &str = "SignInHeadless";
-    pub const COMPLETE_SIGN_IN: &str = "CompleteSignIn";
     pub const SIGN_OUT: &str = "SignOut";
     /// The signed-in session's current bearer, for a local client that calls
     /// the edge as the user itself (zgx's account calls): `{}` →
@@ -434,6 +432,8 @@ pub fn local_only(method: &str) -> bool {
             | methods::ADD_AGENT_API_KEY
             | methods::DELETE_ACCOUNT
             | methods::POST_NOTIFICATION
+            // Which server and account this machine signs in to.
+            | methods::SIGN_IN
     )
 }
 
@@ -1004,7 +1004,6 @@ mod tests {
             methods::STEP_UP,
             methods::DELETE_ACCOUNT,
             methods::SIGN_IN,
-            methods::COMPLETE_SIGN_IN,
             methods::SIGN_OUT,
             methods::OPEN_TERMINAL,
             methods::WRITE_TERMINAL,

@@ -1455,10 +1455,11 @@ mod tests {
             "refused before the service"
         );
 
+        assert!(crate::local_only(methods::SIGN_IN));
         for method in [
             methods::LIST_HARNESSES,
             methods::AUTH_STATUS,
-            methods::SIGN_IN,
+            methods::SIGN_OUT,
         ] {
             assert!(!crate::local_only(method));
             match guard.handle(method, serde_json::json!({})).await {

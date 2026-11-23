@@ -1825,9 +1825,14 @@ fn local_work_phrase(chats: usize, spaces: usize) -> Option<String> {
     }
 }
 
-fn account_menu_action(scope: Option<WorkspaceScope>, flow: SyncFlow) -> Option<AccountMenuAction> {
+fn account_menu_action(
+    scope: Option<WorkspaceScope>,
+    flow: SyncFlow,
+    signed_in: bool,
+) -> Option<AccountMenuAction> {
     match scope {
         Some(WorkspaceScope::Local) => match flow {
+            SyncFlow::Idle if signed_in => Some(AccountMenuAction::SignOut),
             SyncFlow::Idle => Some(AccountMenuAction::EnableSync),
             SyncFlow::Enabling | SyncFlow::Canceling => Some(AccountMenuAction::SyncInProgress),
             SyncFlow::SwitchOffer { .. } | SyncFlow::RestartPending { .. } => {
@@ -1864,7 +1869,9 @@ fn sidebar_account_identity(
     match scope {
         Some(WorkspaceScope::Local) => {
             let identity = if matches!(flow, SyncFlow::RestartPending { .. }) {
-                "Sync ready after restart"
+                "Connects after restart"
+            } else if let Some(user) = user {
+                return ("Local".into(), user.email.clone().into());
             } else {
                 "Stored on this device"
             };
@@ -1894,18 +1901,18 @@ fn sync_flow_after_auth(
     auth: Option<&AuthState>,
 ) -> SyncFlow {
     match scope {
+        // Vardoger's workspace stays on this device: signing in to a Vardoger
+        // server only lets the account's other devices reach it, through a
+        // relay the engine starts at launch. So a sign-in finished from this
+        // window asks for a restart, and nothing else changes.
         Some(WorkspaceScope::Local) => match (flow, auth) {
-            // The in-place switch owns its own lifecycle once started.
-            (flow, _) if flow.is_switch_lifecycle() => flow,
-            // AuthStatus belongs to the runtime, not to the Shell that opened
-            // the browser. Every attached viewport must advertise the pending
-            // profile switch once any of them completes sign-in.
-            (SyncFlow::SwitchOffer { .. }, Some(AuthState::SignedOut)) => SyncFlow::Idle,
-            (SyncFlow::RestartPending { .. }, Some(AuthState::SignedOut)) => SyncFlow::Idle,
-            (SyncFlow::Canceling, Some(AuthState::SignedIn { .. })) => flow,
-            (SyncFlow::SwitchOffer { .. }, Some(AuthState::SignedIn { .. })) => flow,
-            (SyncFlow::RestartPending { .. }, Some(AuthState::SignedIn { .. })) => flow,
-            (_, Some(AuthState::SignedIn { .. })) => SyncFlow::SwitchOffer { notice_open: true },
+            (SyncFlow::Enabling, Some(AuthState::SignedIn { .. })) => {
+                SyncFlow::RestartPending { notice_open: true }
+            }
+            (
+                SyncFlow::RestartPending { .. } | SyncFlow::SigningOut,
+                Some(AuthState::SignedOut),
+            ) => SyncFlow::Idle,
             _ => flow,
         },
         Some(WorkspaceScope::Synced) => match auth {
@@ -6554,7 +6561,10 @@ impl Shell {
 
     fn request_sign_out(&mut self, cx: &mut Context<Self>) {
         self.close_user_menu(cx);
-        if self.state.read(cx).workspace_scope != Some(WorkspaceScope::Synced) {
+        if !matches!(
+            self.state.read(cx).workspace_scope,
+            Some(WorkspaceScope::Synced | WorkspaceScope::Local)
+        ) {
             return;
         }
         self.sync_flow = SyncFlow::SignOutConfirm;
@@ -6562,7 +6572,41 @@ impl Shell {
     }
 
     fn confirm_sign_out(&mut self, cx: &mut Context<Self>) {
-        self.start_local_runtime_transition(true, cx);
+        if self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local) {
+            self.sign_out_here(cx);
+        } else {
+            self.start_local_runtime_transition(true, cx);
+        }
+    }
+
+    /// Sign out of the Vardoger server on a local runtime: the workspace
+    /// stays as it is; AuthStatus moves the flow back to idle.
+    fn sign_out_here(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            self.sync_flow = SyncFlow::Idle;
+            cx.notify();
+            return;
+        };
+        self.sync_flow = SyncFlow::SigningOut;
+        self.auth_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(methods::SIGN_OUT, serde_json::json!({}))
+                .await;
+            this.update(cx, |shell, cx| {
+                if let Err(err) = result {
+                    shell.sync_flow = SyncFlow::Idle;
+                    shell.show_notice(
+                        crate::toast::ToastKind::Error,
+                        format!("Sign out failed: {err}"),
+                        cx,
+                    );
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 
     fn start_local_runtime_transition(&mut self, sign_out: bool, cx: &mut Context<Self>) {
@@ -7347,11 +7391,11 @@ impl Shell {
                     .flex_col()
                     .child(heading(
                         &theme,
-                        "Restart to finish",
+                        "Restart to connect",
                         if remote_engine {
-                            "Vardoger is using a background daemon. Stop it and quit Vardoger, then reopen to start the synced workspace. Existing local sessions stay on this device and will not be uploaded."
+                            "Signed in. Vardoger is using a background daemon: stop it and quit Vardoger, then reopen so your other devices can reach this machine. Your sessions stay on this device."
                         } else {
-                            "Quit and reopen Vardoger to start the synced workspace. Existing local sessions stay on this device and will not be uploaded."
+                            "Signed in. Quit and reopen Vardoger so your other devices can reach this machine. Your sessions stay on this device."
                         },
                     ))
                     .children(error_line(self.runtime_change_error.clone()))
@@ -10513,7 +10557,12 @@ impl Shell {
         let pull_requests = self.render_pull_requests_button(theme, cx);
         let theme = &theme.for_popup();
         let open = self.user_menu.is_open();
-        let action = account_menu_action(self.state.read(cx).workspace_scope, self.sync_flow);
+        let state = self.state.read(cx);
+        let action = account_menu_action(
+            state.workspace_scope,
+            self.sync_flow,
+            state.auth_user().is_some(),
+        );
         // The profile pill hugs avatar + name (shrinking so long names fade
         // out); the gap between it and the settings button is not interactive.
         let initial: SharedString = user_line
@@ -10634,7 +10683,7 @@ impl Shell {
                                         .size(px(16.0))
                                         .text_color(theme.text_muted),
                                 )
-                                .child(SharedString::from("Enable sync"))
+                                .child(SharedString::from("Sign in"))
                                 .into_any_element()
                         }
                         AccountMenuAction::SyncInProgress => {
@@ -10658,7 +10707,7 @@ impl Shell {
                                         .size(px(16.0))
                                         .text_color(theme.text_muted),
                                 )
-                                .child(SharedString::from("Finish sync setup"))
+                                .child(SharedString::from("Restart to connect"))
                                 .into_any_element()
                         }
                         AccountMenuAction::SignOut => {
@@ -10791,13 +10840,18 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).for_popup();
+        let local = self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local);
         let card = match self.sync_flow {
             SyncFlow::SignOutConfirm => popover::dialog_card(&theme)
                 .child(popover::dialog_title(&theme, "Sign out?"))
                 .child(
                     div().mt(px(6.0)).child(popover::dialog_body(
                         &theme,
-                        "Vardoger will remove your credentials, close the synced workspace, and continue in local mode.",
+                        if local {
+                            "This machine leaves your account: your other devices can no longer reach it. Your sessions stay on this device."
+                        } else {
+                            "Vardoger will remove your credentials, close the synced workspace, and continue in local mode."
+                        },
                     )),
                 )
                 .child(
@@ -10829,7 +10883,11 @@ impl Shell {
                 .child(
                     div().mt(px(6.0)).child(popover::dialog_body(
                         &theme,
-                        "Removing account credentials and closing the synced workspace.",
+                        if local {
+                            "Removing this machine from your account."
+                        } else {
+                            "Removing account credentials and closing the synced workspace."
+                        },
                     )),
                 )
                 .into_any_element(),
@@ -15059,15 +15117,19 @@ mod tests {
     #[test]
     fn account_actions_follow_the_attached_workspace_scope() {
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Local), SyncFlow::Idle),
+            account_menu_action(Some(WorkspaceScope::Local), SyncFlow::Idle, false),
             Some(AccountMenuAction::EnableSync)
         );
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle),
+            account_menu_action(Some(WorkspaceScope::Local), SyncFlow::Idle, true),
             Some(AccountMenuAction::SignOut)
         );
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Development), SyncFlow::Idle),
+            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle, true),
+            Some(AccountMenuAction::SignOut)
+        );
+        assert_eq!(
+            account_menu_action(Some(WorkspaceScope::Development), SyncFlow::Idle, false),
             None
         );
     }
@@ -15091,74 +15153,50 @@ mod tests {
         );
         assert_eq!(label(None, None), "Local");
         assert_eq!(label(Some(WorkspaceScope::Synced), None), "Local");
-        // Local-only storage stays "Local" even with a cached profile.
+        // Local-only storage stays "Local"; the menu line names the account.
         assert_eq!(label(Some(WorkspaceScope::Local), Some(&named)), "Local");
+        assert_eq!(
+            sidebar_account_identity(Some(WorkspaceScope::Local), SyncFlow::Idle, Some(&named)).1,
+            "wing@example.com"
+        );
     }
 
     #[test]
-    fn local_sign_in_offers_the_in_place_switch() {
+    fn local_sign_in_asks_for_a_restart_once() {
         let signed_in = AuthState::SignedIn {
             user: vardoger_proto::UserProfile {
                 id: "user-1".into(),
                 email: "user@example.com".into(),
                 name: None,
             },
-            org_id: Some("org-1".into()),
+            org_id: None,
         };
-
+        let local = Some(WorkspaceScope::Local);
         assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::Enabling,
-                Some(WorkspaceScope::Local),
-                Some(&signed_in),
-            ),
-            SyncFlow::SwitchOffer { notice_open: true }
+            sync_flow_after_auth(SyncFlow::Enabling, local, Some(&signed_in)),
+            SyncFlow::RestartPending { notice_open: true },
+            "a sign-in finished from this window asks for a restart"
         );
         assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::Idle,
-                Some(WorkspaceScope::Local),
-                Some(&signed_in),
-            ),
-            SyncFlow::SwitchOffer { notice_open: true },
-            "another viewport derives the pending switch from AuthStatus"
+            sync_flow_after_auth(SyncFlow::Idle, local, Some(&signed_in)),
+            SyncFlow::Idle,
+            "launching signed in asks for nothing"
         );
         assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::SwitchOffer { notice_open: false },
-                Some(WorkspaceScope::Local),
-                Some(&signed_in),
-            ),
-            SyncFlow::SwitchOffer { notice_open: false },
-            "shared auth updates do not reopen a postponed wizard"
-        );
-        assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::RestartPending { notice_open: false },
-                Some(WorkspaceScope::Local),
-                Some(&signed_in),
-            ),
+            sync_flow_after_auth(SyncFlow::RestartPending { notice_open: false }, local, Some(&signed_in)),
             SyncFlow::RestartPending { notice_open: false },
-            "the quit fallback survives shared auth updates too"
+            "a postponed restart notice stays postponed"
         );
-        assert_eq!(
-            account_menu_action(
-                Some(WorkspaceScope::Local),
-                SyncFlow::SwitchOffer { notice_open: false },
-            ),
-            Some(AccountMenuAction::RestartPending)
-        );
-        for notice_open in [true, false] {
+        for flow in [SyncFlow::RestartPending { notice_open: true }, SyncFlow::SigningOut] {
             assert_eq!(
-                sync_flow_after_auth(
-                    SyncFlow::SwitchOffer { notice_open },
-                    Some(WorkspaceScope::Local),
-                    Some(&AuthState::SignedOut),
-                ),
-                SyncFlow::Idle,
-                "revoked credentials cancel the pending switch"
+                sync_flow_after_auth(flow, local, Some(&AuthState::SignedOut)),
+                SyncFlow::Idle
             );
         }
+        assert_eq!(
+            account_menu_action(local, SyncFlow::RestartPending { notice_open: false }, true),
+            Some(AccountMenuAction::RestartPending)
+        );
     }
 
     #[test]
@@ -15231,7 +15269,7 @@ mod tests {
         // no local runtime left to re-derive an offer from, so this menu row
         // is the only path back to the retry dialog.
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), dismissed),
+            account_menu_action(Some(WorkspaceScope::Synced), dismissed, true),
             Some(AccountMenuAction::RestartPending),
             "retry must remain reachable after dismissal"
         );
@@ -15239,13 +15277,14 @@ mod tests {
             account_menu_action(
                 Some(WorkspaceScope::Synced),
                 SyncFlow::ImportFailed { notice_open: true },
+                true,
             ),
             Some(AccountMenuAction::RestartPending)
         );
 
         // Resolving the failure restores the normal synced menu.
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle),
+            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle, true),
             Some(AccountMenuAction::SignOut)
         );
     }
