@@ -71,7 +71,7 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-use zeron_proto::{
+use vardoger_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, McpServer, Model, ReasoningLevel, RunRequest,
     SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
@@ -88,15 +88,15 @@ use wire::{
     deny_response,
 };
 
-/// Appended to a chat's system prompt (where Zeron's server offers
+/// Appended to a chat's system prompt (where Vardoger's server offers
 /// `wait_on_background`: [`McpServer::waits_on_background`]): the text Sonnet and Opus were live-probed acting
 /// on. The CLI starts a turn of its own when a background task ends, so a
 /// turn that ends on one isn't the agent's last.
 const WAIT_ON_BACKGROUND_NOTE: &str = "\
 When you start background work you will come back to once it finishes (a test run, a build, a \
-long check) and you end your turn before it finishes, call the Zeron tool wait_on_background \
+long check) and you end your turn before it finishes, call the Vardoger tool wait_on_background \
 with its task id first, so the person sees this chat waiting rather than finished. Never for work \
-you leave running on purpose (a dev server, a watcher). Zeron tools may be deferred: load it \
+you leave running on purpose (a dev server, a watcher). Vardoger tools may be deferred: load it \
 with tool search first.";
 
 /// Locate the device's installed Claude Code CLI: our own PATH, then the
@@ -191,7 +191,7 @@ const SESSION_LOST: &str = "The previous Claude session could not be restored, s
 /// The inline `--mcp-config` JSON for an injected server (the CLI accepts a
 /// JSON string as well as a file path).
 #[cfg(test)]
-fn mcp_config_arg(mcp: &zeron_proto::McpServer) -> String {
+fn mcp_config_arg(mcp: &vardoger_proto::McpServer) -> String {
     serde_json::json!({
         "mcpServers": {
             &mcp.name: {
@@ -204,10 +204,10 @@ fn mcp_config_arg(mcp: &zeron_proto::McpServer) -> String {
     .to_string()
 }
 
-/// One `mcpServers` entry: Zeron's own over Streamable HTTP when the engine
+/// One `mcpServers` entry: Vardoger's own over Streamable HTTP when the engine
 /// serves it ([`McpServer::http`]; Claude Code takes `"type": "http"` with
 /// headers), else a stdio command.
-fn mcp_server_entry(server: &zeron_proto::McpServer) -> Value {
+fn mcp_server_entry(server: &vardoger_proto::McpServer) -> Value {
     match &server.http {
         Some(http) => serde_json::json!({
             "type": "http",
@@ -224,16 +224,16 @@ fn mcp_server_entry(server: &zeron_proto::McpServer) -> Value {
 
 /// Whether an entry carries a credential (a run's MCP token), so the config
 /// must not ride the command line, where `ps` shows it to every local user.
-fn carries_secret(server: &zeron_proto::McpServer) -> bool {
+fn carries_secret(server: &vardoger_proto::McpServer) -> bool {
     server.http.is_some() || server.env.contains_key(McpServer::TOKEN_ENV)
 }
 
-/// The `--mcp-config` JSON for Zeron's own server plus the plugins'
+/// The `--mcp-config` JSON for Vardoger's own server plus the plugins'
 /// native servers ([`RunRequest::extra_mcp`]), or `None` when there are none,
-/// and whether it carries a credential. Zeron's own server wins a name clash.
+/// and whether it carries a credential. Vardoger's own server wins a name clash.
 fn mcp_servers_config(
-    mcp: Option<&zeron_proto::McpServer>,
-    extras: &[zeron_proto::McpServer],
+    mcp: Option<&vardoger_proto::McpServer>,
+    extras: &[vardoger_proto::McpServer],
 ) -> Option<(String, bool)> {
     if mcp.is_none() && extras.is_empty() {
         return None;
@@ -248,8 +248,8 @@ fn mcp_servers_config(
 
 #[cfg(test)]
 fn mcp_servers_config_arg(
-    mcp: Option<&zeron_proto::McpServer>,
-    extras: &[zeron_proto::McpServer],
+    mcp: Option<&vardoger_proto::McpServer>,
+    extras: &[vardoger_proto::McpServer],
 ) -> Option<String> {
     mcp_servers_config(mcp, extras).map(|(config, _)| config)
 }
@@ -281,25 +281,25 @@ struct McpConfigArgs {
     args: Vec<std::ffi::OsString>,
     /// The private file's directory, kept until the run ends.
     dir: Option<crate::scratch::ScratchDir>,
-    /// Zeron's own server was configured but left out (see below).
-    zeron_left_out: bool,
+    /// Vardoger's own server was configured but left out (see below).
+    vardoger_left_out: bool,
 }
 
-/// The `--mcp-config` arguments for Zeron's own server and the plugins'
+/// The `--mcp-config` arguments for Vardoger's own server and the plugins'
 /// native ones. A config carrying a credential (a run's MCP token) goes in
 /// an owner-only file made by `write`, never inline: the command line is
 /// visible to every local user in `ps`. Should that file not be made, the
 /// run fails closed: the servers carrying a credential are left out (with a
 /// warning) and the chat goes on without their tools.
 fn mcp_config_args(
-    mcp: Option<&zeron_proto::McpServer>,
-    extras: &[zeron_proto::McpServer],
+    mcp: Option<&vardoger_proto::McpServer>,
+    extras: &[vardoger_proto::McpServer],
     write: impl FnOnce(&str) -> std::io::Result<(crate::scratch::ScratchDir, PathBuf)>,
 ) -> McpConfigArgs {
     let mut out = McpConfigArgs {
         args: Vec::new(),
         dir: None,
-        zeron_left_out: false,
+        vardoger_left_out: false,
     };
     let Some((config, secret)) = mcp_servers_config(mcp, extras) else {
         return out;
@@ -320,11 +320,11 @@ fn mcp_config_args(
                 .filter(|server| !carries_secret(server))
                 .cloned()
                 .collect();
-            out.zeron_left_out = mcp.is_some() && mcp_kept.is_none();
+            out.vardoger_left_out = mcp.is_some() && mcp_kept.is_none();
             tracing::warn!(
-                target: "zeron_harness::claude",
+                target: "vardoger_harness::claude",
                 error = %err,
-                left_out = extras.len() - extras_kept.len() + usize::from(out.zeron_left_out),
+                left_out = extras.len() - extras_kept.len() + usize::from(out.vardoger_left_out),
                 "no private MCP config file: starting without the MCP servers that carry a token"
             );
             if let Some((config, secret)) = mcp_servers_config(mcp_kept, &extras_kept) {
@@ -355,7 +355,7 @@ fn model_arg(request: &RunRequest) -> Option<String> {
 /// Whether this run must really be limited to a 200K window. The model id
 /// alone cannot do it: models such as `claude-opus-5-5` run 1M under their
 /// plain id, so the "200K" choice only held for ids that happen to default to
-/// 200K (zeronsh/zeron#1083). The CLI's `CLAUDE_CODE_DISABLE_1M_CONTEXT`
+/// 200K (zeronsh/vardoger#1083). The CLI's `CLAUDE_CODE_DISABLE_1M_CONTEXT`
 /// makes it resolve a 200K window (verified on 2.1.319: `modelUsage.contextWindow`
 /// 1000000 -> 200000), and its own autocompact then works from that window.
 /// It is read at launch, so changing it needs a fresh process.
@@ -658,7 +658,7 @@ impl ClaudeHarness {
         // stream-json`) forwards its own subagents' text too, which only
         // adds tagged frames to its stream.
         cmd.env("CLAUDE_CODE_FORWARD_SUBAGENT_TEXT", "1");
-        // No session title of the CLI's own. Zeron titles chats itself and
+        // No session title of the CLI's own. Vardoger titles chats itself and
         // nothing reads the CLI's title, but in stream-json mode the CLI
         // sends one more Haiku request to name every session whose first
         // prompt is 10+ characters: the chat's run, and every titling run
@@ -694,7 +694,7 @@ impl ClaudeHarness {
                 cmd.arg("--strict-mcp-config");
             }
         } else {
-            // Zeron's own server (and the plugins' native ones) ride beside
+            // Vardoger's own server (and the plugins' native ones) ride beside
             // the user's configured servers (no `--strict-mcp-config`): the
             // CLI merges an inline JSON config with settings-sourced ones.
             // A config with a run's MCP token goes in an owner-only file:
@@ -703,13 +703,13 @@ impl ClaudeHarness {
                 mcp_config_args(request.mcp.as_ref(), &request.extra_mcp, private_mcp_config);
             cmd.args(&config.args);
             mcp_config_dir = config.dir;
-            // When to say it waits on background work (the Zeron tool
+            // When to say it waits on background work (the Vardoger tool
             // `wait_on_background`), where that tool is offered. Its own
             // description and the server's instructions say so too, but
             // neither reaches the model before it decides to end a turn:
             // live-probed on 2.1.319, Sonnet never called it with those
             // alone, and Sonnet and Opus both did with this note.
-            if !config.zeron_left_out
+            if !config.vardoger_left_out
                 && request
                     .mcp
                     .as_ref()
@@ -847,7 +847,7 @@ impl ClaudeHarness {
             child.shutdown(self.kill_grace).await;
             return Err(HarnessError::Protocol("claude child has no stdio".into()));
         };
-        const PROBE_ID: &str = "zeron-command-probe";
+        const PROBE_ID: &str = "vardoger-command-probe";
         let discovery = async {
             let request = serde_json::json!({
                 "type": "control_request",
@@ -863,7 +863,7 @@ impl ClaudeHarness {
             };
             if let Err(error) = sent {
                 tracing::debug!(
-                    target: "zeron_harness::claude",
+                    target: "vardoger_harness::claude",
                     %error,
                     "initialize request not delivered to the discovery probe"
                 );
@@ -1131,7 +1131,7 @@ impl Harness for ClaudeHarness {
     async fn skills(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+    ) -> Result<Option<Vec<vardoger_proto::invocation::Skill>>, HarnessError> {
         let (skills, commands) = tokio::try_join!(
             crate::skills::discover(self.id(), cwd),
             self.workspace_commands
@@ -1147,10 +1147,10 @@ impl Harness for ClaudeHarness {
                         // Shared files are not Claude command definitions. A
                         // same-named built-in must not replace their identity.
                         Some(skill)
-                    } else if zeron_proto::invocation::valid_skill_command_name(&skill.name)
+                    } else if vardoger_proto::invocation::valid_skill_command_name(&skill.name)
                         && commands.iter().any(|command| command.name == skill.name)
                     {
-                        skill.command = Some(zeron_proto::invocation::SkillCommand {
+                        skill.command = Some(vardoger_proto::invocation::SkillCommand {
                             name: skill.name.clone(),
                             harness: self.id(),
                         });
@@ -1199,7 +1199,7 @@ impl Harness for ClaudeHarness {
         // its first user line, asking no model anything.
         runtime
             .stdin
-            .line(wire::initialize_request_line("zeron_initialize"));
+            .line(wire::initialize_request_line("vardoger_initialize"));
         tracing::debug!(target: "first_word", key, pid = runtime.child.id(), "claude warm start");
         let warm = Warm {
             request,
@@ -1244,7 +1244,7 @@ impl Harness for ClaudeHarness {
                     }
                     Some(why) => {
                         tracing::info!(
-                            target: "zeron_harness::claude",
+                            target: "vardoger_harness::claude",
                             key,
                             why,
                             "warm start not used; starting afresh"
@@ -1362,7 +1362,7 @@ impl ClaudeHarness {
                     Normalizer::for_resume(&config_root(&request.env), &session_id).await;
                 if transcript == Transcript::Empty {
                     tracing::info!(
-                        target: "zeron_harness::claude",
+                        target: "vardoger_harness::claude",
                         %session_id,
                         "no conversation to resume; starting a new session"
                     );
@@ -1390,7 +1390,7 @@ impl ClaudeHarness {
 
         let lock_dir = refresh_lock::config_dir_for(&request.env);
         if !title_only && !warmed {
-            stdin.line(wire::initialize_request_line("zeron_initialize"));
+            stdin.line(wire::initialize_request_line("vardoger_initialize"));
         }
 
         // The initial prompt as the first stdin user line (streaming-input
@@ -1443,7 +1443,7 @@ impl ClaudeHarness {
 async fn read_stderr(stderr: impl tokio::io::AsyncRead + Unpin, tail: crate::StderrTail) {
     let mut lines = crate::lossy_lines::lossy_lines(stderr);
     while let Ok(Some(line)) = lines.next_line().await {
-        tracing::debug!(target: "zeron_harness::claude", "stderr: {line}");
+        tracing::debug!(target: "vardoger_harness::claude", "stderr: {line}");
         tail.push(&line);
     }
     tail.close();
@@ -1560,16 +1560,16 @@ async fn load_image_blocks(paths: &[String]) -> Vec<wire::ImageBlock> {
         let bytes = match tokio::fs::read(path).await {
             Ok(bytes) => bytes,
             Err(err) => {
-                tracing::warn!(target: "zeron_harness::claude", %path, error = %err, "attachment unreadable; path ref only");
+                tracing::warn!(target: "vardoger_harness::claude", %path, error = %err, "attachment unreadable; path ref only");
                 continue;
             }
         };
         if bytes.len() as u64 > MAX_INLINE_IMAGE_BYTES {
-            tracing::debug!(target: "zeron_harness::claude", %path, "attachment over inline cap; path ref only");
+            tracing::debug!(target: "vardoger_harness::claude", %path, "attachment over inline cap; path ref only");
             continue;
         }
         let Some(media_type) = image_media_type(std::path::Path::new(path), &bytes) else {
-            tracing::debug!(target: "zeron_harness::claude", %path, "attachment not an inline-supported image; path ref only");
+            tracing::debug!(target: "vardoger_harness::claude", %path, "attachment not an inline-supported image; path ref only");
             continue;
         };
         blocks.push(wire::ImageBlock {
@@ -1597,7 +1597,7 @@ async fn stdin_writer(
                     stdin.flush().await
                 };
                 if let Err(e) = write.await {
-                    tracing::debug!(target: "zeron_harness::claude", "stdin write failed (tolerated): {e}");
+                    tracing::debug!(target: "vardoger_harness::claude", "stdin write failed (tolerated): {e}");
                     return;
                 }
             }
@@ -1823,7 +1823,7 @@ async fn run_session(session: Session) {
                     let frame = match wire::parse_frame(line) {
                         Ok(frame) => frame,
                         Err(e) => {
-                            tracing::debug!(target: "zeron_harness::claude", "unparseable frame (skipped): {e}");
+                            tracing::debug!(target: "vardoger_harness::claude", "unparseable frame (skipped): {e}");
                             continue;
                         }
                     };
@@ -1837,7 +1837,7 @@ async fn run_session(session: Session) {
                             .any(|e| e.as_str().is_some_and(no_conversation))
                     {
                         tracing::info!(
-                            target: "zeron_harness::claude",
+                            target: "vardoger_harness::claude",
                             session = ?launched.resume,
                             "session could not be restored; relaunching fresh"
                         );
@@ -1865,7 +1865,7 @@ async fn run_session(session: Session) {
                             }
                         } else if let Some(error) = error {
                             tracing::warn!(
-                                target: "zeron_harness::claude",
+                                target: "vardoger_harness::claude",
                                 request = %response.request_id,
                                 "control request failed: {error}"
                             );
@@ -1966,7 +1966,7 @@ async fn run_session(session: Session) {
                         && stop_done_at.is_some_and(|at| at.elapsed() < STOP_SETTLE)
                     {
                         tracing::debug!(
-                            target: "zeron_harness::claude",
+                            target: "vardoger_harness::claude",
                             "late result of a stopped turn dropped"
                         );
                         continue;
@@ -2084,14 +2084,14 @@ async fn run_session(session: Session) {
                         let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
                         switch_mode |= resend || permission_mode(&next) != permission_mode(&config);
                         if resend || model_arg(&next) != model_arg(&config) {
-                            let id = format!("zeron_model_{reconfigures}");
+                            let id = format!("vardoger_model_{reconfigures}");
                             let model = model_arg(&next);
                             let line = wire::set_model_request_line(&id, model.as_deref());
                             pending_controls.insert(id, ("model", Value::from(model), deadline));
                             if !stdin.line(line) { break 'main; }
                         }
                         if resend || flag_settings(&next) != flag_settings(&config) {
-                            let id = format!("zeron_settings_{reconfigures}");
+                            let id = format!("vardoger_settings_{reconfigures}");
                             let settings = flag_settings(&next);
                             let line = wire::apply_flag_settings_line(&id, settings.clone());
                             pending_controls.insert(id, ("settings", settings, deadline));
@@ -2101,7 +2101,7 @@ async fn run_session(session: Session) {
                     }
                     if switch_mode {
                         mode_switches += 1;
-                        let id = format!("zeron_mode_{mode_switches}");
+                        let id = format!("vardoger_mode_{mode_switches}");
                         let mode = permission_mode(&config);
                         let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
                         let line = wire::set_permission_mode_line(&id, mode);
@@ -2135,7 +2135,7 @@ async fn run_session(session: Session) {
             // stopped turn must not continue into them.
             _ = turn.stop_requested(), if !interrupted => {
                 stops_sent += 1;
-                let id = format!("zeron_stop_{stops_sent}");
+                let id = format!("vardoger_stop_{stops_sent}");
                 pending_steers.clear();
                 commands.cancel_waiting();
                 stopping = Some(id.clone());
@@ -2160,7 +2160,7 @@ async fn run_session(session: Session) {
             // stop, which kills it and reports the roster without it.
             task = turn.background_stop_requested(), if !interrupted => {
                 task_stops_sent += 1;
-                let id = format!("zeron_stop_task_{task_stops_sent}");
+                let id = format!("vardoger_stop_task_{task_stops_sent}");
                 if !stdin.line(wire::stop_task_request_line(&id, &task)) {
                     break 'main;
                 }
@@ -2249,7 +2249,7 @@ async fn run_session(session: Session) {
                 pending_controls.retain(|id, (_, _, at)| {
                     let waiting = *at > now;
                     if !waiting {
-                        tracing::warn!(target: "zeron_harness::claude", request = %id, "control request unanswered");
+                        tracing::warn!(target: "vardoger_harness::claude", request = %id, "control request unanswered");
                     }
                     waiting
                 });
@@ -2438,7 +2438,7 @@ fn handle_control_request(
 ) {
     if req.request.subtype != "can_use_tool" {
         tracing::debug!(
-            target: "zeron_harness::claude",
+            target: "vardoger_harness::claude",
             "unhandled control_request subtype: {}", req.request.subtype
         );
         let line = control_error_line(
@@ -2667,7 +2667,7 @@ mod tests {
     }
 
     /// The CLI's own Haiku session-title request is skipped on chat runs and
-    /// titling runs alike: Zeron titles chats itself.
+    /// titling runs alike: Vardoger titles chats itself.
     #[test]
     fn runs_turn_off_the_clis_own_session_titles() {
         let request = RunRequest {
@@ -2678,7 +2678,7 @@ mod tests {
             reasoning: None,
             model_options: serde_json::Map::new(),
             cwd: String::new(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: false,
             access: Default::default(),
             plan: false,
@@ -2715,7 +2715,7 @@ mod tests {
             reasoning: None,
             model_options: serde_json::Map::new(),
             cwd: String::new(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: false,
             access: Default::default(),
             plan: false,
@@ -2746,7 +2746,7 @@ mod tests {
                 reasoning: None,
                 model_options: serde_json::Map::new(),
                 cwd: String::new(),
-                sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+                sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
                 auto_approve: false,
                 access: Default::default(),
                 plan: false,
@@ -2768,8 +2768,8 @@ mod tests {
                 .map(|i| args[i + 1].clone())
         };
         let server = |env: &[(&str, &str)]| McpServer {
-            name: "zeron".into(),
-            command: "zeron-engine".into(),
+            name: "vardoger".into(),
+            command: "vardoger-engine".into(),
             args: vec!["mcp".into()],
             env: env.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
             http: None,
@@ -2802,7 +2802,7 @@ mod access_tests {
             reasoning: None,
             model_options: serde_json::Map::new(),
             cwd: "/work".into(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             auto_approve,
             access,
             plan,
@@ -3076,10 +3076,10 @@ mod mcp_injection_tests {
         assert!(!reports_background(None));
     }
 
-    fn engine_served() -> zeron_proto::McpServer {
-        zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron-engine".into(),
+    fn engine_served() -> vardoger_proto::McpServer {
+        vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger-engine".into(),
             args: vec!["mcp-proxy".into()],
             env: [
                 (McpServer::CHAT_ID_ENV.to_owned(), "chat-1".to_owned()),
@@ -3087,7 +3087,7 @@ mod mcp_injection_tests {
             ]
             .into_iter()
             .collect(),
-            http: Some(zeron_proto::McpHttp {
+            http: Some(vardoger_proto::McpHttp {
                 url: "http://127.0.0.1:4321/mcp".into(),
                 headers: [("Authorization".to_owned(), "Bearer secret-token".to_owned())]
                     .into_iter()
@@ -3096,7 +3096,7 @@ mod mcp_injection_tests {
         }
     }
 
-    /// The engine serves Zeron's tools itself: Claude gets the HTTP endpoint
+    /// The engine serves Vardoger's tools itself: Claude gets the HTTP endpoint
     /// (no server process), and the token never reaches the command line —
     /// the config is an owner-only file, gone when the run ends.
     #[test]
@@ -3104,13 +3104,13 @@ mod mcp_injection_tests {
         let (config, secret) = mcp_servers_config(Some(&engine_served()), &[]).unwrap();
         assert!(secret);
         let parsed: Value = serde_json::from_str(&config).unwrap();
-        assert_eq!(parsed["mcpServers"]["zeron"]["type"], "http");
-        assert_eq!(parsed["mcpServers"]["zeron"]["url"], "http://127.0.0.1:4321/mcp");
+        assert_eq!(parsed["mcpServers"]["vardoger"]["type"], "http");
+        assert_eq!(parsed["mcpServers"]["vardoger"]["url"], "http://127.0.0.1:4321/mcp");
         assert_eq!(
-            parsed["mcpServers"]["zeron"]["headers"]["Authorization"],
+            parsed["mcpServers"]["vardoger"]["headers"]["Authorization"],
             "Bearer secret-token"
         );
-        assert!(parsed["mcpServers"]["zeron"].get("command").is_none());
+        assert!(parsed["mcpServers"]["vardoger"].get("command").is_none());
 
         let mut request = access_tests_request();
         request.mcp = Some(engine_served());
@@ -3145,13 +3145,13 @@ mod mcp_injection_tests {
     /// run starts without the servers carrying one; the rest are kept.
     #[test]
     fn a_config_whose_private_file_fails_leaves_the_token_off_the_command_line() {
-        let plugin = zeron_proto::McpServer {
+        let plugin = vardoger_proto::McpServer {
             name: "plugin".into(),
             command: "/opt/plugin/server".into(),
             args: vec!["--stdio".into()],
             ..Default::default()
         };
-        let tokened_plugin = zeron_proto::McpServer {
+        let tokened_plugin = vardoger_proto::McpServer {
             name: "tokened".into(),
             command: "/opt/plugin/other".into(),
             env: [(McpServer::TOKEN_ENV.to_owned(), "plugin-secret".to_owned())]
@@ -3163,7 +3163,7 @@ mod mcp_injection_tests {
             Err(std::io::Error::other("no space left on device"))
         });
         assert!(config.dir.is_none());
-        assert!(config.zeron_left_out);
+        assert!(config.vardoger_left_out);
         let args: Vec<String> = config
             .args
             .iter()
@@ -3179,12 +3179,12 @@ mod mcp_injection_tests {
         let servers = parsed["mcpServers"].as_object().unwrap();
         assert_eq!(servers.keys().collect::<Vec<_>>(), vec!["plugin"]);
 
-        // Only Zeron's own: no `--mcp-config` at all.
+        // Only Vardoger's own: no `--mcp-config` at all.
         let config = mcp_config_args(Some(&engine_served()), &[], |_| {
             Err(std::io::Error::other("no space left on device"))
         });
         assert!(config.args.is_empty());
-        assert!(config.zeron_left_out);
+        assert!(config.vardoger_left_out);
     }
 
     fn access_tests_request() -> RunRequest {
@@ -3196,7 +3196,7 @@ mod mcp_injection_tests {
             reasoning: None,
             model_options: serde_json::Map::new(),
             cwd: String::new(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: false,
             access: AccessMode::FullAccess,
             plan: false,
@@ -3211,36 +3211,36 @@ mod mcp_injection_tests {
 
     #[test]
     fn mcp_config_arg_spells_the_server_the_way_the_cli_reads_it() {
-        let mcp = zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron".into(),
+        let mcp = vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger".into(),
             args: vec!["mcp".into()],
-            env: [("ZERON_CHAT_ID".to_owned(), "chat-1".to_owned())]
+            env: [("VARDOGER_CHAT_ID".to_owned(), "chat-1".to_owned())]
                 .into_iter()
                 .collect(),
             http: None,
         };
         let parsed: Value = serde_json::from_str(&mcp_config_arg(&mcp)).unwrap();
-        assert_eq!(parsed["mcpServers"]["zeron"]["command"], "/opt/zeron/zeron");
+        assert_eq!(parsed["mcpServers"]["vardoger"]["command"], "/opt/vardoger/vardoger");
         assert_eq!(
-            parsed["mcpServers"]["zeron"]["args"],
+            parsed["mcpServers"]["vardoger"]["args"],
             serde_json::json!(["mcp"])
         );
         assert_eq!(
-            parsed["mcpServers"]["zeron"]["env"]["ZERON_CHAT_ID"],
+            parsed["mcpServers"]["vardoger"]["env"]["VARDOGER_CHAT_ID"],
             "chat-1"
         );
     }
     #[test]
-    fn mcp_servers_config_arg_adds_plugin_servers_beside_zeron() {
-        let zeron = zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron".into(),
+    fn mcp_servers_config_arg_adds_plugin_servers_beside_vardoger() {
+        let vardoger = vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger".into(),
             args: vec!["mcp".into()],
             env: Default::default(),
             http: None,
         };
-        let extra = zeron_proto::McpServer {
+        let extra = vardoger_proto::McpServer {
             name: "plugin-focus".into(),
             command: "/data/plugins/.loaded/focus/0123/bin/server".into(),
             args: vec!["--stdio".into()],
@@ -3249,10 +3249,10 @@ mod mcp_injection_tests {
         };
         assert_eq!(mcp_servers_config_arg(None, &[]), None);
         let both: Value = serde_json::from_str(
-            &mcp_servers_config_arg(Some(&zeron), std::slice::from_ref(&extra)).unwrap(),
+            &mcp_servers_config_arg(Some(&vardoger), std::slice::from_ref(&extra)).unwrap(),
         )
         .unwrap();
-        assert_eq!(both["mcpServers"]["zeron"]["command"], "/opt/zeron/zeron");
+        assert_eq!(both["mcpServers"]["vardoger"]["command"], "/opt/vardoger/vardoger");
         let plugin = &both["mcpServers"]["plugin-focus"];
         assert_eq!(
             plugin["command"],
@@ -3262,7 +3262,7 @@ mod mcp_injection_tests {
         assert_eq!(plugin["env"]["FOCUS"], "1");
         let only: Value =
             serde_json::from_str(&mcp_servers_config_arg(None, &[extra]).unwrap()).unwrap();
-        assert!(only["mcpServers"].get("zeron").is_none());
+        assert!(only["mcpServers"].get("vardoger").is_none());
         assert!(only["mcpServers"].get("plugin-focus").is_some());
     }
 }

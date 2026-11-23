@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{OnceLock, PoisonError, RwLock};
 
 use sha2::{Digest, Sha256};
-use zeron_proto::HarnessId;
+use vardoger_proto::HarnessId;
 
 fn table() -> &'static RwLock<HashMap<HarnessId, BTreeMap<String, String>>> {
     static TABLE: OnceLock<RwLock<HashMap<HarnessId, BTreeMap<String, String>>>> = OnceLock::new();

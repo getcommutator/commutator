@@ -5,7 +5,7 @@
 //! machine.
 //!
 //! Every agent that runs on Cloud has a card, holding the vault accounts of
-//! each credential it runs on there (`zeron_proto::providers::
+//! each credential it runs on there (`vardoger_proto::providers::
 //! cloud_credentials`): Claude Code's `claude` sign-ins and `anthropic-key`
 //! keys, Pi's ChatGPT (`codex`) and Copilot sign-ins beside every vendor
 //! key, Muse's `meta-key`, … A vendor's key is one vault provider shared by
@@ -23,15 +23,15 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use zeron_proto::providers::{
+use vardoger_proto::providers::{
     CloudCredential, cloud_credentials, cloud_login_options, cloud_login_vault, groups_by_provider,
     provider_name, runs_on_cloud,
 };
-use zeron_proto::{
+use vardoger_proto::{
     AgentAccount, AgentAccountsSnapshot, AgentAuthKind, AgentUsageWindow, CLOUD_ACCOUNTS_DEVICE,
     HarnessId, VaultAccount, VaultConnectionStatus, VaultProvider,
 };
-use zeron_rpc::{RpcError, RpcReply, methods, parse_params};
+use vardoger_rpc::{RpcError, RpcReply, methods, parse_params};
 
 use crate::agent_accounts::AgentAccounts;
 use crate::cloud_client::CloudClient;
@@ -229,7 +229,7 @@ fn no_cloud_sign_in(harness: HarnessId, provider: Option<&str>) -> RpcError {
         ));
     }
     let what = provider
-        .map(|p| zeron_proto::providers::account_group_label(harness, p))
+        .map(|p| vardoger_proto::providers::account_group_label(harness, p))
         .unwrap_or_else(|| name.to_string());
     RpcError::Failed(format!("{name} on Cloud can't sign in to {what}."))
 }
@@ -596,7 +596,7 @@ pub(crate) async fn ready_harnesses(cloud: &CloudClient) -> Option<Vec<HarnessId
     Some(ready_from(&vault))
 }
 
-fn ready_from(vault: &zeron_proto::VaultStatus) -> Vec<HarnessId> {
+fn ready_from(vault: &vardoger_proto::VaultStatus) -> Vec<HarnessId> {
     let ready = |provider: VaultProvider| {
         vault.connections.iter().any(|c| {
             c.provider == provider
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn a_harness_is_ready_with_an_active_working_login_or_key() {
-        let connection = |provider, status, has_active| zeron_proto::VaultConnection {
+        let connection = |provider, status, has_active| vardoger_proto::VaultConnection {
             provider,
             status,
             authorized_devices: vec![],
@@ -805,7 +805,7 @@ mod tests {
             accounts: 1,
             has_active,
         };
-        let vault = |connections| zeron_proto::VaultStatus {
+        let vault = |connections| vardoger_proto::VaultStatus {
             available: true,
             connections,
             ..Default::default()

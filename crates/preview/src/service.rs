@@ -40,7 +40,7 @@ pub(crate) struct ProbeMemory {
 /// long before) before discovery connects to it. A test's fixture server
 /// lives for its test — milliseconds to a second or two — while a dev
 /// server stays up for minutes or hours, so 3 s spares nearly every fixture
-/// (those of test runners Zeron recognises are never probed at all:
+/// (those of test runners Vardoger recognises are never probed at all:
 /// [`discovery::Listener::is_test_run`]) and costs a dev server about 3 s
 /// before it is listed. It is above [`SCAN_CADENCE`], so a listener is never
 /// probed by the scan right after the one that first saw it.
@@ -53,7 +53,7 @@ enum Verdict {
     },
 }
 const NOT_HTTP_INITIAL_BACKOFF: Duration = Duration::from_secs(4);
-/// How often discovery scans while something Zeron started is alive.
+/// How often discovery scans while something Vardoger started is alive.
 const SCAN_CADENCE: Duration = Duration::from_secs(2);
 /// The longest discovery waits between scans while only processes left
 /// running (an agent's warm session, a server left up) keep it going and
@@ -287,8 +287,8 @@ fn candidates(
         listeners
             .into_iter()
             .filter(|l| {
-                l.zeron_owned
-                    && l.address.port() != zeron_proto::PREVIEW_PROXY_PORT
+                l.vardoger_owned
+                    && l.address.port() != vardoger_proto::PREVIEW_PROXY_PORT
                     && !reserved_ports.contains(&l.address.port())
                     && l.pid != std::process::id()
                     && !l.is_authentication_command()
@@ -375,7 +375,7 @@ impl PreviewService {
         &self.0.catalog
     }
     /// Scan for development servers now: a run or terminal here started or
-    /// changed state. Discovery parks while nothing Zeron started is alive,
+    /// changed state. Discovery parks while nothing Vardoger started is alive,
     /// and only this wakes it.
     pub fn rescan(&self) {
         self.0.scan_wake.notify_one();
@@ -469,7 +469,7 @@ impl PreviewService {
                     Err(error) => {
                         tracing::warn!(%error, "local previews could not start; retrying");
                         proxy_catalog.set_proxy_status(
-                            zeron_proto::PREVIEW_PROXY_PORT,
+                            vardoger_proto::PREVIEW_PROXY_PORT,
                             Some(format!("Local previews could not start: {error}")),
                         )
                     }
@@ -648,7 +648,7 @@ impl Connector for LocalConnector {
 
 
 /// The local preview proxy, listening: on its usual port, or, with that
-/// taken (another Zeron engine on this computer has it: the app's and a
+/// taken (another Vardoger engine on this computer has it: the app's and a
 /// development one, say), on one the system picks. Every preview address is
 /// built from the port it got (`PreviewSnapshot::proxy_port`), so nothing
 /// that opens a preview depends on which.
@@ -656,10 +656,10 @@ async fn serve_proxy(
     router: proxy::Router,
     stop: &CancellationToken,
 ) -> anyhow::Result<(u16, Vec<tokio::task::JoinHandle<()>>)> {
-    match proxy::serve(router.clone(), zeron_proto::PREVIEW_PROXY_PORT, stop.child_token()).await {
+    match proxy::serve(router.clone(), vardoger_proto::PREVIEW_PROXY_PORT, stop.child_token()).await {
         Err(error) if address_in_use(&error) => {
             tracing::info!(
-                port = zeron_proto::PREVIEW_PROXY_PORT,
+                port = vardoger_proto::PREVIEW_PROXY_PORT,
                 "the preview proxy's port is taken; listening on another"
             );
             proxy::serve(router, 0, stop.child_token()).await
@@ -685,7 +685,7 @@ mod tests {
             args: vec!["node".into()],
             started_at: 1_000,
             address: ([127, 0, 0, 1], port).into(),
-            zeron_owned: true,
+            vardoger_owned: true,
             origin: Some("chat:chat".into()),
             chat_id: Some("chat".into()),
             signing_in: false,
@@ -780,8 +780,8 @@ mod tests {
         assert_eq!(planned.settling_until, Some(at(t0, 2) + PROBE_SETTLE));
         assert!(PROBE_SETTLE > SCAN_CADENCE, "never the scan right after the first sighting");
     }
-    /// A chat's development server is found by the scan of what Zeron
-    /// started, and with nothing Zeron started alive the scan finds nothing
+    /// A chat's development server is found by the scan of what Vardoger
+    /// started, and with nothing Vardoger started alive the scan finds nothing
     /// to do: the loop parks instead of scanning again.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
@@ -815,7 +815,7 @@ mod tests {
                 "import socket,sys,time\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\nprint(s.getsockname()[1],flush=True)\ntime.sleep(60)",
             ])
             .current_dir(folder.path())
-            .env(zeron_proto::ORIGIN_ENV, zeron_proto::chat_origin(&chat))
+            .env(vardoger_proto::ORIGIN_ENV, vardoger_proto::chat_origin(&chat))
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -877,7 +877,7 @@ mod tests {
                     "import socket,sys\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\nprint(s.getsockname()[1],flush=True)\nsys.stdin.read()",
                 )
                 .current_dir(folder.path())
-                .env(zeron_proto::ORIGIN_ENV, zeron_proto::chat_origin(&chat))
+                .env(vardoger_proto::ORIGIN_ENV, vardoger_proto::chat_origin(&chat))
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .spawn()

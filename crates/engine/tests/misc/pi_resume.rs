@@ -1,9 +1,9 @@
 //! Pi's native session id survives an idle process crash through dispatch.
 #![cfg(unix)]
 use std::{sync::Arc, time::Duration};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::PiHarness;
-use zeron_proto::{HarnessId, RunRequest, SandboxLevel};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::PiHarness;
+use vardoger_proto::{HarnessId, RunRequest, SandboxLevel};
 
 #[tokio::test]
 async fn pi_idle_crash_next_dispatch_loads_stored_session() {
@@ -48,7 +48,7 @@ async fn pi_idle_crash_next_dispatch_loads_stored_session() {
             loop {
                 let entries = handle.doc().read_entries().unwrap();
                 if entries.iter().any(|entry| entry.parts.iter().any(|part|
-                    matches!(part, zeron_doc::MessagePart::Text { text, .. } if text == &format!("reply:{prompt}"))
+                    matches!(part, vardoger_doc::MessagePart::Text { text, .. } if text == &format!("reply:{prompt}"))
                 )) { break; }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -105,7 +105,7 @@ async fn timed_out_native_question_resolves_and_finishes_without_user_input() {
         while !core
             .sessions
             .session_status(chat)
-            .is_some_and(|s| s.status == zeron_proto::SessionStatus::AwaitingInput)
+            .is_some_and(|s| s.status == vardoger_proto::SessionStatus::AwaitingInput)
         {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -113,12 +113,12 @@ async fn timed_out_native_question_resolves_and_finishes_without_user_input() {
             let entries = handle.doc().read_entries().unwrap();
             if entries.iter().any(|entry| {
                 entry.parts.iter().any(|part| {
-                    matches!(part, zeron_doc::MessagePart::Input { resolved: true, .. })
+                    matches!(part, vardoger_doc::MessagePart::Input { resolved: true, .. })
                 })
             }) && core
                 .sessions
                 .session_status(chat)
-                .is_some_and(|s| s.status == zeron_proto::SessionStatus::Idle)
+                .is_some_and(|s| s.status == vardoger_proto::SessionStatus::Idle)
             {
                 break;
             }

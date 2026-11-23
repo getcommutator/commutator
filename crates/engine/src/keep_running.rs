@@ -1,4 +1,4 @@
-//! "Keep Zeron running after you quit" (Settings → General), this device's
+//! "Keep Vardoger running after you quit" (Settings → General), this device's
 //! own setting for its background engine ([`crate::managed`]).
 //!
 //! On (the default): quitting the app leaves the engine running, as it
@@ -13,7 +13,7 @@
 //! the person's own Stop on each chat. Any later call from this device's
 //! app (it opened again) calls the stop off.
 //!
-//! [`APP_QUITTING`]: zeron_rpc::methods::APP_QUITTING
+//! [`APP_QUITTING`]: vardoger_rpc::methods::APP_QUITTING
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,7 +57,7 @@ fn path(data_dir: &Path) -> PathBuf {
 /// The saved setting; the default when none is saved (or it can't be read).
 pub fn load(data_dir: &Path) -> BackgroundSettings {
     // (Bounded, and never a FIFO or device: a few bytes are expected.)
-    zeron_harness::bounded_file::read(&path(data_dir), 64 * 1024)
+    vardoger_harness::bounded_file::read(&path(data_dir), 64 * 1024)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()

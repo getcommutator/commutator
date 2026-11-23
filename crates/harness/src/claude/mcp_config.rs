@@ -3,7 +3,7 @@
 //! them from a background shell among the agent's children
 //! ([`crate::process::unexpected_descendants`]).
 //!
-//! Zeron launches Claude without `--strict-mcp-config`, so the CLI also
+//! Vardoger launches Claude without `--strict-mcp-config`, so the CLI also
 //! starts the servers configured in its documented MCP scopes
 //! (code.claude.com/docs/en/mcp, /managed-mcp, /claude-directory):
 //!
@@ -234,14 +234,14 @@ fn read_json(path: &Path, max: u64) -> Option<Value> {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
-            tracing::debug!(target: "zeron_harness::claude", path = %path.display(), error = %err, "MCP config not read");
+            tracing::debug!(target: "vardoger_harness::claude", path = %path.display(), error = %err, "MCP config not read");
             return None;
         }
     };
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
         Err(err) => {
-            tracing::debug!(target: "zeron_harness::claude", path = %path.display(), error = %err, "MCP config unreadable");
+            tracing::debug!(target: "vardoger_harness::claude", path = %path.display(), error = %err, "MCP config unreadable");
             None
         }
     }

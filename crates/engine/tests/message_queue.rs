@@ -15,15 +15,15 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{
+use vardoger_doc::{
     MessagePart, MessageRole, QueueDeliveryGate, SessionCommandPayload, SessionMessageEntry,
 };
-use zeron_engine::doc_host::{
+use vardoger_engine::doc_host::{
     BeginQueueEditOutcome, FinishQueueEditAction, FinishQueueEditOutcome,
 };
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls};
+use vardoger_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SteeringMode,
     UserInputQuestion,
 };
@@ -274,10 +274,10 @@ fn assemble_at(path: &std::path::Path, harness: Arc<HeldHarness>) -> EngineCore 
 }
 
 async fn create_chat(core: &EngineCore) {
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
     client
         .call(
-            zeron_rpc::methods::MUTATE,
+            vardoger_rpc::methods::MUTATE,
             serde_json::json!({
                 "op": "createChat",
                 "chatId": CHAT,
@@ -687,7 +687,7 @@ async fn saturated_steering_mailbox_waits_without_restarting_or_losing_messages(
                     .steer(CHAT, &format!("burst {i}"), Some(format!("burst-{i}")))
                     .await
                     .unwrap(),
-                zeron_engine::SteerOutcome::Accepted
+                vardoger_engine::SteerOutcome::Accepted
             ));
         }
     });
@@ -750,7 +750,7 @@ async fn interrupt_bypasses_a_saturated_prompt_command_drain() {
                 .read_commands()
                 .unwrap()
                 .iter()
-                .any(|c| c.id == interrupt && c.status == zeron_doc::SessionCommandStatus::Applied)
+                .any(|c| c.id == interrupt && c.status == vardoger_doc::SessionCommandStatus::Applied)
         },
         "interrupt to bypass blocked prompts",
     )
@@ -777,7 +777,7 @@ async fn batched_remote_steers_preserve_every_message_in_order_exactly_once() {
     for (i, prompt) in expected.iter().enumerate() {
         handle
             .doc()
-            .queue_command(&zeron_doc::SessionCommandEntry {
+            .queue_command(&vardoger_doc::SessionCommandEntry {
                 id: format!("remote-command-{i}"),
                 payload: SessionCommandPayload::Steer {
                     prompt: prompt.clone(),
@@ -787,7 +787,7 @@ async fn batched_remote_steers_preserve_every_message_in_order_exactly_once() {
                 issued_at: now + i as i64,
                 based_on: None,
                 expires_at: None,
-                status: zeron_doc::SessionCommandStatus::Pending,
+                status: vardoger_doc::SessionCommandStatus::Pending,
                 resolution: None,
             })
             .unwrap();
@@ -810,7 +810,7 @@ async fn batched_remote_steers_preserve_every_message_in_order_exactly_once() {
             .read_commands()
             .unwrap()
             .iter()
-            .all(|c| c.status == zeron_doc::SessionCommandStatus::Applied)
+            .all(|c| c.status == vardoger_doc::SessionCommandStatus::Applied)
     );
     // Each turn end releases exactly the next one.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
@@ -883,7 +883,7 @@ async fn queued_text_waits_for_a_steerable_turn_even_with_legacy_policy() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn held_policy_keeps_a_steerable_message_visible_until_steer_now() {
     let (core, harness, prompts) = setup(SteeringMode::StepBoundary).await;
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
 
     core.doc_host
         .queue_message(CHAT, "opening", Vec::new())
@@ -896,7 +896,7 @@ async fn held_policy_keeps_a_steerable_message_visible_until_steer_now() {
 
     let reply = client
         .call(
-            zeron_rpc::methods::QUEUE_MESSAGE,
+            vardoger_rpc::methods::QUEUE_MESSAGE,
             serde_json::json!({
                 "chatId": CHAT,
                 "text": "hold this",
@@ -912,7 +912,7 @@ async fn held_policy_keeps_a_steerable_message_visible_until_steer_now() {
 
     let reply = client
         .call(
-            zeron_rpc::methods::STEER_QUEUED_MESSAGE_NOW,
+            vardoger_rpc::methods::STEER_QUEUED_MESSAGE_NOW,
             serde_json::json!({ "chatId": CHAT, "id": id }),
         )
         .await
@@ -995,10 +995,10 @@ async fn steer_now_starts_the_next_turn_when_the_previous_turn_is_already_idle()
     )
     .await;
 
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
     let reply = client
         .call(
-            zeron_rpc::methods::QUEUE_MESSAGE,
+            vardoger_rpc::methods::QUEUE_MESSAGE,
             serde_json::json!({
                 "chatId": CHAT,
                 "text": "after cancel",
@@ -1234,7 +1234,7 @@ async fn acknowledged_removal_cannot_materialize_after_turn_end() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn queue_rpc_reorders_and_streams() {
     let (core, harness, prompts) = setup(SteeringMode::TurnBoundary).await;
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
 
     core.doc_host
         .queue_message(CHAT, "opening", Vec::new())
@@ -1247,7 +1247,7 @@ async fn queue_rpc_reorders_and_streams() {
 
     let mut rx = client
         .subscribe(
-            zeron_rpc::methods::WATCH_QUEUE,
+            vardoger_rpc::methods::WATCH_QUEUE,
             serde_json::json!({ "chatId": CHAT }),
         )
         .await
@@ -1265,7 +1265,7 @@ async fn queue_rpc_reorders_and_streams() {
     for text in ["a", "b", "c"] {
         client
             .call(
-                zeron_rpc::methods::QUEUE_MESSAGE,
+                vardoger_rpc::methods::QUEUE_MESSAGE,
                 serde_json::json!({ "chatId": CHAT, "text": text }),
             )
             .await
@@ -1286,7 +1286,7 @@ async fn queue_rpc_reorders_and_streams() {
         .clone();
     client
         .call(
-            zeron_rpc::methods::MOVE_QUEUED_MESSAGE,
+            vardoger_rpc::methods::MOVE_QUEUED_MESSAGE,
             serde_json::json!({ "chatId": CHAT, "id": last_id, "toIndex": 0 }),
         )
         .await
@@ -1295,7 +1295,7 @@ async fn queue_rpc_reorders_and_streams() {
 
     client
         .call(
-            zeron_rpc::methods::REMOVE_QUEUED_MESSAGE,
+            vardoger_rpc::methods::REMOVE_QUEUED_MESSAGE,
             serde_json::json!({ "chatId": CHAT, "id": last_id }),
         )
         .await
@@ -1410,7 +1410,7 @@ async fn a_message_holds_while_the_agent_waits_on_a_question() {
         || {
             core.sessions
                 .session_status(CHAT)
-                .is_some_and(|s| s.status == zeron_proto::SessionStatus::AwaitingInput)
+                .is_some_and(|s| s.status == vardoger_proto::SessionStatus::AwaitingInput)
         },
         "the agent to park on its question",
     )
@@ -1679,10 +1679,10 @@ async fn protected_edit_rpc_round_trips_its_camel_case_protocol() {
         .doc_host
         .queue_message(CHAT, "rpc edit", Vec::new())
         .expect("queue row");
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
     let begin = client
         .call(
-            zeron_rpc::methods::BEGIN_QUEUED_MESSAGE_EDIT,
+            vardoger_rpc::methods::BEGIN_QUEUED_MESSAGE_EDIT,
             serde_json::json!({
                 "chatId": CHAT,
                 "id": id,
@@ -1697,7 +1697,7 @@ async fn protected_edit_rpc_round_trips_its_camel_case_protocol() {
 
     let finish = client
         .call(
-            zeron_rpc::methods::FINISH_QUEUED_MESSAGE_EDIT,
+            vardoger_rpc::methods::FINISH_QUEUED_MESSAGE_EDIT,
             serde_json::json!({
                 "chatId": CHAT,
                 "id": id,
@@ -1841,12 +1841,12 @@ async fn failed_queue_dispatch_stays_paused_until_explicit_retry() {
 async fn queued_turn_uses_current_config_at_turn_end_and_send_now() {
     for send_now in [false, true] {
         let (core, harness, prompts) = setup(SteeringMode::TurnBoundary).await;
-        let mut config = zeron_proto::ChatConfig {
+        let mut config = vardoger_proto::ChatConfig {
             harness: HarnessId::Mock,
             model: Some("old-model".into()),
             reasoning: Some(ReasoningLevel::Medium),
             model_options: Default::default(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             access: Default::default(),
             plan: false,
         };
@@ -1947,10 +1947,10 @@ async fn pending_update_does_not_stall_another_chats_queue_flush() {
     )
     .expect("engine core assembles");
     create_chat(&core).await;
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
     client
         .call(
-            zeron_rpc::methods::MUTATE,
+            vardoger_rpc::methods::MUTATE,
             serde_json::json!({
                 "op": "createChat",
                 "chatId": OTHER,
@@ -2123,7 +2123,7 @@ async fn a_send_issued_before_the_running_turn_started_is_the_next_turn_not_a_st
         let mut request = template.clone();
         request.prompt = prompt.into();
         let issued_at = chrono::Utc::now().timestamp_millis() - ago_ms;
-        zeron_doc::SessionCommandEntry {
+        vardoger_doc::SessionCommandEntry {
             id: format!("cmd-{id}"),
             payload: SessionCommandPayload::Run {
                 message_id: format!("m-{id}"),
@@ -2133,7 +2133,7 @@ async fn a_send_issued_before_the_running_turn_started_is_the_next_turn_not_a_st
             issued_at,
             based_on: None,
             expires_at: Some(issued_at + 3_600_000),
-            status: zeron_doc::SessionCommandStatus::Pending,
+            status: vardoger_doc::SessionCommandStatus::Pending,
             resolution: None,
         }
     };
@@ -2262,13 +2262,13 @@ async fn setup_two_providers() -> (
     core.workspace
         .set_chat_config(
             CHAT,
-            &zeron_proto::ChatConfig {
+            &vardoger_proto::ChatConfig {
                 harness: HarnessId::Codex,
                 model: Some("gpt-5.4".into()),
                 reasoning: Some(ReasoningLevel::Medium),
                 model_options: serde_json::Map::new(),
-                sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
-                access: zeron_proto::AccessMode::FullAccess,
+                sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
+                access: vardoger_proto::AccessMode::FullAccess,
                 plan: false,
             },
         )
@@ -2295,14 +2295,14 @@ fn switch_seams(core: &EngineCore) -> Vec<(Option<String>, Option<String>)> {
         .collect()
 }
 
-fn antigravity_config() -> zeron_proto::ChatConfig {
-    zeron_proto::ChatConfig {
+fn antigravity_config() -> vardoger_proto::ChatConfig {
+    vardoger_proto::ChatConfig {
         harness: HarnessId::Antigravity,
         model: Some("gemini-4-neon".into()),
         reasoning: None,
         model_options: serde_json::Map::new(),
-        sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
-        access: zeron_proto::AccessMode::FullAccess,
+        sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
+        access: vardoger_proto::AccessMode::FullAccess,
         plan: false,
     }
 }
@@ -2430,7 +2430,7 @@ async fn send_queued_now_with_provider_switch_interrupts_and_switches() {
     let opening_ix = entries
         .iter()
         .position(|e| {
-            e.role == zeron_doc::MessageRole::User
+            e.role == vardoger_doc::MessageRole::User
                 && e.parts
                     .iter()
                     .any(|p| matches!(p, MessagePart::Text { text, .. } if text == "opening on codex"))

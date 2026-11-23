@@ -7,9 +7,9 @@
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use zeron_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-use zeron_proto::ToolCall;
-use zeron_proto::view::{InputOutcome, input_outcome};
+use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+use vardoger_proto::ToolCall;
+use vardoger_proto::view::{InputOutcome, input_outcome};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderOptions {
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn answered_questions_join_the_tool_ledger() {
-        let question = |id: &str, header: &str| zeron_proto::UserInputQuestion {
+        let question = |id: &str, header: &str| vardoger_proto::UserInputQuestion {
             note: None,
             id: id.into(),
             header: header.into(),
@@ -333,7 +333,7 @@ mod tests {
             multiline: false,
         };
         let input =
-            |id: &str, answers: Option<Vec<zeron_proto::UserInputAnswer>>| MessagePart::Input {
+            |id: &str, answers: Option<Vec<vardoger_proto::UserInputAnswer>>| MessagePart::Input {
                 id: id.into(),
                 request_id: id.into(),
                 questions: vec![question("q", "Recherche")],
@@ -346,7 +346,7 @@ mod tests {
             vec![
                 input(
                     "answered",
-                    Some(vec![zeron_proto::UserInputAnswer {
+                    Some(vec![vardoger_proto::UserInputAnswer {
                         question_id: "q".into(),
                         labels: vec!["Deep dive".into()],
                     }]),

@@ -4,8 +4,8 @@
 //! The in-memory bridge below stands in for the edge room: it cross-imports Loro
 //! updates (`export(updates)`) between the two engines' workspace docs on a timer,
 //! which is exactly what `RoomClient` + the SessionRoom DO do over the wire. A live
-//! variant against a real edge runs behind `#[ignore]` (ZERON_EDGE_WS, like
-//! zeron-sync's edge_convergence test).
+//! variant against a real edge runs behind `#[ignore]` (VARDOGER_EDGE_WS, like
+//! vardoger-sync's edge_convergence test).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,14 +14,14 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use vardoger_doc::{CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls};
+use vardoger_proto::{
     AgentEvent, ChatConfig, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use zeron_rpc::methods;
+use vardoger_rpc::methods;
 
 const VIEWER: &str = "viewer-device";
 
@@ -122,8 +122,8 @@ fn assemble(dir: &std::path::Path, device_id: &str) -> EngineCore {
 async fn bridge(
     a: &EngineCore,
     b: &EngineCore,
-) -> zeron_sync::registry::mock_server::MockRegistryServer {
-    let server = zeron_sync::registry::mock_server::MockRegistryServer::start().await;
+) -> vardoger_sync::registry::mock_server::MockRegistryServer {
+    let server = vardoger_sync::registry::mock_server::MockRegistryServer::start().await;
     a.workspace.connect_registry_url(&server.url());
     b.workspace.connect_registry_url(&server.url());
     server
@@ -231,8 +231,8 @@ async fn two_engines_share_a_workspace() {
 
     // CreateSpace + CreateChat on A (Mutate over the real RPC surface), hosted
     // by dev-a via the space.
-    let client_a = zeron_rpc::memory_client(a.rpc_service());
-    let client_b = zeron_rpc::memory_client(b.rpc_service());
+    let client_a = vardoger_rpc::memory_client(a.rpc_service());
+    let client_b = vardoger_rpc::memory_client(b.rpc_service());
     client_a
         .call(
             methods::MUTATE,
@@ -443,7 +443,7 @@ async fn projectless_claim_syncs_after_offline_creation_and_survives_viewer_rest
     assert_eq!(row.device_id, "dev-a");
     assert_eq!(row.space_id, None);
     // The claim gives the new chat its own scratch folder, not `~`.
-    assert!(zeron_proto::projectless::is_scratch_cwd(
+    assert!(vardoger_proto::projectless::is_scratch_cwd(
         row.cwd.as_deref().unwrap()
     ));
     assert!(a.workspace.read_spaces().unwrap().is_empty());
@@ -468,7 +468,7 @@ async fn projectless_claim_syncs_after_offline_creation_and_survives_viewer_rest
 async fn claim_resolves_a_worktree_cwd_to_the_repo_root_space() {
     let dir = tempfile::tempdir().unwrap();
     let core = assemble(dir.path(), "dev-a");
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = vardoger_rpc::memory_client(core.rpc_service());
 
     // A checkout with a linked worktree — fs layout only; the claim path
     // reads `.git` without spawning git.
@@ -620,7 +620,7 @@ async fn chat_config_selects_the_run_harness() {
         || {
             handle.doc().read_entries().unwrap_or_default().iter().any(|e| {
                 e.parts.iter().any(
-                    |p| matches!(p, zeron_doc::MessagePart::Text { text, .. } if text == "From cursor"),
+                    |p| matches!(p, vardoger_doc::MessagePart::Text { text, .. } if text == "From cursor"),
                 )
             })
         },
@@ -635,15 +635,15 @@ async fn chat_config_selects_the_run_harness() {
 /// the TS edge (`wrangler dev` in `edge/` with AUTH_MODE=dev):
 ///
 /// ```sh
-/// ZERON_EDGE_WS=ws://127.0.0.1:8787 cargo test -p zeron-engine -- --ignored
+/// VARDOGER_EDGE_WS=ws://127.0.0.1:8787 cargo test -p vardoger-engine -- --ignored
 /// ```
 #[tokio::test]
-#[ignore = "requires a live edge: set ZERON_EDGE_WS (e.g. ws://127.0.0.1:8787)"]
+#[ignore = "requires a live edge: set VARDOGER_EDGE_WS (e.g. ws://127.0.0.1:8787)"]
 async fn two_engines_converge_through_a_real_workspace_room() {
-    use zeron_engine::doc_host::EdgeConfig;
+    use vardoger_engine::doc_host::EdgeConfig;
 
-    let base = std::env::var("ZERON_EDGE_WS")
-        .expect("set ZERON_EDGE_WS to the edge origin, e.g. ws://127.0.0.1:8787");
+    let base = std::env::var("VARDOGER_EDGE_WS")
+        .expect("set VARDOGER_EDGE_WS to the edge origin, e.g. ws://127.0.0.1:8787");
     let org = format!("org-{}", uuid::Uuid::new_v4().simple());
 
     let assemble_live = |dir: &std::path::Path, device_id: &str, user: &str| {
@@ -705,15 +705,15 @@ async fn two_engines_converge_through_a_real_workspace_room() {
 
 #[tokio::test]
 async fn legacy_workspace_doc_migrates_instantly_on_first_boot() {
-    use zeron_proto::{Chat, Device, Session, Space};
+    use vardoger_proto::{Chat, Device, Session, Space};
 
     let dir_a = tempfile::tempdir().unwrap();
     // Seed the identity-scoped store with a LEGACY Loro workspace snapshot —
     // what an updated engine finds on its first boot after the registry change.
     let org_dir = dir_a.path().join("orgs").join("dev-org").join("dev-user");
     {
-        let store = zeron_sync::DocsStore::open(&org_dir).expect("open store");
-        let legacy = zeron_doc::WorkspaceDoc::new();
+        let store = vardoger_sync::DocsStore::open(&org_dir).expect("open store");
+        let legacy = vardoger_doc::WorkspaceDoc::new();
         let now = chrono::Utc::now();
         legacy
             .upsert_device(&Device {
@@ -841,10 +841,10 @@ async fn legacy_workspace_doc_migrates_instantly_on_first_boot() {
     b.shutdown().await;
 
     // The registry snapshot now exists; the legacy snapshot is kept for rollback.
-    let store = zeron_sync::DocsStore::open(&org_dir).expect("reopen store");
+    let store = vardoger_sync::DocsStore::open(&org_dir).expect("reopen store");
     assert!(
         store
-            .load_snapshot(zeron_doc::REGISTRY_DOC_ID)
+            .load_snapshot(vardoger_doc::REGISTRY_DOC_ID)
             .expect("load registry snapshot")
             .is_some(),
         "registry snapshot persisted"
@@ -1033,8 +1033,8 @@ async fn a_repositorys_name_and_icon_are_the_same_on_every_device() {
     .await;
 
     // Renamed on A, over the RPC surface every app uses; icon set on B.
-    let client_a = zeron_rpc::memory_client(a.rpc_service());
-    let client_b = zeron_rpc::memory_client(b.rpc_service());
+    let client_a = vardoger_rpc::memory_client(a.rpc_service());
+    let client_b = vardoger_rpc::memory_client(b.rpc_service());
     client_a
         .call(methods::MUTATE, serde_json::json!({ "op": "renameSpace", "spaceId": "copy-a", "name": "Flint" }))
         .await
@@ -1085,7 +1085,7 @@ async fn remove_device_retires_an_away_device_everywhere_and_refuses_the_rest() 
     let dir_b = tempfile::tempdir().unwrap();
     let a = assemble(dir_a.path(), "dev-a");
     let b = assemble(dir_b.path(), "dev-b");
-    let device = |id: &str, platform: &str, capabilities: Vec<String>| zeron_proto::Device {
+    let device = |id: &str, platform: &str, capabilities: Vec<String>| vardoger_proto::Device {
         id: id.into(),
         name: format!("{id} name"),
         platform: platform.into(),
@@ -1095,16 +1095,16 @@ async fn remove_device_retires_an_away_device_everywhere_and_refuses_the_rest() 
         cursor_sdk_version: None,
         capabilities,
     };
-    // An old computer that hasn't opened Zeron in a long while, with a chat
+    // An old computer that hasn't opened Vardoger in a long while, with a chat
     // of its own; and a Cloud session's machine.
     b.workspace.upsert_device_row(&device("dev-old", "linux", Vec::new()));
     b.workspace.upsert_device_row(&device(
         "sess-machine",
         "linux",
-        vec![zeron_proto::CLOUD_SESSION_CAPABILITY.into()],
+        vec![vardoger_proto::CLOUD_SESSION_CAPABILITY.into()],
     ));
     let link = bridge(&a, &b).await;
-    let client_b = zeron_rpc::memory_client(b.rpc_service());
+    let client_b = vardoger_rpc::memory_client(b.rpc_service());
     client_b
         .call(
             methods::MUTATE,
@@ -1132,7 +1132,7 @@ async fn remove_device_retires_an_away_device_everywhere_and_refuses_the_rest() 
     assert!(remove("cloud-acct").await.unwrap_err().contains("cloud_device"));
     // A, beating in the room now: online, refused.
     wait_for(
-        || b.workspace.peer_liveness("dev-a") == zeron_rpc::PeerLiveness::Live,
+        || b.workspace.peer_liveness("dev-a") == vardoger_rpc::PeerLiveness::Live,
         "A's presence on B",
     )
     .await;
@@ -1151,7 +1151,7 @@ async fn remove_device_retires_an_away_device_everywhere_and_refuses_the_rest() 
     wait_for(|| !ids(&a).contains(&"dev-old".to_string()), "the old computer gone on A").await;
     assert!(!ids(&b).contains(&"dev-old".to_string()));
     for core in [&a, &b] {
-        assert_eq!(core.workspace.peer_liveness("dev-old"), zeron_rpc::PeerLiveness::Dark);
+        assert_eq!(core.workspace.peer_liveness("dev-old"), vardoger_rpc::PeerLiveness::Dark);
         assert!(core.workspace.chat("old-chat").ok().flatten().is_some());
     }
     // Again: already gone, nothing to do.

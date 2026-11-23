@@ -58,7 +58,7 @@ use futures::stream::BoxStream;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use zeron_proto::{
+use vardoger_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice,
     ReasoningLevel, RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
@@ -211,7 +211,7 @@ fn default_effort_values(
 }
 
 /// Devin's `thought_level` also offers `none` ("No Thinking"), which the
-/// catalog maps to Zeron's lowest level.
+/// catalog maps to Vardoger's lowest level.
 fn devin_effort_values(
     reasoning: Option<ReasoningLevel>,
     model: Option<&str>,
@@ -255,7 +255,7 @@ fn grok_spec() -> AcpAgentSpec {
         // the `agent` subcommand and starts a fresh agent even when
         // `[cli] use_leader` is set — leader mode ATTACHES `agent stdio` to a
         // shared process via ~/.grok/leader.sock, so a wedged/stale leader
-        // (the user's TUI) reads as total silent non-response in zeron.
+        // (the user's TUI) reads as total silent non-response in vardoger.
         args: &["--no-auto-update", "agent", "--no-leader", "stdio"],
         npm_package: Some("@xai-official/grok@1.0.4"),
         archive: None,
@@ -300,7 +300,7 @@ fn grok_spec() -> AcpAgentSpec {
         prompt_complete_extension: true,
         prompt_stall: Some(Duration::from_secs(30)),
         stall_hint: "The agent process is likely wedged — a stale shared leader \
-             process or a hung startup check; zeron launches it with --no-leader \
+             process or a hung startup check; vardoger launches it with --no-leader \
              and --no-auto-update to avoid both.",
         effort_in_model_id: false,
         auth_method: None,
@@ -407,7 +407,7 @@ fn devin_spec() -> AcpAgentSpec {
 /// The spec every registry agent shares: nothing about the agent beyond its
 /// id and name, its launch read from its record each time (an update moves
 /// it), its models and sign-in from its own handshake.
-fn registry_spec(agent: zeron_proto::RegistryAgent, name: &str) -> AcpAgentSpec {
+fn registry_spec(agent: vardoger_proto::RegistryAgent, name: &str) -> AcpAgentSpec {
     AcpAgentSpec {
         id: HarnessId::Registry(agent),
         // (Interned with the agent's id: bounded by the agents ever added.)
@@ -711,7 +711,7 @@ const ANTIGRAVITY_ARCHIVE_NAME: &str = "antigravity-acp";
 pub const ANTIGRAVITY_REGISTRY_URL: &str = "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json";
 
 /// install marker for a release proven by google's code signature, which has
-/// no digest in zeron's source to record instead.
+/// no digest in vardoger's source to record instead.
 const ANTIGRAVITY_SIGNED_MARKER: &str = "google-code-signature";
 
 /// install marker prefix for a Google-hosted release verified by the ACP
@@ -801,7 +801,7 @@ fn newest_antigravity_install() -> Option<(semver::Version, PathBuf)> {
         .max_by(|(left, _), (right, _)| left.cmp(right))
 }
 
-/// whether `executable` is the server zeron installed and may replace.
+/// whether `executable` is the server vardoger installed and may replace.
 pub fn is_managed_antigravity_server(executable: &Path) -> bool {
     newest_antigravity_install().is_some_and(|(_, entry)| entry == executable)
 }
@@ -817,7 +817,7 @@ pub struct AntigravityRelease {
 }
 
 impl AntigravityRelease {
-    /// whether zeron can prove this release's origin before installing it.
+    /// whether vardoger can prove this release's origin before installing it.
     pub fn installable(&self) -> bool {
         antigravity_archive().is_some_and(|pin| pin.version == self.version)
             || (self.archive_url.is_some()
@@ -979,7 +979,7 @@ pub fn antigravity_build_version(output: &str) -> Option<String> {
 }
 
 /// remove trusted installs older than the one launches resolve to. a version
-/// still running (in any process, including another zeron) is kept, and on
+/// still running (in any process, including another vardoger) is kept, and on
 /// failure to inspect processes nothing is removed.
 pub fn prune_superseded_antigravity_installs() {
     let Some((newest, _)) = newest_antigravity_install() else {
@@ -1086,7 +1086,7 @@ pub(crate) fn running_command_lines() -> Option<Vec<String>> {
     None
 }
 
-/// how a process may name files under `dir`: as zeron spawned it, and in its
+/// how a process may name files under `dir`: as vardoger spawned it, and in its
 /// canonical form, which windows reports for images even when the adapters
 /// directory was reached through an 8.3 short name such as `RUNNER~1`.
 fn install_path_prefixes(dir: &Path) -> Vec<String> {
@@ -1139,7 +1139,7 @@ fn select_antigravity_install_target(
     fallback.map(AntigravityInstallTarget::Fallback)
 }
 
-/// Whether the listing device supports Zeron's managed Antigravity archive install.
+/// Whether the listing device supports Vardoger's managed Antigravity archive install.
 pub fn can_install(harness: HarnessId) -> bool {
     harness == HarnessId::Antigravity && antigravity_registry_platform().is_some()
 }
@@ -1284,14 +1284,14 @@ fn signs_in_to(env: &[(String, std::ffi::OsString)], live: Option<&Path>) -> Opt
 
 /// The Google login Antigravity's server keeps in a file under `home`
 /// (`AGY_ACP_FORCE_FILE_STORAGE`, or where it has no Keychain): what a
-/// sign-in on this computer through Zeron writes.
+/// sign-in on this computer through Vardoger writes.
 pub fn antigravity_token_file(home: &Path) -> PathBuf {
     home.join("antigravity-acp").join("acp_token.json")
 }
 
-/// Whether Zeron's Antigravity runs read their login from `home`'s token file
+/// Whether Vardoger's Antigravity runs read their login from `home`'s token file
 /// rather than the Keychain: once it holds a Google login (a refresh token),
-/// as a sign-in through Zeron leaves it. Without one the server keeps its
+/// as a sign-in through Vardoger leaves it. Without one the server keeps its
 /// own default, so a Keychain login made elsewhere still runs.
 pub fn antigravity_reads_token_file(home: &Path) -> bool {
     std::fs::read(antigravity_token_file(home))
@@ -1853,7 +1853,7 @@ async fn report_lines(
     let mut lines = crate::lossy_lines::lossy_lines(stream);
     while let Ok(Some(line)) = lines.next_line().await {
         tracing::debug!(
-            target: "zeron_harness::acp",
+            target: "vardoger_harness::acp",
             "sign-in output: {}",
             crate::redact::redact_output(&line)
         );
@@ -1914,12 +1914,12 @@ pub fn prewarm_managed_adapters() {
         handle.spawn(async move {
             match crate::adapter_install::ensure_installed(pin, bin_name, display_name).await {
                 Ok(entry) => tracing::info!(
-                    target: "zeron_harness::adapter_install",
+                    target: "vardoger_harness::adapter_install",
                     adapter = %entry.display(),
                     "prewarmed {display_name} ACP adapter"
                 ),
                 Err(e) => tracing::warn!(
-                    target: "zeron_harness::adapter_install",
+                    target: "vardoger_harness::adapter_install",
                     "prewarm of the {display_name} ACP adapter failed: {e}"
                 ),
             }
@@ -1981,7 +1981,7 @@ pub struct AcpHarness {
 /// (its folder, MCP server and environment: all `spawn_agent` takes).
 struct WarmAgent {
     cwd: String,
-    mcp: Option<zeron_proto::McpServer>,
+    mcp: Option<vardoger_proto::McpServer>,
     env: std::collections::BTreeMap<String, String>,
     spawned: Spawned,
 }
@@ -2074,7 +2074,7 @@ impl AcpHarness {
     /// An agent added from the ACP registry, launched from its record
     /// ([`crate::acp_registry`]): the generic harness, the same for every
     /// registry agent. `name` is how it's shown.
-    pub fn registry(agent: zeron_proto::RegistryAgent, name: &str) -> Self {
+    pub fn registry(agent: vardoger_proto::RegistryAgent, name: &str) -> Self {
         Self::with_spec(registry_spec(agent, name))
     }
 
@@ -2219,7 +2219,7 @@ impl AcpHarness {
                 while let Ok(Some(line)) = lines.next_line().await {
                     // Sign-in output carries authorize urls and device codes.
                     tracing::debug!(
-                        target: "zeron_harness::acp",
+                        target: "vardoger_harness::acp",
                         "sign-in stderr: {}",
                         crate::redact::redact_output(&line)
                     );
@@ -2303,7 +2303,7 @@ impl AcpHarness {
         // opened here (the app opens it on the device the person is at).
         let openers = env
             .iter()
-            .find(|(k, _)| k == "ZERON_LOGIN_URL_FILE")
+            .find(|(k, _)| k == "VARDOGER_LOGIN_URL_FILE")
             .and_then(|(_, file)| login_openers(Path::new(file)));
         let command = |extra: &[String], extra_env: &[(String, String)]| {
             let mut cmd = Command::new(&exe);
@@ -2905,7 +2905,7 @@ impl AcpHarness {
                             .await
                             {
                                 tracing::warn!(
-                                    target: "zeron_harness::adapter_install",
+                                    target: "vardoger_harness::adapter_install",
                                     "background adapter install failed: {e}"
                                 );
                             }
@@ -2973,7 +2973,7 @@ impl AcpHarness {
         cwd: Option<&str>,
         block_on_install: bool,
         extra_args: &[String],
-        _mcp: Option<&zeron_proto::McpServer>,
+        _mcp: Option<&vardoger_proto::McpServer>,
         run_env: &std::collections::BTreeMap<String, String>,
         enable_thoughts_proxy: bool,
     ) -> Result<Spawned, HarnessError> {
@@ -3048,7 +3048,7 @@ impl AcpHarness {
             tokio::spawn(async move {
                 let mut lines = crate::lossy_lines::lossy_lines(stderr);
                 while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!(target: "zeron_harness::acp", "stderr: {line}");
+                    tracing::debug!(target: "vardoger_harness::acp", "stderr: {line}");
                     tail.push(&line);
                     if is_sign_in_prompt(harness, &line) {
                         prompted.cancel();
@@ -3257,7 +3257,7 @@ impl AcpHarness {
     }
 }
 
-/// Map an advertised `thought_level` value id onto zeron's ladder.
+/// Map an advertised `thought_level` value id onto vardoger's ladder.
 fn reasoning_from_value(value: &str) -> Option<ReasoningLevel> {
     match norm_id(value).as_str() {
         "minimal" => Some(ReasoningLevel::Minimal),
@@ -3328,7 +3328,7 @@ fn split_provider_label(model: &mut Model) {
         .join(" ");
     let provider_name = if known == spelled { written.to_owned() } else { known };
     model.label = name.to_owned();
-    model.provider = Some(zeron_proto::ModelProvider {
+    model.provider = Some(vardoger_proto::ModelProvider {
         id: pid.to_owned(),
         name: provider_name,
     });
@@ -3524,12 +3524,12 @@ fn models_from_session_wire(session_response: &Value, catalog: &[Model]) -> Vec<
 }
 
 /// A session config option surfaced as a Traits-dropdown section. Mode is
-/// zeron's own (set from the run's access mode), model rides the model rows,
+/// vardoger's own (set from the run's access mode), model rides the model rows,
 /// and thought_level is the Reasoning ladder — everything else the agent
 /// advertises (fast mode, collaboration mode, agent persona, …) passes
 /// through. `currentValue` doubles as the default: it is the state the
 /// session opens in. Booleans render as an off/on select, mirroring the
-/// catalogs (zeron never declares the boolean config capability, so adapters
+/// catalogs (vardoger never declares the boolean config capability, so adapters
 /// send selects, but handle the shape defensively).
 fn trait_from_config_option(option: &Value) -> Option<ModelOption> {
     if matches!(
@@ -3780,7 +3780,7 @@ impl Harness for AcpHarness {
     async fn skills(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+    ) -> Result<Option<Vec<vardoger_proto::invocation::Skill>>, HarnessError> {
         if self.id() == HarnessId::Fx {
             return crate::skills::discover(self.id(), cwd).await.map(Some);
         }
@@ -3890,7 +3890,7 @@ impl Harness for AcpHarness {
                 Some(w.spawned)
             }
             Some(w) => {
-                tracing::info!(target: "zeron_harness::acp", key, "warm start not used; starting afresh");
+                tracing::info!(target: "vardoger_harness::acp", key, "warm start not used; starting afresh");
                 spawn_retire(w, self.kill_grace);
                 None
             }
@@ -4105,7 +4105,7 @@ fn initialize_params(harness: HarnessId) -> Value {
         // Devin otherwise exposes only the parent's run_subagent call. This
         // unlocks lifecycle tags plus every nested message, thought, and tool
         // update, all of which DevinTracker can route. Do not advertise the
-        // separate subagentControl extension: Zeron has no matching UI yet.
+        // separate subagentControl extension: Vardoger has no matching UI yet.
         capabilities["_meta"] = json!({ "cognition.ai/subagentSupport": true });
     }
     // No `_meta.clientType` here. Grok's is added only for an Auto run, by
@@ -4115,12 +4115,12 @@ fn initialize_params(harness: HarnessId) -> Value {
     json!({
         "protocolVersion": 1,
         "clientInfo": {
-            "name": "zeron",
-            "title": "Zeron",
+            "name": "vardoger",
+            "title": "Vardoger",
             "version": env!("CARGO_PKG_VERSION"),
         },
         // Declined: agents fall back to their own fs/terminal access, which
-        // is what zeron wants — the working tree is the source of truth for
+        // is what vardoger wants — the working tree is the source of truth for
         // the diff pane, and commands belong to the agent's own sandbox.
         "clientCapabilities": capabilities,
     })
@@ -4178,7 +4178,7 @@ fn cancel_params(harness: HarnessId, session_id: &str) -> Value {
 /// the host injected nothing — the user's own servers come from the agent's
 /// config, never from here.
 #[cfg(test)]
-fn acp_mcp_servers(mcp: Option<&zeron_proto::McpServer>) -> Vec<Value> {
+fn acp_mcp_servers(mcp: Option<&vardoger_proto::McpServer>) -> Vec<Value> {
     acp_session_mcp_servers(mcp, &[], false)
 }
 
@@ -4191,13 +4191,13 @@ fn takes_http_mcp(init: &Value) -> bool {
 }
 
 /// [`acp_mcp_servers`] plus the plugins' native servers
-/// ([`RunRequest::extra_mcp`]), Zeron's own first. With `http` (the agent
-/// takes HTTP servers), Zeron's own is the engine's endpoint
+/// ([`RunRequest::extra_mcp`]), Vardoger's own first. With `http` (the agent
+/// takes HTTP servers), Vardoger's own is the engine's endpoint
 /// (`{type: "http", name, url, headers: [{name, value}]}`) and no process
 /// starts; otherwise its stdio command — the engine's `mcp-proxy`.
 fn acp_session_mcp_servers(
-    mcp: Option<&zeron_proto::McpServer>,
-    extras: &[zeron_proto::McpServer],
+    mcp: Option<&vardoger_proto::McpServer>,
+    extras: &[vardoger_proto::McpServer],
     http: bool,
 ) -> Vec<Value> {
     let pairs = |map: &std::collections::BTreeMap<String, String>| {
@@ -4767,7 +4767,7 @@ fn handle_server_request(
             Vec::new()
         }
         _ => {
-            tracing::debug!(target: "zeron_harness::acp", "unhandled server request: {method}");
+            tracing::debug!(target: "vardoger_harness::acp", "unhandled server request: {method}");
             client.respond_error(&id, -32601, &format!("unsupported method: {method}"));
             Vec::new()
         }
@@ -5026,7 +5026,7 @@ fn noop_browser() -> Result<String, HarnessError> {
 
 /// python's `webbrowser` splits `BROWSER` on `:` and then shell-splits each
 /// entry. hosts without `true` (nixos, minimal containers) fall back to
-/// zeron's own `--noop-browser` mode.
+/// vardoger's own `--noop-browser` mode.
 #[cfg(any(not(windows), test))]
 fn unix_noop_browser(
     candidates: &[&Path],
@@ -5205,7 +5205,7 @@ async fn open_session(
             // A missing/corrupted session falls back to a fresh one.
             Err(e) => {
                 tracing::debug!(
-                    target: "zeron_harness::acp",
+                    target: "vardoger_harness::acp",
                     "{method} failed (starting fresh): {e}"
                 );
                 fallback = Some((resume.clone(), e));
@@ -5931,7 +5931,7 @@ async fn select_session_config(
                         )));
                     }
                     tracing::debug!(
-                        target: "zeron_harness::acp",
+                        target: "vardoger_harness::acp",
                         "session/set_config_option {config_id}={payload} rejected (agent default runs): {e}"
                     );
                 }
@@ -6179,7 +6179,7 @@ async fn run_session(session: Session) {
                     None => e.to_string(),
                 },
             };
-            tracing::warn!(target: "zeron_harness::acp", %error, "agent setup failed");
+            tracing::warn!(target: "vardoger_harness::acp", %error, "agent setup failed");
             let _ = event_tx
                 .send(Ok(AgentEvent::Done {
                     status: DoneStatus::Errored,
@@ -6247,10 +6247,10 @@ async fn run_session(session: Session) {
     // settled ids are remembered so a STALE `prompt_complete` (a late replay
     // of an already-settled prompt) can never settle a newer turn.
     let mut prompt_seq: u64 = 1;
-    let mut current_prompt_id = prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+    let mut current_prompt_id = prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
     let mut completed_prompts: VecDeque<String> = VecDeque::new();
-    // `ZERON_ACP_PROMPT_STALL_MS` overrides the spec's bound; 0 disables.
-    let prompt_stall: Option<Duration> = match std::env::var("ZERON_ACP_PROMPT_STALL_MS")
+    // `VARDOGER_ACP_PROMPT_STALL_MS` overrides the spec's bound; 0 disables.
+    let prompt_stall: Option<Duration> = match std::env::var("VARDOGER_ACP_PROMPT_STALL_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
     {
@@ -6337,7 +6337,7 @@ async fn run_session(session: Session) {
     // Silence is not a turn boundary: completed tools, text, and usage may
     // all precede a slow model request. Keep the prompt future alive until
     // its response (or an authoritative completion extension) arrives.
-    // ZERON_ACP_QUIET_SETTLE_MS is intentionally no longer honored (#296).
+    // VARDOGER_ACP_QUIET_SETTLE_MS is intentionally no longer honored (#296).
     let mut last_update_at = tokio::time::Instant::now();
     let mut open_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
     // PREVENTION, ahead of all the recovery above: never send a
@@ -6607,7 +6607,7 @@ async fn run_session(session: Session) {
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
-                        prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+                        prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
                     prompt_stall_deadline =
                         prompt_stall.map(|d| tokio::time::Instant::now() + d);
                     current_prompt = PromptInput::join(prompts);
@@ -6815,7 +6815,7 @@ async fn run_session(session: Session) {
                         .to_owned(),
                     Err(e) => {
                         tracing::debug!(
-                            target: "zeron_harness::acp",
+                            target: "vardoger_harness::acp",
                             "_session/steering failed (redelivering): {e}"
                         );
                         // Failed calls redeliver like a lost turn-end race.
@@ -6919,7 +6919,7 @@ async fn run_session(session: Session) {
                         == Some("noRunningTurn")
                     {
                         tracing::warn!(
-                            target: "zeron_harness::acp",
+                            target: "vardoger_harness::acp",
                             "steering answered noRunningTurn with a prompt \
                              outstanding; arming starved-turn recovery"
                         );
@@ -6948,7 +6948,7 @@ async fn run_session(session: Session) {
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
-                        prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+                        prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
                     prompt_stall_deadline =
                         prompt_stall.map(|d| tokio::time::Instant::now() + d);
                     current_prompt = text;
@@ -6998,7 +6998,7 @@ async fn run_session(session: Session) {
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
-                        prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+                        prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
                     prompt_stall_deadline =
                         prompt_stall.map(|d| tokio::time::Instant::now() + d);
                     current_prompt = text;
@@ -7023,7 +7023,7 @@ async fn run_session(session: Session) {
             ), if starve_deadline.is_some() && turn.is_some() && !interrupted => {
                 starve_deadline = None;
                 tracing::warn!(
-                    target: "zeron_harness::acp",
+                    target: "vardoger_harness::acp",
                     "prompt response missing past turn-end evidence; settling \
                      the dead turn (and promoting any queued steer)"
                 );
@@ -7076,7 +7076,7 @@ async fn run_session(session: Session) {
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
-                        prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+                        prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
                     prompt_stall_deadline =
                         prompt_stall.map(|d| tokio::time::Instant::now() + d);
                     current_prompt = text;
@@ -7209,7 +7209,7 @@ async fn run_session(session: Session) {
                         // cancel it rather than prompt into the starve.
                         //
                         tracing::info!(
-                            target: "zeron_harness::acp",
+                            target: "vardoger_harness::acp",
                             "steer into a self-continuing session; cancelling \
                              the unowned turn before prompting"
                         );
@@ -7236,7 +7236,7 @@ async fn run_session(session: Session) {
                         last_update_at = tokio::time::Instant::now();
                         prompt_seq += 1;
                     current_prompt_id =
-                        prompt_complete_extension.then(|| format!("zeron-p{prompt_seq}"));
+                        prompt_complete_extension.then(|| format!("vardoger-p{prompt_seq}"));
                     prompt_stall_deadline =
                         prompt_stall.map(|d| tokio::time::Instant::now() + d);
                     current_prompt = prompt;
@@ -7346,7 +7346,7 @@ async fn run_session(session: Session) {
                 stop_deadline = None;
                 if turn.is_some() && stopping {
                     tracing::warn!(
-                        target: "zeron_harness::acp",
+                        target: "vardoger_harness::acp",
                         "{agent_name} did not settle a stopped turn within {}s; retiring the process",
                         stop_timeout.as_secs()
                     );
@@ -7374,7 +7374,7 @@ async fn run_session(session: Session) {
                 preempt_deadline = None;
                 if turn.is_some() && preempt_sent {
                     tracing::warn!(
-                        target: "zeron_harness::acp",
+                        target: "vardoger_harness::acp",
                         "{agent_name} did not settle a steer-preempt cancel within {}s; retiring the process",
                         stop_timeout.as_secs()
                     );
@@ -7442,7 +7442,7 @@ async fn run_session(session: Session) {
                     && antigravity_has_active_background_task(&request.env, &session_id).await
                 {
                     tracing::debug!(
-                        target: "zeron_harness::acp",
+                        target: "vardoger_harness::acp",
                         %session_id,
                         "deferring Antigravity prompt-stall watchdog while a background task is active"
                     );
@@ -7561,7 +7561,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unix_browser_suppression_falls_back_to_zerons_noop_mode() {
+    fn unix_browser_suppression_falls_back_to_vardogers_noop_mode() {
         let present = std::env::current_exe().unwrap();
         assert_eq!(
             unix_noop_browser(&[Path::new("/missing/true"), &present], None).unwrap(),
@@ -7572,10 +7572,10 @@ mod tests {
             Path::new("/missing/bin/true"),
         ];
         assert_eq!(
-            unix_noop_browser(&missing, Some(Path::new("/opt/My Apps/zeron"))).unwrap(),
-            "'/opt/My Apps/zeron' --noop-browser %s"
+            unix_noop_browser(&missing, Some(Path::new("/opt/My Apps/vardoger"))).unwrap(),
+            "'/opt/My Apps/vardoger' --noop-browser %s"
         );
-        for path in ["/opt/a:b/zeron", "/opt/it's/zeron", "/opt/100%s/zeron"] {
+        for path in ["/opt/a:b/vardoger", "/opt/it's/vardoger", "/opt/100%s/vardoger"] {
             assert!(
                 unix_noop_browser(&missing, Some(Path::new(path))).is_err(),
                 "{path}"
@@ -7625,13 +7625,13 @@ mod tests {
 
     #[test]
     fn windows_browser_suppression_quotes_the_executable_path() {
-        let command = windows_noop_browser(Path::new(r"C:\Program Files\Zeron\zeron.exe"))
+        let command = windows_noop_browser(Path::new(r"C:\Program Files\Vardoger\vardoger.exe"))
             .expect("browser command");
         assert_eq!(
             command,
-            r#""C:\\Program Files\\Zeron\\zeron.exe" --noop-browser %s"#
+            r#""C:\\Program Files\\Vardoger\\vardoger.exe" --noop-browser %s"#
         );
-        for path in [r"C:\semi;colon\zeron.exe", r"C:\percent%s\zeron.exe"] {
+        for path in [r"C:\semi;colon\vardoger.exe", r"C:\percent%s\vardoger.exe"] {
             assert!(windows_noop_browser(Path::new(path)).is_err());
         }
     }
@@ -7667,8 +7667,8 @@ mod tests {
         (home, path)
     }
 
-    /// Zeron's Antigravity reads the token file once it holds a Google login
-    /// (a sign-in through Zeron), and the Keychain otherwise.
+    /// Vardoger's Antigravity reads the token file once it holds a Google login
+    /// (a sign-in through Vardoger), and the Keychain otherwise.
     #[test]
     fn antigravity_reads_its_token_file_once_it_holds_a_google_login() {
         let home = tempfile::tempdir().unwrap();
@@ -7924,7 +7924,7 @@ mod tests {
     #[test]
     fn antigravity_unknown_named_home_fails_before_auth_selection() {
         let cwd = tempfile::tempdir().unwrap();
-        let path = PathBuf::from(format!("~zeron-missing-{}", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(format!("~vardoger-missing-{}", uuid::Uuid::new_v4()));
         assert!(
             antigravity_paths::resolve_home(Some(&path), Some(cwd.path()), cwd.path()).is_err()
         );
@@ -7943,11 +7943,11 @@ mod tests {
     }
 
     /// runs in a child process, since installs resolve through the
-    /// process-wide `ZERON_ADAPTERS_DIR`.
+    /// process-wide `VARDOGER_ADAPTERS_DIR`.
     #[cfg(any(unix, windows))]
     #[test]
     fn antigravity_launches_the_newest_trusted_install_and_prunes_the_rest() {
-        let Ok(adapters) = std::env::var("ZERON_TEST_AGY_ADAPTERS") else {
+        let Ok(adapters) = std::env::var("VARDOGER_TEST_AGY_ADAPTERS") else {
             let root = tempfile::tempdir().unwrap();
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -7955,10 +7955,10 @@ mod tests {
                     "acp::tests::antigravity_launches_the_newest_trusted_install_and_prunes_the_rest",
                     "--nocapture",
                 ])
-                .env("ZERON_ADAPTERS_DIR", root.path())
-                .env("ZERON_TEST_AGY_ADAPTERS", root.path())
+                .env("VARDOGER_ADAPTERS_DIR", root.path())
+                .env("VARDOGER_TEST_AGY_ADAPTERS", root.path())
                 .env("PATH", root.path().join("bin"))
-                .env("ZERON_NO_LOGIN_SHELL", "1")
+                .env("VARDOGER_NO_LOGIN_SHELL", "1")
                 .env_remove("ANTIGRAVITY_ACP_EXECUTABLE")
                 .output()
                 .unwrap();
@@ -8075,10 +8075,10 @@ mod tests {
     }
 
     /// downloads google's real archive (~110 MB). run with
-    /// `ZERON_TEST_AGY_LIVE_SIGNED=1 ZERON_ADAPTERS_DIR=<empty dir>`.
+    /// `VARDOGER_TEST_AGY_LIVE_SIGNED=1 VARDOGER_ADAPTERS_DIR=<empty dir>`.
     #[tokio::test]
     async fn antigravity_live_release_is_refused_when_it_misreports_its_version() {
-        if std::env::var_os("ZERON_TEST_AGY_LIVE_SIGNED").is_none() {
+        if std::env::var_os("VARDOGER_TEST_AGY_LIVE_SIGNED").is_none() {
             return;
         }
         let pin = antigravity_archive().unwrap();
@@ -8296,7 +8296,7 @@ mod tests {
             "session store is locked (code -32603)",
             "Invalid params (code -32602)",
             // A load fails in these words while the session is fine.
-            "MCP server command not found: zeron (code -32603)",
+            "MCP server command not found: vardoger (code -32603)",
             "model not found: grok-9 (code -32603)",
             "Path not found. (code -32603)",
         ] {
@@ -9513,11 +9513,11 @@ mod mcp_injection_tests {
     #[test]
     fn acp_mcp_servers_spell_env_as_name_value_pairs_and_default_empty() {
         assert!(acp_mcp_servers(None).is_empty());
-        let mcp = zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron".into(),
+        let mcp = vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger".into(),
             args: vec!["mcp".into()],
-            env: [("ZERON_IPC_PORT".to_owned(), "27654".to_owned())]
+            env: [("VARDOGER_IPC_PORT".to_owned(), "27754".to_owned())]
                 .into_iter()
                 .collect(),
             http: None,
@@ -9526,32 +9526,32 @@ mod mcp_injection_tests {
         assert_eq!(
             servers,
             vec![json!({
-                "name": "zeron",
-                "command": "/opt/zeron/zeron",
+                "name": "vardoger",
+                "command": "/opt/vardoger/vardoger",
                 "args": ["mcp"],
-                "env": [{ "name": "ZERON_IPC_PORT", "value": "27654" }],
+                "env": [{ "name": "VARDOGER_IPC_PORT", "value": "27754" }],
             })]
         );
     }
     #[test]
-    fn acp_session_mcp_servers_list_plugin_servers_after_zeron() {
-        let zeron = zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron".into(),
+    fn acp_session_mcp_servers_list_plugin_servers_after_vardoger() {
+        let vardoger = vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger".into(),
             args: vec!["mcp".into()],
             env: Default::default(),
             http: None,
         };
-        let extra = zeron_proto::McpServer {
+        let extra = vardoger_proto::McpServer {
             name: "plugin-focus".into(),
             command: "/data/plugins/.loaded/focus/0123/bin/server".into(),
             args: vec![],
             env: [("FOCUS".to_owned(), "1".to_owned())].into_iter().collect(),
             http: None,
         };
-        let servers = acp_session_mcp_servers(Some(&zeron), std::slice::from_ref(&extra), false);
+        let servers = acp_session_mcp_servers(Some(&vardoger), std::slice::from_ref(&extra), false);
         assert_eq!(servers.len(), 2);
-        assert_eq!(servers[0]["name"], "zeron");
+        assert_eq!(servers[0]["name"], "vardoger");
         assert_eq!(
             servers[1],
             json!({
@@ -9565,27 +9565,27 @@ mod mcp_injection_tests {
     }
 
     /// An agent that takes HTTP servers gets the engine's endpoint for
-    /// Zeron's own (no process); one that doesn't gets the stdio proxy.
+    /// Vardoger's own (no process); one that doesn't gets the stdio proxy.
     #[test]
-    fn zeron_s_server_is_http_only_where_the_agent_takes_it() {
-        let zeron = zeron_proto::McpServer {
-            name: "zeron".into(),
-            command: "/opt/zeron/zeron-engine".into(),
+    fn vardoger_s_server_is_http_only_where_the_agent_takes_it() {
+        let vardoger = vardoger_proto::McpServer {
+            name: "vardoger".into(),
+            command: "/opt/vardoger/vardoger-engine".into(),
             args: vec!["mcp-proxy".into()],
-            env: [("ZERON_MCP_TOKEN".to_owned(), "t".to_owned())].into_iter().collect(),
-            http: Some(zeron_proto::McpHttp {
+            env: [("VARDOGER_MCP_TOKEN".to_owned(), "t".to_owned())].into_iter().collect(),
+            http: Some(vardoger_proto::McpHttp {
                 url: "http://127.0.0.1:4321/mcp".into(),
                 headers: [("Authorization".to_owned(), "Bearer t".to_owned())]
                     .into_iter()
                     .collect(),
             }),
         };
-        let http = acp_session_mcp_servers(Some(&zeron), &[], true);
+        let http = acp_session_mcp_servers(Some(&vardoger), &[], true);
         assert_eq!(http[0]["type"], "http");
         assert_eq!(http[0]["url"], "http://127.0.0.1:4321/mcp");
         assert_eq!(http[0]["headers"], json!([{ "name": "Authorization", "value": "Bearer t" }]));
-        let stdio = acp_session_mcp_servers(Some(&zeron), &[], false);
-        assert_eq!(stdio[0]["command"], "/opt/zeron/zeron-engine");
+        let stdio = acp_session_mcp_servers(Some(&vardoger), &[], false);
+        assert_eq!(stdio[0]["command"], "/opt/vardoger/vardoger-engine");
         assert_eq!(stdio[0]["args"], json!(["mcp-proxy"]));
         assert!(stdio[0].get("type").is_none());
         let init = json!({ "agentCapabilities": { "mcpCapabilities": { "http": true } } });

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/zeron",
+    "apps/vardoger",
     "crates/cli",
     "crates/doc",
     "crates/engine",
@@ -29,24 +29,24 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-zeron-voice-session = { path = "crates/voice-session" }
-zeron-orb = { path = "crates/orb" }
-zeron-term-link = { path = "crates/term-link" }
-zeron-voice-media = { path = "crates/voice-media" }
-zeron-proto = { path = "crates/proto" }
-zeron-preview = { path = "crates/preview" }
-zeron-preview-label = { path = "crates/preview-label" }
-zeron-doc = { path = "crates/doc" }
-zeron-sync = { path = "crates/sync" }
-zeron-harness = { path = "crates/harness" }
-zeron-engine = { path = "crates/engine" }
-zeron-rpc = { path = "crates/rpc" }
-zeron-update = { path = "crates/update" }
-zeron-cli = { path = "crates/cli" }
-zeron-launch = { path = "crates/launch" }
-zeron-notify = { path = "crates/notify" }
-zeron-mcp = { path = "crates/mcp" }
-zeron-visual = { path = "crates/visual" }
+vardoger-voice-session = { path = "crates/voice-session" }
+vardoger-orb = { path = "crates/orb" }
+vardoger-term-link = { path = "crates/term-link" }
+vardoger-voice-media = { path = "crates/voice-media" }
+vardoger-proto = { path = "crates/proto" }
+vardoger-preview = { path = "crates/preview" }
+vardoger-preview-label = { path = "crates/preview-label" }
+vardoger-doc = { path = "crates/doc" }
+vardoger-sync = { path = "crates/sync" }
+vardoger-harness = { path = "crates/harness" }
+vardoger-engine = { path = "crates/engine" }
+vardoger-rpc = { path = "crates/rpc" }
+vardoger-update = { path = "crates/update" }
+vardoger-cli = { path = "crates/cli" }
+vardoger-launch = { path = "crates/launch" }
+vardoger-notify = { path = "crates/notify" }
+vardoger-mcp = { path = "crates/mcp" }
+vardoger-visual = { path = "crates/visual" }
 
 # CRDT
 loro = "1.17"
@@ -144,5 +144,5 @@ debug = true
 debug = true
 
 # Scenes rasterize in software every frame the camera moves.
-[profile.dev.package.zeron-visual]
+[profile.dev.package.vardoger-visual]
 opt-level = 3

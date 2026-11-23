@@ -18,19 +18,19 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
-use zeron_proto::{
+use vardoger_proto::{
     BillingLink, BillingStatus, CloudReach, CloudSession, CloudSessions, CloudStatus, CloudUsage,
     GithubConnectProgress, GithubDeviceFlow, GithubRepo, HarnessId, VaultAccount,
     VaultAccountProfile, VaultProvider, VaultStatus,
 };
-use zeron_proto::{CLOUD_STATES_HEADER, CLOUD_STATES_UNDERSTOOD};
+use vardoger_proto::{CLOUD_STATES_HEADER, CLOUD_STATES_UNDERSTOOD};
 
 #[derive(Deserialize)]
 struct AccountList {
     #[serde(default)]
     accounts: Vec<VaultAccount>,
 }
-use zeron_rpc::{RpcError, RpcReply, TokenError, TokenSource, methods, parse_params};
+use vardoger_rpc::{RpcError, RpcReply, TokenError, TokenSource, methods, parse_params};
 
 use crate::EngineError;
 use crate::agent_accounts::{AgentAccounts, CaptureSink};
@@ -42,7 +42,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Shown when a mutation is attempted on a runtime that can't use Cloud.
 pub(crate) const UNAVAILABLE: &str =
-    "Cloud needs a signed-in Zeron account with sync on. Sign in from Settings → Account.";
+    "Cloud needs a signed-in Vardoger account with sync on. Sign in from Settings → Account.";
 
 fn http() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -417,8 +417,8 @@ impl CloudClient {
         chat_id: &str,
         parent_chat_id: &str,
         branch: Option<&str>,
-        config: Option<&zeron_proto::ChatConfig>,
-        child_kind: Option<zeron_proto::ChildKind>,
+        config: Option<&vardoger_proto::ChatConfig>,
+        child_kind: Option<vardoger_proto::ChildKind>,
     ) -> Result<CloudSession, EngineError> {
         require_id(chat_id, "chatId")?;
         require_id(parent_chat_id, "parentChatId")?;
@@ -502,8 +502,8 @@ impl CloudClient {
     /// one in for Cloud, kept as theirs until a machine discovers its own.
     pub async fn publish_account_models(
         &self,
-        harness: zeron_proto::HarnessId,
-        models: &[zeron_proto::Model],
+        harness: vardoger_proto::HarnessId,
+        models: &[vardoger_proto::Model],
         accounts: &str,
     ) -> Result<(), EngineError> {
         let body = serde_json::json!({
@@ -1442,7 +1442,7 @@ impl Target {
         let bytes = self.call_raw(method, segments, query, body, what).await?;
         serde_json::from_slice::<T>(&bytes).map_err(|e| {
             Failure::Error(EngineError::Other(format!(
-                "{what}: unexpected reply from Zeron's servers ({e})"
+                "{what}: unexpected reply from Vardoger's servers ({e})"
             )))
         })
     }
@@ -1467,15 +1467,15 @@ impl Target {
             // The vault providers this build parses: the edge lists no other
             // in `VaultStatus` (an older build sees the original five).
             .header(
-                zeron_proto::VAULT_PROVIDERS_HEADER,
-                zeron_proto::vault_providers_understood(),
+                vardoger_proto::VAULT_PROVIDERS_HEADER,
+                vardoger_proto::vault_providers_understood(),
             );
         if let Some(body) = body {
             request = request.json(&body);
         }
         let response = request.send().await.map_err(|e| {
             EngineError::Other(format!(
-                "Couldn't reach Zeron's servers: {}",
+                "Couldn't reach Vardoger's servers: {}",
                 describe_http_error(e)
             ))
         })?;
@@ -1518,7 +1518,7 @@ pub struct CloudModelLists {
 #[serde(rename_all = "camelCase")]
 pub struct ReportedUsage {
     #[serde(default)]
-    pub windows: Vec<zeron_proto::AgentUsageWindow>,
+    pub windows: Vec<vardoger_proto::AgentUsageWindow>,
     #[serde(default)]
     pub plan_label: Option<String>,
     /// Unix ms.
@@ -1557,17 +1557,17 @@ impl CloudModelLists {
 /// The edge's models, as this engine's catalog takes them: each read alone, so/// The edge's models, as this engine's catalog takes them: each read alone, so
 /// one this build can't read (a reasoning level it doesn't know, say) drops
 /// that level or that model, never the list.
-pub fn cloud_models(listed: &[serde_json::Value]) -> Vec<zeron_proto::Model> {
+pub fn cloud_models(listed: &[serde_json::Value]) -> Vec<vardoger_proto::Model> {
     listed
         .iter()
         .filter_map(|m| {
             let mut m = m.clone();
             if let Some(levels) = m.get_mut("reasoningLevels").and_then(|l| l.as_array_mut()) {
                 levels.retain(|l| {
-                    serde_json::from_value::<zeron_proto::ReasoningLevel>(l.clone()).is_ok()
+                    serde_json::from_value::<vardoger_proto::ReasoningLevel>(l.clone()).is_ok()
                 });
             }
-            serde_json::from_value::<zeron_proto::Model>(m).ok()
+            serde_json::from_value::<vardoger_proto::Model>(m).ok()
         })
         .collect()
 }
@@ -1587,7 +1587,7 @@ fn is_day(day: &str) -> bool {
 fn token_error(error: TokenError) -> Failure {
     Failure::Error(EngineError::Other(match error {
         TokenError::SignedOut => UNAVAILABLE.to_string(),
-        other => format!("Couldn't refresh your Zeron session: {other}"),
+        other => format!("Couldn't refresh your Vardoger session: {other}"),
     }))
 }
 
@@ -1621,14 +1621,14 @@ fn edge_error(status: u16, body: &[u8], what: &str) -> EngineError {
         (Some("not_authorized"), _) => "That device isn't allowed to use this credential.".into(),
         (Some("upstream"), _) => "The provider didn't answer — try again in a moment.".into(),
         (_, 400) => format!("{what}: the request was rejected."),
-        (_, 401) => "Your Zeron session expired — sign in again.".into(),
+        (_, 401) => "Your Vardoger session expired — sign in again.".into(),
         (_, 403) => "This account can't manage Cloud for this workspace.".into(),
         (_, 404) => format!("{what}: not found."),
         (_, 409) => "Cloud is busy with another change — try again in a moment.".into(),
         (_, 429) => "Too many requests — try again in a moment.".into(),
-        (_, 501 | 503) => "Cloud isn't available on this Zeron server yet.".into(),
+        (_, 501 | 503) => "Cloud isn't available on this Vardoger server yet.".into(),
         (_, status) if status >= 500 => {
-            format!("{what} failed on Zeron's servers ({status}) — try again.")
+            format!("{what} failed on Vardoger's servers ({status}) — try again.")
         }
         (_, status) => format!("{what} failed ({status})."),
     });
@@ -1646,7 +1646,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use zeron_proto::{CloudState, GithubConnectState, VaultConnectionStatus};
+    use vardoger_proto::{CloudState, GithubConnectState, VaultConnectionStatus};
 
     #[derive(Debug, Clone)]
     struct Recorded {
@@ -1709,7 +1709,7 @@ mod tests {
                                 } else if name.eq_ignore_ascii_case(CLOUD_STATES_HEADER) {
                                     cloud_states = Some(value.to_string());
                                 } else if name
-                                    .eq_ignore_ascii_case(zeron_proto::VAULT_PROVIDERS_HEADER)
+                                    .eq_ignore_ascii_case(vardoger_proto::VAULT_PROVIDERS_HEADER)
                                 {
                                     vault_providers = Some(value.to_string());
                                 }
@@ -1753,7 +1753,7 @@ mod tests {
             CloudClient::new(
                 self.url.clone(),
                 org,
-                Arc::new(zeron_rpc::StaticToken("user-bearer".into())),
+                Arc::new(vardoger_rpc::StaticToken("user-bearer".into())),
             )
         }
 
@@ -1997,7 +1997,7 @@ mod tests {
             edge.requests()
         );
         // ... and which vault providers: the edge lists no other.
-        let understood = zeron_proto::vault_providers_understood();
+        let understood = vardoger_proto::vault_providers_understood();
         assert!(
             edge.requests()
                 .iter()
@@ -2179,7 +2179,7 @@ mod tests {
             dispatch(
                 client.clone(),
                 &accounts,
-                zeron_rpc::methods::VAULT_PUT_API_KEY,
+                vardoger_rpc::methods::VAULT_PUT_API_KEY,
                 serde_json::json!({
                     "provider": provider, "key": "sk-saved-key-1", "authorizedDevices": ["cloud-1"]
                 }),
@@ -2333,7 +2333,7 @@ mod tests {
             CloudClient::new(
                 edge.url.clone(),
                 "  ",
-                Arc::new(zeron_rpc::StaticToken("t".into())),
+                Arc::new(vardoger_rpc::StaticToken("t".into())),
             ),
         ] {
             assert!(!client.is_available());

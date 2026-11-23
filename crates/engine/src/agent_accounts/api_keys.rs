@@ -1,10 +1,10 @@
 //! API keys for agents that keep a login per model provider — added in the
 //! app instead of a CLI, stored exactly where and how each agent's own CLI
-//! stores them (`zeron_proto::providers::api_key_options` says which):
+//! stores them (`vardoger_proto::providers::api_key_options` says which):
 //!
 //! - **Pi** — `auth.json`'s provider entry `{"type": "api_key", "key"}`
 //!   (pi-ai `envApiKeyAuth`'s login result; pi's `FileAuthStorageBackend`
-//!   writes it 0600 under its proper-lockfile lock, as zeron does). Pi reads
+//!   writes it 0600 under its proper-lockfile lock, as vardoger does). Pi reads
 //!   a key starting `!` as a shell command and expands `$VAR`s, so a key is
 //!   only ever a plain token (see [`valid_key`]).
 //! - **OpenCode 1.x** — `auth.json`'s entry `{"type": "api", "key"}` (its
@@ -26,10 +26,10 @@
 //! The key is a secret end to end: never logged, never in an error, never
 //! in a list (a key row says `API key ····abcd`), never on a command line,
 //! and never sent anywhere but its provider — `AddAgentApiKey` is answered
-//! only over this device's own IPC (`zeron_rpc::local_only`), and a request
+//! only over this device's own IPC (`vardoger_rpc::local_only`), and a request
 //! naming another device is refused rather than forwarded.
 
-use zeron_proto::providers::api_key_option;
+use vardoger_proto::providers::api_key_option;
 
 use super::*;
 
@@ -104,7 +104,7 @@ fn key_check(provider: &str) -> Option<KeyCheck> {
     })
 }
 
-/// A key as zeron accepts it: one plain token of 8 to 512 characters from
+/// A key as vardoger accepts it: one plain token of 8 to 512 characters from
 /// the alphabet API keys use. Nothing a shell, Pi's `!command` / `$VAR`
 /// expansion or a JSON / TOML store could read as anything but a literal.
 pub(super) fn valid_key(key: &str) -> bool {
@@ -230,7 +230,7 @@ pub(super) fn key_detected(
     entry: &serde_json::Value,
 ) -> Option<Detected> {
     let key = key_entry_secret(harness, entry)?;
-    let provider = zeron_proto::providers::account_group_label(harness, store_key);
+    let provider = vardoger_proto::providers::account_group_label(harness, store_key);
     // (A Pi key that's really a command or a variable shows none of it.)
     let plain = valid_key(&key).then_some(key.as_str());
     let digest = crate::repos::hex(&Sha256::digest(key.as_bytes()))[..16].to_string();
@@ -310,7 +310,7 @@ impl AgentAccounts {
         let key = key.trim();
         let Some(option) = api_key_option(harness, provider) else {
             return Err(EngineError::Other(format!(
-                "Zeron doesn't add {provider} keys for {}.",
+                "Vardoger doesn't add {provider} keys for {}.",
                 stores::cli_name(harness)
             )));
         };
@@ -339,7 +339,7 @@ impl AgentAccounts {
                 let entry = key_entry(harness, key);
                 let mut detected = key_detected(harness, provider, &entry)
                     .ok_or_else(|| EngineError::Other("That key couldn't be stored.".into()))?;
-                let group = zeron_proto::providers::account_group_label(harness, provider);
+                let group = vardoger_proto::providers::account_group_label(harness, provider);
                 name_key_profile(&mut detected.profile, &group, Some(key), name.as_deref());
                 self.save_new_login(harness, &detected).await?;
                 let _ops = self.inner.ops.lock().await;
@@ -359,11 +359,11 @@ impl AgentAccounts {
     }
 
     /// Ask the provider whether it takes `key` — the one request the key is
-    /// ever sent in by zeron, over https to the provider's own host.
+    /// ever sent in by vardoger, over https to the provider's own host.
     async fn check_api_key(&self, provider: &str, key: &str) -> Result<(), EngineError> {
         let Some(check) = key_check(provider) else {
             return Err(EngineError::Other(
-                "Zeron can't check that provider's keys yet.".into(),
+                "Vardoger can't check that provider's keys yet.".into(),
             ));
         };
         let base = self
@@ -430,9 +430,9 @@ impl AgentAccounts {
         command.kill_on_drop(true);
         command
             .env("HERMES_HOME", &self.inner.config.hermes_home)
-            .stdin(zeron_harness::process::Stdio::piped())
-            .stdout(zeron_harness::process::Stdio::piped())
-            .stderr(zeron_harness::process::Stdio::piped());
+            .stdin(vardoger_harness::process::Stdio::piped())
+            .stdout(vardoger_harness::process::Stdio::piped())
+            .stderr(vardoger_harness::process::Stdio::piped());
         #[cfg(unix)]
         // SAFETY: `setsid` is async-signal-safe; nothing else runs between
         // fork and exec.
@@ -467,7 +467,7 @@ impl AgentAccounts {
             .rev()
             .find(|l| !l.trim().is_empty() && !l.contains("GetPassWarning"))
             .unwrap_or("hermes refused the key");
-        Err(EngineError::Other(zeron_harness::redact::redact_output(
+        Err(EngineError::Other(vardoger_harness::redact::redact_output(
             &without(last.trim(), key),
         )))
     }
@@ -538,7 +538,7 @@ impl AgentAccounts {
             .filter(|slot| slot.profile.auth_kind == AgentAuthKind::ApiKey)
             .ok_or_else(|| EngineError::Other("Only an API key takes a name here.".into()))?;
         let key = key_entry_secret(harness, &slot.credentials);
-        let provider = zeron_proto::providers::account_group_label(
+        let provider = vardoger_proto::providers::account_group_label(
             harness,
             slot.store_key.as_deref().unwrap_or_default(),
         );

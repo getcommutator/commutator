@@ -18,12 +18,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::claude::refresh_lock;
-use zeron_harness::{CancellationToken, ClaudeHarness, Harness, RunControls};
-use zeron_proto::{HarnessId, RunRequest, SandboxLevel};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::claude::refresh_lock;
+use vardoger_harness::{CancellationToken, ClaudeHarness, Harness, RunControls};
+use vardoger_proto::{HarnessId, RunRequest, SandboxLevel};
 
-const ROLE: &str = "ZERON_AGENTS_DIE_ROLE";
+const ROLE: &str = "VARDOGER_AGENTS_DIE_ROLE";
 const TEST: &str = "agents_a_killed_engine_left_running_are_ended_by_the_next";
 
 /// `polite` exits on SIGTERM; `stubborn` ignores it (as does the shell it
@@ -172,8 +172,8 @@ fn engine(data: PathBuf, work: PathBuf) -> ! {
 fn agents_a_killed_engine_left_running_are_ended_by_the_next() {
     if std::env::var_os(ROLE).is_some() {
         engine(
-            std::env::var_os("ZERON_DATA_DIR").unwrap().into(),
-            std::env::var_os("ZERON_AGENTS_DIE_WORK").unwrap().into(),
+            std::env::var_os("VARDOGER_DATA_DIR").unwrap().into(),
+            std::env::var_os("VARDOGER_AGENTS_DIE_WORK").unwrap().into(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -187,11 +187,11 @@ fn agents_a_killed_engine_left_running_are_ended_by_the_next() {
         std::fs::create_dir_all(work.join(format!("config-{mode}"))).unwrap();
     }
     // Private HOME and data dir for both engines: nothing here may reach
-    // the user's own (~/.zeron, ~/.claude).
+    // the user's own (~/.vardoger, ~/.claude).
     // SAFETY: the only test in this binary, before any thread starts.
     unsafe {
         std::env::set_var("HOME", &home);
-        std::env::set_var("ZERON_DATA_DIR", &data);
+        std::env::set_var("VARDOGER_DATA_DIR", &data);
     }
     let script = work.join("claude");
     std::fs::write(&script, FAKE_CLAUDE).unwrap();
@@ -215,7 +215,7 @@ fn agents_a_killed_engine_left_running_are_ended_by_the_next() {
     let mut first = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
         .env(ROLE, "engine")
-        .env("ZERON_AGENTS_DIE_WORK", &work)
+        .env("VARDOGER_AGENTS_DIE_WORK", &work)
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
@@ -235,7 +235,7 @@ fn agents_a_killed_engine_left_running_are_ended_by_the_next() {
     let polite = read_pid(&work.join("polite.pid")).unwrap();
     let stubborn = read_pid(&work.join("stubborn.pid")).unwrap();
     let shell = read_pid(&work.join("stubborn-shell.pid")).unwrap();
-    let ledgers = data.join(zeron_harness::process::registry::LEDGER_DIR);
+    let ledgers = data.join(vardoger_harness::process::registry::LEDGER_DIR);
     let ledger_count = || std::fs::read_dir(&ledgers).map_or(0, |dir| dir.count());
     assert_eq!(ledger_count(), 1, "the first engine recorded its agents");
 

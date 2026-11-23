@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// The wire prefix of an agent added from the ACP registry: its harness
 /// slug is `acp.<registry id>` (`acp.gemini`), kept apart from the built-in
-/// slugs (the registry also lists agents Zeron drives itself, `cursor`,
+/// slugs (the registry also lists agents Vardoger drives itself, `cursor`,
 /// `devin`, …) and safe as a directory name on every platform.
 pub const REGISTRY_SLUG_PREFIX: &str = "acp.";
 
@@ -234,7 +234,7 @@ pub enum HarnessInstallSource {
     Homebrew,
     Cargo,
     Vendor,
-    ManagedByZeron,
+    ManagedByVardoger,
     #[default]
     Unknown,
 }
@@ -328,24 +328,24 @@ pub struct HarnessUpdateStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_reason: Option<String>,
     /// The installed release is known not to work with (or isn't supported
-    /// by) this engine's zeron.
+    /// by) this engine's vardoger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<HarnessCompatibility>,
-    /// A newer release exists, but zeron won't install it: it is known not
+    /// A newer release exists, but vardoger won't install it: it is known not
     /// to work. Such a release is never reported as available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_back: Option<HarnessCompatibility>,
 }
 
-/// How well a CLI release works with this zeron (see the engine's
+/// How well a CLI release works with this vardoger (see the engine's
 /// compatibility policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessCompatibilityStatus {
     Supported,
-    /// Outside the releases this zeron was built and tested against.
+    /// Outside the releases this vardoger was built and tested against.
     Unsupported,
-    /// Known not to work with this zeron.
+    /// Known not to work with this vardoger.
     Broken,
 }
 
@@ -508,7 +508,7 @@ impl SandboxLevel {
 
 /// What an agent-made chat may run with: `sandbox` and `access` no more
 /// trusting than its creator's (`ceiling`), and whether either was lowered.
-/// A chat created through Zeron's MCP never gets more access than the chat
+/// A chat created through Vardoger's MCP never gets more access than the chat
 /// that created it.
 pub fn cap_access(
     (sandbox, access): (SandboxLevel, AccessMode),
@@ -620,7 +620,7 @@ pub struct RunRequest {
     /// Code Mode: enable the provider's scriptable JavaScript tool-calling
     /// runtime (Settings → Providers). Stamped by the HOST engine before a
     /// run launches, like `mcp` and `extra_mcp`; honored by drivers that
-    /// support it (`zeron_harness::supports_code_mode`). Additive +
+    /// support it (`vardoger_harness::supports_code_mode`). Additive +
     /// serde-defaulted for wire compat.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub code_mode: bool,
@@ -629,7 +629,7 @@ pub struct RunRequest {
     /// Absolute paths of image attachments already staged on the run device
     /// (composer uploads: UploadChunk/UploadCommit → durable path). The same
     /// paths also ride the prompt text as `Attached images (local files …)`
-    /// refs (zeron's `withAttachments` transport — that's what persists in the
+    /// refs (vardoger's `withAttachments` transport — that's what persists in the
     /// doc); this field additionally lets a harness inline the bytes as image
     /// content blocks. Additive + serde-defaulted for wire compat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -640,12 +640,12 @@ pub struct RunRequest {
     /// host ignores it and runs in `cwd` (the repo's main checkout).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeSpec>,
-    /// Zeron's own MCP server, injected by the HOST engine as it starts the
-    /// run: the `zeron mcp` subcommand of this same binary, pointed at the
+    /// Vardoger's own MCP server, injected by the HOST engine as it starts the
+    /// run: the `vardoger mcp` subcommand of this same binary, pointed at the
     /// engine's loopback IPC and stamped with the originating chat so the
     /// agent can spawn, read, and message side chats. Additive +
     /// serde-defaulted — an old host leaves it unset and the agent simply has
-    /// no Zeron tools; title runs never carry it.
+    /// no Vardoger tools; title runs never carry it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpServer>,
     /// Native MCP servers from the host's plugins (those `on` with `native`
@@ -718,7 +718,7 @@ impl std::fmt::Debug for RunRequest {
 /// (Claude `--mcp-config`, ACP `session/new` `mcpServers`, Codex
 /// `mcp_servers.*` config overrides).
 ///
-/// Zeron's own server also carries [`Self::http`]: the engine serves its
+/// Vardoger's own server also carries [`Self::http`]: the engine serves its
 /// tools itself, over loopback Streamable HTTP, so a driver whose agent
 /// speaks HTTP MCP adds that and starts no process. `command`/`args`/`env`
 /// then name a small stdio-to-HTTP proxy for agents that only speak stdio.
@@ -798,16 +798,16 @@ impl std::fmt::Debug for McpHttp {
 impl McpServer {
     /// The stdio proxy's endpoint URL ([`Self::http`]'s, for agents that
     /// only speak stdio).
-    pub const URL_ENV: &'static str = "ZERON_MCP_URL";
+    pub const URL_ENV: &'static str = "VARDOGER_MCP_URL";
     /// The stdio proxy's bearer token: the run's own, scoped to its chat and
     /// revoked when the run ends.
-    pub const TOKEN_ENV: &'static str = "ZERON_MCP_TOKEN";
+    pub const TOKEN_ENV: &'static str = "VARDOGER_MCP_TOKEN";
 
-    /// Set to `1` on Zeron's own server when its host turned the provider's
+    /// Set to `1` on Vardoger's own server when its host turned the provider's
     /// native subagents off (Settings → Providers) and the chat has no
     /// parent: the agent delegates through this server's side chats instead,
     /// and the driver launches it without its subagent tools.
-    pub const SIDE_CHATS_ONLY_ENV: &'static str = "ZERON_SIDE_CHATS_ONLY";
+    pub const SIDE_CHATS_ONLY_ENV: &'static str = "VARDOGER_SIDE_CHATS_ONLY";
 
     pub fn side_chats_only(&self) -> bool {
         self.env
@@ -815,17 +815,17 @@ impl McpServer {
             .is_some_and(|value| value == "1")
     }
 
-    /// The chat Zeron's own server speaks for, set when the engine launched
+    /// The chat Vardoger's own server speaks for, set when the engine launched
     /// it for a chat's run (its in-chat tools are offered only then).
-    pub const CHAT_ID_ENV: &'static str = "ZERON_CHAT_ID";
+    pub const CHAT_ID_ENV: &'static str = "VARDOGER_CHAT_ID";
 
-    /// Set to `1` on Zeron's own server for a chat's run when the runtime
+    /// Set to `1` on Vardoger's own server for a chat's run when the runtime
     /// brings its agent back on its own as background work ends: only then
     /// is the agent offered `wait_on_background` (anywhere else a turn that
     /// ends is the agent done, and the call would only be refused).
-    pub const WAITS_ON_BACKGROUND_ENV: &'static str = "ZERON_WAITS_ON_BACKGROUND";
+    pub const WAITS_ON_BACKGROUND_ENV: &'static str = "VARDOGER_WAITS_ON_BACKGROUND";
 
-    /// Whether this is Zeron's server for a chat's run whose agent may say
+    /// Whether this is Vardoger's server for a chat's run whose agent may say
     /// it waits on background work.
     pub fn waits_on_background(&self) -> bool {
         self.env.get(Self::CHAT_ID_ENV).is_some_and(|id| !id.is_empty())
@@ -846,7 +846,7 @@ impl McpServer {
 pub struct WorktreeSpec {
     /// The repo whose worktree to create (the space's folder on the host).
     pub repo_path: String,
-    /// Base ref the fresh `zeron/<name>` branch is created off.
+    /// Base ref the fresh `vardoger/<name>` branch is created off.
     pub base: String,
     /// Owning project used to resolve host-local setup Actions. Optional for
     /// wire compatibility with clients that only request worktree creation.
@@ -1003,7 +1003,7 @@ pub const SUBAGENT_INPUT_KEEP: [&str; 5] = [
 ];
 
 /// Bounds on an agent's inline visual ([`AgentEvent::Visual`]): a Luau
-/// script Zeron runs in a sandbox and renders natively.
+/// script Vardoger runs in a sandbox and renders natively.
 pub const VISUAL_MAX_BYTES: usize = 256 * 1024;
 pub const VISUAL_MAX_TITLE_CHARS: usize = 200;
 /// Files a visual may ship with (models, textures, environment maps).
@@ -1209,7 +1209,7 @@ pub enum DoneStatus {
 
 /// The normalized streaming event every harness emits.
 ///
-/// Mirrors zeron's `AgentEvent` tagged enum.
+/// Mirrors vardoger's `AgentEvent` tagged enum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {
@@ -1229,7 +1229,7 @@ pub enum AgentEvent {
     },
     /// A raster image in the reply: one a harness generated (the engine
     /// materializes this path before publication) or one an agent showed with
-    /// Zeron's `show_image` MCP tool (already stored in uploads).
+    /// Vardoger's `show_image` MCP tool (already stored in uploads).
     #[serde(rename_all = "camelCase")]
     GeneratedImage {
         id: String,
@@ -1238,8 +1238,8 @@ pub enum AgentEvent {
         mime_type: String,
     },
     /// An agent-authored visual shown inline in the reply: a Luau script
-    /// that builds native UI (`zeron-visual`). The engine emits it when the
-    /// agent calls Zeron's `show_visual` MCP tool; `path` is the stored
+    /// that builds native UI (`vardoger-visual`). The engine emits it when the
+    /// agent calls Vardoger's `show_visual` MCP tool; `path` is the stored
     /// script on the host device.
     Visual {
         id: String,

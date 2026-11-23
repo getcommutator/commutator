@@ -1,5 +1,5 @@
-//! Zeron's MCP tools served by the engine itself, over loopback Streamable
-//! HTTP — so an agent's run needs no `zeron mcp` process of its own.
+//! Vardoger's MCP tools served by the engine itself, over loopback Streamable
+//! HTTP — so an agent's run needs no `vardoger mcp` process of its own.
 //!
 //! **Stateless.** The server keeps nothing per client connection: every
 //! request is authenticated by its run's bearer token and stands on its own,
@@ -31,7 +31,7 @@
 //! carrying `Origin` (any browser page) is refused, and so is one whose
 //! `Host` isn't the loopback address (DNS rebinding). The token reaches what
 //! the old stdio server's agent token reached — the engine's
-//! agent-scoped methods ([`zeron_rpc::agent_allowed`]) — and no more; the
+//! agent-scoped methods ([`vardoger_rpc::agent_allowed`]) — and no more; the
 //! methods that act on "the calling chat" are pinned to the token's chat.
 
 use std::collections::HashMap;
@@ -50,7 +50,7 @@ use tokio::sync::mpsc;
 
 use crate::jsonrpc::{cap_reply, error_response, handle_request};
 use crate::tools::Tools;
-use crate::zeron::Origin;
+use crate::vardoger::Origin;
 
 /// The modern revisions served statelessly.
 pub const MODERN_VERSIONS: [&str; 1] = ["2026-07-28"];
@@ -91,7 +91,7 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Body = UnsyncBoxBody<Bytes, Infallible>;
 
-/// Builds the tools one grant's requests run: Zeron's tools speaking for
+/// Builds the tools one grant's requests run: Vardoger's tools speaking for
 /// `origin`, over a connection to the engine scoped to `origin`'s chat.
 pub type ToolsFactory = Arc<dyn Fn(&Origin) -> Arc<Tools> + Send + Sync>;
 
@@ -216,7 +216,7 @@ impl McpHttpServer {
 
     /// A fresh token for one run speaking as `origin`.
     pub fn grant(&self, origin: Origin) -> std::io::Result<Grant> {
-        let token = zeron_rpc::ipc_auth::generate_token()?;
+        let token = vardoger_rpc::ipc_auth::generate_token()?;
         let state = Arc::new(GrantState {
             token,
             origin,
@@ -440,7 +440,7 @@ fn check_modern_headers(
 }
 
 fn server_info() -> Value {
-    json!({ "name": "zeron", "version": env!("CARGO_PKG_VERSION") })
+    json!({ "name": "vardoger", "version": env!("CARGO_PKG_VERSION") })
 }
 
 /// A modern result: `resultType`, and the server named in `_meta`.

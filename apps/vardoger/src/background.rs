@@ -1,8 +1,8 @@
-//! The desktop app's background engine process (`zeron-engine`, or
-//! `zeron engine` where no separate executable ships): the app starts it
+//! The desktop app's background engine process (`vardoger-engine`, or
+//! `vardoger engine` where no separate executable ships): the app starts it
 //! when nothing serves its port and attaches to it; it keeps running —
 //! sessions, desktop banners — with the app closed
-//! ([`zeron_engine::managed`]).
+//! ([`vardoger_engine::managed`]).
 
 use std::path::{Path, PathBuf};
 
@@ -11,21 +11,21 @@ pub fn run() -> anyhow::Result<()> {
     crate::init_logging(true, "engine", false);
     crate::long_running_setup();
     let config = crate::engine_config_from_env();
-    zeron_engine::desktop_notify::enable();
-    let app = std::env::var_os(zeron_engine::managed::APP_ENV).map(PathBuf::from);
+    vardoger_engine::desktop_notify::enable();
+    let app = std::env::var_os(vardoger_engine::managed::APP_ENV).map(PathBuf::from);
     // Banners carry the app's name and icon (the development bundle's for
     // the development app), and a click opens the app on the banner's chat.
-    if let Some(id) = app.as_deref().and_then(zeron_notify::bundle_id_of) {
-        zeron_notify::set_app_bundle_id(&id);
+    if let Some(id) = app.as_deref().and_then(vardoger_notify::bundle_id_of) {
+        vardoger_notify::set_app_bundle_id(&id);
     }
-    zeron_notify::on_click(move |target| open_in_app(app.as_deref(), &target));
+    vardoger_notify::on_click(move |target| open_in_app(app.as_deref(), &target));
     run_engine(config)
 }
 
 /// A clicked banner: bring the app up on its target. The app may not be
 /// running — opening its link launches it.
 fn open_in_app(app: Option<&Path>, target: &str) {
-    let link = zeron_notify::link(target);
+    let link = vardoger_notify::link(target);
     #[cfg(target_os = "macos")]
     {
         let mut command = std::process::Command::new("/usr/bin/open");
@@ -45,18 +45,18 @@ fn open_in_app(app: Option<&Path>, target: &str) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_engine(config: zeron_engine::EngineConfig) -> anyhow::Result<()> {
+fn run_engine(config: vardoger_engine::EngineConfig) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(zeron_engine::Engine::new(config).run_managed())
+    runtime.block_on(vardoger_engine::Engine::new(config).run_managed())
 }
 
 /// macOS: the engine runs on Tokio threads while the main thread runs a
 /// CoreFoundation run loop, which services the main dispatch queue banners
 /// are posted on and delivers their clicks.
 #[cfg(target_os = "macos")]
-fn run_engine(config: zeron_engine::EngineConfig) -> anyhow::Result<()> {
+fn run_engine(config: vardoger_engine::EngineConfig) -> anyhow::Result<()> {
     // Before the engine starts: its sockets then never start the polling
-    // wake detector (`zeron_sync::wake`).
+    // wake detector (`vardoger_sync::wake`).
     main_loop::watch_power();
     let worker = std::thread::Builder::new()
         .name("engine".into())
@@ -64,7 +64,7 @@ fn run_engine(config: zeron_engine::EngineConfig) -> anyhow::Result<()> {
             let result = tokio::runtime::Runtime::new()
                 .map_err(anyhow::Error::from)
                 .and_then(|runtime| {
-                    runtime.block_on(zeron_engine::Engine::new(config).run_managed())
+                    runtime.block_on(vardoger_engine::Engine::new(config).run_managed())
                 });
             main_loop::finish();
             result
@@ -142,7 +142,7 @@ mod main_loop {
             CAN_SYSTEM_SLEEP | SYSTEM_WILL_SLEEP => unsafe {
                 IOAllowPowerChange(ROOT_PORT.load(Ordering::Acquire), argument as isize);
             },
-            SYSTEM_HAS_POWERED_ON => zeron_sync::wake::notify_wake(),
+            SYSTEM_HAS_POWERED_ON => vardoger_sync::wake::notify_wake(),
             _ => {}
         }
     }
@@ -167,7 +167,7 @@ mod main_loop {
             let source = IONotificationPortGetRunLoopSource(port);
             CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
         }
-        zeron_sync::wake::use_os_wake_events();
+        vardoger_sync::wake::use_os_wake_events();
     }
 
     /// The stop source fired: [`run`]'s wait returns and it reads `DONE`.

@@ -33,10 +33,10 @@ use super::{Protocol, Server};
 use crate::HarnessError;
 
 /// The run-environment variable a Cloud machine's broker hands logins in.
-pub const CREDENTIALS_ENV: &str = "ZERON_OPENCODE_CREDENTIALS";
+pub const CREDENTIALS_ENV: &str = "VARDOGER_OPENCODE_CREDENTIALS";
 
 /// The label of every credential the harness installs.
-pub const LABEL: &str = "Zeron Cloud";
+pub const LABEL: &str = "Vardoger Cloud";
 
 /// One login to install.
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
@@ -237,7 +237,7 @@ pub(super) fn write_v1_auth(file: &std::path::Path, logins: &[Handoff]) -> Resul
     }
     let bytes = serde_json::to_vec_pretty(&Value::Object(map))
         .map_err(|e| HarnessError::Protocol(e.to_string()))?;
-    let tmp = file.with_extension("json.zeron-tmp");
+    let tmp = file.with_extension("json.vardoger-tmp");
     {
         let mut options = std::fs::OpenOptions::new();
         options.create(true).truncate(true).write(true);
@@ -377,7 +377,7 @@ mod tests {
             ("OPENAI_API_KEY".to_string(), "unrelated".to_string()),
         ]);
         let mut server = harness
-            .server_with_env(None, None, &[], &env, zeron_proto::AccessMode::FullAccess)
+            .server_with_env(None, None, &[], &env, vardoger_proto::AccessMode::FullAccess)
             .await
             .unwrap();
         server.shutdown(std::time::Duration::ZERO).await;
@@ -415,12 +415,12 @@ mod tests {
         let logins = json!([{"integrationID": "openai", "value": {"type": "oauth", "refresh": "",
             "access": "discovery", "expires": 5}}]);
         crate::catalog_env::set(
-            zeron_proto::HarnessId::Opencode,
+            vardoger_proto::HarnessId::Opencode,
             std::collections::BTreeMap::from([(CREDENTIALS_ENV.to_string(), logins.to_string())]),
         );
         let mut server = harness.server(None, None).await.unwrap();
         server.shutdown(std::time::Duration::ZERO).await;
-        crate::catalog_env::set(zeron_proto::HarnessId::Opencode, Default::default());
+        crate::catalog_env::set(vardoger_proto::HarnessId::Opencode, Default::default());
         let calls = calls.lock().unwrap();
         let post = calls
             .iter()
@@ -440,7 +440,7 @@ mod tests {
         ]);
         let env = std::collections::BTreeMap::from([(CREDENTIALS_ENV.to_string(), logins.to_string())]);
         let mut server = harness
-            .server_with_env(None, None, &[], &env, zeron_proto::AccessMode::FullAccess)
+            .server_with_env(None, None, &[], &env, vardoger_proto::AccessMode::FullAccess)
             .await
             .unwrap();
         server.shutdown(std::time::Duration::ZERO).await;

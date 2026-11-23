@@ -1,7 +1,7 @@
 //! DocHost — per-chat `SessionDoc` handles: snapshot persistence (debounced), edge room
 //! sync (offline-tolerant), and the HOST-ONLY durable command executor.
 //!
-//! Pragmatic port of zeron's `session-docs.ts` + the `main.ts` executor (spec:
+//! Pragmatic port of vardoger's `session-docs.ts` + the `main.ts` executor (spec:
 //! feature-inventory §3.3, ARCHITECTURE §2 "command plane"):
 //! - the doc IS the outbox: commands and user entries commit locally and sync whenever a
 //!   room connection exists; the engine is fully functional with sync disabled;
@@ -28,14 +28,14 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use zeron_doc::{
+use vardoger_doc::{
     CommandBasedOn, CommandDisposition, DocError, EvaluationContext,
     MessagePart, MessageRole, MessageStatus, QueueDeliveryGate, QueuedMessage, SessionCommandEntry,
     SessionCommandPayload, SessionCommandStatus, SessionDoc, SessionMessageEntry, SubagentStatus,
     evaluate_command,
 };
-use zeron_proto::{ConversationSourceContext, HarnessId, UserInputAnswer, UserInputQuestion};
-use zeron_sync::DocsStore;
+use vardoger_proto::{ConversationSourceContext, HarnessId, UserInputAnswer, UserInputQuestion};
+use vardoger_sync::DocsStore;
 
 use crate::chat2_checkpoint::{CheckpointPost, chat2_checkpoint_parts, post_chat2_checkpoint};
 use crate::http_error::describe_http_error;
@@ -67,7 +67,7 @@ pub const QUEUE_EDIT_LEASE_MS: i64 = 60_000;
 const WAKE_BOOT_MARGIN_MS: i64 = 60 * 60 * 1000;
 
 /// Warm-doc LRU: how many unwatched, run-less docs stay fully open. Everything
-/// beyond this (and beyond [`zeron_doc::DOC_LRU_BYTE_BUDGET`]) is evicted
+/// beyond this (and beyond [`vardoger_doc::DOC_LRU_BYTE_BUDGET`]) is evicted
 /// oldest-access-first. A real chat's doc is large (a long one 15-80 MB, 3-24M
 /// ops), and reopening one from its SQLite snapshot reads its whole state:
 /// 45 ms for 15 MB, 280 ms for 80 MB (M5 Max, 2026-11-17), past the 400 ms
@@ -166,14 +166,14 @@ const RELAY_MIN_VERSION: (u64, u64, u64) = (0, 2, 12);
 /// Edge connection config. The bearer is a **provider**, never a snapshot:
 /// every room (re)connect and HTTP request re-reads it, so WorkOS access-token
 /// refreshes (~1h expiry) take effect without an engine restart. Dev bearers
-/// (which never expire) ride the same seam as a [`zeron_rpc::StaticToken`].
+/// (which never expire) ride the same seam as a [`vardoger_rpc::StaticToken`].
 #[derive(Clone)]
 pub struct EdgeConfig {
     /// Edge base URL (`http(s)://…`); rewritten to `ws(s)` for the room socket.
     pub url: String,
     /// Fresh-bearer provider (the relay's `TokenSource`), consulted per
     /// connect/request. Temporary failures preserve the signed-in session.
-    pub token: Arc<dyn zeron_rpc::TokenSource>,
+    pub token: Arc<dyn vardoger_rpc::TokenSource>,
     /// This engine's device id, carried on room dials (`&device=`) so the
     /// edge can attribute sockets in logs. Debugging the 2026-08-04 deaf
     /// socket meant reverse-engineering devices from rotating IPv6 privacy
@@ -191,7 +191,7 @@ impl std::fmt::Debug for EdgeConfig {
 }
 
 impl EdgeConfig {
-    pub fn new(url: impl Into<String>, token: Arc<dyn zeron_rpc::TokenSource>) -> Self {
+    pub fn new(url: impl Into<String>, token: Arc<dyn vardoger_rpc::TokenSource>) -> Self {
         Self {
             url: url.into(),
             token,
@@ -207,11 +207,11 @@ impl EdgeConfig {
 
     /// Fixed bearer — dev mode and tests, where tokens never expire.
     pub fn with_static_token(url: impl Into<String>, token: impl Into<String>) -> Self {
-        Self::new(url, Arc::new(zeron_rpc::StaticToken(token.into())))
+        Self::new(url, Arc::new(vardoger_rpc::StaticToken(token.into())))
     }
 
     /// The current bearer, or a distinct signed-out/temporarily-unavailable error.
-    pub async fn bearer(&self) -> Result<String, zeron_rpc::TokenError> {
+    pub async fn bearer(&self) -> Result<String, vardoger_rpc::TokenError> {
         self.token.token().await
     }
 
@@ -222,7 +222,7 @@ impl EdgeConfig {
     /// A per-dial room URL provider for `path` (e.g. `/session/{chatId}/ws`):
     /// the bearer is re-fetched before every connect, so reconnects after a
     /// token expiry present a fresh `?token=` instead of the boot-time one.
-    pub fn room_url(&self, path: impl Into<String>) -> Arc<dyn zeron_sync::UrlProvider> {
+    pub fn room_url(&self, path: impl Into<String>) -> Arc<dyn vardoger_sync::UrlProvider> {
         self.room_url_with_host(path, None)
     }
 
@@ -230,7 +230,7 @@ impl EdgeConfig {
         &self,
         path: impl Into<String>,
         host_device: Option<String>,
-    ) -> Arc<dyn zeron_sync::UrlProvider> {
+    ) -> Arc<dyn vardoger_sync::UrlProvider> {
         let ws_base = self.url.replacen("http", "ws", 1);
         Arc::new(EdgeRoomUrl {
             base: format!("{}{}", ws_base.trim_end_matches('/'), path.into()),
@@ -243,26 +243,26 @@ impl EdgeConfig {
 
 struct EdgeRoomUrl {
     base: String,
-    token: Arc<dyn zeron_rpc::TokenSource>,
+    token: Arc<dyn vardoger_rpc::TokenSource>,
     device_id: String,
     host_device: Option<String>,
 }
 
-impl zeron_sync::UrlProvider for EdgeRoomUrl {
-    fn url(&self) -> futures::future::BoxFuture<'static, Result<String, zeron_sync::SyncError>> {
+impl vardoger_sync::UrlProvider for EdgeRoomUrl {
+    fn url(&self) -> futures::future::BoxFuture<'static, Result<String, vardoger_sync::SyncError>> {
         let token = self.token.clone();
         let base = self.base.clone();
         let device = self.device_id.clone();
         let host = self.host_device.clone();
         Box::pin(async move {
-            let token = token.token().await.map_err(zeron_sync::SyncError::from)?;
+            let token = token.token().await.map_err(vardoger_sync::SyncError::from)?;
             let mut url = format!("{base}?token={token}");
             if !device.is_empty() {
                 url.push_str(&format!("&device={device}"));
             }
             if let Some(host) = host {
                 let mut parsed = reqwest::Url::parse(&url)
-                    .map_err(|e| zeron_sync::SyncError::Protocol(e.to_string()))?;
+                    .map_err(|e| vardoger_sync::SyncError::Protocol(e.to_string()))?;
                 parsed.query_pairs_mut().append_pair("hostDevice", &host);
                 url = parsed.into();
             }
@@ -352,7 +352,7 @@ struct DocHostInner {
     uploads: OnceLock<crate::uploads::Uploads>,
     /// Connectivity watch (`WatchConnectivity`): lazily-started monitor
     /// publishes the edge posture on change (see `watch_connectivity`).
-    connectivity: OnceLock<watch::Sender<zeron_proto::Connectivity>>,
+    connectivity: OnceLock<watch::Sender<vardoger_proto::Connectivity>>,
     connectivity_started: AtomicBool,
     /// Told as the workspace is wired (`set_workspace`): a connectivity
     /// monitor started before then learns whether there is an edge to watch.
@@ -362,7 +362,7 @@ struct DocHostInner {
     /// moving: added when a file's push starts, removed on commit or failure
     /// (a retry re-adds), so consumers can render a real percent while the
     /// relay leg runs and fall back to indeterminate otherwise.
-    transfers: watch::Sender<Vec<zeron_proto::TransferProgress>>,
+    transfers: watch::Sender<Vec<vardoger_proto::TransferProgress>>,
     connectivity_grace: Mutex<DegradeGrace>,
     /// Command ids currently BETWEEN mark-processed and their resolution in a
     /// drain. Distinguishes "executing right now" from "consumed by the
@@ -372,7 +372,7 @@ struct DocHostInner {
     executing: Mutex<HashSet<String>>,
     /// Peer links (engine assembly, edge runtimes only) — the transport that
     /// pushes queued attachment bytes to a remote host.
-    links: OnceLock<Arc<zeron_rpc::LinkCache>>,
+    links: OnceLock<Arc<vardoger_rpc::LinkCache>>,
     /// Shared client for sidecar blob PUT/GET (30s timeout, uploads.rs
     /// discipline — diff_sync's untimed client hung on dead links).
     http: reqwest::Client,
@@ -384,7 +384,7 @@ struct DocHostInner {
     /// Cuts a held send's backoff short on the user's retry.
     held_kick: tokio::sync::Notify,
     /// The outbox as the local interface shows it.
-    held_status: watch::Sender<Vec<zeron_proto::HeldSendStatus>>,
+    held_status: watch::Sender<Vec<vardoger_proto::HeldSendStatus>>,
     /// A Cloud host's looks in the attachment store, by `pending://` ref.
     store_looks: Mutex<HashMap<String, attachment_store::StoreLook>>,
 }
@@ -446,8 +446,8 @@ const CONNECTIVITY_STEADY: std::time::Duration = std::time::Duration::from_secs(
 const CONNECTIVITY_SETTLE_TICKS: u32 = 3;
 
 /// Nothing degraded: local, or connected with every open chat connected.
-fn connectivity_healthy(posture: &zeron_proto::Connectivity) -> bool {
-    use zeron_proto::ConnectivityState as S;
+fn connectivity_healthy(posture: &vardoger_proto::Connectivity) -> bool {
+    use vardoger_proto::ConnectivityState as S;
     matches!(posture.state, S::Connected | S::Disabled) && posture.chats.iter().all(|chat| chat.connected)
 }
 
@@ -513,7 +513,7 @@ impl DegradeGrace {
 struct ChatConnectionSnapshot {
     sync_started: bool,
     sync_requested: bool,
-    stats: Option<zeron_sync::ChatStatsSnapshot>,
+    stats: Option<vardoger_sync::ChatStatsSnapshot>,
     delivery_live: bool,
 }
 
@@ -669,7 +669,7 @@ pub enum FinishQueueEditOutcome {
 pub struct TranscriptSnapshot {
     /// Shared with the doc's entry cache: a commit copies none of them.
     pub entries: Arc<Vec<Arc<SessionMessageEntry>>>,
-    pub replay_baseline: Arc<zeron_doc::TranscriptBaseline>,
+    pub replay_baseline: Arc<vardoger_doc::TranscriptBaseline>,
 }
 
 /// One open chat doc: the `SessionDoc`, its change plumbing, and the room client.
@@ -718,7 +718,7 @@ pub struct ChatDocHandle {
     /// Sends held for a turn-boundary agent's turn end (rather than queued
     /// by the user), with the run configuration each was sent with: the row
     /// carries only its text and images.
-    held_sends: Mutex<HashMap<String, zeron_proto::RunRequest>>,
+    held_sends: Mutex<HashMap<String, vardoger_proto::RunRequest>>,
     /// The latest Stop command that has acted. A prompt sent before it that
     /// only executes now (a loaded host, a slow agent) was cancelled by it:
     /// running it would start the stopped work again in a fresh runtime.
@@ -759,7 +759,7 @@ pub struct ChatDocHandle {
     retired: AtomicBool,
     /// chat2 relay client (docs/chat2-sync.md C3) — populated once the
     /// registry names roomGen 2 for this chat and the join resolves.
-    chat2: Mutex<Option<zeron_sync::ChatClient>>,
+    chat2: Mutex<Option<vardoger_sync::ChatClient>>,
     sync_started: AtomicBool,
     sync_requested: AtomicBool,
     sync_background: AtomicBool,
@@ -814,9 +814,9 @@ struct ReopenRefresh {
 
 #[derive(Clone, Copy)]
 struct PendingRefresh {
-    /// [`zeron_sync::ChatClient::request_catch_up`]'s ticket.
+    /// [`vardoger_sync::ChatClient::request_catch_up`]'s ticket.
     catch_up: u64,
-    /// [`zeron_sync::chat_relay::RelayHandle::ask_host`]'s, on a relayed chat.
+    /// [`vardoger_sync::chat_relay::RelayHandle::ask_host`]'s, on a relayed chat.
     host: Option<u64>,
     since: i64,
 }
@@ -977,10 +977,10 @@ impl ChatDocHandle {
 
     pub(crate) fn commit_voice(
         &self,
-        transcript: &zeron_proto::voice::VoiceTranscript,
+        transcript: &vardoger_proto::voice::VoiceTranscript,
     ) -> Result<Option<String>, EngineError> {
         let _owner = lock(&self.transcript_import);
-        zeron_doc::voice::commit_voice_transcript(
+        vardoger_doc::voice::commit_voice_transcript(
             &self.doc,
             transcript,
             &self.device_id,
@@ -1217,7 +1217,7 @@ impl ChatDocHandle {
     /// chips in completed parent turns), then stamp abandoned `streaming`
     /// entries `aborted`, appending
     /// `note` as a visible error part so the transcript says WHY the turn
-    /// ended (zeron folded "Run interrupted by backend restart" the same
+    /// ended (vardoger folded "Run interrupted by backend restart" the same
     /// way). Returns the stamped entries' `(id, created_at)` — recovery uses
     /// them for the resume-freshness check.
     pub fn mark_abandoned_streams(&self, note: &str) -> Result<Vec<(String, i64)>, DocError> {
@@ -1293,7 +1293,7 @@ impl ChatDocHandle {
             Ok(entries) => {
                 let replay_baseline =
                     lock(&self.transcript_history).snapshot(self.doc.doc(), &entries);
-                let joined = zeron_doc::join_continuation_shared(entries);
+                let joined = vardoger_doc::join_continuation_shared(entries);
                 // send_replace: update the watch even with no subscribers yet, so a
                 // late subscriber's first borrow sees the current transcript.
                 self.messages_tx.send_replace(TranscriptSnapshot {
@@ -1664,7 +1664,7 @@ impl DocHost {
     /// see — so watch session status instead and re-drain every warm chat.
     /// `drain_queue` is a cheap no-op for empty queues and busy agents, which
     /// is why this can afford to be indiscriminate.
-    fn spawn_queue_flush_watcher(&self, mut statuses: watch::Receiver<Vec<zeron_proto::Session>>) {
+    fn spawn_queue_flush_watcher(&self, mut statuses: watch::Receiver<Vec<vardoger_proto::Session>>) {
         let host = self.clone();
         self.spawn_worker(async move {
             while statuses.changed().await.is_ok() {
@@ -1725,7 +1725,7 @@ impl DocHost {
     }
 
     /// Wire the repos engine (engine assembly) — worktree materialization for
-    /// Run commands carrying a [`zeron_proto::WorktreeSpec`].
+    /// Run commands carrying a [`vardoger_proto::WorktreeSpec`].
     pub fn set_repos(&self, repos: crate::repos::Repos) {
         let _ = self.inner.repos.set(repos);
     }
@@ -1754,7 +1754,7 @@ impl DocHost {
 
     /// Wire the peer-link cache (engine assembly, edge runtimes only) — the
     /// transport for queued attachment transfers to a remote host.
-    pub fn set_links(&self, links: Arc<zeron_rpc::LinkCache>) {
+    pub fn set_links(&self, links: Arc<vardoger_rpc::LinkCache>) {
         let _ = self.inner.links.set(links);
     }
 
@@ -1773,7 +1773,7 @@ impl DocHost {
     /// sent now would read to it as the chat having moved on.
     fn thaw_recovered_queue(&self, handle: &ChatDocHandle, sessions: &SessionsEngine) {
         if !handle.queue_frozen_by_recovery.load(Ordering::Acquire)
-            || !zeron_proto::is_cloud_device(&self.inner.config.device_id, "")
+            || !vardoger_proto::is_cloud_device(&self.inner.config.device_id, "")
             || !self.inner.boot_recovery_finished.load(Ordering::Acquire)
             || sessions.revival_pending(&handle.chat_id)
         {
@@ -1833,7 +1833,7 @@ impl DocHost {
                     return; // edge-less engine: nothing to migrate onto
                 };
                 let Some(ws) = host.workspace() else { continue };
-                let chats: Vec<zeron_proto::Chat> = ws.watch_chats().borrow().clone();
+                let chats: Vec<vardoger_proto::Chat> = ws.watch_chats().borrow().clone();
                 let device = host.inner.config.device_id.clone();
                 let now = now_ms();
                 let candidate = chats.into_iter().find(|c| {
@@ -1876,7 +1876,7 @@ impl DocHost {
     /// the chat2 adopt path. A handle with a LIVE local writer (a running
     /// turn's doc ref) is left alone — the host never flips mid-run, and a
     /// racing writer must never lose its doc out from under it.
-    fn spawn_cutover_watcher(&self, mut chats: watch::Receiver<Vec<zeron_proto::Chat>>) {
+    fn spawn_cutover_watcher(&self, mut chats: watch::Receiver<Vec<vardoger_proto::Chat>>) {
         let host = self.clone();
         self.spawn_worker(async move {
             loop {
@@ -2603,12 +2603,12 @@ impl DocHost {
         let kick = self.inner.sync_kick.clone();
         let mut jobs = self.inner.store.watch_sync_jobs();
         let mut outbox = self.inner.store.watch_outbox();
-        let mut socket_contention = zeron_sync::budget::shared().watch_socket_contention();
+        let mut socket_contention = vardoger_sync::budget::shared().watch_socket_contention();
         self.spawn_worker(async move {
             use futures::{StreamExt, stream::FuturesUnordered};
             // Followed once the workspace is wired: ownership and cutover
             // decide admission, and reconciliation waits for the first sync.
-            let mut registry_chats: Option<watch::Receiver<Vec<zeron_proto::Chat>>> = None;
+            let mut registry_chats: Option<watch::Receiver<Vec<vardoger_proto::Chat>>> = None;
             let mut registry_synced: Option<watch::Receiver<bool>> = None;
             let mut busy = true;
             let mut last_pass: Option<tokio::time::Instant> = None;
@@ -2901,7 +2901,7 @@ impl DocHost {
                 let available = ACTIVE_SYNC_CAP.saturating_sub(running);
                 let now = now_ms();
                 let contended = available == 0 && !waiting.is_empty();
-                let budget = zeron_sync::budget::shared().stats();
+                let budget = vardoger_sync::budget::shared().stats();
                 let global_contended = !budget.resource_paused && budget.sockets >= budget.socket_limit && budget.socket_waiting > 0;
                 // (A socket waiter arriving later signals `socket_contention`.)
                 // A descriptor-exhaustion pause ends on a clock, not an
@@ -3149,9 +3149,9 @@ impl DocHost {
         let cancel = CancellationToken::new();
         *lock(&handle.sync_cancel) = cancel.clone();
         let priority = if handle.sync_background.load(Ordering::Acquire) {
-            zeron_sync::budget::Priority::Background
+            vardoger_sync::budget::Priority::Background
         } else {
-            zeron_sync::budget::Priority::Interactive
+            vardoger_sync::budget::Priority::Interactive
         };
         let chat = handle.chat_id.clone();
         let doc = handle.doc.clone();
@@ -3183,7 +3183,7 @@ impl DocHost {
                 .then(|| host.relay_state_for(&weak, &device, sink.clone()))
                 .flatten();
             let relay = relay_state.as_ref().map(|state| state.relay.clone());
-            let mut wake = zeron_sync::wake::subscribe();
+            let mut wake = vardoger_sync::wake::subscribe();
             // Sibling-dial successes end a backoff wait immediately, exactly
             // like the joined clients' own reconnect loops (chat_client.rs).
             // Without this, a NEW chat whose first joins hit a network blip
@@ -3191,7 +3191,7 @@ impl DocHost {
             // established room redialed instantly on recovery — fresh sends
             // to new sessions stalled while other chats hummed (2026-08-19
             // user report, reproduced on two networks).
-            let mut online = zeron_sync::wake::subscribe_online();
+            let mut online = vardoger_sync::wake::subscribe_online();
             let mut backoff = crate::workspace_host::JOIN_RETRY_BASE;
             loop {
                 if weak.upgrade().is_none() {
@@ -3210,7 +3210,7 @@ impl DocHost {
                 ).with_host_device(remote_host.clone()).with_priority(priority).with_relay(relay.is_some()));
                 let dial = tokio::time::timeout(
                     std::time::Duration::from_secs(60),
-                    zeron_sync::ChatClient::connect_via_relay(
+                    vardoger_sync::ChatClient::connect_via_relay(
                         url.clone(),
                         sink.clone(),
                         fetcher.clone(),
@@ -3223,7 +3223,7 @@ impl DocHost {
                 .await;
                 match dial {
                     Ok(Ok(client)) => {
-                        if matches!(edge.bearer().await, Err(zeron_rpc::TokenError::SignedOut)) {
+                        if matches!(edge.bearer().await, Err(vardoger_rpc::TokenError::SignedOut)) {
                             return;
                         }
                         let Some(handle) = weak.upgrade() else {
@@ -3320,7 +3320,7 @@ impl DocHost {
                                     .unwrap_or(false);
                                 let relayed = lock(&handle.relay).is_some()
                                     && host.workspace().and_then(|ws| ws.chat(&handle.chat_id).ok().flatten())
-                                        .is_some_and(|chat| chat.room_gen.unwrap_or(1) >= zeron_proto::relay_gen::RELAY_ROOM_GEN);
+                                        .is_some_and(|chat| chat.room_gen.unwrap_or(1) >= vardoger_proto::relay_gen::RELAY_ROOM_GEN);
                                 if no_checkpoint && has_content && !relayed {
                                     tracing::info!(chat = %handle.chat_id,
                                         "chat2 room has rows but no checkpoint; posting bootstrap checkpoint");
@@ -3337,7 +3337,7 @@ impl DocHost {
                             let weak = weak.clone();
                             let chat = chat.clone();
                             host.clone().spawn_sync_worker(cancel.clone(), async move {
-                                use zeron_sync::chat_client::ChatEvent;
+                                use vardoger_sync::chat_client::ChatEvent;
                                 loop {
                                     match events.recv().await {
                                         Ok(ChatEvent::ServerReset) => {
@@ -3368,7 +3368,7 @@ impl DocHost {
                                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                                 },
                                 _ = crate::workspace_host::token_changed(&mut token_changes) => {
-                                    if matches!(edge.bearer().await, Err(zeron_rpc::TokenError::SignedOut)) {
+                                    if matches!(edge.bearer().await, Err(vardoger_rpc::TokenError::SignedOut)) {
                                         if let Some(handle) = weak.upgrade() {
                                             lock(&handle.chat2).take();
                                             // Keep journaling local cleanup after credentials disappear.
@@ -3507,7 +3507,7 @@ impl DocHost {
     ) -> Result<(), String> {
         use base64::Engine as _;
         let vv_at_rebuild = doc.doc().oplog_vv().encode();
-        let rebuilt = zeron_doc::rebuild::rebuild_thin_doc(&doc).map_err(|e| e.to_string())?;
+        let rebuilt = vardoger_doc::rebuild::rebuild_thin_doc(&doc).map_err(|e| e.to_string())?;
         // The seed's own doc ref must be gone before the pinned re-check
         // below: `pinned` reads `Arc::strong_count(&handle.doc) > 1`, and
         // holding this clone made that true unconditionally — every seed
@@ -3528,8 +3528,8 @@ impl DocHost {
             edge.url.trim_end_matches('/'),
             chat_id
         );
-        let _permit = zeron_sync::budget::shared()
-            .http(zeron_sync::budget::Priority::Background)
+        let _permit = vardoger_sync::budget::shared()
+            .http(vardoger_sync::budget::Priority::Background)
             .await
             .map_err(|e| e.to_string())?;
         let res = self
@@ -3635,7 +3635,7 @@ impl DocHost {
             // Let boot settle (registry load, room joins) before sweeping.
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             let Some(ws) = host.workspace() else { return };
-            let chats: Vec<zeron_proto::Chat> = ws.watch_chats().borrow().clone();
+            let chats: Vec<vardoger_proto::Chat> = ws.watch_chats().borrow().clone();
             for chat in chats {
                 if chat.device_id != host.inner.config.device_id {
                     continue; // only the host owns its chats' history
@@ -3750,7 +3750,7 @@ impl DocHost {
         let raw = loro::LoroDoc::new();
         raw.import(&bytes).map_err(|e| e.to_string())?;
         let fat = SessionDoc::from_doc(raw);
-        let rebuilt = zeron_doc::rebuild::rebuild_thin_doc(&fat).map_err(|e| e.to_string())?;
+        let rebuilt = vardoger_doc::rebuild::rebuild_thin_doc(&fat).map_err(|e| e.to_string())?;
         let entries = rebuilt.doc.read_entries().map_err(|e| e.to_string())?;
         if entries.is_empty() {
             return Ok(());
@@ -3838,7 +3838,7 @@ impl DocHost {
         let doc = handle.doc.clone();
         let body = tokio::task::spawn_blocking(move || {
             let tail =
-                zeron_doc::materialize_tail(&doc, now_ms(), zeron_doc::TAIL_MESSAGE_COUNT).ok()?;
+                vardoger_doc::materialize_tail(&doc, now_ms(), vardoger_doc::TAIL_MESSAGE_COUNT).ok()?;
             serde_json::to_vec(&tail).ok()
         })
         .await
@@ -3857,8 +3857,8 @@ impl DocHost {
                     edge_tail.url.trim_end_matches('/'),
                     chat
                 );
-                let Ok(_permit) = zeron_sync::budget::shared()
-                    .http(zeron_sync::budget::Priority::Background)
+                let Ok(_permit) = vardoger_sync::budget::shared()
+                    .http(vardoger_sync::budget::Priority::Background)
                     .await
                 else {
                     return;
@@ -3994,7 +3994,7 @@ impl DocHost {
                 if at_floor { "&atFloor=1" } else { "" },
                 if reason == relay::HEAL_REASON { "&heal=1" } else { "" }
             );
-            let Ok(_permit) = zeron_sync::budget::shared().http(zeron_sync::budget::Priority::Background).await else {
+            let Ok(_permit) = vardoger_sync::budget::shared().http(vardoger_sync::budget::Priority::Background).await else {
                 return;
             };
             let size = snapshot.len() as u64;
@@ -4076,7 +4076,7 @@ impl DocHost {
                         .sum::<usize>(),
                 )
             };
-            if count <= WARM_DOC_CAP && estimate <= zeron_doc::DOC_LRU_BYTE_BUDGET {
+            if count <= WARM_DOC_CAP && estimate <= vardoger_doc::DOC_LRU_BYTE_BUDGET {
                 return false;
             }
             let evicted = {
@@ -4098,7 +4098,7 @@ impl DocHost {
         let handles = lock(&self.inner.handles);
         handles.len() > WARM_DOC_CAP
             || handles.values().map(|h| h.resident_estimate()).sum::<usize>()
-                > zeron_doc::DOC_LRU_BYTE_BUDGET
+                > vardoger_doc::DOC_LRU_BYTE_BUDGET
     }
 
     /// Seed-specific activity gate: a live WRITER (a run's doc ref) or
@@ -4198,14 +4198,14 @@ impl DocHost {
             if let Ok(res) = res
                 && res.status().is_success()
             {
-                zeron_sync::wake::notify_online();
+                vardoger_sync::wake::notify_online();
             }
         });
     }
 
     /// The in-flight queued-attachment transfer set: current entries first,
     /// then a fresh snapshot per landed chunk (see `push_attachments`).
-    pub fn watch_transfers(&self) -> watch::Receiver<Vec<zeron_proto::TransferProgress>> {
+    pub fn watch_transfers(&self) -> watch::Receiver<Vec<vardoger_proto::TransferProgress>> {
         self.inner.transfers.subscribe()
     }
 
@@ -4217,7 +4217,7 @@ impl DocHost {
                     t.done = done;
                     t.total = total;
                 }
-                None => list.push(zeron_proto::TransferProgress {
+                None => list.push(vardoger_proto::TransferProgress {
                     upload_id: upload_id.to_string(),
                     file_name: file_name.to_string(),
                     done,
@@ -4243,7 +4243,7 @@ impl DocHost {
     /// a few seconds, so a settled engine isn't woken each second to find
     /// nothing changed. The retry countdown renders client-side from
     /// `retry_at_ms`, so quiet periods emit nothing at all.
-    pub fn watch_connectivity(&self) -> watch::Receiver<zeron_proto::Connectivity> {
+    pub fn watch_connectivity(&self) -> watch::Receiver<vardoger_proto::Connectivity> {
         let tx = self
             .inner
             .connectivity
@@ -4268,9 +4268,9 @@ impl DocHost {
                     }
                     if held >= CONNECTIVITY_SETTLE_TICKS {
                         // Settled: on the beat grid, with the sockets' pings
-                        // (`zeron_sync::wake`), so it wakes the engine with
+                        // (`vardoger_sync::wake`), so it wakes the engine with
                         // them rather than between.
-                        tokio::time::sleep_until(zeron_sync::wake::next_beat(CONNECTIVITY_STEADY))
+                        tokio::time::sleep_until(vardoger_sync::wake::next_beat(CONNECTIVITY_STEADY))
                             .await;
                     } else {
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -4310,8 +4310,8 @@ impl DocHost {
         self.inner.config.edge.is_some() || self.workspace().is_some_and(|w| w.edge_expected())
     }
 
-    fn compute_connectivity(&self) -> zeron_proto::Connectivity {
-        use zeron_proto::{ChatConnectivity, Connectivity, ConnectivityState};
+    fn compute_connectivity(&self) -> vardoger_proto::Connectivity {
+        use vardoger_proto::{ChatConnectivity, Connectivity, ConnectivityState};
         let workspace = self.workspace();
         if !self.edge_expected() {
             return Connectivity::default();
@@ -4349,7 +4349,7 @@ impl DocHost {
             .and_then(|w| w.sync_status())
             .is_some_and(|s| s.connected);
         let path_offline =
-            grace.degraded(GraceKey::OsPath, zeron_sync::wake::path_is_offline(), now);
+            grace.degraded(GraceKey::OsPath, vardoger_sync::wake::path_is_offline(), now);
         let registry_down = grace.degraded(GraceKey::Registry, !registry_connected, now);
         let (state, retry_at_ms, last_failure) = if path_offline {
             (
@@ -4375,8 +4375,8 @@ impl DocHost {
         }
     }
 
-    pub fn chat_sync_state(&self, chat_id: &str) -> zeron_proto::ChatSyncState {
-        use zeron_proto::ChatSyncState as S;
+    pub fn chat_sync_state(&self, chat_id: &str) -> vardoger_proto::ChatSyncState {
+        use vardoger_proto::ChatSyncState as S;
         let handle = lock(&self.inner.handles).get(chat_id).cloned();
         let Some(handle) = handle else {
             return S::Local;
@@ -4389,8 +4389,8 @@ impl DocHost {
         &self,
         handle: &ChatDocHandle,
         snapshot: &ChatConnectionSnapshot,
-    ) -> zeron_proto::ChatSyncState {
-        use zeron_proto::ChatSyncState as S;
+    ) -> vardoger_proto::ChatSyncState {
+        use vardoger_proto::ChatSyncState as S;
         if handle.publication_failed.load(Ordering::Acquire) {
             return S::StorageError;
         }
@@ -4406,7 +4406,7 @@ impl DocHost {
         }
         match snapshot.stats {
             Some(stats) if snapshot.delivery_live && stats.pending_pushes == 0 => S::Synced,
-            Some(_) if !snapshot.delivery_live && zeron_sync::wake::path_is_offline() => S::Offline,
+            Some(_) if !snapshot.delivery_live && vardoger_sync::wake::path_is_offline() => S::Offline,
             _ => S::Connecting,
         }
     }
@@ -4449,7 +4449,7 @@ impl DocHost {
         #[cfg(not(unix))]
         let fd_limit: Option<u64> = None;
         serde_json::json!({
-            "budget": zeron_sync::budget::shared().stats(),
+            "budget": vardoger_sync::budget::shared().stats(),
             "activeClientLimit": ACTIVE_SYNC_CAP,
             "openDocuments": handles.len(), "waitingDocuments": waiting,
             "documentLoads": self.inner.document_loads.load(Ordering::Relaxed),
@@ -4459,12 +4459,12 @@ impl DocHost {
         })
     }
 
-    /// Per-open-chat room introspection for SyncStatus / `zeron sync`.
+    /// Per-open-chat room introspection for SyncStatus / `vardoger sync`.
     /// `None` room = still dialing (join retry loop) or edge-less.
-    pub fn sync_statuses(&self) -> Vec<(String, Option<zeron_sync::ChatStatsSnapshot>)> {
+    pub fn sync_statuses(&self) -> Vec<(String, Option<vardoger_sync::ChatStatsSnapshot>)> {
         let handles: Vec<Arc<ChatDocHandle>> =
             lock(&self.inner.handles).values().cloned().collect();
-        let mut rows: Vec<(String, Option<zeron_sync::ChatStatsSnapshot>)> = handles
+        let mut rows: Vec<(String, Option<vardoger_sync::ChatStatsSnapshot>)> = handles
             .iter()
             .map(|h| {
                 (
@@ -4635,7 +4635,7 @@ impl DocHost {
         attachments: Vec<String>,
         hold_for_turn_end: bool,
         transfers: Vec<crate::uploads::AttachmentTransfer>,
-        config: Option<zeron_proto::ChatConfig>,
+        config: Option<vardoger_proto::ChatConfig>,
     ) -> Result<String, EngineError> {
         let handle = self.open(chat_id)?;
         let id = new_id();
@@ -5555,7 +5555,7 @@ impl DocHost {
     /// 2. give the normal path (chat2 rows → edge → host's room) a short
     ///    grace to ack;
     /// 3. rows still not at the edge but the peer link alive → relay-forward
-    ///    the entry itself ([`zeron_rpc::methods::RELAY_COMMAND`]). The
+    ///    the entry itself ([`vardoger_rpc::methods::RELAY_COMMAND`]). The
     ///    host's processed ledger claims the client-minted id, so the doc
     ///    row arriving later dedupes to a no-op — exactly-once by
     ///    construction (the 2026-08-18 03:45 incident shape: nudges flowed,
@@ -5580,8 +5580,8 @@ impl DocHost {
             if !transfers.is_empty() && !host.deliver_attachments(&chat, &transfers).await {
                 return; // gave up; the drain's wait cap surfaces the failure
             }
-            let mut wake = zeron_sync::wake::subscribe();
-            let mut online = zeron_sync::wake::subscribe_online();
+            let mut wake = vardoger_sync::wake::subscribe();
+            let mut online = vardoger_sync::wake::subscribe_online();
             let give_up = tokio::time::Instant::now() + RELAY_GIVE_UP;
             let grace_end = tokio::time::Instant::now() + ROWS_GRACE;
             while tokio::time::Instant::now() < grace_end {
@@ -5632,8 +5632,8 @@ impl DocHost {
         chat: &str,
         transfers: &[crate::uploads::AttachmentTransfer],
     ) -> bool {
-        let mut wake = zeron_sync::wake::subscribe();
-        let mut online = zeron_sync::wake::subscribe_online();
+        let mut wake = vardoger_sync::wake::subscribe();
+        let mut online = vardoger_sync::wake::subscribe_online();
         let mut backoff = TRANSFER_BACKOFF_BASE;
         let deadline = tokio::time::Instant::now() + ATTACHMENT_WAIT_MAX;
         loop {
@@ -5704,7 +5704,7 @@ impl DocHost {
             .into_iter()
             .flatten()
             .find(|d| d.id == target)
-            .and_then(|d| d.version.as_deref().and_then(zeron_proto::version_triple))
+            .and_then(|d| d.version.as_deref().and_then(vardoger_proto::version_triple))
             .is_some_and(|v| v >= RELAY_MIN_VERSION);
         if !supported {
             return Err("host does not support relay delivery (version gate)".into());
@@ -5719,13 +5719,13 @@ impl DocHost {
             .await
             .map_err(|e| format!("peer link: {e}"))?;
         let params = serde_json::json!({ "chatId": chat_id, "entry": entry });
-        let call = client.call(zeron_rpc::methods::RELAY_COMMAND, params);
+        let call = client.call(vardoger_rpc::methods::RELAY_COMMAND, params);
         match tokio::time::timeout(RELAY_CALL_TIMEOUT, call).await {
             Err(_) => {
                 links.invalidate(target);
                 Err("relay call timed out; peer link suspect".into())
             }
-            Ok(Err(zeron_rpc::RpcError::Failed(err))) => Err(format!("host refused: {err}")),
+            Ok(Err(vardoger_rpc::RpcError::Failed(err))) => Err(format!("host refused: {err}")),
             Ok(Err(err)) => {
                 links.invalidate(target);
                 Err(format!("relay call failed: {err}"))
@@ -5926,7 +5926,7 @@ impl DocHost {
         Ok(())
     }
 
-    /// Host side of [`zeron_rpc::methods::RELAY_COMMAND`]: evaluate the
+    /// Host side of [`vardoger_rpc::methods::RELAY_COMMAND`]: evaluate the
     /// forwarded entry against OUR doc (dedupe/TTL/supersede rules apply
     /// unchanged), claim its client-minted id in the processed ledger, then
     /// execute. The claim is what makes the doc row arriving later — over
@@ -6048,13 +6048,13 @@ impl DocHost {
                 let params = serde_json::json!({
                     "uploadId": transfer.upload_id, "seq": seq, "data": &b64[start..end],
                 });
-                let call = client.call(zeron_rpc::methods::UPLOAD_CHUNK, params);
+                let call = client.call(vardoger_rpc::methods::UPLOAD_CHUNK, params);
                 match tokio::time::timeout(TRANSFER_CHUNK_TIMEOUT, call).await {
                     Err(_) => {
                         links.invalidate(target);
                         return Err(Transient("chunk push timed out; peer link suspect".into()));
                     }
-                    Ok(Err(zeron_rpc::RpcError::Failed(err))) => {
+                    Ok(Err(vardoger_rpc::RpcError::Failed(err))) => {
                         return Err(Permanent(format!("host refused chunk: {err}")));
                     }
                     Ok(Err(err)) => {
@@ -6076,13 +6076,13 @@ impl DocHost {
             let params = serde_json::json!({
                 "uploadId": transfer.upload_id, "fileName": transfer.file_name,
             });
-            let call = client.call(zeron_rpc::methods::UPLOAD_COMMIT, params);
+            let call = client.call(vardoger_rpc::methods::UPLOAD_COMMIT, params);
             match tokio::time::timeout(TRANSFER_COMMIT_TIMEOUT, call).await {
                 Err(_) => {
                     links.invalidate(target);
                     return Err(Transient("commit timed out; peer link suspect".into()));
                 }
-                Ok(Err(zeron_rpc::RpcError::Failed(err))) => {
+                Ok(Err(vardoger_rpc::RpcError::Failed(err))) => {
                     return Err(Permanent(format!("host refused commit: {err}")));
                 }
                 Ok(Err(err)) => {
@@ -6100,7 +6100,7 @@ impl DocHost {
     /// Fire-and-forget: the doc already carries the summary, so a lost upload
     /// degrades to "full output unavailable" — it must never block or fail
     /// the run. Offline/edge-less engines skip silently.
-    pub fn upload_tool_sidecar(&self, chat_id: &str, payload: zeron_doc::SidecarPayload) {
+    pub fn upload_tool_sidecar(&self, chat_id: &str, payload: vardoger_doc::SidecarPayload) {
         let Some(edge) = self.inner.config.edge.clone() else {
             return;
         };
@@ -6232,7 +6232,7 @@ impl DocHost {
     pub(crate) fn harness_for_request(
         &self,
         chat_id: &str,
-        request: &zeron_proto::RunRequest,
+        request: &vardoger_proto::RunRequest,
     ) -> HarnessId {
         request.harness.unwrap_or_else(|| self.harness_for(chat_id))
     }
@@ -6512,7 +6512,7 @@ impl DocHost {
     /// paths — in the attachments list AND the prompt text — so the harness
     /// (and the persisted user entry) see ordinary local files, exactly like
     /// the legacy pre-upload flow produced.
-    fn resolve_request_attachments(&self, request: &mut zeron_proto::RunRequest) {
+    fn resolve_request_attachments(&self, request: &mut vardoger_proto::RunRequest) {
         self.resolve_attachment_refs(&mut request.prompt, &mut request.attachments);
     }
 
@@ -6695,17 +6695,17 @@ impl DocHost {
                     ws.claim_chat(chat_id, Some(&request.cwd))?;
                     // Older clients send `~` for a projectless run; a chat
                     // created with a scratch folder runs there instead.
-                    if zeron_proto::projectless::is_home_cwd(&request.cwd)
+                    if vardoger_proto::projectless::is_home_cwd(&request.cwd)
                         && let Ok(Some(chat)) = ws.chat(chat_id)
                         && let Some(cwd) = chat.cwd.filter(|cwd| {
-                            chat.space_id.is_none() && zeron_proto::projectless::is_scratch_cwd(cwd)
+                            chat.space_id.is_none() && vardoger_proto::projectless::is_scratch_cwd(cwd)
                         })
                     {
                         request.cwd = cwd;
                     }
                     // A pre-existing row (the client's createChat raced ahead)
                     // still carries the repo folder — repoint it at the fresh
-                    // worktree, and stamp the actual `zeron/<name>` branch so
+                    // worktree, and stamp the actual `vardoger/<name>` branch so
                     // the footer and the title-rename flow see it.
                     if let Some(wt) = &fresh_worktree {
                         if let Err(err) = ws.set_chat_cwd(chat_id, &wt.path) {
@@ -6735,7 +6735,7 @@ impl DocHost {
                 if let Some(ws) = self.workspace()
                     && ws.chat_config(chat_id).is_none()
                 {
-                    let config = zeron_proto::ChatConfig {
+                    let config = vardoger_proto::ChatConfig {
                         harness,
                         model: request.model.clone(),
                         reasoning: request.reasoning,
@@ -6963,7 +6963,7 @@ impl DocHost {
         prompt: &str,
         issued_at: i64,
         steer: bool,
-        request: Option<&zeron_proto::RunRequest>,
+        request: Option<&vardoger_proto::RunRequest>,
     ) -> Result<(), EngineError> {
         let item = QueuedMessage {
             id: message_id.to_string(),
@@ -6998,7 +6998,7 @@ impl DocHost {
     /// Put a typed prompt in front of a live agent: steer it in, or — with no
     /// live steerable run — deliver the durable command as the next turn.
     /// After an engine restart `last_request` is empty too, so rebuild the run
-    /// config from the chat's workspace row (zeron derived dispatch config from
+    /// config from the chat's workspace row (vardoger derived dispatch config from
     /// the chat row the same way — sessions.ts:601-620); dispatch's engine-owned
     /// resume then reattaches the prior harness conversation.
     ///
@@ -7128,7 +7128,7 @@ impl DocHost {
         sessions: &SessionsEngine,
         chat_id: &str,
         harness: HarnessId,
-        request: zeron_proto::RunRequest,
+        request: vardoger_proto::RunRequest,
         message_id: Option<String>,
     ) -> Result<String, EngineError> {
         // Stamped on a task of its own: the drain resolves the command as
@@ -7155,8 +7155,8 @@ impl DocHost {
     async fn materialize_worktree(
         &self,
         chat_id: &str,
-        spec: &zeron_proto::WorktreeSpec,
-    ) -> Result<(String, Option<zeron_proto::Worktree>), EngineError> {
+        spec: &vardoger_proto::WorktreeSpec,
+    ) -> Result<(String, Option<vardoger_proto::Worktree>), EngineError> {
         if let Some(ws) = self.workspace()
             && let Ok(Some(chat)) = ws.chat(chat_id)
             && let Some(cwd) = chat.cwd
@@ -7188,8 +7188,8 @@ impl DocHost {
         &self,
         command_id: &str,
         chat_id: &str,
-        spec: &zeron_proto::WorktreeSpec,
-        fresh_worktree: Option<&zeron_proto::Worktree>,
+        spec: &vardoger_proto::WorktreeSpec,
+        fresh_worktree: Option<&vardoger_proto::Worktree>,
     ) {
         let Some((project_actions, terminals)) = self.inner.project_action_runtime.get() else {
             return;
@@ -7223,8 +7223,8 @@ impl DocHost {
         project_actions: &ProjectActionsStore,
         terminals: &Terminals,
         space_id: &str,
-        spec: &zeron_proto::WorktreeSpec,
-        worktree: &zeron_proto::Worktree,
+        spec: &vardoger_proto::WorktreeSpec,
+        worktree: &vardoger_proto::Worktree,
     ) -> Result<ProjectActionSetupHandoff, EngineError> {
         let workspace = self
             .workspace()
@@ -7274,7 +7274,7 @@ impl DocHost {
         &self,
         chat_id: &str,
         prompt: &str,
-    ) -> Option<zeron_proto::RunRequest> {
+    ) -> Option<vardoger_proto::RunRequest> {
         let workspace = self.workspace()?;
         let chat = match workspace.chat(chat_id) {
             Ok(chat) => chat?,
@@ -7284,7 +7284,7 @@ impl DocHost {
             }
         };
         let config = chat.config;
-        Some(zeron_proto::RunRequest {
+        Some(vardoger_proto::RunRequest {
             mcp: None,
             prompt: prompt.to_string(),
             harness: config.as_ref().map(|c| c.harness),
@@ -7298,7 +7298,7 @@ impl DocHost {
             sandbox: config
                 .as_ref()
                 .map(|c| c.sandbox)
-                .unwrap_or(zeron_proto::SandboxLevel::WorkspaceWrite),
+                .unwrap_or(vardoger_proto::SandboxLevel::WorkspaceWrite),
             auto_approve: false,
             access: config.as_ref().map(|c| c.access).unwrap_or_default(),
             plan: config.as_ref().is_some_and(|c| c.plan),
@@ -7505,12 +7505,12 @@ mod transfer_progress_tests {
 
     fn host() -> (tempfile::TempDir, DocHost) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).expect("store opens"));
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).expect("store opens"));
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "dev-test".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
@@ -7524,13 +7524,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn a_commit_in_a_watched_whale_costs_what_it_changed() {
         let (_dir, host) = host();
-        let source = zeron_doc::SessionDoc::init("watched-whale").unwrap();
+        let source = vardoger_doc::SessionDoc::init("watched-whale").unwrap();
         for i in 0..3000 {
             source
-                .push_message(&zeron_doc::SessionMessageEntry {
+                .push_message(&vardoger_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: zeron_doc::MessageRole::User,
-                    parts: vec![zeron_doc::MessagePart::Text {
+                    role: vardoger_doc::MessageRole::User,
+                    parts: vec![vardoger_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -7553,12 +7553,12 @@ mod transfer_progress_tests {
         let attach = start.elapsed();
         assert_eq!(rx.borrow().entries.len(), 3000);
 
-        let mut writer = zeron_doc::SegmentWriter::begin(handle.doc(), "reply", "dev-test", 1).unwrap();
+        let mut writer = vardoger_doc::SegmentWriter::begin(handle.doc(), "reply", "dev-test", 1).unwrap();
         let mut commits = std::time::Duration::ZERO;
         for n in 1..=5 {
             let words = "streamed ".repeat(n);
             writer
-                .sync(&[zeron_doc::MessagePart::Text { id: "t".into(), text: words.clone() }])
+                .sync(&[vardoger_doc::MessagePart::Text { id: "t".into(), text: words.clone() }])
                 .unwrap();
             let start = std::time::Instant::now();
             handle.publish_messages_if_watched();
@@ -7567,7 +7567,7 @@ mod transfer_progress_tests {
             assert_eq!(published.len(), 3001);
             assert_eq!(
                 published.last().unwrap().parts,
-                vec![zeron_doc::MessagePart::Text { id: "t".into(), text: words }],
+                vec![vardoger_doc::MessagePart::Text { id: "t".into(), text: words }],
             );
         }
         let commit = commits / 5;
@@ -7586,13 +7586,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn waiting_messages_in_a_whale_cost_what_waits() {
         let (_dir, host) = host();
-        let source = zeron_doc::SessionDoc::init("waiting-whale").unwrap();
+        let source = vardoger_doc::SessionDoc::init("waiting-whale").unwrap();
         for i in 0..3000 {
             source
-                .push_message(&zeron_doc::SessionMessageEntry {
+                .push_message(&vardoger_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: zeron_doc::MessageRole::User,
-                    parts: vec![zeron_doc::MessagePart::Text {
+                    role: vardoger_doc::MessageRole::User,
+                    parts: vec![vardoger_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -7627,13 +7627,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn whale_snapshot_opens_and_reopens_without_network() {
         let (_dir, host) = host();
-        let source = zeron_doc::SessionDoc::init("persisted-whale").unwrap();
+        let source = vardoger_doc::SessionDoc::init("persisted-whale").unwrap();
         for i in 0..2000 {
             source
-                .push_message(&zeron_doc::SessionMessageEntry {
+                .push_message(&vardoger_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: zeron_doc::MessageRole::User,
-                    parts: vec![zeron_doc::MessagePart::Text {
+                    role: vardoger_doc::MessageRole::User,
+                    parts: vec![vardoger_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -7778,19 +7778,19 @@ mod source_context_tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         git(&repo, &["init", "-b", "feature/captured"]);
-        git(&repo, &["config", "user.name", "Zeron Test"]);
-        git(&repo, &["config", "user.email", "zeron@example.com"]);
+        git(&repo, &["config", "user.name", "Vardoger Test"]);
+        git(&repo, &["config", "user.email", "vardoger@example.com"]);
         std::fs::write(repo.join("README.md"), "capture\n").unwrap();
         git(&repo, &["add", "README.md"]);
         git(&repo, &["commit", "-m", "capture"]);
 
         let store =
-            Arc::new(zeron_sync::DocsStore::open(dir.path().join("docs")).expect("store opens"));
+            Arc::new(vardoger_sync::DocsStore::open(dir.path().join("docs")).expect("store opens"));
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "device-a".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
@@ -7861,11 +7861,11 @@ mod degrade_grace_tests {
         use super::{DocHost, DocHostConfig, EdgeConfig, lock};
         use std::sync::Arc;
         use std::sync::atomic::Ordering;
-        use zeron_proto::{ChatSyncState, HarnessId};
+        use vardoger_proto::{ChatSyncState, HarnessId};
 
         let dir = tempfile::tempdir().unwrap();
         let host = DocHost::new(
-            Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap()),
+            Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap()),
             DocHostConfig {
                 device_id: "local".into(),
                 default_harness: HarnessId::Mock,
@@ -8195,7 +8195,7 @@ mod publication_eviction_tests {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         assert_eq!(
             host.chat_sync_state("failed"),
-            zeron_proto::ChatSyncState::StorageError
+            vardoger_proto::ChatSyncState::StorageError
         );
         assert!(!other.sync_started.load(Ordering::Acquire));
         assert!(host.pinned(&handle));

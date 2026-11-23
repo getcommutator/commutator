@@ -5335,6 +5335,370 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
+name = "vardoger"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "clap",
+ "embed-resource",
+ "libc",
+ "libmimalloc-sys",
+ "mimalloc",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vardoger-cli",
+ "vardoger-engine",
+ "vardoger-mcp",
+ "vardoger-notify",
+ "vardoger-rpc",
+ "vardoger-sync",
+ "vardoger-update",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vardoger-cli"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vardoger-launch",
+ "vardoger-update",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vardoger-doc"
+version = "0.3.16"
+dependencies = [
+ "chrono",
+ "loro",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "thiserror 2.0.20",
+ "tracing",
+ "vardoger-proto",
+]
+
+[[package]]
+name = "vardoger-engine"
+version = "0.3.16"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "core-foundation 0.10.1",
+ "dunce",
+ "fff-search",
+ "flate2",
+ "futures",
+ "gethostname",
+ "ignore",
+ "image",
+ "libc",
+ "loro",
+ "notify 7.0.0",
+ "portable-pty",
+ "reqwest",
+ "ring",
+ "rusqlite",
+ "same-file",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "vardoger-doc",
+ "vardoger-harness",
+ "vardoger-launch",
+ "vardoger-mcp",
+ "vardoger-notify",
+ "vardoger-preview",
+ "vardoger-proto",
+ "vardoger-rpc",
+ "vardoger-sync",
+ "vardoger-term-link",
+ "vardoger-update",
+ "vardoger-visual",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "vardoger-harness"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bzip2",
+ "chrono",
+ "deser-hjson",
+ "filetime",
+ "flate2",
+ "futures",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "vardoger-doc",
+ "vardoger-proto",
+ "vardoger-voice-media",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "vardoger-launch"
+version = "0.3.16"
+dependencies = [
+ "libc",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vardoger-mcp"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "vardoger-doc",
+ "vardoger-proto",
+ "vardoger-rpc",
+ "vardoger-visual",
+]
+
+[[package]]
+name = "vardoger-notify"
+version = "0.3.16"
+dependencies = [
+ "objc",
+ "sha2",
+ "tracing",
+]
+
+[[package]]
+name = "vardoger-orb"
+version = "0.3.16"
+
+[[package]]
+name = "vardoger-preview"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "vardoger-preview-label",
+ "vardoger-proto",
+ "webrtc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vardoger-preview-label"
+version = "0.3.16"
+
+[[package]]
+name = "vardoger-proto"
+version = "0.3.16"
+dependencies = [
+ "chrono",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "vardoger-rpc"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "uuid",
+ "vardoger-doc",
+ "vardoger-proto",
+ "vardoger-sync",
+]
+
+[[package]]
+name = "vardoger-sync"
+version = "0.3.16"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "chrono",
+ "futures",
+ "loro",
+ "loro-protocol",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "vardoger-doc",
+ "vardoger-proto",
+]
+
+[[package]]
+name = "vardoger-term-link"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+ "vardoger-preview",
+ "vardoger-proto",
+ "vardoger-rpc",
+]
+
+[[package]]
+name = "vardoger-update"
+version = "0.3.16"
+dependencies = [
+ "anyhow",
+ "futures",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vardoger-visual"
+version = "0.3.16"
+dependencies = [
+ "base64 0.22.1",
+ "gltf",
+ "image",
+ "mlua",
+ "naga",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "vardoger-voice-media"
+version = "0.3.16"
+dependencies = [
+ "async-trait",
+ "semver",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "vardoger-proto",
+ "vardoger-voice-session",
+]
+
+[[package]]
+name = "vardoger-voice-session"
+version = "0.3.16"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "vardoger-orb",
+ "vardoger-proto",
+ "vardoger-rpc",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6160,370 +6524,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "zeron"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "clap",
- "embed-resource",
- "libc",
- "libmimalloc-sys",
- "mimalloc",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows-sys 0.61.2",
- "zeron-cli",
- "zeron-engine",
- "zeron-mcp",
- "zeron-notify",
- "zeron-rpc",
- "zeron-sync",
- "zeron-update",
-]
-
-[[package]]
-name = "zeron-cli"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "clap",
- "libc",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows-sys 0.61.2",
- "zeron-launch",
- "zeron-update",
-]
-
-[[package]]
-name = "zeron-doc"
-version = "0.3.16"
-dependencies = [
- "chrono",
- "loro",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "thiserror 2.0.20",
- "tracing",
- "zeron-proto",
-]
-
-[[package]]
-name = "zeron-engine"
-version = "0.3.16"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "core-foundation 0.10.1",
- "dunce",
- "fff-search",
- "flate2",
- "futures",
- "gethostname",
- "ignore",
- "image",
- "libc",
- "loro",
- "notify 7.0.0",
- "portable-pty",
- "reqwest",
- "ring",
- "rusqlite",
- "same-file",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tar",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "windows-sys 0.61.2",
- "zeron-doc",
- "zeron-harness",
- "zeron-launch",
- "zeron-mcp",
- "zeron-notify",
- "zeron-preview",
- "zeron-proto",
- "zeron-rpc",
- "zeron-sync",
- "zeron-term-link",
- "zeron-update",
- "zeron-visual",
- "zip",
-]
-
-[[package]]
-name = "zeron-harness"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bzip2",
- "chrono",
- "deser-hjson",
- "filetime",
- "flate2",
- "futures",
- "libc",
- "reqwest",
- "rusqlite",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "windows-sys 0.61.2",
- "zeron-doc",
- "zeron-proto",
- "zeron-voice-media",
- "zip",
-]
-
-[[package]]
-name = "zeron-launch"
-version = "0.3.16"
-dependencies = [
- "libc",
- "tempfile",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "zeron-mcp"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "futures",
- "http-body-util",
- "hyper",
- "hyper-util",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "zeron-doc",
- "zeron-proto",
- "zeron-rpc",
- "zeron-visual",
-]
-
-[[package]]
-name = "zeron-notify"
-version = "0.3.16"
-dependencies = [
- "objc",
- "sha2",
- "tracing",
-]
-
-[[package]]
-name = "zeron-orb"
-version = "0.3.16"
-
-[[package]]
-name = "zeron-preview"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "futures",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "webrtc",
- "windows-sys 0.61.2",
- "zeron-preview-label",
- "zeron-proto",
-]
-
-[[package]]
-name = "zeron-preview-label"
-version = "0.3.16"
-
-[[package]]
-name = "zeron-proto"
-version = "0.3.16"
-dependencies = [
- "chrono",
- "pulldown-cmark",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "zeron-rpc"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures",
- "getrandom 0.4.3",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "uuid",
- "zeron-doc",
- "zeron-proto",
- "zeron-sync",
-]
-
-[[package]]
-name = "zeron-sync"
-version = "0.3.16"
-dependencies = [
- "base64 0.22.1",
- "block2",
- "chrono",
- "futures",
- "loro",
- "loro-protocol",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "tracing",
- "uuid",
- "zeron-doc",
- "zeron-proto",
-]
-
-[[package]]
-name = "zeron-term-link"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "futures",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
- "zeron-preview",
- "zeron-proto",
- "zeron-rpc",
-]
-
-[[package]]
-name = "zeron-update"
-version = "0.3.16"
-dependencies = [
- "anyhow",
- "futures",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tracing",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "zeron-visual"
-version = "0.3.16"
-dependencies = [
- "base64 0.22.1",
- "gltf",
- "image",
- "mlua",
- "naga",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "zeron-voice-media"
-version = "0.3.16"
-dependencies = [
- "async-trait",
- "semver",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "zeron-proto",
- "zeron-voice-session",
-]
-
-[[package]]
-name = "zeron-voice-session"
-version = "0.3.16"
-dependencies = [
- "async-trait",
- "futures",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "zeron-orb",
- "zeron-proto",
- "zeron-rpc",
 ]
 
 [[package]]

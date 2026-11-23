@@ -1,8 +1,8 @@
-//! zeron-rpc — the typed control plane (UiRpc / ControlRpc) over WebSocket + in-memory
+//! vardoger-rpc — the typed control plane (UiRpc / ControlRpc) over WebSocket + in-memory
 //! transports, plus the device-room relay transport ({s,k,to,from} frames — [`device_room`]).
 //!
 //! Framing: ndjson envelopes, one JSON object per WebSocket text message (or per line on
-//! byte transports), matching the shape of zeron's Effect RPC without the Effect runtime:
+//! byte transports), matching the shape of vardoger's Effect RPC without the Effect runtime:
 //!
 //! - client → server: `{id, method, params}` to invoke, `{id, cancel: true}` to stop a stream;
 //! - server → client: `{id, ok}` / `{id, err}` for unary calls,
@@ -77,7 +77,7 @@ pub mod methods {
     /// replies with the device's fresh `ListHarnesses` catalog.
     pub const GET_TITLE_SETTINGS: &str = "GetTitleSettings";
     pub const SET_TITLE_SETTINGS: &str = "SetTitleSettings";
-    /// Whether agents' commits on this device credit Zeron
+    /// Whether agents' commits on this device credit Vardoger
     /// (`{enabled, cloud}`; set with `{enabled}`).
     pub const GET_COMMIT_CREDIT: &str = "GetCommitCredit";
     pub const SET_COMMIT_CREDIT: &str = "SetCommitCredit";
@@ -147,25 +147,25 @@ pub mod methods {
     /// app foregrounded). No params; IPC-only. Each room ignores the hint
     /// unless it has been broadcast-quiet ≥30s, so this is cheap to spam.
     pub const PROBE_SYNC: &str = "ProbeSync";
-    /// Live sync introspection (`zeron sync` / debug surfaces): per-room
+    /// Live sync introspection (`vardoger sync` / debug surfaces): per-room
     /// connection state, last pushed-frame/ack ages, rejoin/probe/resync
     /// counters for the workspace room and every open chat doc. No params;
     /// IPC-only.
     pub const SYNC_STATUS: &str = "SyncStatus";
-    /// Pushed edge-connectivity posture (`zeron_proto::Connectivity`):
+    /// Pushed edge-connectivity posture (`vardoger_proto::Connectivity`):
     /// current value first, then every change — the connection pill /
     /// composer-honesty / queued-badge feed. No params; IPC-only.
     pub const WATCH_CONNECTIVITY: &str = "WatchConnectivity";
-    /// In-flight queued-attachment transfers (`zeron_proto::TransferProgress`
+    /// In-flight queued-attachment transfers (`vardoger_proto::TransferProgress`
     /// list): current set first, then a fresh snapshot per landed chunk —
     /// the sending thumbnail's percent-ring feed. No params; IPC-only.
     pub const WATCH_TRANSFERS: &str = "WatchTransfers";
     /// Sends waiting for their attachment bytes to reach the edge's store
-    /// (`zeron_proto::HeldSendStatus` list): current set first, then every
+    /// (`vardoger_proto::HeldSendStatus` list): current set first, then every
     /// change. No params; IPC-only.
     pub const WATCH_HELD_SENDS: &str = "WatchHeldSends";
     /// One chat's messages not yet taken by its agent
-    /// (`zeron_proto::WaitingMessage` list), `{chatId}`: current set first, then
+    /// (`vardoger_proto::WaitingMessage` list), `{chatId}`: current set first, then
     /// every change. IPC-only.
     pub const WATCH_WAITING_MESSAGES: &str = "WatchWaitingMessages";
     /// Remove a send from this device's outbox, failed or still uploading:
@@ -189,7 +189,7 @@ pub mod methods {
     /// This engine runtime's fixed device and workspace identity.
     pub const ENGINE_INFO: &str = "EngineInfo";
     /// What a device's machine can say about itself (OS, CPU, memory,
-    /// storage, GPU, load, battery, Zeron's version): `{targetDeviceId?}` →
+    /// storage, GPU, load, battery, Vardoger's version): `{targetDeviceId?}` →
     /// `DeviceStats`. Another of the account's devices answers through its
     /// relay within a few seconds, or the call says it's offline or too old.
     pub const DEVICE_STATS: &str = "DeviceStats";
@@ -200,7 +200,7 @@ pub mod methods {
     /// Headed IPC owners do not implement this method: closing another app's
     /// engine behind its windows would leave that process unusable.
     pub const STOP_ENGINE: &str = "StopEngine";
-    /// "Keep Zeron running after you quit": `{ keepRunningAfterQuit }`
+    /// "Keep Vardoger running after you quit": `{ keepRunningAfterQuit }`
     /// (the background engine's; this device's app only).
     pub const GET_BACKGROUND_SETTINGS: &str = "GetBackgroundSettings";
     pub const SET_BACKGROUND_SETTINGS: &str = "SetBackgroundSettings";
@@ -210,7 +210,7 @@ pub mod methods {
     /// pending; `{ stopWork: true }` stops the chats still working first.
     pub const APP_QUITTING: &str = "AppQuitting";
     /// Headless IPC only: stop starting work ahead of a Cloud sleep (the
-    /// edge runs `zeron quiesce` before stopping the machine). Replies
+    /// edge runs `vardoger quiesce` before stopping the machine). Replies
     /// `{"quiesced":true}` or `{"quiesced":false,"busy":"<why>"}`.
     pub const QUIESCE_FOR_SLEEP: &str = "QuiesceForSleep";
     pub const AUTH_STATUS: &str = "AuthStatus";
@@ -297,7 +297,7 @@ pub mod methods {
     pub const READ_BACKGROUND_TASK_OUTPUT: &str = "ReadBackgroundTaskOutput";
     /// `{chatId, taskIds, waiting?}` → `{matched, unmatched}`: the agent says
     /// it waits on these of its background processes (or, `waiting` false,
-    /// no longer), so its turn's end reads as a wait (Zeron's MCP
+    /// no longer), so its turn's end reads as a wait (Vardoger's MCP
     /// `wait_on_background`). An agent's always names its own chat. Refused
     /// where the runtime doesn't wake its agent when the work ends. Local:
     /// an agent's MCP server dials its chat's host.
@@ -322,7 +322,7 @@ pub mod methods {
     /// one shell command run to its end on the target device (no PTY, no
     /// session), its output capped and its process group killed at the
     /// timeout; with `background`, → `CommandStatus` of one left running.
-    /// Relay-forwardable, as are the three below (Zeron MCP's `run_command`,
+    /// Relay-forwardable, as are the three below (Vardoger MCP's `run_command`,
     /// `command_output`, `stop_command`, `list_commands`).
     pub const RUN_COMMAND: &str = "RunCommand";
     /// `{id}` → `CommandStatus`: a background command's output since it was
@@ -567,7 +567,7 @@ pub fn peer_refused(method: &str, _params: &serde_json::Value) -> bool {
     local_only(method)
 }
 
-/// The methods an agent's `zeron mcp` server may call with the
+/// The methods an agent's `vardoger mcp` server may call with the
 /// agent-scoped IPC token: what its tools need and nothing that grants
 /// power. An allow-list, so a method added later stays the app's until
 /// it's listed here. Never here: updating (the engine's and harnesses'),
@@ -601,7 +601,7 @@ pub fn agent_allowed(method: &str) -> bool {
             | methods::PUBLISH_IMAGE
             // Saying what the calling chat's agent waits on.
             | methods::AWAIT_BACKGROUND
-            // Commands on any of the person's devices (Zeron MCP's
+            // Commands on any of the person's devices (Vardoger MCP's
             // run_command & co.): full access only (the engine's agent gate).
             | methods::RUN_COMMAND
             | methods::READ_COMMAND_OUTPUT
@@ -1119,7 +1119,7 @@ mod tests {
         }
     }
 
-    /// R6/R16: the agent-scoped token (what `zeron mcp` holds) reaches its
+    /// R6/R16: the agent-scoped token (what `vardoger mcp` holds) reaches its
     /// tools' methods as an agent, and nothing that decides, signs, updates
     /// or hands out credentials; the full token still reaches everything.
     #[tokio::test]

@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use zeron_rpc::{RpcClient, connect_ipc, methods};
+use vardoger_rpc::{RpcClient, connect_ipc, methods};
 
 fn fail(message: &str) -> ! {
     eprintln!("FAIL: {message}");

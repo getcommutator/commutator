@@ -16,7 +16,7 @@
 //!   as pi saves it (`{type: "oauth", refresh, access, expires}`, `expires`
 //!   five minutes early). A fresh grant of its own: never Claude Code's
 //!   refresh token (single-use: sharing one would log the other out). Pi
-//!   refreshes it under its own lock, which every zeron swap takes too.
+//!   refreshes it under its own lock, which every vardoger swap takes too.
 //!   (OpenCode has no Claude sign-in: none offered.)
 //! - **GitHub Copilot** (`github-copilot`, OpenCode and Pi): GitHub's
 //!   device flow (scope `read:user`) — the dialog shows the code; no
@@ -169,14 +169,14 @@ impl AgentAccounts {
             Ok(()) => (
                 "200 OK",
                 "<!doctype html><title>Signed in</title><p>Signed in to ChatGPT.</p>\
-                 <p>You can close this tab and return to Zeron.</p>"
+                 <p>You can close this tab and return to Vardoger.</p>"
                     .to_string(),
             ),
             Err(error) => (
                 "400 Bad Request",
                 format!(
                     "<!doctype html><title>Sign-in failed</title><p>{}</p>\
-                     <p>Return to Zeron to try again.</p>",
+                     <p>Return to Vardoger to try again.</p>",
                     html_escape(&error.to_string())
                 ),
             ),
@@ -343,14 +343,14 @@ impl AgentAccounts {
             Ok(()) => (
                 "200 OK",
                 "<!doctype html><title>Signed in</title><p>Signed in to Claude for Pi.</p>\
-                 <p>You can close this tab and return to Zeron.</p>"
+                 <p>You can close this tab and return to Vardoger.</p>"
                     .to_string(),
             ),
             Err(error) => (
                 "400 Bad Request",
                 format!(
                     "<!doctype html><title>Sign-in failed</title><p>{}</p>\
-                     <p>Return to Zeron to try again.</p>",
+                     <p>Return to Vardoger to try again.</p>",
                     html_escape(&error.to_string())
                 ),
             ),
@@ -620,7 +620,7 @@ impl AgentAccounts {
             .get(format!("{api}/user"))
             .header("Authorization", format!("token {github_token}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "zeron")
+            .header("User-Agent", "vardoger")
             .timeout(Duration::from_secs(15))
             .send()
             .await
@@ -780,7 +780,7 @@ fn copilot_client_id(harness: HarnessId) -> &'static str {
 fn copilot_user_agent(harness: HarnessId) -> &'static str {
     match harness {
         HarnessId::Pi => PI_COPILOT_HEADERS[0].1,
-        _ => "zeron",
+        _ => "vardoger",
     }
 }
 

@@ -72,12 +72,12 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::watch;
 
-use zeron_doc::{MessagePart, SessionCommandPayload};
-use zeron_proto::{
+use vardoger_doc::{MessagePart, SessionCommandPayload};
+use vardoger_proto::{
     AgentEvent, ChatConfig, CreateWorktreeOutcome, EngineInfo, HarnessId, HarnessUpdatePolicy,
     ProjectActionDraft, Space, ToolCall, WorkspaceScope,
 };
-use zeron_rpc::{
+use vardoger_rpc::{
     LinkCache, RpcError, RpcReply, RpcService, capability_errors, methods, parse_params,
 };
 
@@ -169,7 +169,7 @@ struct RelayCommandParams {
     chat_id: String,
     /// The full command entry, client-minted id included — the exactly-once
     /// key the host claims in its processed ledger before executing.
-    entry: zeron_doc::SessionCommandEntry,
+    entry: vardoger_doc::SessionCommandEntry,
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,7 +416,7 @@ const CANVAS_TERMINAL_PREFIX: &str = "space-canvas:";
 /// `chat_image_root`), as configured: the jail matches a reply's path against
 /// it raw or canonical. Fails closed: no folder of its own (a legacy
 /// projectless chat runs in home), a relative or missing folder, and any
-/// folder that is `home` or above it, or holds one of `data` (Zeron's own
+/// folder that is `home` or above it, or holds one of `data` (Vardoger's own
 /// dirs), are refused, comparing canonical forms. A scratch folder is
 /// resolved under `scratch_root`, never created: only a run creates it.
 fn chat_image_folder(
@@ -426,9 +426,9 @@ fn chat_image_folder(
     data: &[std::path::PathBuf],
 ) -> Result<std::path::PathBuf, &'static str> {
     let cwd = cwd
-        .filter(|cwd| !zeron_proto::projectless::is_home_cwd(cwd))
+        .filter(|cwd| !vardoger_proto::projectless::is_home_cwd(cwd))
         .ok_or("the chat has no working folder of its own")?;
-    let folder = if zeron_proto::projectless::is_scratch_cwd(cwd) {
+    let folder = if vardoger_proto::projectless::is_scratch_cwd(cwd) {
         scratch_root.join(cwd.trim().rsplit('/').next().unwrap_or_default())
     } else {
         std::path::PathBuf::from(crate::repos::expand_home(cwd)?)
@@ -446,7 +446,7 @@ fn chat_image_folder(
             .filter_map(|dir| std::fs::canonicalize(dir).ok())
             .any(|dir| dir.starts_with(&canonical))
     {
-        return Err("the chat works in the home folder, above it, or around Zeron's data");
+        return Err("the chat works in the home folder, above it, or around Vardoger's data");
     }
     Ok(folder)
 }
@@ -668,11 +668,11 @@ struct ReadChatImageChunkParams {
     offset: u64,
 }
 
-const _: () = assert!(zeron_proto::VISUAL_MAX_BYTES == zeron_visual::MAX_SCRIPT_BYTES);
-const _: () = assert!(zeron_proto::VISUAL_MAX_ASSETS == zeron_visual::assets::MAX_ASSETS);
-const _: () = assert!(zeron_proto::VISUAL_MAX_ASSET_BYTES == zeron_visual::assets::MAX_ASSET_BYTES);
+const _: () = assert!(vardoger_proto::VISUAL_MAX_BYTES == vardoger_visual::MAX_SCRIPT_BYTES);
+const _: () = assert!(vardoger_proto::VISUAL_MAX_ASSETS == vardoger_visual::assets::MAX_ASSETS);
+const _: () = assert!(vardoger_proto::VISUAL_MAX_ASSET_BYTES == vardoger_visual::assets::MAX_ASSET_BYTES);
 const _: () = assert!(
-    zeron_proto::VISUAL_MAX_TOTAL_ASSET_BYTES == zeron_visual::assets::MAX_TOTAL_ASSET_BYTES
+    vardoger_proto::VISUAL_MAX_TOTAL_ASSET_BYTES == vardoger_visual::assets::MAX_TOTAL_ASSET_BYTES
 );
 
 #[derive(Debug, Deserialize)]
@@ -711,7 +711,7 @@ fn decode_visual_assets(
     assets: &std::collections::BTreeMap<String, String>,
 ) -> Result<Vec<(String, Vec<u8>)>, RpcError> {
     use base64::Engine as _;
-    use zeron_visual::assets::{MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, valid_name};
+    use vardoger_visual::assets::{MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, valid_name};
     if assets.len() > MAX_ASSETS {
         return Err(RpcError::BadParams(format!(
             "a visual takes at most {MAX_ASSETS} assets"
@@ -788,15 +788,15 @@ enum MutateParams {
         /// Cwd override (isolated-worktree path); default = the space's folder.
         #[serde(default)]
         cwd: Option<String>,
-        /// The chat whose agent is creating this one (Zeron MCP); recorded
+        /// The chat whose agent is creating this one (Vardoger MCP); recorded
         /// on the row as `parentChatId` for orchestration trees.
         #[serde(default)]
         parent_chat_id: Option<String>,
         /// What the child is to its parent (`childKind`: `side` | `subagent`,
-        /// the Zeron MCP's `kind`): kept on the row only with a parent. An
+        /// the Vardoger MCP's `kind`): kept on the row only with a parent. An
         /// unknown kind reads as none (a side chat).
-        #[serde(default, deserialize_with = "zeron_proto::lenient_child_kind")]
-        child_kind: Option<zeron_proto::ChildKind>,
+        #[serde(default, deserialize_with = "vardoger_proto::lenient_child_kind")]
+        child_kind: Option<vardoger_proto::ChildKind>,
         /// Run on Cloud (the checkout picker's Cloud): the chat gets its own
         /// Cloud machine, cloning the project's GitHub repository.
         #[serde(default)]
@@ -805,7 +805,7 @@ enum MutateParams {
         /// = the account's default. The person's alone: from an agent, or
         /// another device, it is ignored.
         #[serde(default)]
-        cloud_reach: Option<zeron_proto::CloudReach>,
+        cloud_reach: Option<vardoger_proto::CloudReach>,
     },
     /// Create a space (device + folder pair). Idempotent by id; a live
     /// duplicate `(deviceId, path)` no-ops. `gitDetected` is seeded from the
@@ -838,7 +838,7 @@ enum MutateParams {
     SetSpaceIcon {
         space_id: String,
         #[serde(default)]
-        icon: Option<zeron_proto::SpaceIcon>,
+        icon: Option<vardoger_proto::SpaceIcon>,
     },
     /// Hard delete: cascades to every chat (and session row) in the space.
     /// Live runs hosted here are interrupted best-effort.
@@ -874,9 +874,9 @@ enum MutateParams {
     /// Change one pin without replacing another device's edits.
     #[serde(rename_all = "camelCase")]
     ChangeSidebarPin {
-        change: zeron_proto::SidebarPinChange,
+        change: vardoger_proto::SidebarPinChange,
     },
-    /// Full-config replace on the chat row (zeron `SetChatConfig`): the
+    /// Full-config replace on the chat row (vardoger `SetChatConfig`): the
     /// composer's mid-session model / reasoning / options changes, LWW-synced
     /// so they survive restarts and reach every device.
     #[serde(rename_all = "camelCase")]
@@ -926,7 +926,7 @@ pub struct EngineRpc {
     /// Agents' shell commands here ([`crate::commands`]).
     commands: crate::commands::Commands,
     project_actions: ProjectActionsStore,
-    previews: Option<zeron_preview::PreviewService>,
+    previews: Option<vardoger_preview::PreviewService>,
     change_requests: CheckoutChangeRequests,
     github: GitHubCli,
     diff_sync: CheckoutDiffSync,
@@ -934,7 +934,7 @@ pub struct EngineRpc {
     agent_accounts: AgentAccounts,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
-    updater: Option<zeron_update::Updater>,
+    updater: Option<vardoger_update::Updater>,
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
     local_import: Option<crate::local_import::LocalImporter>,
     /// Cloud runner only: vault grants (ListGithubRepos, credentialed CloneRepo).
@@ -965,12 +965,12 @@ impl EngineRpc {
         let engine_info = EngineInfo {
             device_id: doc_host.device_id().to_string(),
             workspace_scope,
-            cursor_sdk_version: Some(zeron_harness::CursorHarness::sdk_version().into()),
+            cursor_sdk_version: Some(vardoger_harness::CursorHarness::sdk_version().into()),
             capabilities: {
-                let mut capabilities = zeron_proto::capabilities::current();
+                let mut capabilities = vardoger_proto::capabilities::current();
                 if crate::desktop_notify::enabled() {
                     capabilities
-                        .push(zeron_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
+                        .push(vardoger_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
                 }
                 capabilities
             },
@@ -1006,7 +1006,7 @@ impl EngineRpc {
         }
     }
 
-    pub fn with_previews(mut self, previews: zeron_preview::PreviewService) -> Self {
+    pub fn with_previews(mut self, previews: vardoger_preview::PreviewService) -> Self {
         self.previews = Some(previews);
         self
     }
@@ -1039,7 +1039,7 @@ impl EngineRpc {
     }
 
     /// Attach the release checker (UpdateStatus stream + ApplyUpdate).
-    pub fn with_updater(mut self, updater: zeron_update::Updater) -> Self {
+    pub fn with_updater(mut self, updater: vardoger_update::Updater) -> Self {
         self.updater = Some(updater);
         self
     }
@@ -1124,7 +1124,7 @@ impl EngineRpc {
             || self.workspace.read_devices().is_ok_and(|devices| {
                 devices.iter().any(|device| {
                     device.id == device_id
-                        && device.supports(zeron_proto::capabilities::PROVIDER_SWITCH_V1)
+                        && device.supports(vardoger_proto::capabilities::PROVIDER_SWITCH_V1)
                 })
             })
     }
@@ -1162,7 +1162,7 @@ impl EngineRpc {
                 d.id == device_id
                     && d.capabilities
                         .iter()
-                        .any(|c| c == zeron_proto::CLOUD_ACCOUNT_CAPABILITY)
+                        .any(|c| c == vardoger_proto::CLOUD_ACCOUNT_CAPABILITY)
             })
         })
     }
@@ -1215,7 +1215,7 @@ impl EngineRpc {
                 if !crate::registry::CLOUD_HARNESS_IDS.contains(&p.harness) {
                     return Some(Err(RpcError::Failed(format!(
                         "{} doesn't run on Cloud",
-                        zeron_proto::providers::provider_name(p.harness)
+                        vardoger_proto::providers::provider_name(p.harness)
                     ))));
                 }
                 // What Cloud's machines run: the edge's list for the accounts
@@ -1260,7 +1260,7 @@ impl EngineRpc {
     /// accounts Cloud runs it on now, else its newest
     /// ([`crate::cloud_client::CloudModelLists::for_harness`]). `None` before
     /// the edge was ever read, or with nothing listed for it.
-    async fn cloud_models(&self, harness: HarnessId) -> Option<Vec<zeron_proto::Model>> {
+    async fn cloud_models(&self, harness: HarnessId) -> Option<Vec<vardoger_proto::Model>> {
         let key = serde_json::to_value(harness).ok()?.as_str()?.to_owned();
         let path = self.repos.data_dir().join("cloud-models.json");
         let cloud = self.cloud();
@@ -1310,9 +1310,9 @@ impl EngineRpc {
                 names.insert(0, default.clone());
             }
         }
-        let refs: Vec<zeron_proto::RepoRef> = names
+        let refs: Vec<vardoger_proto::RepoRef> = names
             .into_iter()
-            .map(|name| zeron_proto::RepoRef {
+            .map(|name| vardoger_proto::RepoRef {
                 current: p.default_branch.as_deref() == Some(name.as_str()),
                 name,
                 worktree_path: None,
@@ -1335,17 +1335,17 @@ impl EngineRpc {
         space_id: Option<&str>,
         device_id: Option<&str>,
         parent_chat_id: Option<&str>,
-        child_kind: Option<zeron_proto::ChildKind>,
+        child_kind: Option<vardoger_proto::ChildKind>,
         branch: Option<&str>,
         cloud: bool,
-        reach: Option<zeron_proto::CloudReach>,
+        reach: Option<vardoger_proto::CloudReach>,
         config: Option<&ChatConfig>,
     ) -> Result<Option<CloudHost>, RpcError> {
         let failed = |e: crate::EngineError| RpcError::Failed(e.to_string());
-        let on_cloud = |device_id: &str| device_id.starts_with(zeron_proto::CLOUD_DEVICE_PREFIX);
+        let on_cloud = |device_id: &str| device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX);
         // An agent's chat on another of the person's devices runs there.
         let elsewhere = |parent: &str| {
-            matches!(zeron_rpc::caller(), zeron_rpc::Caller::Agent { .. })
+            matches!(vardoger_rpc::caller(), vardoger_rpc::Caller::Agent { .. })
                 && device_id.is_some_and(|device| !device.is_empty() && device != parent)
         };
         // A side chat of a Cloud chat shares its machine (and files), unless
@@ -1421,7 +1421,7 @@ impl EngineRpc {
             .find(|repo| repo.full_name.eq_ignore_ascii_case(&full_name))
             .ok_or_else(|| {
                 RpcError::Failed(format!(
-                    "Cloud can't reach {full_name} — install the Zeron GitHub App on it in Settings → Cloud."
+                    "Cloud can't reach {full_name} — install the Vardoger GitHub App on it in Settings → Cloud."
                 ))
             })?;
         let session = cloud_client
@@ -1453,7 +1453,7 @@ impl EngineRpc {
         }
     }
 
-    fn updater(&self) -> Result<&zeron_update::Updater, RpcError> {
+    fn updater(&self) -> Result<&vardoger_update::Updater, RpcError> {
         self.updater
             .as_ref()
             .ok_or_else(|| RpcError::Failed("updates unavailable".into()))
@@ -1491,7 +1491,7 @@ impl EngineRpc {
     /// name an existing linked worktree for a new chat, but it is verified
     /// against the space repository before any filesystem walk begins.
     async fn file_search_root(&self, p: &FileSearchParams) -> Result<std::path::PathBuf, RpcError> {
-        let target = zeron_proto::WorkspaceTarget {
+        let target = vardoger_proto::WorkspaceTarget {
             chat_id: p.chat_id.clone(),
             space_id: p.space_id.clone(),
             checkout_path: p.path.clone(),
@@ -1532,7 +1532,7 @@ impl EngineRpc {
     /// The one folder a chat's reply images (`![alt](path)`) may come from:
     /// its working folder on this host. Refused, failing closed, when the chat
     /// runs elsewhere, has no folder of its own, or works in the home folder,
-    /// above it, or around Zeron's own data — so a reply can never show an
+    /// above it, or around Vardoger's own data — so a reply can never show an
     /// image from all of home, or another chat's attachments.
     fn chat_image_root(&self, chat_id: &str) -> Result<std::path::PathBuf, RpcError> {
         let refused = |why: &str| RpcError::BadParams(why.into());
@@ -1684,7 +1684,7 @@ impl EngineRpc {
 
     /// An agent login runs on `target`, but the browser that finishes it runs
     /// HERE: while the login waits on a loopback callback, this device's same
-    /// port forwards to it over P2P ([`zeron_preview::login`]). The forwarder
+    /// port forwards to it over P2P ([`vardoger_preview::login`]). The forwarder
     /// opens when a reply first names the port and closes when the login
     /// finishes, fails, is cancelled or its time runs out; a port taken here
     /// fails the login with that reason instead of stranding the browser.
@@ -1694,7 +1694,7 @@ impl EngineRpc {
         method: &str,
         mut params: serde_json::Value,
     ) -> Result<RpcReply, RpcError> {
-        use zeron_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus};
+        use vardoger_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus};
         let login_id = params
             .get("loginId")
             .and_then(|v| v.as_str())
@@ -1963,7 +1963,7 @@ impl EngineRpc {
     /// processes until it ends ([`Self::follow_commands`]). Only an agent's
     /// own call: a peer forwarding one here runs it for a chat hosted there.
     fn show_command(&self, device: Option<&str>, started: &serde_json::Value) {
-        let zeron_rpc::Caller::Agent { chat: Some(chat) } = zeron_rpc::caller() else {
+        let vardoger_rpc::Caller::Agent { chat: Some(chat) } = vardoger_rpc::caller() else {
             return;
         };
         let Some(id) = started["id"].as_str() else {
@@ -1980,7 +1980,7 @@ impl EngineRpc {
         let task = crate::commands::CommandTask {
             device: device.map(str::to_owned),
             id: id.to_owned(),
-            task: zeron_proto::BackgroundTask {
+            task: vardoger_proto::BackgroundTask {
                 id: match device {
                     Some(device) => format!("{id}@{device}"),
                     None => id.to_owned(),
@@ -2007,7 +2007,7 @@ impl EngineRpc {
         const COMMANDS_UNREACHABLE: Duration = Duration::from_secs(120);
         const REDIAL: Duration = Duration::from_secs(3);
         let heartbeat_every =
-            Duration::from_millis(zeron_proto::view::SESSION_HEARTBEAT_MS as u64 / 2);
+            Duration::from_millis(vardoger_proto::view::SESSION_HEARTBEAT_MS as u64 / 2);
         let mut heartbeat = tokio::time::interval(heartbeat_every);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut lost_since: Option<tokio::time::Instant> = None;
@@ -2137,13 +2137,13 @@ impl EngineRpc {
         chat: &str,
     ) -> Result<
         (
-            zeron_harness::codex::realtime::RealtimeHandle,
-            tokio::sync::broadcast::Receiver<zeron_proto::voice::VoiceEvent>,
+            vardoger_harness::codex::realtime::RealtimeHandle,
+            tokio::sync::broadcast::Receiver<vardoger_proto::voice::VoiceEvent>,
             std::sync::Arc<crate::sessions::VoiceActivity>,
         ),
-        zeron_proto::voice::VoiceRejection,
+        vardoger_proto::voice::VoiceRejection,
     > {
-        use zeron_proto::voice::VoiceRejection;
+        use vardoger_proto::voice::VoiceRejection;
         // Without Codex here a retry can never connect: ask for an install.
         if !self
             .registry
@@ -2187,7 +2187,7 @@ impl EngineRpc {
                 // A voice orchestrator is hidden, so the chats it creates are
                 // the user's top-level sessions rather than its side chats.
                 let parent_chat_id = parent_chat_id
-                    .filter(|parent| !zeron_proto::voice::is_orchestrator_chat(parent));
+                    .filter(|parent| !vardoger_proto::voice::is_orchestrator_chat(parent));
                 self.workspace
                     .create_chat_hosted(
                         &chat_id,
@@ -2215,7 +2215,7 @@ impl EngineRpc {
                 git_detected,
                 github_repo,
             } => match github_repo {
-                Some(repo) if device_id.starts_with(zeron_proto::CLOUD_DEVICE_PREFIX) => self
+                Some(repo) if device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX) => self
                     .workspace
                     .create_cloud_space(&space_id, &device_id, &path, name, &repo)
                     .map_err(failed),
@@ -2230,7 +2230,7 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::SetSpaceIcon { space_id, icon } => {
-                let icon = match icon.map(zeron_proto::SpaceIcon::normalized).transpose() {
+                let icon = match icon.map(vardoger_proto::SpaceIcon::normalized).transpose() {
                     Ok(icon) => icon.flatten(),
                     Err(part) => return Err(RpcError::BadParams(format!("invalid icon: {part}"))),
                 };
@@ -2246,7 +2246,7 @@ impl EngineRpc {
                     .iter()
                     .filter(|chat| {
                         chat.space_id.as_deref() == Some(space_id.as_str())
-                            && zeron_proto::is_cloud_device(&chat.device_id, "")
+                            && vardoger_proto::is_cloud_device(&chat.device_id, "")
                     })
                     .map(|chat| chat.id.clone())
                     .collect();
@@ -2256,7 +2256,7 @@ impl EngineRpc {
                     .iter()
                     .filter(|chat| {
                         chat.space_id.is_none()
-                            && zeron_proto::is_cloud_device(&chat.device_id, "")
+                            && vardoger_proto::is_cloud_device(&chat.device_id, "")
                             && chat
                                 .parent_chat_id
                                 .as_ref()
@@ -2351,7 +2351,7 @@ impl EngineRpc {
                 }
                 if switching && !self.host_switches_providers(&chat_id) {
                     return Err(RpcError::Failed(
-                        "This chat's computer needs a newer Zeron to switch provider".into(),
+                        "This chat's computer needs a newer Vardoger to switch provider".into(),
                     ));
                 }
                 self.voice.retire_chat(&chat_id);
@@ -2366,7 +2366,7 @@ impl EngineRpc {
                     .chat(&chat_id)
                     .ok()
                     .flatten()
-                    .is_some_and(|chat| zeron_proto::is_cloud_device(&chat.device_id, ""));
+                    .is_some_and(|chat| vardoger_proto::is_cloud_device(&chat.device_id, ""));
                 // A Cloud chat's children on Cloud go with it: its delegates
                 // (each on a machine of its own, which would otherwise outlive
                 // the parent) and its side chats (on its machine, now gone).
@@ -2417,17 +2417,17 @@ impl EngineRpc {
                     .unwrap_or_default()
                     .into_iter()
                     .find(|d| d.id == device_id);
-                let cloud = zeron_proto::is_cloud_device(&device_id, "")
+                let cloud = vardoger_proto::is_cloud_device(&device_id, "")
                     || row.as_ref().is_some_and(|d| {
-                        zeron_proto::is_cloud_device(&d.id, &d.platform)
+                        vardoger_proto::is_cloud_device(&d.id, &d.platform)
                             || d.capabilities.iter().any(|c| {
-                                c == zeron_proto::CLOUD_SESSION_CAPABILITY || c == zeron_proto::CLOUD_ACCOUNT_CAPABILITY
+                                c == vardoger_proto::CLOUD_SESSION_CAPABILITY || c == vardoger_proto::CLOUD_ACCOUNT_CAPABILITY
                             })
                     });
                 if cloud {
                     return Err(RpcError::BadParams("cloud_device".into()));
                 }
-                if self.workspace.peer_liveness(&device_id) == zeron_rpc::PeerLiveness::Live {
+                if self.workspace.peer_liveness(&device_id) == vardoger_rpc::PeerLiveness::Live {
                     return Err(RpcError::Failed("device_online".into()));
                 }
                 self.workspace
@@ -2466,7 +2466,7 @@ impl EngineRpc {
 /// turn, plus — when the parent is itself on Cloud — its children on Cloud.
 /// (A computer's chat keeps its Cloud delegates, as before.)
 fn chat_descendants(
-    chats: &[zeron_proto::Chat],
+    chats: &[vardoger_proto::Chat],
     root: &str,
     root_on_cloud: bool,
 ) -> Vec<(String, bool)> {
@@ -2478,7 +2478,7 @@ fn chat_descendants(
             if chat.parent_chat_id.as_deref() != Some(parent) {
                 continue;
             }
-            let on_cloud = zeron_proto::is_cloud_device(&chat.device_id, "");
+            let on_cloud = vardoger_proto::is_cloud_device(&chat.device_id, "");
             if (on_cloud && !parent_on_cloud) || !seen.insert(chat.id.as_str()) {
                 continue;
             }
@@ -2518,13 +2518,13 @@ fn change_request_rpc_error(error: ChangeRequestError) -> RpcError {
 /// everything else is interactive and must fail fast.
 #[derive(Default)]
 pub(crate) struct Installations(
-    std::sync::Mutex<std::collections::HashMap<HarnessId, zeron_harness::CancellationToken>>,
+    std::sync::Mutex<std::collections::HashMap<HarnessId, vardoger_harness::CancellationToken>>,
 );
 
 struct Installing<'a> {
     installs: &'a Installations,
     harness: HarnessId,
-    cancel: zeron_harness::CancellationToken,
+    cancel: vardoger_harness::CancellationToken,
 }
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
@@ -2542,7 +2542,7 @@ impl Installations {
         if installs.contains_key(&harness) {
             return Err(RpcError::Failed("already installing".into()));
         }
-        let cancel = zeron_harness::CancellationToken::new();
+        let cancel = vardoger_harness::CancellationToken::new();
         installs.insert(harness, cancel.clone());
         Ok(Installing {
             installs: self,
@@ -2564,14 +2564,14 @@ impl Installations {
 
 async fn run_requested_install(
     harness: HarnessId,
-    cancel: zeron_harness::CancellationToken,
-) -> Result<(), zeron_harness::HarnessError> {
+    cancel: vardoger_harness::CancellationToken,
+) -> Result<(), vardoger_harness::HarnessError> {
     #[cfg(test)]
-    if let Ok(script) = std::env::var(format!("ZERON_INSTALLER_COMMAND_{harness:?}").to_uppercase())
+    if let Ok(script) = std::env::var(format!("VARDOGER_INSTALLER_COMMAND_{harness:?}").to_uppercase())
     {
-        return zeron_harness::install::install_with_command(harness, &script, cancel).await;
+        return vardoger_harness::install::install_with_command(harness, &script, cancel).await;
     }
-    zeron_harness::install::install_harness(harness, cancel).await
+    vardoger_harness::install::install_harness(harness, cancel).await
 }
 
 async fn install_harness_with<F, Fut>(
@@ -2581,7 +2581,7 @@ async fn install_harness_with<F, Fut>(
 ) -> Result<Vec<crate::registry::HarnessDescriptor>, RpcError>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<(), zeron_harness::HarnessError>>,
+    Fut: std::future::Future<Output = Result<(), vardoger_harness::HarnessError>>,
 {
     // A Cloud device registers only Codex + Claude Code; installing anything
     // else would put a CLI on it that nothing may run (or probe).
@@ -2590,7 +2590,7 @@ where
             "{harness:?} is not available on this device"
         )));
     }
-    if !zeron_harness::install::can_install(harness) {
+    if !vardoger_harness::install::can_install(harness) {
         return Err(RpcError::Failed(
             "No supported installer or required tools available on this device".into(),
         ));
@@ -2655,11 +2655,11 @@ const LOGIN_TUNNEL_TTL: Duration = Duration::from_secs(15 * 60);
 /// variables its CLI signs in with. Unknown (never listed, or an agent whose
 /// logins aren't tracked) is not signed out.
 fn warm_signed_out(
-    snapshot: Option<&zeron_proto::AgentAccountsSnapshot>,
-    harness: zeron_proto::HarnessId,
+    snapshot: Option<&vardoger_proto::AgentAccountsSnapshot>,
+    harness: vardoger_proto::HarnessId,
     set: impl Fn(&str) -> bool,
 ) -> bool {
-    use zeron_proto::HarnessId;
+    use vardoger_proto::HarnessId;
     let env: &[&str] = match harness {
         HarnessId::ClaudeCode => &[
             "ANTHROPIC_API_KEY",
@@ -2947,15 +2947,15 @@ fn keyed_frame(rows: Vec<serde_json::Value>, key: &str, last: Option<SentRows>) 
     (Some(frame), (keys, now_rows))
 }
 
-/// The transcript watch as delta frames (`zeron_doc::transcript_delta`): a
+/// The transcript watch as delta frames (`vardoger_doc::transcript_delta`): a
 /// full `reset` first, then only changed entries per commit — the whole-Vec
 /// serialization here was the per-tick cost that scaled with transcript size.
 /// (`options`: what the watcher asked for beyond the original frames: a long
 /// reply's changed parts alone, `partPatches`.)
 fn doc_messages_stream(
     rx: watch::Receiver<crate::doc_host::TranscriptSnapshot>,
-    doc: std::sync::Arc<zeron_doc::SessionDoc>,
-    options: zeron_doc::DiffOptions,
+    doc: std::sync::Arc<vardoger_doc::SessionDoc>,
+    options: vardoger_doc::DiffOptions,
 ) -> BoxStream<'static, serde_json::Value> {
     doc_messages_stream_from(rx, doc, options, None)
 }
@@ -2964,14 +2964,14 @@ fn doc_messages_stream(
 /// has, and its opening cutoff) when given: deltas from it, no reset.
 fn doc_messages_stream_from(
     rx: watch::Receiver<crate::doc_host::TranscriptSnapshot>,
-    doc: std::sync::Arc<zeron_doc::SessionDoc>,
-    options: zeron_doc::DiffOptions,
-    start: Option<(crate::doc_host::TranscriptSnapshot, zeron_doc::TranscriptBaseline)>,
+    doc: std::sync::Arc<vardoger_doc::SessionDoc>,
+    options: vardoger_doc::DiffOptions,
+    start: Option<(crate::doc_host::TranscriptSnapshot, vardoger_doc::TranscriptBaseline)>,
 ) -> BoxStream<'static, serde_json::Value> {
-    use zeron_doc::transcript_delta::{TranscriptFrame, diff_transcript_with};
+    use vardoger_doc::transcript_delta::{TranscriptFrame, diff_transcript_with};
     let (prev, baseline) = match start {
         Some((snapshot, baseline)) => (Some(snapshot), baseline),
-        None => (None, zeron_doc::TranscriptBaseline::default()),
+        None => (None, vardoger_doc::TranscriptBaseline::default()),
     };
     let usage = prev.as_ref().map(|_| doc.context_usage());
     futures::stream::unfold(
@@ -2990,7 +2990,7 @@ fn doc_messages_stream_from(
                 };
                 let replay_baseline = match prev.as_ref() {
                     None => {
-                        opening_baseline = zeron_doc::TranscriptBaseline::capture(&current.entries);
+                        opening_baseline = vardoger_doc::TranscriptBaseline::capture(&current.entries);
                         Some(opening_baseline.clone())
                     }
                     Some(prev)
@@ -3024,7 +3024,7 @@ fn doc_messages_stream_from(
                     continue;
                 }
                 previous_usage = usage;
-                let value = serde_json::to_value(zeron_doc::TranscriptUpdate {
+                let value = serde_json::to_value(vardoger_doc::TranscriptUpdate {
                     frame,
                     context_usage: usage,
                     replay_baseline,
@@ -3043,9 +3043,9 @@ fn doc_messages_stream_from(
 async fn windowed_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    window: zeron_doc::TranscriptWindow,
+    window: vardoger_doc::TranscriptWindow,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
-    use zeron_doc::transcript_delta::{TranscriptFrame, diff_transcript};
+    use vardoger_doc::transcript_delta::{TranscriptFrame, diff_transcript};
     // Opening a whale and building its mirror mustn't stall the RPC task.
     let (rx, doc) = tokio::task::spawn_blocking(move || {
         let handle = host.open(&chat_id)?;
@@ -3058,7 +3058,7 @@ async fn windowed_doc_messages_stream(
         (rx, doc, window, None, None, None),
         |(mut rx, doc, window, mut prev, mut prev_info, mut prev_usage)| async move {
             loop {
-                let prev_slice: Option<&Vec<std::sync::Arc<zeron_doc::SessionMessageEntry>>> =
+                let prev_slice: Option<&Vec<std::sync::Arc<vardoger_doc::SessionMessageEntry>>> =
                     prev.as_ref();
                 if prev_slice.is_some() {
                     rx.changed().await.ok()?;
@@ -3077,7 +3077,7 @@ async fn windowed_doc_messages_stream(
                 if unchanged {
                     continue;
                 }
-                let mut value = serde_json::to_value(zeron_doc::TranscriptUpdate {
+                let mut value = serde_json::to_value(vardoger_doc::TranscriptUpdate {
                     frame,
                     context_usage: usage,
                     replay_baseline: None,
@@ -3114,7 +3114,7 @@ const SINCE_TAIL_PARTS: usize = 2_048;
 async fn since_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    options: zeron_doc::DiffOptions,
+    options: vardoger_doc::DiffOptions,
     known: Vec<(String, u64)>,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
     let (preview, handle, known) = match tokio::task::spawn_blocking(move || {
@@ -3123,16 +3123,16 @@ async fn since_doc_messages_stream(
             true => handle.doc().read_newest_entries(SINCE_TAIL_ENTRIES, SINCE_TAIL_PARTS)?,
             false => Vec::new(),
         };
-        let (changed, holds) = zeron_doc::tail_since_known(&known, &tail);
+        let (changed, holds) = vardoger_doc::tail_since_known(&known, &tail);
         // (A short chat, or nothing changed among its newest: the `since`
         // frame at once.)
         if changed.is_empty() {
             return since_stream(&handle, options, &known).map(Err);
         }
-        let mut preview = serde_json::to_value(zeron_doc::TranscriptUpdate {
-            frame: zeron_doc::TranscriptFrame::reset(&changed),
+        let mut preview = serde_json::to_value(vardoger_doc::TranscriptUpdate {
+            frame: vardoger_doc::TranscriptFrame::reset(&changed),
             context_usage: handle.doc().context_usage(),
-            replay_baseline: Some(zeron_doc::TranscriptBaseline::capture(&changed)),
+            replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&changed)),
         })
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         preview["historyPending"] = serde_json::Value::Bool(true);
@@ -3167,7 +3167,7 @@ async fn since_doc_messages_stream(
 /// then its deltas.
 fn since_stream(
     handle: &crate::doc_host::ChatDocHandle,
-    options: zeron_doc::DiffOptions,
+    options: vardoger_doc::DiffOptions,
     known: &[(String, u64)],
 ) -> Result<BoxStream<'static, serde_json::Value>, crate::EngineError> {
     let (rx, doc, first, start) = {
@@ -3177,18 +3177,18 @@ fn since_stream(
         // doc reads only the entries changed since its last read.
         handle.publish_messages();
         let current = rx.borrow().clone();
-        let baseline = zeron_doc::TranscriptBaseline::capture(&current.entries);
-        let frame = zeron_doc::delta_from_known(known, &current.entries);
+        let baseline = vardoger_doc::TranscriptBaseline::capture(&current.entries);
+        let frame = vardoger_doc::delta_from_known(known, &current.entries);
         // What the frame carries is history, not a reply arriving: its
         // cutoff, only for what it carries (the reader's rows have theirs).
         let sent = match &frame {
-            zeron_doc::TranscriptFrame::Delta { upsert, .. } => {
+            vardoger_doc::TranscriptFrame::Delta { upsert, .. } => {
                 let entries: Vec<_> = upsert.iter().map(|u| u.entry.clone()).collect();
-                zeron_doc::TranscriptBaseline::capture(&entries)
+                vardoger_doc::TranscriptBaseline::capture(&entries)
             }
             _ => baseline.clone(),
         };
-        let mut first = serde_json::to_value(zeron_doc::TranscriptUpdate {
+        let mut first = serde_json::to_value(vardoger_doc::TranscriptUpdate {
             frame,
             context_usage: handle.doc().context_usage(),
             replay_baseline: Some(sent),
@@ -3196,7 +3196,7 @@ fn since_stream(
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         first["since"] = serde_json::Value::Bool(true);
         // The order the reader must now hold its rows in (it checks).
-        first["orderSum"] = serde_json::json!(zeron_doc::order_sum(
+        first["orderSum"] = serde_json::json!(vardoger_doc::order_sum(
             current.entries.iter().map(|e| e.id.as_str())
         ));
         (rx, handle.doc_arc(), first, (current, baseline))
@@ -3211,15 +3211,15 @@ fn since_stream(
 async fn opening_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    options: zeron_doc::DiffOptions,
+    options: vardoger_doc::DiffOptions,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
     let (handle, preview) = tokio::task::spawn_blocking(move || {
         let handle = host.open(&chat_id)?;
         let entries = handle.doc().read_opening_tail(128)?;
-        let mut preview = serde_json::to_value(zeron_doc::TranscriptUpdate {
-            frame: zeron_doc::TranscriptFrame::reset(&entries),
+        let mut preview = serde_json::to_value(vardoger_doc::TranscriptUpdate {
+            frame: vardoger_doc::TranscriptFrame::reset(&entries),
             context_usage: handle.doc().context_usage(),
-            replay_baseline: Some(zeron_doc::TranscriptBaseline::capture(&entries)),
+            replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&entries)),
         })
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         preview["historyPending"] = serde_json::Value::Bool(true);
@@ -3300,7 +3300,7 @@ impl RpcService for AuthRpc {
                 RpcReply::value(&serde_json::json!({ "url": url }))
             }
             methods::ACCESS_TOKEN => {
-                // Local IPC only: the relay refuses it (`zeron_rpc::local_only`).
+                // Local IPC only: the relay refuses it (`vardoger_rpc::local_only`).
                 let (token, expires_at) = self
                     .auth
                     .access_token_with_expiry()
@@ -3431,7 +3431,7 @@ impl crate::remote_terminals::Relay for EngineRpc {
 impl RpcService for EngineRpc {
     async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
         // An agent's chats: capped at its own access, runs as the chat is
-        // set, attributed by Zeron (rpc/agent_gate.rs). Before forwarding.
+        // set, attributed by Vardoger (rpc/agent_gate.rs). Before forwarding.
         let params = self.agent_gate(method, params)?;
         // Machine stats: answered here, or asked of another of the
         // account's devices with its own deadline and error words.
@@ -3447,7 +3447,7 @@ impl RpcService for EngineRpc {
             let target = target.to_string();
             // What only that device may answer for itself (credentials,
             // signing, templates' consent), refused there too.
-            if zeron_rpc::peer_refused(method, &params) {
+            if vardoger_rpc::peer_refused(method, &params) {
                 return Err(RpcError::Failed(format!(
                     "{method}: only that device's own window can do that. It's waiting for you there."
                 )));
@@ -3459,7 +3459,7 @@ impl RpcService for EngineRpc {
             // user bearer for the vault: it forwards as before.)
             if crate::cloud_accounts::handles(method)
                 && (crate::cloud_accounts::is_cloud_accounts_target(&target)
-                    || (target.starts_with(zeron_proto::CLOUD_DEVICE_PREFIX)
+                    || (target.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX)
                         && !crate::runner::is_cloud_platform()))
             {
                 return Box::pin(crate::cloud_accounts::dispatch(
@@ -3470,7 +3470,7 @@ impl RpcService for EngineRpc {
                 ))
                 .await;
             }
-            if (target.starts_with(zeron_proto::CLOUD_DEVICE_PREFIX)
+            if (target.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX)
                 || crate::cloud_accounts::is_cloud_accounts_target(&target))
                 && let Some(reply) = self.answer_for_cloud(&target, method, &params).await
             {
@@ -3730,7 +3730,7 @@ impl RpcService for EngineRpc {
                 #[serde(rename_all = "camelCase")]
                 struct WarmStartParams {
                     chat_id: String,
-                    request: zeron_proto::RunRequest,
+                    request: vardoger_proto::RunRequest,
                     #[serde(default)]
                     typed: bool,
                 }
@@ -3849,8 +3849,8 @@ impl RpcService for EngineRpc {
                 let boundary = entries
                     .iter()
                     .rposition(|entry| {
-                        entry.role == zeron_doc::MessageRole::Assistant
-                            && entry.status == Some(zeron_doc::MessageStatus::Complete)
+                        entry.role == vardoger_doc::MessageRole::Assistant
+                            && entry.status == Some(vardoger_doc::MessageStatus::Complete)
                     })
                     .ok_or_else(|| {
                         RpcError::Failed(
@@ -3889,7 +3889,7 @@ impl RpcService for EngineRpc {
                     // sweep; the subagent's doc stays the source's.
                     for part in &mut entry.parts {
                         match part {
-                            zeron_doc::MessagePart::Input {
+                            vardoger_doc::MessagePart::Input {
                                 resolved, answers, ..
                             } => {
                                 if !*resolved {
@@ -3898,10 +3898,10 @@ impl RpcService for EngineRpc {
                                 }
                                 *resolved = true;
                             }
-                            zeron_doc::MessagePart::Tool {
+                            vardoger_doc::MessagePart::Tool {
                                 subagent_status, ..
-                            } if *subagent_status == Some(zeron_doc::SubagentStatus::Running) => {
-                                *subagent_status = Some(zeron_doc::SubagentStatus::Failed);
+                            } if *subagent_status == Some(vardoger_doc::SubagentStatus::Running) => {
+                                *subagent_status = Some(vardoger_doc::SubagentStatus::Failed);
                             }
                             _ => {}
                         }
@@ -3923,18 +3923,18 @@ impl RpcService for EngineRpc {
                         .unwrap_or_else(|| "New session".into());
                     target
                         .doc()
-                        .push_message(&zeron_doc::SessionMessageEntry {
+                        .push_message(&vardoger_doc::SessionMessageEntry {
                             duration_ms: None,
                             id: marker_id.clone(),
-                            role: zeron_doc::MessageRole::System,
-                            parts: vec![zeron_doc::MessagePart::Fork {
+                            role: vardoger_doc::MessageRole::System,
+                            parts: vec![vardoger_doc::MessagePart::Fork {
                                 id: marker_id,
                                 source_chat_id: source.id.clone(),
                                 source_title,
                             }],
                             created_at: chrono::Utc::now().timestamp_millis(),
                             device_id: self.doc_host.device_id().to_owned(),
-                            status: Some(zeron_doc::MessageStatus::Complete),
+                            status: Some(vardoger_doc::MessageStatus::Complete),
                             continuation_of: None,
                         })
                         .map_err(|e| RpcError::Failed(e.to_string()))?;
@@ -3994,7 +3994,7 @@ impl RpcService for EngineRpc {
                     .unwrap_or(false);
                 // Opt-in too: a reply's changed parts alone (`parts` frames),
                 // for a viewport that applies them.
-                let options = zeron_doc::DiffOptions {
+                let options = vardoger_doc::DiffOptions {
                     part_patches: params
                         .get("partPatches")
                         .and_then(|v| v.as_bool())
@@ -4003,7 +4003,7 @@ impl RpcService for EngineRpc {
                 let window = params
                     .get("window")
                     .filter(|v| !v.is_null())
-                    .map(|v| serde_json::from_value::<zeron_doc::TranscriptWindow>(v.clone()))
+                    .map(|v| serde_json::from_value::<vardoger_doc::TranscriptWindow>(v.clone()))
                     .transpose()
                     .map_err(|e| RpcError::BadParams(e.to_string()))?;
                 // What the reader holds (each entry's id and `entry_sum`):
@@ -4019,7 +4019,7 @@ impl RpcService for EngineRpc {
                 // device) keeps its parked agent for the longer idle window:
                 // its person is likely to write next. Not an agent reading
                 // it through its tools.
-                let viewer = (!matches!(zeron_rpc::caller(), zeron_rpc::Caller::Agent { .. }))
+                let viewer = (!matches!(vardoger_rpc::caller(), vardoger_rpc::Caller::Agent { .. }))
                     .then(|| self.sessions.retain_viewer(&p.chat_id));
                 if let Some(window) = window {
                     return windowed_doc_messages_stream(self.doc_host.clone(), p.chat_id, window)
@@ -4089,7 +4089,7 @@ impl RpcService for EngineRpc {
                         .is_some_and(|current| current.harness != cfg.harness);
                     if switching && !self.host_switches_providers(&p.chat_id) {
                         return Err(RpcError::Failed(
-                            "This chat's computer needs a newer Zeron to switch provider".into(),
+                            "This chat's computer needs a newer Vardoger to switch provider".into(),
                         ));
                     }
                 }
@@ -4260,7 +4260,7 @@ impl RpcService for EngineRpc {
                         },
                         None => self.commands.tail(&id).ok(),
                     };
-                    let output: Option<zeron_proto::BackgroundTaskOutput> = output;
+                    let output: Option<vardoger_proto::BackgroundTaskOutput> = output;
                     return RpcReply::value(&output);
                 }
                 let output = self
@@ -4301,7 +4301,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({}))
             }
             methods::SYNC_STATUS => {
-                fn room_json(s: &zeron_sync::RoomStatsSnapshot) -> serde_json::Value {
+                fn room_json(s: &vardoger_sync::RoomStatsSnapshot) -> serde_json::Value {
                     serde_json::json!({
                         "connected": s.connected,
                         "synced": s.synced,
@@ -4314,7 +4314,7 @@ impl RpcService for EngineRpc {
                         "rejected": s.rejected,
                     })
                 }
-                fn chat2_json(s: &zeron_sync::ChatStatsSnapshot) -> serde_json::Value {
+                fn chat2_json(s: &vardoger_sync::ChatStatsSnapshot) -> serde_json::Value {
                     serde_json::json!({
                         "connected": s.connected,
                         "cursor": s.cursor,
@@ -4414,7 +4414,7 @@ impl RpcService for EngineRpc {
                 ))
             }
             methods::WATCH_PREVIEWS => {
-                let p: zeron_proto::WatchPreviewsParams = parse_params(params)?;
+                let p: vardoger_proto::WatchPreviewsParams = parse_params(params)?;
                 if self
                     .workspace
                     .chat(&p.chat_id)
@@ -4465,11 +4465,11 @@ impl RpcService for EngineRpc {
                             .and_then(|p| p.file_name())
                             .map(|s| s.to_string_lossy().into_owned());
                         // Servers in this checkout, and any this chat's agent
-                        // or terminals started elsewhere. Only Zeron-started
+                        // or terminals started elsewhere. Only Vardoger-started
                         // ones: an older peer advertises every listener.
                         snapshot.services.retain(|service| {
                             service.device_id == device
-                                && service.zeron_owned
+                                && service.vardoger_owned
                                 && (service.chat_id.as_deref() == Some(chat_id.as_str())
                                     || cwd.as_ref().is_some_and(|cwd| {
                                         cwd == std::path::Path::new(&service.project_cwd)
@@ -4641,7 +4641,7 @@ impl RpcService for EngineRpc {
                         *child_kind,
                         branch.as_deref().filter(|b| !b.is_empty()),
                         *cloud,
-                        cloud_reach.filter(|_| zeron_rpc::caller().is_local()),
+                        cloud_reach.filter(|_| vardoger_rpc::caller().is_local()),
                         config.as_ref(),
                     ))
                     .await?
@@ -4703,7 +4703,7 @@ impl RpcService for EngineRpc {
                 ))
             }
             methods::WATCH_WORKSPACE_GIT_STATUS => {
-                let request: zeron_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
+                let request: vardoger_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
                 let workspace = self.workspace_files.resolve_target(&request.target).await?;
                 // A file browser can outlive its chat's transcript stream, or
                 // have none (a project's).
@@ -4730,7 +4730,7 @@ impl RpcService for EngineRpc {
                                 emitted = true;
                                 previous = next.clone();
                                 let value =
-                                    serde_json::to_value(zeron_proto::WorkspaceGitStatusFrame {
+                                    serde_json::to_value(vardoger_proto::WorkspaceGitStatusFrame {
                                         status: next,
                                     })
                                     .ok()?;
@@ -4787,7 +4787,7 @@ impl RpcService for EngineRpc {
                 struct P {
                     repository: String,
                     #[serde(default)]
-                    filter: zeron_proto::ChangeRequestFilter,
+                    filter: vardoger_proto::ChangeRequestFilter,
                     #[serde(default)]
                     after: Option<String>,
                     #[serde(default)]
@@ -4983,7 +4983,7 @@ impl RpcService for EngineRpc {
                         _ => crate::diff_sync::capture_diff(&self.repos, root).await,
                     }
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                    RpcReply::value(&zeron_proto::CheckoutDiff {
+                    RpcReply::value(&vardoger_proto::CheckoutDiff {
                         checkout_id: identity.id,
                         device_id: self.doc_host.device_id().to_string(),
                         cwd: identity.root.to_string_lossy().to_string(),
@@ -5055,8 +5055,8 @@ impl RpcService for EngineRpc {
                                 .is_some_and(|session| {
                                     matches!(
                                         session.status,
-                                        zeron_proto::SessionStatus::Working
-                                            | zeron_proto::SessionStatus::AwaitingInput
+                                        vardoger_proto::SessionStatus::Working
+                                            | vardoger_proto::SessionStatus::AwaitingInput
                                     )
                                 })
                         {
@@ -5083,7 +5083,7 @@ impl RpcService for EngineRpc {
                 // behind an allocation so every unrelated RPC does not carry that
                 // state in `EngineRpc::handle`'s stack frame.
                 Box::pin(async move {
-                    let p: zeron_proto::GetCheckoutFileDiffTextRequest = parse_params(params)?;
+                    let p: vardoger_proto::GetCheckoutFileDiffTextRequest = parse_params(params)?;
                     let identity =
                         Box::pin(self.repos.checkout_identity(std::path::Path::new(&p.cwd)))
                             .await
@@ -5161,7 +5161,7 @@ impl RpcService for EngineRpc {
                             (snapshot, base, None)
                         }
                     };
-                    let stale = || zeron_proto::CheckoutFileDiffText {
+                    let stale = || vardoger_proto::CheckoutFileDiffText {
                         diff_checksum: p.diff_checksum.clone(),
                         old_text: None,
                         new_text: None,
@@ -5228,7 +5228,7 @@ impl RpcService for EngineRpc {
                     if current.checksum != p.diff_checksum {
                         return RpcReply::value(&stale());
                     }
-                    RpcReply::value(&zeron_proto::CheckoutFileDiffText {
+                    RpcReply::value(&vardoger_proto::CheckoutFileDiffText {
                         diff_checksum: p.diff_checksum,
                         old_text: pair.old_text,
                         new_text: pair.new_text,
@@ -5450,7 +5450,7 @@ impl RpcService for EngineRpc {
             }
             methods::GET_WORKTREE_SETTINGS => RpcReply::value(&self.repos.worktree_settings()),
             methods::SET_WORKTREE_SETTINGS => {
-                let settings: zeron_proto::WorktreeSettings = parse_params(params)?;
+                let settings: vardoger_proto::WorktreeSettings = parse_params(params)?;
                 let status = self
                     .repos
                     .set_worktree_settings(settings)
@@ -5468,7 +5468,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&listing)
             }
             methods::SEARCH_HOME_FOLDERS => {
-                let request: zeron_proto::SearchHomeFoldersRequest = parse_params(params)?;
+                let request: vardoger_proto::SearchHomeFoldersRequest = parse_params(params)?;
                 if request.query.chars().count() > 256 {
                     return Err(RpcError::BadParams(
                         "SearchHomeFolders query must not exceed 256 characters".into(),
@@ -5495,7 +5495,7 @@ impl RpcService for EngineRpc {
                     .list_drives()
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&zeron_proto::DriveListing { drives })
+                RpcReply::value(&vardoger_proto::DriveListing { drives })
             }
             methods::SEARCH_FILES => {
                 let p: FileSearchParams = parse_params(params)?;
@@ -5522,7 +5522,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&matches)
             }
             methods::LIST_WORKSPACE_DIRECTORY => {
-                let request: zeron_proto::ListWorkspaceDirectoryRequest = parse_params(params)?;
+                let request: vardoger_proto::ListWorkspaceDirectoryRequest = parse_params(params)?;
                 let page = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.list_directory(request),
@@ -5533,7 +5533,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&page)
             }
             methods::SEARCH_WORKSPACE_FILES => {
-                let request: zeron_proto::SearchWorkspaceFilesRequest = parse_params(params)?;
+                let request: vardoger_proto::SearchWorkspaceFilesRequest = parse_params(params)?;
                 let matches = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.search(request),
@@ -5544,7 +5544,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&matches)
             }
             methods::SEARCH_WORKSPACE_CONTENT => {
-                let request: zeron_proto::SearchWorkspaceContentRequest = parse_params(params)?;
+                let request: vardoger_proto::SearchWorkspaceContentRequest = parse_params(params)?;
                 let result = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.search_content(request),
@@ -5555,7 +5555,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&result)
             }
             methods::WARM_WORKSPACE_SEARCH => {
-                let request: zeron_proto::WarmWorkspaceSearchRequest = parse_params(params)?;
+                let request: vardoger_proto::WarmWorkspaceSearchRequest = parse_params(params)?;
                 let result = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.warm_search(request),
@@ -5566,7 +5566,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&result)
             }
             methods::READ_WORKSPACE_IMAGE => {
-                let request: zeron_proto::ReadWorkspaceImageRequest = parse_params(params)?;
+                let request: vardoger_proto::ReadWorkspaceImageRequest = parse_params(params)?;
                 let chunk = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.read_image(request),
@@ -5577,7 +5577,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&chunk)
             }
             methods::READ_WORKSPACE_FILE => {
-                let request: zeron_proto::ReadWorkspaceFileRequest = parse_params(params)?;
+                let request: vardoger_proto::ReadWorkspaceFileRequest = parse_params(params)?;
                 let file = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.read_file(request),
@@ -5588,7 +5588,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&file)
             }
             methods::DELETE_WORKSPACE_ENTRY => {
-                let request: zeron_proto::DeleteWorkspaceEntryRequest = parse_params(params)?;
+                let request: vardoger_proto::DeleteWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .delete_entry(request)
@@ -5597,7 +5597,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::MOVE_WORKSPACE_ENTRY => {
-                let request: zeron_proto::MoveWorkspaceEntryRequest = parse_params(params)?;
+                let request: vardoger_proto::MoveWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .move_entry(request)
@@ -5606,7 +5606,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::CREATE_WORKSPACE_ENTRY => {
-                let request: zeron_proto::CreateWorkspaceEntryRequest = parse_params(params)?;
+                let request: vardoger_proto::CreateWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .create_entry(request)
@@ -5615,7 +5615,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::WRITE_WORKSPACE_FILE => {
-                let request: zeron_proto::WriteWorkspaceFileRequest = parse_params(params)?;
+                let request: vardoger_proto::WriteWorkspaceFileRequest = parse_params(params)?;
                 let outcome = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.write_file(request),
@@ -5626,7 +5626,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::WATCH_WORKSPACE_FILES => {
-                let request: zeron_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
+                let request: vardoger_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
                 let subscription = self
                     .workspace_files
                     .watch_files(request)
@@ -6001,7 +6001,7 @@ impl RpcService for EngineRpc {
                     .is_some_and(|target| !target.is_empty() && target != self.doc_host.device_id())
                 {
                     return Err(RpcError::Failed(
-                        "API keys are added on the device that runs the agent — open Zeron there."
+                        "API keys are added on the device that runs the agent — open Vardoger there."
                             .into(),
                     ));
                 }
@@ -6173,15 +6173,15 @@ impl RpcService for EngineRpc {
                     .title
                     .trim()
                     .chars()
-                    .take(zeron_proto::VISUAL_MAX_TITLE_CHARS)
+                    .take(vardoger_proto::VISUAL_MAX_TITLE_CHARS)
                     .collect();
                 if title.is_empty() {
                     return Err(RpcError::BadParams("title is empty".into()));
                 }
-                if p.script.trim().is_empty() || p.script.len() > zeron_proto::VISUAL_MAX_BYTES {
+                if p.script.trim().is_empty() || p.script.len() > vardoger_proto::VISUAL_MAX_BYTES {
                     return Err(RpcError::BadParams(format!(
                         "script must be 1 to {} bytes",
-                        zeron_proto::VISUAL_MAX_BYTES
+                        vardoger_proto::VISUAL_MAX_BYTES
                     )));
                 }
                 // Before decoding and storing anything (checked again below).
@@ -6196,15 +6196,15 @@ impl RpcService for EngineRpc {
                 let uploads = self.uploads.clone();
                 let (stored_id, script) = (id.clone(), p.script);
                 let (path, report) = tokio::task::spawn_blocking(move || {
-                    let files = zeron_visual::Assets::new(
+                    let files = vardoger_visual::Assets::new(
                         assets
                             .iter()
                             .map(|(name, bytes)| (name.clone(), bytes.as_slice().into()))
                             .collect(),
                     );
-                    let checked = zeron_visual::check_with_assets(
+                    let checked = vardoger_visual::check_with_assets(
                         &script,
-                        zeron_visual::seed_for(&stored_id),
+                        vardoger_visual::seed_for(&stored_id),
                         files,
                     );
                     let report = checked
@@ -6244,10 +6244,10 @@ impl RpcService for EngineRpc {
                     return Err(no_turn_for("show_image"));
                 }
                 // Bounded before decoding: base64 is 4 bytes per 3.
-                if p.data.len() > zeron_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 {
+                if p.data.len() > vardoger_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 {
                     return Err(RpcError::BadParams(format!(
                         "an image is at most {} MB",
-                        zeron_proto::IMAGE_MAX_BYTES / (1024 * 1024)
+                        vardoger_proto::IMAGE_MAX_BYTES / (1024 * 1024)
                     )));
                 }
                 let bytes = base64::engine::general_purpose::STANDARD
@@ -6301,8 +6301,8 @@ mod tests {
     /// aren't known yet, or that signs in from the environment, still gets it.
     #[test]
     fn a_new_chat_starts_early_only_for_an_agent_not_known_signed_out() {
-        use zeron_proto::HarnessId;
-        let snapshot = |accounts: serde_json::Value| -> zeron_proto::AgentAccountsSnapshot {
+        use vardoger_proto::HarnessId;
+        let snapshot = |accounts: serde_json::Value| -> vardoger_proto::AgentAccountsSnapshot {
             serde_json::from_value(serde_json::json!({ "accounts": accounts, "warnings": [] }))
                 .unwrap()
         };
@@ -6409,7 +6409,7 @@ mod tests {
         assert!(second.voice.owns_chat("chat"));
         assert_eq!(
             second.voice.reserve("other").unwrap_err(),
-            zeron_proto::voice::VoiceRejection::Busy
+            vardoger_proto::voice::VoiceRejection::Busy
         );
         let owner = second.voice.own(lease).unwrap();
         core.sessions.shutdown().await;
@@ -6428,7 +6428,7 @@ mod tests {
         )
         .unwrap();
         let rpc = core.rpc_service();
-        let orchestrator = format!("{}1", zeron_proto::voice::ORCHESTRATOR_CHAT_PREFIX);
+        let orchestrator = format!("{}1", vardoger_proto::voice::ORCHESTRATOR_CHAT_PREFIX);
         for (chat, parent, expected) in [
             ("worker", orchestrator.as_str(), None),
             ("side", "ordinary", Some("ordinary")),
@@ -6458,7 +6458,7 @@ mod tests {
         )
         .unwrap();
         let rpc = core.rpc_service();
-        use zeron_proto::ChildKind;
+        use vardoger_proto::ChildKind;
         for (chat, parent, kind, expected) in [
             ("sub", Some("main"), Some("subagent"), Some(ChildKind::Subagent)),
             ("side", Some("main"), Some("side"), Some(ChildKind::Side)),
@@ -6527,13 +6527,13 @@ mod tests {
     #[cfg(unix)]
     async fn installer_rpc_fixture(mode: &str) {
         use std::{os::unix::fs::PermissionsExt, sync::Arc};
-        if std::env::var_os("ZERON_INSTALL_FIXTURE_CHILD").is_none() {
+        if std::env::var_os("VARDOGER_INSTALL_FIXTURE_CHILD").is_none() {
             let root = tempfile::tempdir().unwrap();
             let bin = root.path().join("bin");
             std::fs::create_dir(&bin).unwrap();
             let script = match mode {
                 "success" => {
-                    "test -z \"$ZERON_INSTALL_FIXTURE_CHILD\" && test -z \"$CLAUDECODE\" && printf '#!/bin/sh\\necho 99.0.0\\n' > \"$CODEX_EXECUTABLE\" && /bin/chmod +x \"$CODEX_EXECUTABLE\""
+                    "test -z \"$VARDOGER_INSTALL_FIXTURE_CHILD\" && test -z \"$CLAUDECODE\" && printf '#!/bin/sh\\necho 99.0.0\\n' > \"$CODEX_EXECUTABLE\" && /bin/chmod +x \"$CODEX_EXECUTABLE\""
                 }
                 "failure" => "echo 'fixture failure api_key=private' >&2; exit 7",
                 "missing" => "exit 0",
@@ -6544,9 +6544,9 @@ mod tests {
             let test = format!("rpc::tests::installer_rpc_{mode}");
             let output = tokio::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", &test, "--nocapture", "--include-ignored"])
-                .env("ZERON_INSTALL_FIXTURE_CHILD", root.path())
-                .env("ZERON_INSTALLER_COMMAND_CODEX", script)
-                .env("ZERON_NO_LOGIN_SHELL", "1")
+                .env("VARDOGER_INSTALL_FIXTURE_CHILD", root.path())
+                .env("VARDOGER_INSTALLER_COMMAND_CODEX", script)
+                .env("VARDOGER_NO_LOGIN_SHELL", "1")
                 .env("HOME", root.path())
                 .env("XDG_CONFIG_HOME", root.path().join("config"))
                 .env("CODEX_EXECUTABLE", bin.join("codex"))
@@ -6575,9 +6575,9 @@ mod tests {
             return;
         }
         let root =
-            std::path::PathBuf::from(std::env::var_os("ZERON_INSTALL_FIXTURE_CHILD").unwrap());
+            std::path::PathBuf::from(std::env::var_os("VARDOGER_INSTALL_FIXTURE_CHILD").unwrap());
         let registry = Arc::new(HarnessRegistry::new());
-        registry.register(Arc::new(zeron_harness::CodexHarness::new()));
+        registry.register(Arc::new(vardoger_harness::CodexHarness::new()));
         let core = crate::EngineCore::assemble(
             &root.join("engine"),
             registry.clone(),
@@ -6683,8 +6683,8 @@ mod tests {
         use sha2::{Digest, Sha512};
         use std::io::Write;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use zeron_harness::archive_install::{ArchivePin, ensure_installed, installed_entry};
-        if std::env::var_os("ZERON_INSTALL_RPC_TEST").is_none() {
+        use vardoger_harness::archive_install::{ArchivePin, ensure_installed, installed_entry};
+        if std::env::var_os("VARDOGER_INSTALL_RPC_TEST").is_none() {
             let root = tempfile::tempdir().unwrap();
             let output = tokio::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -6692,8 +6692,8 @@ mod tests {
                     "rpc::tests::explicit_install_rpc_verifies_archive_and_refreshes_descriptors",
                     "--nocapture",
                 ])
-                .env("ZERON_INSTALL_RPC_TEST", "1")
-                .env("ZERON_ADAPTERS_DIR", root.path())
+                .env("VARDOGER_INSTALL_RPC_TEST", "1")
+                .env("VARDOGER_ADAPTERS_DIR", root.path())
                 .output()
                 .await
                 .unwrap();
@@ -6705,7 +6705,7 @@ mod tests {
             );
             return;
         }
-        if !zeron_harness::acp::can_install(HarnessId::Antigravity) {
+        if !vardoger_harness::acp::can_install(HarnessId::Antigravity) {
             return;
         }
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -6797,10 +6797,10 @@ mod tests {
         use crate::doc_host::{DocHost, DocHostConfig};
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store,
-            DocHostConfig { device_id: "viewer".into(), default_harness: zeron_proto::HarnessId::Mock, edge: None },
+            DocHostConfig { device_id: "viewer".into(), default_harness: vardoger_proto::HarnessId::Mock, edge: None },
         );
         let handle = host.open("kept").unwrap();
         for i in 0..300 {
@@ -6813,7 +6813,7 @@ mod tests {
         let held: Vec<serde_json::Value> = sent["reset"].as_array().unwrap().clone();
         let known: Vec<(String, u64)> = held
             .iter()
-            .map(|e| (e["id"].as_str().unwrap().to_owned(), zeron_doc::entry_sum(e)))
+            .map(|e| (e["id"].as_str().unwrap().to_owned(), vardoger_doc::entry_sum(e)))
             .collect();
         // While it was away: one more message.
         handle.write_user_message("away", "while away", 400).unwrap();
@@ -6830,7 +6830,7 @@ mod tests {
         let ids: Vec<String> = handle.doc().read_entries().unwrap().into_iter().map(|e| e.id).collect();
         assert_eq!(
             first["orderSum"].as_u64(),
-            Some(zeron_doc::order_sum(ids.iter().map(String::as_str))),
+            Some(vardoger_doc::order_sum(ids.iter().map(String::as_str))),
             "the order the reader must hold its rows in"
         );
         assert!(serde_json::to_string(&first).unwrap().len() < 4_000);
@@ -6846,23 +6846,23 @@ mod tests {
         use crate::doc_host::{DocHost, DocHostConfig};
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
         let handle = host.open("whale").unwrap();
         handle
             .doc()
-            .push_message(&zeron_doc::SessionMessageEntry {
+            .push_message(&vardoger_doc::SessionMessageEntry {
                 id: "turn".into(),
-                role: zeron_doc::MessageRole::Assistant,
+                role: vardoger_doc::MessageRole::Assistant,
                 parts: (0..500)
-                    .map(|i| zeron_doc::MessagePart::Text {
+                    .map(|i| vardoger_doc::MessagePart::Text {
                         id: format!("part-{i}"),
                         text: "local text".into(),
                     })
@@ -6916,8 +6916,8 @@ mod tests {
             .unwrap();
         let mut entries = Vec::new();
         for value in [full, live] {
-            let update: zeron_doc::TranscriptUpdate = serde_json::from_value(value).unwrap();
-            zeron_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
+            let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(value).unwrap();
+            vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
         }
         assert_eq!(entries.len(), 3);
         assert_eq!(entries.last().unwrap().id, "live");
@@ -6929,10 +6929,10 @@ mod tests {
         let registry = HarnessRegistry::new();
         let executable = std::env::current_exe().unwrap();
         registry.register(std::sync::Arc::new(
-            zeron_harness::AcpHarness::grok().with_executable(executable.clone()),
+            vardoger_harness::AcpHarness::grok().with_executable(executable.clone()),
         ));
         registry.register(std::sync::Arc::new(
-            zeron_harness::AcpHarness::antigravity().with_executable(executable),
+            vardoger_harness::AcpHarness::antigravity().with_executable(executable),
         ));
         registry.set_enabled(HarnessId::Antigravity, true).unwrap();
 
@@ -6976,7 +6976,7 @@ mod tests {
         .expect("sidebar preferences params");
         assert!(matches!(
             p,
-            MutateParams::ChangeSidebarPin { change: zeron_proto::SidebarPinChange::Move { session_id, before, .. } }
+            MutateParams::ChangeSidebarPin { change: vardoger_proto::SidebarPinChange::Move { session_id, before, .. } }
                 if session_id == "chat-b" && before.as_deref() == Some("chat-a")
         ));
     }
@@ -6992,15 +6992,15 @@ mod tests {
         // An API key never leaves the device it was typed on: not forwarded,
         // not served to a peer through the relay, not an agent's to call.
         assert!(!forwardable(methods::ADD_AGENT_API_KEY));
-        assert!(zeron_rpc::local_only(methods::ADD_AGENT_API_KEY));
-        assert!(zeron_rpc::peer_refused(methods::ADD_AGENT_API_KEY, &serde_json::json!({})));
-        assert!(!zeron_rpc::agent_allowed(methods::ADD_AGENT_API_KEY));
+        assert!(vardoger_rpc::local_only(methods::ADD_AGENT_API_KEY));
+        assert!(vardoger_rpc::peer_refused(methods::ADD_AGENT_API_KEY, &serde_json::json!({})));
+        assert!(!vardoger_rpc::agent_allowed(methods::ADD_AGENT_API_KEY));
         // Per-provider account actions do travel, provider and all.
         assert!(forwardable(methods::START_AGENT_LOGIN));
         assert!(forwardable(methods::ACTIVATE_AGENT_ACCOUNT));
         // A key's name is no secret: renamed wherever the key lives.
         assert!(forwardable(methods::RENAME_AGENT_ACCOUNT));
-        assert!(!zeron_rpc::local_only(methods::RENAME_AGENT_ACCOUNT));
+        assert!(!vardoger_rpc::local_only(methods::RENAME_AGENT_ACCOUNT));
         assert!(forwardable(methods::QUEUE_COMMAND));
         assert!(forwardable(methods::SEARCH_FILES));
         assert!(forwardable(methods::SEARCH_GIT_HISTORY));
@@ -7136,7 +7136,7 @@ mod tests {
     fn chat_image_folders_fail_closed() {
         let home = tempfile::tempdir().unwrap();
         let project = home.path().join("code").join("app");
-        let data = home.path().join(".zeron");
+        let data = home.path().join(".vardoger");
         let scratch_root = data.join("scratch");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(scratch_root.join("2026-10-25-a1b2c3d4")).unwrap();
@@ -7152,7 +7152,7 @@ mod tests {
             Ok(project.clone())
         );
         assert_eq!(
-            folder(Some("~/.zeron/scratch/2026-10-25-a1b2c3d4")),
+            folder(Some("~/.vardoger/scratch/2026-10-25-a1b2c3d4")),
             Ok(scratch_root.join("2026-10-25-a1b2c3d4"))
         );
         let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
@@ -7170,16 +7170,16 @@ mod tests {
             (Some("relative/app"), "not an absolute path"),
             (Some(missing.as_str()), "doesn't exist"),
             (
-                Some("~/.zeron/scratch/2026-10-25-zzzz9999"),
+                Some("~/.vardoger/scratch/2026-10-25-zzzz9999"),
                 "doesn't exist",
             ),
             (Some(home_text.as_str()), "home folder, above it"),
             (Some(above_home.as_str()), "home folder, above it"),
             (Some(root.as_str()), "home folder, above it"),
-            (Some(data_text.as_str()), "around Zeron's data"),
-            (Some(scratch_text.as_str()), "around Zeron's data"),
-            (Some("~/.zeron/scratch/."), "around Zeron's data"),
-            (Some("~/.zeron/scratch/.."), "around Zeron's data"),
+            (Some(data_text.as_str()), "around Vardoger's data"),
+            (Some(scratch_text.as_str()), "around Vardoger's data"),
+            (Some("~/.vardoger/scratch/."), "around Vardoger's data"),
+            (Some("~/.vardoger/scratch/.."), "around Vardoger's data"),
         ] {
             let error = folder(cwd).expect_err(&format!("{cwd:?}"));
             assert!(error.contains(why), "{cwd:?}: {error}");
@@ -7291,14 +7291,14 @@ mod context_usage_tests {
     #[tokio::test]
     async fn replay_cutoff_travels_with_coalesced_backfill_and_live_content() {
         use crate::doc_host::{DocHost, DocHostConfig};
-        use zeron_sync::chat_client::ChatDocSink;
+        use vardoger_sync::chat_client::ChatDocSink;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
@@ -7306,23 +7306,23 @@ mod context_usage_tests {
         let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "replay-chat")
             .with_handle(Arc::downgrade(&handle));
         let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let first: zeron_doc::TranscriptUpdate =
+        let first: vardoger_doc::TranscriptUpdate =
             serde_json::from_value(stream.next().await.unwrap()).unwrap();
         assert!(first.replay_baseline.unwrap().entries.is_empty());
 
-        let source = zeron_doc::SessionDoc::init("replay-chat").unwrap();
+        let source = vardoger_doc::SessionDoc::init("replay-chat").unwrap();
         let append = |id: &str| {
             source
-                .push_message(&zeron_doc::SessionMessageEntry {
+                .push_message(&vardoger_doc::SessionMessageEntry {
                     id: id.into(),
-                    role: zeron_doc::MessageRole::Assistant,
-                    parts: vec![zeron_doc::MessagePart::Text {
+                    role: vardoger_doc::MessageRole::Assistant,
+                    parts: vec![vardoger_doc::MessagePart::Text {
                         id: "text".into(),
                         text: id.into(),
                     }],
                     created_at: 0,
                     device_id: "writer".into(),
-                    status: Some(zeron_doc::MessageStatus::Streaming),
+                    status: Some(vardoger_doc::MessageStatus::Streaming),
                     continuation_of: None,
                     duration_ms: None,
                 })
@@ -7331,7 +7331,7 @@ mod context_usage_tests {
         append("cached");
         sink.apply_checkpoint(&source.export_snapshot().unwrap(), 0)
             .unwrap();
-        let checkpoint: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let checkpoint: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7366,7 +7366,7 @@ mod context_usage_tests {
         );
         // Neither the doc worker nor the RPC consumer ran between these
         // imports. They must not flatten their different presentation origins.
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7377,8 +7377,8 @@ mod context_usage_tests {
         assert!(cutoff.entries.contains_key("away"));
         assert!(!cutoff.entries.contains_key("live"));
         let mut entries = vec![];
-        zeron_doc::apply_transcript_frame(&mut entries, checkpoint.frame).unwrap();
-        zeron_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut entries, checkpoint.frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
         assert_eq!(entries.len(), 3);
 
         let version = source.doc().oplog_vv();
@@ -7390,7 +7390,7 @@ mod context_usage_tests {
                 .unwrap(),
             3,
         );
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7402,7 +7402,7 @@ mod context_usage_tests {
             "live updates must not resend the history watermark"
         );
         let mut reopened = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: zeron_doc::TranscriptUpdate =
+        let opening: vardoger_doc::TranscriptUpdate =
             serde_json::from_value(reopened.next().await.unwrap()).unwrap();
         assert_eq!(
             opening.replay_baseline.unwrap().entries.len(),
@@ -7415,14 +7415,14 @@ mod context_usage_tests {
     #[tokio::test]
     async fn replay_metadata_and_backfill_leave_interleaved_local_content_live() {
         use crate::doc_host::{DocHost, DocHostConfig};
-        use zeron_sync::chat_client::ChatDocSink;
+        use vardoger_sync::chat_client::ChatDocSink;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "host".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
@@ -7431,26 +7431,26 @@ mod context_usage_tests {
             .with_handle(Arc::downgrade(&handle));
         let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
         stream.next().await.unwrap();
-        let source = zeron_doc::SessionDoc::init("interleaved").unwrap();
+        let source = vardoger_doc::SessionDoc::init("interleaved").unwrap();
         sink.apply_checkpoint(&source.export_snapshot().unwrap(), 0)
             .unwrap();
-        let entry = |id: &str| zeron_doc::SessionMessageEntry {
+        let entry = |id: &str| vardoger_doc::SessionMessageEntry {
             id: id.into(),
-            role: zeron_doc::MessageRole::Assistant,
-            parts: vec![zeron_doc::MessagePart::Text {
+            role: vardoger_doc::MessageRole::Assistant,
+            parts: vec![vardoger_doc::MessagePart::Text {
                 id: "text".into(),
                 text: id.into(),
             }],
             created_at: 0,
             device_id: "host".into(),
-            status: Some(zeron_doc::MessageStatus::Streaming),
+            status: Some(vardoger_doc::MessageStatus::Streaming),
             continuation_of: None,
             duration_ms: None,
         };
         handle.doc().push_message(&entry("local-before")).unwrap();
         source.update_context_usage(Some(10), Some(100)).unwrap();
         sink.apply_replay_row(&source.export_snapshot().unwrap(), 1);
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7462,7 +7462,7 @@ mod context_usage_tests {
             "metadata must not reset ongoing live animations"
         );
         let mut entries = vec![];
-        zeron_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
         assert_eq!(entries[0].id, "local-before");
         let version = source.doc().oplog_vv();
         source.push_message(&entry("historical")).unwrap();
@@ -7475,7 +7475,7 @@ mod context_usage_tests {
             2,
         );
         handle.doc().push_message(&entry("local-after")).unwrap();
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7485,7 +7485,7 @@ mod context_usage_tests {
         let baseline = update.replay_baseline.unwrap();
         assert_eq!(baseline.entries.len(), 1);
         assert!(baseline.entries.contains_key("historical"));
-        zeron_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
         assert_eq!(entries.len(), 4);
         host.shutdown_workers().await;
     }
@@ -7493,14 +7493,14 @@ mod context_usage_tests {
     #[tokio::test]
     async fn replay_preserves_each_watchers_opening_cutoff_without_consuming_live_text() {
         use crate::doc_host::{DocHost, DocHostConfig};
-        use zeron_sync::chat_client::ChatDocSink;
+        use vardoger_sync::chat_client::ChatDocSink;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
@@ -7508,9 +7508,9 @@ mod context_usage_tests {
         let sink =
             crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "cached-replay")
                 .with_handle(Arc::downgrade(&handle));
-        let source = zeron_doc::SessionDoc::init("cached-replay").unwrap();
-        let mut writer = zeron_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let text = |id: &str, value: &str| zeron_doc::MessagePart::Text {
+        let source = vardoger_doc::SessionDoc::init("cached-replay").unwrap();
+        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
+        let text = |id: &str, value: &str| vardoger_doc::MessagePart::Text {
             id: id.into(),
             text: value.into(),
         };
@@ -7521,7 +7521,7 @@ mod context_usage_tests {
         // Cached content exists before the first watcher and never enters
         // the changed-parts tracker. It may not have been painted yet.
         let mut first = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: zeron_doc::TranscriptUpdate =
+        let opening: vardoger_doc::TranscriptUpdate =
             serde_json::from_value(first.next().await.unwrap()).unwrap();
         assert_eq!(
             opening.replay_baseline.unwrap().entries["reply"]["body"],
@@ -7531,7 +7531,7 @@ mod context_usage_tests {
         let live = text("body", "café histórico y nuevo");
         writer.sync(&[live.clone()]).unwrap();
         sink.apply_row(&source.export_snapshot().unwrap(), 1);
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), first.next())
                 .await
                 .unwrap()
@@ -7542,7 +7542,7 @@ mod context_usage_tests {
         // A later subscriber sees a longer historical prefix, but must not
         // change the first subscriber's ongoing live animation.
         let mut second = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: zeron_doc::TranscriptUpdate =
+        let opening: vardoger_doc::TranscriptUpdate =
             serde_json::from_value(second.next().await.unwrap()).unwrap();
         assert_eq!(
             opening.replay_baseline.unwrap().entries["reply"]["body"],
@@ -7559,7 +7559,7 @@ mod context_usage_tests {
                 (&mut first, "café histórico".len()),
                 (&mut second, "café histórico y nuevo".len()),
             ] {
-                let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+                let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
                     tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                         .await
                         .unwrap()
@@ -7585,23 +7585,23 @@ mod context_usage_tests {
     #[tokio::test]
     async fn reopening_rearms_history_for_previously_live_text() {
         use crate::doc_host::{DocHost, DocHostConfig};
-        use zeron_sync::chat_client::ChatDocSink;
+        use vardoger_sync::chat_client::ChatDocSink;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
         let handle = host.open("reopen").unwrap();
         let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "reopen")
             .with_handle(Arc::downgrade(&handle));
-        let source = zeron_doc::SessionDoc::init("reopen").unwrap();
-        let mut writer = zeron_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let part = |text: &str| zeron_doc::MessagePart::Text {
+        let source = vardoger_doc::SessionDoc::init("reopen").unwrap();
+        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
+        let part = |text: &str| vardoger_doc::MessagePart::Text {
             id: "body".into(),
             text: text.into(),
         };
@@ -7620,7 +7620,7 @@ mod context_usage_tests {
         stream.next().await.unwrap();
         writer.sync(&[part("live plus recovered")]).unwrap();
         sink.apply_replay_row(&source.export_snapshot().unwrap(), 2);
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
             tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
                 .await
                 .unwrap()
@@ -7640,23 +7640,23 @@ mod context_usage_tests {
     #[tokio::test]
     async fn part_patches_carry_a_reply_s_changed_calls_alone_when_asked_for() {
         use crate::doc_host::{DocHost, DocHostConfig};
-        use zeron_sync::chat_client::ChatDocSink;
+        use vardoger_sync::chat_client::ChatDocSink;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         );
         let handle = host.open("parts").unwrap();
         let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "parts")
             .with_handle(Arc::downgrade(&handle));
-        let source = zeron_doc::SessionDoc::init("parts").unwrap();
-        let mut writer = zeron_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let call = |i: usize, output: Option<&str>| -> zeron_doc::MessagePart {
+        let source = vardoger_doc::SessionDoc::init("parts").unwrap();
+        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
+        let call = |i: usize, output: Option<&str>| -> vardoger_doc::MessagePart {
             serde_json::from_value(serde_json::json!({
                 "kind": "tool", "id": format!("t{i}"),
                 "call": { "kind": "exec", "command": format!("echo {i}") },
@@ -7668,7 +7668,7 @@ mod context_usage_tests {
         calls.push(call(40, None));
         writer.sync(&calls).unwrap();
         sink.apply_row(&source.export_snapshot().unwrap(), 1);
-        let options = zeron_doc::DiffOptions { part_patches: true };
+        let options = vardoger_doc::DiffOptions { part_patches: true };
         let mut patched = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), options);
         let mut whole = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
         async fn next(stream: &mut BoxStream<'static, serde_json::Value>) -> serde_json::Value {
@@ -7677,10 +7677,10 @@ mod context_usage_tests {
                 .unwrap()
                 .unwrap()
         }
-        let read = |value: serde_json::Value| serde_json::from_value::<zeron_doc::TranscriptUpdate>(value).unwrap();
+        let read = |value: serde_json::Value| serde_json::from_value::<vardoger_doc::TranscriptUpdate>(value).unwrap();
         let (mut a, mut b) = (vec![], vec![]);
-        zeron_doc::apply_transcript_frame(&mut a, read(next(&mut patched).await).frame).unwrap();
-        zeron_doc::apply_transcript_frame(&mut b, read(next(&mut whole).await).frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut a, read(next(&mut patched).await).frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut b, read(next(&mut whole).await).frame).unwrap();
         // The call in flight finishes, and the next arrives.
         calls[40] = call(40, Some("done"));
         calls.push(call(41, None));
@@ -7690,11 +7690,11 @@ mod context_usage_tests {
         assert!(value.get("upsert").is_none_or(|u| u.as_array().is_some_and(Vec::is_empty)), "{value}");
         let ids: Vec<_> = value["parts"].as_array().unwrap().iter().map(|p| p["part"]["id"].as_str().unwrap().to_owned()).collect();
         assert_eq!(ids, ["t40", "t41"]);
-        zeron_doc::apply_transcript_frame(&mut a, read(value).frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut a, read(value).frame).unwrap();
         let value = next(&mut whole).await;
         assert!(value.get("parts").is_none(), "{value}");
         assert_eq!(value["upsert"].as_array().map(Vec::len), Some(1));
-        zeron_doc::apply_transcript_frame(&mut b, read(value).frame).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut b, read(value).frame).unwrap();
         assert_eq!(a, b);
         assert_eq!(a[0].parts.len(), 42);
         host.shutdown_workers().await;
@@ -7702,11 +7702,11 @@ mod context_usage_tests {
 
     #[tokio::test]
     async fn context_only_commits_reach_remote_watch_and_reconnect() {
-        let host = zeron_doc::SessionDoc::init("context-chat").unwrap();
+        let host = vardoger_doc::SessionDoc::init("context-chat").unwrap();
         host.update_context_usage(Some(42000), Some(200000))
             .unwrap();
         // The viewing engine reads a replicated document, with no harness process.
-        let remote = Arc::new(zeron_doc::SessionDoc::from_doc(loro::LoroDoc::new()));
+        let remote = Arc::new(vardoger_doc::SessionDoc::from_doc(loro::LoroDoc::new()));
         remote
             .doc()
             .import(&host.export_snapshot().unwrap())
@@ -7755,7 +7755,7 @@ mod cold_open_tests {
     use futures::StreamExt;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use zeron_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
+    use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
 
     /// Words for a synthetic chat: varied enough not to compress away.
     struct Words(u64);
@@ -7834,7 +7834,7 @@ mod cold_open_tests {
 
     /// A chat of `entries` entries, stored as the engine stores one (a
     /// chat2 snapshot), so a host opens it cold.
-    fn store_synthetic_chat(store: &zeron_sync::DocsStore, chat_id: &str, entries: usize) -> usize {
+    fn store_synthetic_chat(store: &vardoger_sync::DocsStore, chat_id: &str, entries: usize) -> usize {
         let doc = SessionDoc::init(chat_id).unwrap();
         let mut words = Words(0x9e37_79b9_7f4a_7c15);
         for i in 0..entries {
@@ -7847,12 +7847,12 @@ mod cold_open_tests {
         bytes.len()
     }
 
-    fn new_host(store: &Arc<zeron_sync::DocsStore>) -> DocHost {
+    fn new_host(store: &Arc<vardoger_sync::DocsStore>) -> DocHost {
         DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
                 edge: None,
             },
         )
@@ -7862,12 +7862,12 @@ mod cold_open_tests {
     fn known_of(entries: &[serde_json::Value]) -> Vec<(String, u64)> {
         entries
             .iter()
-            .map(|e| (e["id"].as_str().unwrap().to_owned(), zeron_doc::entry_sum(e)))
+            .map(|e| (e["id"].as_str().unwrap().to_owned(), vardoger_doc::entry_sum(e)))
             .collect()
     }
 
     /// The transcript as a reader of the whole of it gets it.
-    async fn whole_transcript(store: &Arc<zeron_sync::DocsStore>, chat: &str) -> Vec<serde_json::Value> {
+    async fn whole_transcript(store: &Arc<vardoger_sync::DocsStore>, chat: &str) -> Vec<serde_json::Value> {
         let host = new_host(store);
         let handle = host.open(chat).unwrap();
         let rx = handle.watch_messages();
@@ -7885,7 +7885,7 @@ mod cold_open_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_reader_holding_rows_gets_a_cold_chats_newest_changes_first() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let chat = "long";
         assert!(store_synthetic_chat(&store, chat, 400) > 1 << 20);
         let whole: Vec<SessionMessageEntry> = whole_transcript(&store, chat)
@@ -7902,7 +7902,7 @@ mod cold_open_tests {
             held[at].parts.truncate(1);
         }
         let known: Vec<(String, u64)> =
-            held.iter().map(|e| (e.id.clone(), zeron_doc::entry_sum_of(e))).collect();
+            held.iter().map(|e| (e.id.clone(), vardoger_doc::entry_sum_of(e))).collect();
 
         let host = new_host(&store);
         let handle = host.open(chat).unwrap();
@@ -7917,7 +7917,7 @@ mod cold_open_tests {
             })
         });
         locked_rx.recv().unwrap();
-        let options = zeron_doc::DiffOptions { part_patches: true };
+        let options = vardoger_doc::DiffOptions { part_patches: true };
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
             since_doc_messages_stream(host.clone(), chat.into(), options, known.clone()),
@@ -7953,22 +7953,22 @@ mod cold_open_tests {
             since["upsert"].as_array().unwrap().iter().map(|u| u["entry"]["id"].as_str().unwrap()).collect();
         assert_eq!(upserts, [whole[11].id.as_str()], "the older change, nothing of the tail again");
         let order = since["orderSum"].as_u64();
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(since).unwrap();
-        zeron_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(since).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
         assert_eq!(rows, whole);
-        assert_eq!(order, Some(zeron_doc::order_sum(rows.iter().map(|e| e.id.as_str()))));
+        assert_eq!(order, Some(vardoger_doc::order_sum(rows.iter().map(|e| e.id.as_str()))));
         // Then live changes, as deltas.
         handle.write_user_message("live", "after", 1).unwrap();
         let live = tokio::time::timeout(Duration::from_secs(5), stream.next()).await.unwrap().unwrap();
-        let update: zeron_doc::TranscriptUpdate = serde_json::from_value(live).unwrap();
-        zeron_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
+        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(live).unwrap();
+        vardoger_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
         assert_eq!(rows.len(), n + 1);
         assert_eq!(rows.last().unwrap().id, "live");
         drop(stream);
 
         // Nothing among the newest entries changed: the `since` frame alone.
         let mut known: Vec<(String, u64)> =
-            rows.iter().map(|e| (e.id.clone(), zeron_doc::entry_sum_of(e))).collect();
+            rows.iter().map(|e| (e.id.clone(), vardoger_doc::entry_sum_of(e))).collect();
         known[11].1 = 0;
         let mut again = since_doc_messages_stream(host.clone(), chat.into(), options, known).await.unwrap();
         let first = again.next().await.unwrap();
@@ -7989,19 +7989,19 @@ mod cold_open_tests {
     /// the whole history) for a cold doc: (a) the opening tail, no `known`;
     /// (b) `known` all but the newest few entries; and (b) again on the doc
     /// warm. Each frame is serialized as the RPC layer would. Run with:
-    /// `cargo test --release -p zeron-engine --lib cold_open_first_frame -- --ignored --nocapture`
-    /// (`ZERON_COLD_OPEN_ENTRIES=4000,20000` for other sizes).
+    /// `cargo test --release -p vardoger-engine --lib cold_open_first_frame -- --ignored --nocapture`
+    /// (`VARDOGER_COLD_OPEN_ENTRIES=4000,20000` for other sizes).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "benchmark: builds tens of MB of chat"]
     async fn cold_open_first_frame_bench() {
         const RUNS: usize = 7;
-        let sizes: Vec<usize> = std::env::var("ZERON_COLD_OPEN_ENTRIES")
+        let sizes: Vec<usize> = std::env::var("VARDOGER_COLD_OPEN_ENTRIES")
             .ok()
             .map(|v| v.split(',').map(|n| n.parse().unwrap()).collect())
             .unwrap_or_else(|| vec![4_000, 20_000]);
         for entries in sizes {
             let dir = tempfile::tempdir().unwrap();
-            let store = Arc::new(zeron_sync::DocsStore::open(dir.path()).unwrap());
+            let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
             let chat = "bench";
             let built = Instant::now();
             let snapshot = store_synthetic_chat(&store, chat, entries);
@@ -8036,7 +8036,7 @@ mod cold_open_tests {
                 let (mut first, mut rest, mut bytes) = (Vec::new(), Vec::new(), (0, 0));
                 for _ in 0..RUNS {
                     let host = new_host(&store);
-                    let options = zeron_doc::DiffOptions { part_patches: true };
+                    let options = vardoger_doc::DiffOptions { part_patches: true };
                     if scenario.ends_with("warm") {
                         // Viewed a moment ago: open, its reader gone, its
                         // read cache kept.

@@ -3,7 +3,7 @@ use super::*;
 use futures::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use zeron_sync::chat_frames::{decode, encode, frame_type};
+use vardoger_sync::chat_frames::{decode, encode, frame_type};
 
 #[derive(Clone, Copy)]
 enum Hold {
@@ -270,7 +270,7 @@ async fn idle_connection_closes_while_caller_keeps_document() {
 /// that syncing, and an outage only once the dial has stalled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_hello_reads_as_connecting_until_the_room_answers() {
-    use zeron_proto::ChatSyncState as S;
+    use vardoger_proto::ChatSyncState as S;
     let _budget_guard = SYNC_TEST_LOCK.lock().await;
     let relay = relay(Hold::Hello).await;
     let dir = tempfile::tempdir().unwrap();
@@ -1230,7 +1230,7 @@ async fn forty_eight_parent_and_subagent_writers_all_get_service_at_capacity() {
                         .unwrap()
                         <= ACTIVE_SYNC_CAP as u64
                 );
-                assert!(zeron_sync::budget::shared().stats().sockets <= 32);
+                assert!(vardoger_sync::budget::shared().stats().sockets <= 32);
                 assert_eq!(
                     lock(&relay.joins_by_chat).get(&handles[0].chat_id),
                     Some(&1),
@@ -1343,14 +1343,14 @@ async fn global_saturation_rotates_between_profiles_below_their_local_caps() {
             handles.push(h);
         }
     }
-    until(|| zeron_sync::budget::shared().stats().socket_waiting > 0).await;
+    until(|| vardoger_sync::budget::shared().stats().socket_waiting > 0).await;
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             for h in &handles {
                 h.sync_last_started
                     .store(now_ms() - SYNC_QUANTUM_MS - 1, Ordering::Release);
             }
-            assert!(zeron_sync::budget::shared().stats().sockets <= 32);
+            assert!(vardoger_sync::budget::shared().stats().sockets <= 32);
             if lock(&relay.joins_by_chat).len() == 40 {
                 break;
             }
@@ -1363,8 +1363,8 @@ async fn global_saturation_rotates_between_profiles_below_their_local_caps() {
         host.shutdown_workers().await;
     }
     until(|| {
-        zeron_sync::budget::shared().stats().sockets == 0
-            && zeron_sync::budget::shared().stats().socket_waiting == 0
+        vardoger_sync::budget::shared().stats().sockets == 0
+            && vardoger_sync::budget::shared().stats().socket_waiting == 0
     })
     .await;
 }
@@ -1514,8 +1514,8 @@ const ROOM_HOST: &str = "host-device";
 /// The chat's host as its room sees it: a doc behind its own relay task, no
 /// engine. It joins and leaves the room as a host's socket does.
 struct HostPeer {
-    doc: zeron_doc::SessionDoc,
-    relay: zeron_sync::chat_relay::RelayHandle,
+    doc: vardoger_doc::SessionDoc,
+    relay: vardoger_sync::chat_relay::RelayHandle,
     /// What its local-update hook has handed out so far.
     sent: Mutex<loro::VersionVector>,
 }
@@ -1523,9 +1523,9 @@ struct HostPeer {
 /// The host's doc as its relay task reads it (what `EngineChatSink` does).
 struct PeerDoc(loro::LoroDoc);
 
-impl zeron_sync::chat_client::ChatDocSink for PeerDoc {
-    fn apply_row(&self, _: &[u8], _: u64) -> zeron_sync::chat_client::RowImportOutcome {
-        zeron_sync::chat_client::RowImportOutcome::Applied
+impl vardoger_sync::chat_client::ChatDocSink for PeerDoc {
+    fn apply_row(&self, _: &[u8], _: u64) -> vardoger_sync::chat_client::RowImportOutcome {
+        vardoger_sync::chat_client::RowImportOutcome::Applied
     }
     fn apply_checkpoint(&self, _: &[u8], _: u64) -> Result<(), String> {
         Ok(())
@@ -1550,11 +1550,11 @@ impl zeron_sync::chat_client::ChatDocSink for PeerDoc {
         }
         self.0.export(loro::ExportMode::updates(&vv)).ok()
     }
-    fn relay_import(&self, bytes: &[u8], _: bool) -> zeron_sync::chat_relay::RelayImport {
+    fn relay_import(&self, bytes: &[u8], _: bool) -> vardoger_sync::chat_relay::RelayImport {
         match self.0.import(bytes) {
-            Ok(status) if status.pending.is_some() => zeron_sync::chat_relay::RelayImport::Parked,
-            Ok(_) => zeron_sync::chat_relay::RelayImport::Applied,
-            Err(_) => zeron_sync::chat_relay::RelayImport::Unreadable,
+            Ok(status) if status.pending.is_some() => vardoger_sync::chat_relay::RelayImport::Parked,
+            Ok(_) => vardoger_sync::chat_relay::RelayImport::Applied,
+            Err(_) => vardoger_sync::chat_relay::RelayImport::Unreadable,
         }
     }
 }
@@ -1562,25 +1562,25 @@ impl zeron_sync::chat_client::ChatDocSink for PeerDoc {
 impl HostPeer {
     fn new() -> Arc<Self> {
         let loro = loro::LoroDoc::new();
-        let relay = zeron_sync::chat_relay::RelayHandle::spawn(
+        let relay = vardoger_sync::chat_relay::RelayHandle::spawn(
             ROOM_HOST,
             Arc::new(PeerDoc(loro.clone())),
-            zeron_sync::chat_relay::RelayPolicy { confirm_queue: true },
+            vardoger_sync::chat_relay::RelayPolicy { confirm_queue: true },
         );
         Arc::new(Self {
-            doc: zeron_doc::SessionDoc::from_doc(loro),
+            doc: vardoger_doc::SessionDoc::from_doc(loro),
             relay,
             sent: Mutex::new(loro::VersionVector::default()),
         })
     }
 
     /// One entry of the host's run, relayed as the host relays every commit.
-    fn say(&self, id: &str, role: zeron_doc::MessageRole, text: &str) {
+    fn say(&self, id: &str, role: vardoger_doc::MessageRole, text: &str) {
         self.doc
-            .push_message(&zeron_doc::SessionMessageEntry {
+            .push_message(&vardoger_doc::SessionMessageEntry {
                 id: id.into(),
                 role,
-                parts: vec![zeron_doc::MessagePart::Text { id: "text".into(), text: text.into() }],
+                parts: vec![vardoger_doc::MessagePart::Text { id: "text".into(), text: text.into() }],
                 created_at: 1,
                 device_id: ROOM_HOST.into(),
                 status: None,
@@ -1597,7 +1597,7 @@ impl HostPeer {
 
 enum RoomPeer {
     Socket(tokio::sync::mpsc::UnboundedSender<tokio_tungstenite::tungstenite::Message>),
-    Host(zeron_sync::chat_relay::RelayHandle),
+    Host(vardoger_sync::chat_relay::RelayHandle),
 }
 
 #[derive(Default)]
@@ -1721,7 +1721,7 @@ impl RelayRoom {
             RoomPeer::Socket(tx) => {
                 let _ = tx.send(encode(kind, &header, payload).into());
             }
-            RoomPeer::Host(relay) => relay.room_frame(zeron_sync::chat_frames::WireFrame {
+            RoomPeer::Host(relay) => relay.room_frame(vardoger_sync::chat_frames::WireFrame {
                 kind,
                 header,
                 payload: payload.to_vec(),
@@ -1730,7 +1730,7 @@ impl RelayRoom {
     }
 
     /// `handleRelayFrame` and `handleQueueReq`, minus quotas and legacy peers.
-    fn route(&self, from: &str, frame: zeron_sync::chat_frames::WireFrame) {
+    fn route(&self, from: &str, frame: vardoger_sync::chat_frames::WireFrame) {
         let mut state = lock(&self.state);
         let mut header = frame.header.clone();
         let to = header.as_object_mut().and_then(|h| h.remove("to"));
@@ -1789,7 +1789,7 @@ impl RelayRoom {
         }
         state.peers.insert(ROOM_HOST.into(), RoomPeer::Host(self.host.relay.clone()));
         drop(state);
-        let (tx, mut rx) = tokio::sync::mpsc::channel(zeron_sync::chat_relay::PATH_QUEUE);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(vardoger_sync::chat_relay::PATH_QUEUE);
         self.host.relay.room_up(tx);
         let stop = CancellationToken::new();
         *lock(&self.host_socket) = Some(stop.clone());
@@ -1835,7 +1835,7 @@ fn entry_ids(handle: &ChatDocHandle) -> Vec<String> {
 /// read "Interrupted" until a send pulled the rest in with it).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reopening_a_stale_relayed_chat_brings_what_its_host_finished_meanwhile() {
-    use zeron_doc::MessageRole::{Assistant, User};
+    use vardoger_doc::MessageRole::{Assistant, User};
     let _budget_guard = SYNC_TEST_LOCK.lock().await;
     let room = RelayRoom::open().await;
     room.join_host();
@@ -1865,7 +1865,7 @@ async fn reopening_a_stale_relayed_chat_brings_what_its_host_finished_meanwhile(
         },
     )
     .unwrap();
-    workspace.upsert_device_row(&zeron_proto::Device {
+    workspace.upsert_device_row(&vardoger_proto::Device {
         id: ROOM_HOST.into(),
         name: "linux box".into(),
         platform: "linux".into(),
@@ -1873,9 +1873,9 @@ async fn reopening_a_stale_relayed_chat_brings_what_its_host_finished_meanwhile(
         created_at: None,
         version: None,
         cursor_sdk_version: None,
-        capabilities: vec![zeron_proto::relay_gen::CHAT_RELAY_CAPABILITY.into()],
+        capabilities: vec![vardoger_proto::relay_gen::CHAT_RELAY_CAPABILITY.into()],
     });
-    legacy_chat(&workspace, "chat", ROOM_HOST, Some(zeron_proto::relay_gen::RELAY_ROOM_GEN));
+    legacy_chat(&workspace, "chat", ROOM_HOST, Some(vardoger_proto::relay_gen::RELAY_ROOM_GEN));
     viewer.set_workspace(workspace);
 
     let handle = viewer.open("chat").unwrap();

@@ -8,14 +8,14 @@ use futures::{StreamExt, stream::BoxStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
-use zeron_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls};
+use vardoger_proto::{
     AgentEvent, ChatConfig, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use zeron_rpc::methods;
+use vardoger_rpc::methods;
 
 type Seen = Arc<Mutex<Vec<(HarnessId, RunRequest)>>>;
 
@@ -239,7 +239,7 @@ impl Rig {
         self.turn(harness, prompt, message_id).await
     }
 
-    fn row(&self) -> zeron_proto::Chat {
+    fn row(&self) -> vardoger_proto::Chat {
         self.core.workspace.chat("main").unwrap().unwrap()
     }
 
@@ -696,7 +696,7 @@ async fn provider_cannot_change_while_a_turn_is_running() {
     .await
     .unwrap();
 
-    let client = zeron_rpc::memory_client(rig.core.rpc_service());
+    let client = vardoger_rpc::memory_client(rig.core.rpc_service());
     let to = |harness: HarnessId| {
         serde_json::json!({
             "op": "setChatConfig",

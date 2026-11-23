@@ -9,7 +9,7 @@
 //! Setting `AGY_ACP_CCPA_BASE_URL=http://127.0.0.1:<port>/<secret>` routes all
 //! post-startup CCPA calls (`streamGenerateContent`, `generateContent`,
 //! `fetchAvailableModels`, `retrieveUserQuotaSummary`, chained cleanly behind
-//! `zeron-harness`'s `ThoughtsProxy`) through this loopback forwarder, which:
+//! `vardoger-harness`'s `ThoughtsProxy`) through this loopback forwarder, which:
 //! 1. Authenticates the caller via a per-broker random path secret and rejects
 //!    browser `Origin` / non-loopback `Host` / non-`v1internal` paths.
 //! 2. Fetches the live vault `antigravity` access token on every request and
@@ -136,7 +136,7 @@ impl AntigravityProxy {
                                 res = handle_connection(stream, state) => {
                                     if let Err(err) = res {
                                         tracing::debug!(
-                                            target: "zeron_engine::credentials::antigravity_proxy",
+                                            target: "vardoger_engine::credentials::antigravity_proxy",
                                             %err,
                                             "Antigravity CCPA auth proxy connection ended with error"
                                         );
@@ -429,7 +429,7 @@ async fn resolve_upstream(
             if let Ok(json) = resp.json::<Value>().await {
                 let resolved = endpoint_from_load_code_assist(&json).to_owned();
                 tracing::debug!(
-                    target: "zeron_engine::credentials::antigravity_proxy",
+                    target: "vardoger_engine::credentials::antigravity_proxy",
                     endpoint = %resolved,
                     "resolved Antigravity CCPA upstream endpoint"
                 );
@@ -439,14 +439,14 @@ async fn resolve_upstream(
         }
         Ok(resp) => {
             tracing::debug!(
-                target: "zeron_engine::credentials::antigravity_proxy",
+                target: "vardoger_engine::credentials::antigravity_proxy",
                 status = %resp.status(),
                 "loadCodeAssist returned non-2xx; defaulting to daily CCPA endpoint"
             );
         }
         Err(err) => {
             tracing::debug!(
-                target: "zeron_engine::credentials::antigravity_proxy",
+                target: "vardoger_engine::credentials::antigravity_proxy",
                 %err,
                 "loadCodeAssist failed; defaulting to daily CCPA endpoint"
             );
@@ -587,7 +587,7 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<ProxyState>) -> std
     // vault and retry before committing response headers.
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         tracing::info!(
-            target: "zeron_engine::credentials::antigravity_proxy",
+            target: "vardoger_engine::credentials::antigravity_proxy",
             "CCPA returned 401; forcing vault refresh for Antigravity token"
         );
         if let GrantOutcome::Granted(fresh) = state.tokens.get_grant(true).await {

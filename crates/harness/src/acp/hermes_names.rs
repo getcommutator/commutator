@@ -4,14 +4,14 @@
 //! keeps the models.dev catalog it reads context windows from beside its
 //! config (`$HERMES_HOME/models_dev_cache.json`), and that names each model
 //! as its maker does ("Claude Opus 5.5"). A model it doesn't list keeps its
-//! id. Zeron only reads the file; Hermes refreshes it.
+//! id. Vardoger only reads the file; Hermes refreshes it.
 use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, Visitor};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
     path::Path,
 };
-use zeron_proto::Model;
+use vardoger_proto::Model;
 
 /// The models.dev provider a Hermes provider's models are listed under, as
 /// Hermes maps them (`agent/models_dev.py`); any other is its own id.
@@ -101,7 +101,7 @@ pub(super) fn mark_default(models: &mut [Model], chosen: Option<&str>) {
 
 /// The provider Hermes runs on when its config leaves the choice to
 /// auto-detection: `active_provider` in `$HERMES_HOME/auth.json`, which its
-/// own sign-in sets (and Zeron's, on a Cloud machine). A small file, read
+/// own sign-in sets (and Vardoger's, on a Cloud machine). A small file, read
 /// as Hermes's catalog is (`name_models`).
 pub(super) async fn active_provider() -> Option<String> {
     active_provider_in(&hermes_home()).await
@@ -156,15 +156,15 @@ pub(super) fn fold_context_variants(models: &mut Vec<Model>) {
         if folded.contains(&format!("{}{SUFFIX}", model.id))
             && !model.options.iter().any(|o| o.id == "contextWindow")
         {
-            model.options.push(zeron_proto::ModelOption {
+            model.options.push(vardoger_proto::ModelOption {
                 id: "contextWindow".into(),
                 label: "Context Window".into(),
                 choices: vec![
-                    zeron_proto::ModelOptionChoice {
+                    vardoger_proto::ModelOptionChoice {
                         id: "272k".into(),
                         label: "272K".into(),
                     },
-                    zeron_proto::ModelOptionChoice {
+                    vardoger_proto::ModelOptionChoice {
                         id: "900k".into(),
                         label: "900K".into(),
                     },
@@ -410,9 +410,9 @@ mod tests {
         assert!(super::runnable(served[0], served));
         assert!(super::runnable("auto:anthropic/claude-opus-4.6", ["auto:anthropic/claude-opus-4.6"]));
 
-        let mut models: Vec<zeron_proto::Model> = listed
+        let mut models: Vec<vardoger_proto::Model> = listed
             .iter()
-            .map(|id| zeron_proto::Model {
+            .map(|id| vardoger_proto::Model {
                 id: (*id).into(),
                 label: (*id).into(),
                 description: None,
@@ -447,9 +447,9 @@ mod tests {
         assert_eq!(chosen(both[0], &both, None).as_deref(), Some("anthropic:claude-fable-5-2"));
         assert_eq!(chosen(both[0], &both, Some("nous")).as_deref(), Some("anthropic:claude-fable-5-2"), "a provider it lists nothing of");
         // The picker marks the same one.
-        let mut rows: Vec<zeron_proto::Model> = both
+        let mut rows: Vec<vardoger_proto::Model> = both
             .iter()
-            .map(|id| zeron_proto::Model {
+            .map(|id| vardoger_proto::Model {
                 id: (*id).into(),
                 label: (*id).into(),
                 description: None,
@@ -481,7 +481,7 @@ mod tests {
         Model {
             id: id.into(),
             label: label.into(),
-            provider: Some(zeron_proto::ModelProvider {
+            provider: Some(vardoger_proto::ModelProvider {
                 id: provider.into(),
                 name: provider.into(),
             }),

@@ -1,9 +1,9 @@
-//! The subcommands that run the engine's own code ([`zeron_cli::EngineCommand`]),
-//! in a binary that links it: `zeron` itself, and `zeron-engine`, the helper
+//! The subcommands that run the engine's own code ([`vardoger_cli::EngineCommand`]),
+//! in a binary that links it: `vardoger` itself, and `vardoger-engine`, the helper
 //! an interface without the engine hands them to. Logging is set up by
-//! [`zeron_cli::run`] before these run.
+//! [`vardoger_cli::run`] before these run.
 
-use zeron_cli::EngineCommand;
+use vardoger_cli::EngineCommand;
 
 use crate::{auth_cli, engine_config_from_env, ipc_cli};
 
@@ -12,7 +12,7 @@ pub fn run_engine_command(command: EngineCommand) -> anyhow::Result<()> {
         EngineCommand::Headless => {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(async {
-                let engine = zeron_engine::Engine::new(engine_config_from_env());
+                let engine = vardoger_engine::Engine::new(engine_config_from_env());
                 engine.run().await
             })
         }
@@ -42,7 +42,7 @@ pub fn run_engine_command(command: EngineCommand) -> anyhow::Result<()> {
         EngineCommand::Engine => crate::background::run(),
         EngineCommand::DiscoverModels(harness) => {
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(zeron_engine::sign_in_catalog::print_discovered(&harness))
+            runtime.block_on(vardoger_engine::sign_in_catalog::print_discovered(&harness))
         }
     }
 }

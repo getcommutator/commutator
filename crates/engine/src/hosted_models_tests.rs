@@ -319,7 +319,7 @@ fn the_staging_list_on_the_edge_is_valid() {
     assert!(!claude.models.is_empty());
     // And applied to the real built-in catalog it keeps every built-in row
     // for a current CLI and marks one default.
-    let builtin = zeron_harness::claude::catalog::static_models();
+    let builtin = vardoger_harness::claude::catalog::static_models();
     let models = apply(builtin.clone(), claude, Some("2.1.322"), Source::BuiltIn);
     for model in &builtin {
         assert!(models.iter().any(|m| m.id == model.id), "{}", model.id);
@@ -328,7 +328,7 @@ fn the_staging_list_on_the_edge_is_valid() {
 }
 
 #[test]
-fn only_https_on_zeron_sh_may_serve_the_list() {
+fn only_https_on_vardoger_sh_may_serve_the_list() {
     for (edge, url) in [
         (
             "https://edge.zeron.sh",
@@ -349,7 +349,7 @@ fn only_https_on_zeron_sh_may_serve_the_list() {
         ("https://evilzeron.sh", None),
         ("https://user@edge.zeron.sh", None),
         (
-            "https://zeron-edge-staging.sylasincorporated.workers.dev",
+            "https://vardoger-edge-staging.sylasincorporated.workers.dev",
             None,
         ),
         ("http://127.0.0.1:27640", None),

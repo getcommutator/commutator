@@ -11,8 +11,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::handshake::server::{
     Request as WsRequest, Response as WsResponse,
 };
-use zeron_engine::{AuthState, Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
-use zeron_rpc::{connect_ipc, connect_ws, memory_client, methods};
+use vardoger_engine::{AuthState, Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
+use vardoger_rpc::{connect_ipc, connect_ws, memory_client, methods};
 
 fn config(
     data_dir: &std::path::Path,
@@ -46,7 +46,7 @@ async fn rejecting_edge() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<
                 let mut request = [0u8; 4096];
                 let n = stream.read(&mut request).await.unwrap_or(0);
                 // A `HEAD /` is preview discovery probing this listener on
-                // localhost (seen from the Zeron engine already running on a
+                // localhost (seen from the Vardoger engine already running on a
                 // developer's Mac), not a request to the edge.
                 if !request[..n].starts_with(b"HEAD / ") {
                     seen.fetch_add(1, Ordering::SeqCst);
@@ -408,7 +408,7 @@ async fn signed_in_with_chats_kept_local_opens_the_local_workspace_offline() {
         r#"{"refreshToken":"dead","user":{"id":"user_1","email":"u@example.com"},"orgId":"org_1"}"#,
     )
     .unwrap();
-    zeron_proto::set_keep_chats_local(dir.path(), true).unwrap();
+    vardoger_proto::set_keep_chats_local(dir.path(), true).unwrap();
     // An edge that refuses everything and notes each request's line.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let edge_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -467,7 +467,7 @@ async fn signed_in_with_chats_kept_local_opens_the_local_workspace_offline() {
         r#"{"refreshToken":"dead","user":{"id":"user_1","email":"u@example.com"},"orgId":"org_1"}"#,
     )
     .unwrap();
-    zeron_proto::set_keep_chats_local(dir.path(), false).unwrap();
+    vardoger_proto::set_keep_chats_local(dir.path(), false).unwrap();
     let synced = self::config(dir.path(), "http://127.0.0.1:9".into(), Some("client_test"), None);
     let auth = Engine::build_auth(&synced).await;
     assert_eq!(Engine::initial_workspace_scope(&auth), WorkspaceScope::Synced);
@@ -534,7 +534,7 @@ async fn workspace_recovers_from_an_unreachable_edge_without_restarting() {
     let refresh_loop = auth.spawn_refresh_loop();
     assert!(matches!(
         auth.access_token().await,
-        Err(zeron_rpc::TokenError::TemporarilyUnavailable(_))
+        Err(vardoger_rpc::TokenError::TemporarilyUnavailable(_))
     ));
     wait_until(
         || runtime.core().workspace.sync_status().is_some(),
@@ -642,7 +642,7 @@ async fn headless_stop_rpc_drains_the_daemon_and_releases_ipc() {
     .expect("headless IPC did not start");
 
     // The daemon published an owner-only bearer and refuses dials without it.
-    let token_file = zeron_rpc::ipc_auth::token_path(dir.path());
+    let token_file = vardoger_rpc::ipc_auth::token_path(dir.path());
     assert!(
         token_file.is_file(),
         "headless start must publish its IPC token"

@@ -9,11 +9,11 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use zeron_harness::acp::SignInProgress;
-use zeron_harness::{
+use vardoger_harness::acp::SignInProgress;
+use vardoger_harness::{
     AcpHarness, CancellationToken, Harness, HarnessError, RunControls, SteerMessage,
 };
-use zeron_proto::{
+use vardoger_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode, TodoItem, TodoStatus, ToolCall, UserInputAnswer,
 };
@@ -154,7 +154,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
     assert!(events.contains(&AgentEvent::ToolCall {
         id: "t1".into(),
         call: ToolCall::Exec {
-            command: "cargo test -p zeron-harness".into()
+            command: "cargo test -p vardoger-harness".into()
         },
     }));
     let exec_output = events
@@ -169,7 +169,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
             _ => None,
         })
         .expect("exec output present");
-    assert!(exec_output.starts_with("   Compiling zeron-harness"));
+    assert!(exec_output.starts_with("   Compiling vardoger-harness"));
     assert_eq!(exec_output.lines().count(), 6, "{exec_output:?}");
 
     // Edit tool: single-shot completed call carries the inline diff.
@@ -226,7 +226,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
 async fn config_options_apply_requested_model_and_effort() {
     let (controls, _steer, _token) = controls();
     let mut req = request("scenario:config");
-    req.reasoning = Some(zeron_proto::ReasoningLevel::Medium);
+    req.reasoning = Some(vardoger_proto::ReasoningLevel::Medium);
     let events = run_to_end(&harness(), req, controls).await;
     // The fixture answers refusal unless BOTH set_config_option calls
     // (model grok-4.5, effort medium) arrived before the prompt.
@@ -349,7 +349,7 @@ async fn teardown_ends_a_command_the_agent_detached() {
 /// it again, or the cancelled message runs after all.
 #[tokio::test]
 async fn a_turn_stop_cancels_a_steer_still_in_flight() {
-    use zeron_harness::TurnControl;
+    use vardoger_harness::TurnControl;
     let (mut controls, steer, _token) = controls();
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -861,9 +861,9 @@ fn descriptor_surface_matches_registry_expectations() {
     assert_eq!(
         harness.reasoning_levels(),
         &[
-            zeron_proto::ReasoningLevel::Low,
-            zeron_proto::ReasoningLevel::Medium,
-            zeron_proto::ReasoningLevel::High,
+            vardoger_proto::ReasoningLevel::Low,
+            vardoger_proto::ReasoningLevel::Medium,
+            vardoger_proto::ReasoningLevel::High,
         ]
     );
 }
@@ -880,9 +880,9 @@ async fn models_are_discovered_from_the_acp_session() {
     assert_eq!(
         models[0].reasoning_levels,
         vec![
-            zeron_proto::ReasoningLevel::Low,
-            zeron_proto::ReasoningLevel::Medium,
-            zeron_proto::ReasoningLevel::High,
+            vardoger_proto::ReasoningLevel::Low,
+            vardoger_proto::ReasoningLevel::Medium,
+            vardoger_proto::ReasoningLevel::High,
         ],
         "{models:?}"
     );
@@ -934,7 +934,7 @@ async fn missing_override_is_not_installed_and_fails_discovery() {
     assert!(!harness.installed());
     let err = harness.models().await.expect_err("missing override");
     assert!(
-        matches!(err, zeron_harness::HarnessError::NotInstalled(_)),
+        matches!(err, vardoger_harness::HarnessError::NotInstalled(_)),
         "{err:?}"
     );
 }
@@ -984,7 +984,7 @@ fn hermes_and_pi_descriptor_surfaces_match_registry_expectations() {
     assert_eq!(hermes.steering_mode(), SteeringMode::TurnBoundary);
     assert!(hermes.reasoning_levels().is_empty());
 
-    let pi = zeron_harness::PiHarness::new();
+    let pi = vardoger_harness::PiHarness::new();
     assert_eq!(pi.id(), HarnessId::Pi);
     assert_eq!(pi.display_name(), "Pi");
     assert!(pi.supports_steering());
@@ -1049,7 +1049,7 @@ fn devin_auth_fixture() -> PathBuf {
     path
 }
 
-/// Zeron's "Add account" for Devin: an explicit method (Devin has no
+/// Vardoger's "Add account" for Devin: an explicit method (Devin has no
 /// default), a throwaway data home the new login lands in, and a url filter
 /// that skips the handshake's unrelated link for the real sign-in page.
 #[tokio::test]
@@ -1060,7 +1060,7 @@ async fn devin_sign_in_runs_the_given_method_in_the_given_environment() {
     AcpHarness::devin()
         .with_executable(devin_auth_fixture())
         .sign_in_with(
-            zeron_harness::acp::SignInOptions {
+            vardoger_harness::acp::SignInOptions {
                 method: Some("devin-browser".into()),
                 env: vec![("XDG_DATA_HOME".into(), data.path().into())],
                 url_filter: Some(|url| url.contains("redirect_uri=")),
@@ -1770,7 +1770,7 @@ async fn grok_subagent_lifecycle_tails_the_disk_transcript_into_tagged_events() 
     let tool = pos(&|e| {
         matches!(
             e,
-            AgentEvent::ToolCall { id, call: zeron_proto::ToolCall::Exec { command } }
+            AgentEvent::ToolCall { id, call: vardoger_proto::ToolCall::Exec { command } }
                 if id == "call-1-0" && command == "ls"
         )
     })
@@ -2011,7 +2011,7 @@ fn antigravity_sign_in_preserves_relative_home_auth_in_a_separate_process() {
         .current_dir(parent_cwd.path())
         .env("HOME", child_home.path())
         .env("GEMINI_HOME", "relative-gemini-home")
-        .env("ZERON_TEST_EXPECTED_GEMINI_HOME", &gemini_home)
+        .env("VARDOGER_TEST_EXPECTED_GEMINI_HOME", &gemini_home)
         .output()
         .unwrap();
     assert!(
@@ -2024,7 +2024,7 @@ fn antigravity_sign_in_preserves_relative_home_auth_in_a_separate_process() {
 
 #[tokio::test]
 async fn antigravity_auth_path_subprocess() {
-    if std::env::var_os("ZERON_TEST_EXPECTED_GEMINI_HOME").is_none() {
+    if std::env::var_os("VARDOGER_TEST_EXPECTED_GEMINI_HOME").is_none() {
         return;
     }
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2577,7 +2577,7 @@ async fn acp_boundary_steer(scenario: &str, trigger_on_done: bool) {
             };
             if trigger && let Some(sender) = steer.take() {
                 sender
-                    .send(zeron_harness::SteerMessage {
+                    .send(vardoger_harness::SteerMessage {
                         prompt: "second".into(),
                         message_id: None,
                         attachments: Vec::new(),
@@ -2669,8 +2669,8 @@ fn antigravity_detection_and_missing_server_never_install() {
             .env("HOME", dir.path())
             .env("PATH", &bin)
             .env("SHELL", "/nonexistent-shell")
-            .env("ZERON_ADAPTERS_DIR", &adapters)
-            .env("ZERON_TEST_DETECTION", scenario)
+            .env("VARDOGER_ADAPTERS_DIR", &adapters)
+            .env("VARDOGER_TEST_DETECTION", scenario)
             .env_remove("ANTIGRAVITY_ACP_EXECUTABLE");
         if scenario == "override" {
             child.env("ANTIGRAVITY_ACP_EXECUTABLE", &exe);
@@ -2691,7 +2691,7 @@ fn antigravity_detection_and_missing_server_never_install() {
 
 #[tokio::test]
 async fn antigravity_detection_subprocess() {
-    let Ok(scenario) = std::env::var("ZERON_TEST_DETECTION") else {
+    let Ok(scenario) = std::env::var("VARDOGER_TEST_DETECTION") else {
         return;
     };
     let harness = AcpHarness::antigravity();
@@ -2726,7 +2726,7 @@ async fn antigravity_detection_subprocess() {
         harness.run(request("hello"), ctl).await,
         Err(HarnessError::NotInstalled(_))
     ));
-    let adapters = PathBuf::from(std::env::var_os("ZERON_ADAPTERS_DIR").unwrap());
+    let adapters = PathBuf::from(std::env::var_os("VARDOGER_ADAPTERS_DIR").unwrap());
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
         std::fs::read_dir(adapters)
@@ -2750,13 +2750,13 @@ async fn mcp_injection_all_acp_harnesses_new_resume_and_fallback() {
             let mut req = request("scenario:mcp");
             req.model = None;
             req.resume = resume.map(str::to_owned);
-            req.mcp = Some(zeron_proto::McpServer {
-                name: "zeron".into(),
-                command: "/path with spaces/zeron".into(),
+            req.mcp = Some(vardoger_proto::McpServer {
+                name: "vardoger".into(),
+                command: "/path with spaces/vardoger".into(),
                 args: vec!["mcp".into()],
                 env: [
-                    ("ZERON_CHAT_ID".into(), "origin-chat".into()),
-                    ("ZERON_IPC_PORT".into(), "27699".into()),
+                    ("VARDOGER_CHAT_ID".into(), "origin-chat".into()),
+                    ("VARDOGER_IPC_PORT".into(), "27699".into()),
                 ]
                 .into(),
                 http: None,
@@ -2813,7 +2813,7 @@ async fn all_acp_harnesses_use_project_scoped_session_command_updates() {
 
 #[tokio::test]
 async fn shared_acp_skills_require_explicit_native_command_classification() {
-    use zeron_proto::invocation::{Invocation, harness_prompt};
+    use vardoger_proto::invocation::{Invocation, harness_prompt};
     for h in [
         AcpHarness::devin(),
         AcpHarness::grok(),
@@ -2822,10 +2822,10 @@ async fn shared_acp_skills_require_explicit_native_command_classification() {
     ] {
         let h = h.with_executable(fixture_path());
         let cwd = tempfile::tempdir().unwrap();
-        let skill_dir = cwd.path().join(".agents/skills/zeron-fixture-review");
+        let skill_dir = cwd.path().join(".agents/skills/vardoger-fixture-review");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: zeron-fixture-review\ndescription: Review changes\n---\nReview the changes.").unwrap();
-        let command_name = "zeron-fixture-review";
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: vardoger-fixture-review\ndescription: Review changes\n---\nReview the changes.").unwrap();
+        let command_name = "vardoger-fixture-review";
         std::fs::write(cwd.path().join(".command-fixture"), command_name).unwrap();
         let skills = h
             .skills(&cwd.path().canonicalize().unwrap())
@@ -2834,7 +2834,7 @@ async fn shared_acp_skills_require_explicit_native_command_classification() {
             .unwrap();
         let skill = skills
             .into_iter()
-            .find(|s| s.name == "zeron-fixture-review")
+            .find(|s| s.name == "vardoger-fixture-review")
             .unwrap();
         assert!(skill.command.is_none());
         let invocation = Invocation::Skill {
@@ -2851,7 +2851,7 @@ async fn shared_acp_skills_require_explicit_native_command_classification() {
 
 #[tokio::test]
 async fn a_stopped_turn_keeps_the_agent_for_the_next_prompt() {
-    use zeron_harness::TurnControl;
+    use vardoger_harness::TurnControl;
     let (mut controls, steer, _token) = controls();
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -2971,7 +2971,7 @@ async fn fx_rejected_model_never_falls_back_to_another_model() {
 }
 
 #[tokio::test]
-async fn fx_permissions_follow_zeron_access_mode() {
+async fn fx_permissions_follow_vardoger_access_mode() {
     for (access, answer, expected, question_count) in [
         (AccessMode::Supervised, Some("No"), "deny", 1),
         (AccessMode::Supervised, Some("Yes"), "allow", 1),
@@ -3101,7 +3101,7 @@ async fn a_discarded_warm_start_is_ended() {
 /// even when the selected agent only advertises full access.
 #[tokio::test]
 async fn auto_without_a_safe_fallback_refuses_before_launch() {
-    let (_, capped, _) = zeron_proto::cap_access(
+    let (_, capped, _) = vardoger_proto::cap_access(
         (SandboxLevel::WorkspaceWrite, AccessMode::FullAccess),
         (SandboxLevel::WorkspaceWrite, AccessMode::Auto),
     );

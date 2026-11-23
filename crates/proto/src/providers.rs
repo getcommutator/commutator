@@ -1,11 +1,11 @@
-//! Which agents Zeron signs in to and how: the rules every app's provider
+//! Which agents Vardoger signs in to and how: the rules every app's provider
 //! settings follow (desktop Settings → Providers, the phone's Providers), so
 //! the platforms offer the same sign-ins, labels and switching. Pure.
 
 use crate::HarnessId;
 
-/// The providers zeron can sign into, in display order: (harness, name, CLI
-/// command — named in the empty-state copy, zeron settings.agents.tsx
+/// The providers vardoger can sign into, in display order: (harness, name, CLI
+/// command — named in the empty-state copy, vardoger settings.agents.tsx
 /// `PROVIDERS`). Every agent with a login of its own is here; what each one
 /// supports is documented engine-side (`agent_accounts` module docs).
 pub const PROVIDERS: [(HarnessId, &str, &str); 10] = [
@@ -51,14 +51,14 @@ pub fn keeps_one_login(_harness: HarnessId) -> bool {
     false
 }
 
-/// Whether zeron switches this agent's logins. Hermes rotates through its
+/// Whether vardoger switches this agent's logins. Hermes rotates through its
 /// own credential pool (listed, never reordered); fx has none.
 pub fn switches_accounts(harness: HarnessId) -> bool {
     !matches!(harness, HarnessId::Hermes | HarnessId::Fx)
 }
 
 /// A standing note under a provider's Accounts label, for an agent whose
-/// accounts work differently. Hermes owns its credential pool: zeron lists
+/// accounts work differently. Hermes owns its credential pool: vardoger lists
 /// it and adds to it through Hermes' own CLI, but never switches or removes
 /// its entries. Pure.
 pub fn provider_note(harness: HarnessId) -> Option<&'static str> {
@@ -81,14 +81,14 @@ pub struct LoginOption {
     pub label: &'static str,
 }
 
-/// The sign-ins zeron offers for `harness`, in button order. Pure.
+/// The sign-ins vardoger offers for `harness`, in button order. Pure.
 ///
 /// For an agent that keeps a login per model provider, these are the
-/// providers its own auth supports AND zeron can sign in to unattended
+/// providers its own auth supports AND vardoger can sign in to unattended
 /// (engine `agent_accounts::oauth` / `stores` say how): Pi's Claude is the
 /// same Claude Pro/Max sign-in Pi's own `/login` runs. Left out: OpenCode's
 /// Claude (OpenCode has no Anthropic OAuth — removed upstream, absent from
-/// 2.x); Pi's xAI, Kimi, Meta and OpenRouter logins (zeron can't tell their
+/// 2.x); Pi's xAI, Kimi, Meta and OpenRouter logins (vardoger can't tell their
 /// accounts apart yet); and Hermes' Claude, Qwen, MiniMax and OpenRouter
 /// (not unattended device codes: a pasted code, another CLI's login, a
 /// minted API key, unverified). API keys are [`api_key_options`].
@@ -119,7 +119,7 @@ pub fn login_options(harness: HarnessId) -> Vec<LoginOption> {
     }
 }
 
-/// A provider an agent reaches with an API key Zeron can add for it.
+/// A provider an agent reaches with an API key Vardoger can add for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApiKeyOption {
     /// The agent's own id for the provider: its store key (Pi's and
@@ -129,7 +129,7 @@ pub struct ApiKeyOption {
     pub label: &'static str,
 }
 
-/// The providers whose API key Zeron adds for `harness`, as the agent's own
+/// The providers whose API key Vardoger adds for `harness`, as the agent's own
 /// CLI would store it (engine `agent_accounts::api_keys`), each checked
 /// with the provider before it's saved. Pure.
 pub fn api_key_options(harness: HarnessId) -> Vec<ApiKeyOption> {
@@ -155,7 +155,7 @@ pub fn api_key_options(harness: HarnessId) -> Vec<ApiKeyOption> {
     }
 }
 
-/// The API key Zeron adds for `provider` of `harness`, if it adds one.
+/// The API key Vardoger adds for `provider` of `harness`, if it adds one.
 pub fn api_key_option(harness: HarnessId, provider: &str) -> Option<ApiKeyOption> {
     api_key_options(harness)
         .into_iter()
@@ -183,7 +183,7 @@ pub fn groups_by_provider(harness: HarnessId) -> bool {
     )
 }
 
-/// The sign-in zeron offers for `provider` of `harness`, if it offers one.
+/// The sign-in vardoger offers for `provider` of `harness`, if it offers one.
 pub fn login_option(harness: HarnessId, provider: &str) -> Option<LoginOption> {
     login_options(harness)
         .into_iter()
@@ -194,7 +194,7 @@ pub fn login_option(harness: HarnessId, provider: &str) -> Option<LoginOption> {
 /// Settings, the model picker's "<name> account"): the provider its models
 /// come from — "ChatGPT" for the ChatGPT-only `openai-codex`, "OpenAI" for
 /// `openai` (ChatGPT sign-ins and API keys alike), "Anthropic" for
-/// `anthropic` (Claude sign-ins and API keys). An id zeron doesn't know
+/// `anthropic` (Claude sign-ins and API keys). An id vardoger doesn't know
 /// reads as its words. Pure.
 pub fn account_group_label(harness: HarnessId, provider: &str) -> String {
     let known = match provider {
@@ -236,10 +236,10 @@ pub fn account_group_label(harness: HarnessId, provider: &str) -> String {
         .join(" ")
 }
 
-/// How to add another account to a provider group zeron can neither sign
-/// in to nor add a key for (a Pi login zeron can't run, a Hermes provider
+/// How to add another account to a provider group vardoger can neither sign
+/// in to nor add a key for (a Pi login vardoger can't run, a Hermes provider
 /// without a device code or key): the agent's own way, said under the
-/// group. `None` where zeron adds one itself. Pure.
+/// group. `None` where vardoger adds one itself. Pure.
 pub fn account_group_hint(harness: HarnessId, provider: &str) -> Option<String> {
     if login_option(harness, provider).is_some() || api_key_option(harness, provider).is_some() {
         return None;
@@ -631,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn a_group_zeron_cant_add_to_says_the_agents_own_way() {
+    fn a_group_vardoger_cant_add_to_says_the_agents_own_way() {
         assert_eq!(
             account_group_hint(HarnessId::Pi, "kimi-coding").as_deref(),
             Some("To add another Kimi account, run /login in Pi.")
@@ -640,7 +640,7 @@ mod tests {
             account_group_hint(HarnessId::Hermes, "minimax-oauth").as_deref(),
             Some("To add another MiniMax account, run `hermes auth add minimax-oauth`.")
         );
-        // Zeron adds these itself (a sign-in, a key): no hint.
+        // Vardoger adds these itself (a sign-in, a key): no hint.
         assert!(account_group_hint(HarnessId::Pi, "anthropic").is_none());
         assert!(account_group_hint(HarnessId::Hermes, "openrouter").is_none());
         assert!(account_group_hint(HarnessId::Opencode, "github-copilot").is_none());

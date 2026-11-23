@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! (cd edge && npx wrangler dev --port 27640 --var AUTH_MODE:dev)
-//! ZERON_EDGE_WS=ws://127.0.0.1:27640 rtk proxy cargo test -p zeron-engine \
+//! VARDOGER_EDGE_WS=ws://127.0.0.1:27640 rtk proxy cargo test -p vardoger-engine \
 //!   --test registry_writes_live -- --ignored --nocapture
 //! ```
 //!
@@ -25,15 +25,15 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use zeron_doc::{CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
-use zeron_engine::doc_host::EdgeConfig;
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use vardoger_doc::{CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
+use vardoger_engine::doc_host::EdgeConfig;
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls};
+use vardoger_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use zeron_rpc::methods;
+use vardoger_rpc::methods;
 
 const HOST: &str = "reg-host";
 const VIEWER: &str = "reg-viewer";
@@ -248,9 +248,9 @@ fn report(phase: &str, seconds: u64, from: u64, to: u64, before: &Tally, after: 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires a live edge: set ZERON_EDGE_WS (e.g. ws://127.0.0.1:27640)"]
+#[ignore = "requires a live edge: set VARDOGER_EDGE_WS (e.g. ws://127.0.0.1:27640)"]
 async fn registry_writes_per_turn_and_parked_minute() {
-    let base = std::env::var("ZERON_EDGE_WS").expect("set ZERON_EDGE_WS");
+    let base = std::env::var("VARDOGER_EDGE_WS").expect("set VARDOGER_EDGE_WS");
     let http = base.replacen("ws", "http", 1);
     let org = format!("org-{}", uuid::Uuid::new_v4().simple());
     let token = format!("alice@{org}");
@@ -285,7 +285,7 @@ async fn registry_writes_per_turn_and_parked_minute() {
         )
         .await;
     }
-    let rpc = zeron_rpc::memory_client(host.rpc_service());
+    let rpc = vardoger_rpc::memory_client(host.rpc_service());
     rpc.call(
         methods::MUTATE,
         json!({"op": "createSpace", "spaceId": "space-w", "deviceId": HOST, "path": "/tmp"}),

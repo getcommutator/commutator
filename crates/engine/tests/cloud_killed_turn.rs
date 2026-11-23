@@ -13,17 +13,17 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{
+use vardoger_doc::{
     MessagePart, MessageRole, MessageStatus, SessionCommandEntry, SessionCommandPayload,
     SessionCommandStatus, SessionDoc, SessionMessageEntry,
 };
-use zeron_engine::{EngineCore, HarnessRegistry, RunJournal};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use vardoger_engine::{EngineCore, HarnessRegistry, RunJournal};
+use vardoger_harness::{Harness, HarnessError, RunControls};
+use vardoger_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
-use zeron_sync::DocsStore;
+use vardoger_sync::DocsStore;
 
 const CHAT: &str = "chat-killed";
 const DEVICE: &str = "dev-cloud";
@@ -333,7 +333,7 @@ async fn settle() {
 }
 
 fn on_a_cloud_machine() {
-    zeron_engine::runner::set_session(Some(zeron_engine::runner::CloudSession {
+    vardoger_engine::runner::set_session(Some(vardoger_engine::runner::CloudSession {
         account: "cloud-acct".into(),
         chat_id: CHAT.into(),
         repo: None,
@@ -348,7 +348,7 @@ fn on_a_cloud_machine() {
 struct Logins;
 
 #[async_trait]
-impl zeron_engine::registry::RunEnvironment for Logins {
+impl vardoger_engine::registry::RunEnvironment for Logins {
     async fn prepare(
         &self,
         _harness: HarnessId,

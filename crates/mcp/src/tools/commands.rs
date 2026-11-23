@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use zeron_rpc::{RpcError, methods};
+use vardoger_rpc::{RpcError, methods};
 
 use super::{ToolDef, Tools};
 
@@ -109,7 +109,7 @@ fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
 fn said(error: RpcError) -> anyhow::Error {
     match error {
         RpcError::UnknownMethod(_) => anyhow::anyhow!(
-            "That device's Zeron is too old to run commands: update Zeron there and restart it"
+            "That device's Vardoger is too old to run commands: update Vardoger there and restart it"
         ),
         RpcError::Failed(message) => anyhow::anyhow!(message),
         other => anyhow::anyhow!("{other}"),
@@ -133,8 +133,8 @@ impl Tools {
     /// The device to send to (`None`: this engine's), and how a reply names it.
     async fn command_device(&self, key: Option<&str>) -> anyhow::Result<(Option<String>, Value)> {
         let (devices, local) =
-            tokio::try_join!(self.zeron.devices(), self.zeron.local_device_id())?;
-        let id = self.zeron.resolve_device_id(key).await?;
+            tokio::try_join!(self.vardoger.devices(), self.vardoger.local_device_id())?;
+        let id = self.vardoger.resolve_device_id(key).await?;
         let name = devices.iter().find(|d| d.id == id).map(|d| d.name.clone());
         let named = json!({ "id": id, "name": name, "local": id == local });
         Ok(((id != local).then_some(id), named))
@@ -162,7 +162,7 @@ impl Tools {
         if args.background {
             params["background"] = json!(true);
         }
-        if let Some(chat) = &self.zeron.origin().chat_id {
+        if let Some(chat) = &self.vardoger.origin().chat_id {
             params["chatId"] = json!(chat);
         }
         if let Some(target) = &target {
@@ -173,7 +173,7 @@ impl Tools {
             if let Some(cwd) = cwd {
                 params["cwd"] = json!(cwd);
             }
-            self.zeron.call_rpc(methods::RUN_COMMAND, params)
+            self.vardoger.call_rpc(methods::RUN_COMMAND, params)
         };
         let reply = match send(asked.as_ref().or(remembered.as_ref())).await {
             // The folder it was left in is gone: start where a first one would.
@@ -214,7 +214,7 @@ impl Tools {
         if let Some(target) = &target {
             params["targetDeviceId"] = json!(target);
         }
-        let mut status = self.zeron.call_rpc(method, params).await.map_err(said)?;
+        let mut status = self.vardoger.call_rpc(method, params).await.map_err(said)?;
         status["id"] = json!(args.id);
         status["device"] = named;
         Ok(status)
@@ -224,14 +224,14 @@ impl Tools {
         let (target, named) = self.command_device(args.device.as_deref()).await?;
         let device_id = named["id"].as_str().unwrap_or_default().to_owned();
         let mut params = json!({});
-        if let Some(chat) = &self.zeron.origin().chat_id {
+        if let Some(chat) = &self.vardoger.origin().chat_id {
             params["chatId"] = json!(chat);
         }
         if let Some(target) = &target {
             params["targetDeviceId"] = json!(target);
         }
         let mut listed = self
-            .zeron
+            .vardoger
             .call_rpc(methods::LIST_BACKGROUND_COMMANDS, params)
             .await
             .map_err(said)?;
@@ -249,7 +249,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::zeron::{Origin, Zeron};
+    use crate::vardoger::{Origin, Vardoger};
 
     /// Two devices. `RunCommand` ends wherever `cd` took it; the rest answer
     /// with what they were asked.
@@ -259,14 +259,14 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl zeron_rpc::RpcService for Engine {
+    impl vardoger_rpc::RpcService for Engine {
         async fn handle(
             &self,
             method: &str,
             params: Value,
-        ) -> Result<zeron_rpc::RpcReply, RpcError> {
+        ) -> Result<vardoger_rpc::RpcReply, RpcError> {
             use futures::StreamExt;
-            use zeron_rpc::RpcReply;
+            use vardoger_rpc::RpcReply;
             if method.contains("Command") {
                 if self.old_remote && params["targetDeviceId"] == "dev-remote" {
                     return Err(RpcError::UnknownMethod(method.into()));
@@ -314,8 +314,8 @@ mod tests {
             chat_id: Some("chat-1".into()),
             ..Default::default()
         };
-        Tools::new(Arc::new(Zeron::with_client(
-            zeron_rpc::memory_client(engine),
+        Tools::new(Arc::new(Vardoger::with_client(
+            vardoger_rpc::memory_client(engine),
             origin,
         )))
     }

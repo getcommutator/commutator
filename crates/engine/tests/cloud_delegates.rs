@@ -6,8 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use zeron_engine::{EdgeConfig, EngineCore, HarnessId, default_registry};
-use zeron_rpc::{memory_client, methods};
+use vardoger_engine::{EdgeConfig, EngineCore, HarnessId, default_registry};
+use vardoger_rpc::{memory_client, methods};
 
 type Requests = Arc<Mutex<Vec<(String, String)>>>;
 
@@ -98,7 +98,7 @@ async fn edge() -> (String, Requests) {
 
 #[tokio::test]
 async fn a_cloud_machine_starts_delegates_of_its_own_chat() {
-    zeron_engine::runner::set_session(Some(zeron_engine::runner::CloudSession {
+    vardoger_engine::runner::set_session(Some(vardoger_engine::runner::CloudSession {
         account: "cloud-acct".into(),
         chat_id: "main".into(),
         repo: Some("acme/app".into()),
@@ -130,7 +130,7 @@ async fn a_cloud_machine_starts_delegates_of_its_own_chat() {
                 None,
                 Some("/home/user/app".into()),
                 Some("main".into()),
-                Some(zeron_proto::ChildKind::Subagent),
+                Some(vardoger_proto::ChildKind::Subagent),
             )
             .unwrap();
     });
@@ -151,7 +151,7 @@ async fn a_cloud_machine_starts_delegates_of_its_own_chat() {
     let child = core.workspace.chat("child").unwrap().unwrap();
     assert_eq!(child.device_id, "cloud-child");
     assert_eq!(child.parent_chat_id.as_deref(), Some("main"));
-    assert_eq!(child.child_kind, Some(zeron_proto::ChildKind::Subagent));
+    assert_eq!(child.child_kind, Some(vardoger_proto::ChildKind::Subagent));
 
     // The request named the parent, childKind and the agent — never a repository.
     let (request, body) = seen

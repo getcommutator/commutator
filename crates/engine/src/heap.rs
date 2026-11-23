@@ -3,7 +3,7 @@
 //! them.
 //!
 //! The engine doesn't pick its allocator: the macOS app binaries run it on
-//! mimalloc (`apps/zeron/src/allocator.rs`), and they hand in its forced
+//! mimalloc (`apps/vardoger/src/allocator.rs`), and they hand in its forced
 //! collect. Memory a thread allocated stays in that thread's pages; once the
 //! thread has exited they're abandoned, and freeing what's in them later (an
 //! index dropped on another thread) doesn't return them to the system until

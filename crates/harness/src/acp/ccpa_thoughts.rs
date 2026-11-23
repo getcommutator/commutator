@@ -35,7 +35,7 @@ const MAX_HEADER_BYTES: usize = 64 * 1024;
 const LOAD_CODE_ASSIST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) const CCPA_BASE_URL_ENV: &str = "AGY_ACP_CCPA_BASE_URL";
-const DISABLE_PROXY_ENV: &str = "ZERON_ANTIGRAVITY_THOUGHTS_PROXY";
+const DISABLE_PROXY_ENV: &str = "VARDOGER_ANTIGRAVITY_THOUGHTS_PROXY";
 
 /// Running loopback CCPA proxy whose lifetime is tied to the spawned Antigravity child.
 pub(crate) struct ThoughtsProxy {
@@ -55,7 +55,7 @@ impl ThoughtsProxy {
         self.activity.clone()
     }
 
-    /// Start the loopback proxy unless disabled via `ZERON_ANTIGRAVITY_THOUGHTS_PROXY=0`.
+    /// Start the loopback proxy unless disabled via `VARDOGER_ANTIGRAVITY_THOUGHTS_PROXY=0`.
     pub(crate) async fn start(
         run_env: &BTreeMap<String, String>,
     ) -> std::io::Result<Option<Self>> {
@@ -102,7 +102,7 @@ impl ThoughtsProxy {
                                 res = handle_connection(stream, state) => {
                                     if let Err(err) = res {
                                         tracing::debug!(
-                                            target: "zeron_harness::acp::ccpa_thoughts",
+                                            target: "vardoger_harness::acp::ccpa_thoughts",
                                             %err,
                                             "CCPA thoughts proxy connection ended with error"
                                         );
@@ -315,7 +315,7 @@ async fn resolve_upstream(state: &ProxyState, headers: &[(String, String)]) -> S
             if let Ok(json) = resp.json::<Value>().await {
                 let resolved = endpoint_from_load_code_assist(&json).to_owned();
                 tracing::debug!(
-                    target: "zeron_harness::acp::ccpa_thoughts",
+                    target: "vardoger_harness::acp::ccpa_thoughts",
                     endpoint = %resolved,
                     "resolved CCPA upstream endpoint from loadCodeAssist"
                 );
@@ -325,14 +325,14 @@ async fn resolve_upstream(state: &ProxyState, headers: &[(String, String)]) -> S
         }
         Ok(resp) => {
             tracing::debug!(
-                target: "zeron_harness::acp::ccpa_thoughts",
+                target: "vardoger_harness::acp::ccpa_thoughts",
                 status = %resp.status(),
                 "loadCodeAssist returned non-2xx; defaulting to daily CCPA endpoint"
             );
         }
         Err(err) => {
             tracing::debug!(
-                target: "zeron_harness::acp::ccpa_thoughts",
+                target: "vardoger_harness::acp::ccpa_thoughts",
                 %err,
                 "loadCodeAssist failed; defaulting to daily CCPA endpoint"
             );
@@ -578,7 +578,7 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<ProxyState>) -> std
         if looks_like_thinking_rejection(&err_body) {
             if let Some(Some(model)) = injected_model {
                 tracing::debug!(
-                    target: "zeron_harness::acp::ccpa_thoughts",
+                    target: "vardoger_harness::acp::ccpa_thoughts",
                     %model,
                     "upstream rejected includeThoughts; retrying without it and caching skip"
                 );

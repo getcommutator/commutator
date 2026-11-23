@@ -554,7 +554,7 @@ pub type KnownServer = (String, Vec<String>);
 /// or not the agent listed it. Zombies don't count. Blocking: one
 /// process-table read and an argv read per child.
 ///
-/// An agent that leads its own process group (every agent Zeron starts
+/// An agent that leads its own process group (every agent Vardoger starts
 /// through `owned::configure`) also holds on to what was left in that
 /// group: a stop signals the whole group, so `cmd &` run by a shell that
 /// has since exited (re-parented to init, but still in the group) would be
@@ -1038,8 +1038,8 @@ mod unexpected_descendants_tests {
         assert!(started_as(&npx, "npx", &argv(&["-y", "server"])));
         assert!(!started_as(&npx, "npx", &argv(&["-y", "other"])));
         assert!(started_as(
-            &argv(&["/x/zeron-engine", "mcp-proxy"]),
-            "/x/zeron-engine",
+            &argv(&["/x/vardoger-engine", "mcp-proxy"]),
+            "/x/vardoger-engine",
             &argv(&["mcp-proxy"])
         ));
         assert!(!started_as(
@@ -1049,7 +1049,7 @@ mod unexpected_descendants_tests {
         ));
     }
 
-    /// An agent leading its own group (as Zeron starts them) whose shell ran
+    /// An agent leading its own group (as Vardoger starts them) whose shell ran
     /// `sleep 3608 &` and exited: the orphan is re-parented, but still in
     /// the group a stop signals, so it counts. Configured as an MCP
     /// server, it doesn't.

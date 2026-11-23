@@ -16,10 +16,10 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
-use zeron_doc::{MessageStatus, SessionCommandPayload};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls, TurnControl};
-use zeron_proto::{
+use vardoger_doc::{MessageStatus, SessionCommandPayload};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls, TurnControl};
+use vardoger_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode, ToolCall,
 };
@@ -456,7 +456,7 @@ async fn a_message_from_another_chat_never_stops_the_command() {
     )
     .await;
     let message =
-        zeron_proto::agent_messages::agent_message("Coordinator (139d8682)", "139d8682", "status?");
+        vardoger_proto::agent_messages::agent_message("Coordinator (139d8682)", "139d8682", "status?");
     steer(&rig, &message, "m-agent");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(read(&rig).len(), 1, "it waits for the command");

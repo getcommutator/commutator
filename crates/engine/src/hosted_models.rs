@@ -1,6 +1,6 @@
-//! The hosted model list: a small JSON file on Zeron's edge
+//! The hosted model list: a small JSON file on Vardoger's edge
 //! (`<edge>/models/v1.json`) that lets the model pickers learn new models,
-//! a better order and better labels without a Zeron release.
+//! a better order and better labels without a Vardoger release.
 //!
 //! It only ever adjusts the catalog the harness already built (curated rows
 //! plus what the installed CLI reports): it can add a row the installed CLI is
@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use zeron_proto::{HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel};
+use vardoger_proto::{HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel};
 
 /// The schema this engine reads. A breaking change ships at a new path
 /// (`/models/v2.json`) with `schema: 2`; this engine keeps reading v1.
@@ -385,7 +385,7 @@ fn now() -> u64 {
 }
 
 /// The list's URL on `edge`, or `None` when that edge may not serve it: only
-/// HTTPS on Zeron's own domain (`zeron.sh` and its subdomains).
+/// HTTPS on Vardoger's own domain (`zeron.sh` and its subdomains).
 pub fn list_url(edge: &str) -> Option<String> {
     let url = reqwest::Url::parse(edge.trim()).ok()?;
     let host = url.host_str()?;
@@ -413,9 +413,9 @@ pub struct HostedModels {
 }
 
 impl HostedModels {
-    /// For the engine's own edge (`ZERON_EDGE_URL`, production's when unset).
+    /// For the engine's own edge (`VARDOGER_EDGE_URL`, production's when unset).
     pub fn for_engine(data_dir: &Path) -> Arc<Self> {
-        let edge = std::env::var("ZERON_EDGE_URL")
+        let edge = std::env::var("VARDOGER_EDGE_URL")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_EDGE.into());
@@ -467,7 +467,7 @@ impl HostedModels {
                 // A redirect could leave our domain: none are followed.
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(TIMEOUT)
-                .user_agent(concat!("zeron-engine/", env!("CARGO_PKG_VERSION")))
+                .user_agent(concat!("vardoger-engine/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .ok()
         });

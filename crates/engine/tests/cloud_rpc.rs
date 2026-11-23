@@ -6,9 +6,9 @@
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use zeron_engine::{EdgeConfig, EngineCore, HarnessId, default_registry};
-use zeron_proto::{CloudState, CloudStatus, CloudUsage, VaultStatus};
-use zeron_rpc::{memory_client, methods};
+use vardoger_engine::{EdgeConfig, EngineCore, HarnessId, default_registry};
+use vardoger_proto::{CloudState, CloudStatus, CloudUsage, VaultStatus};
+use vardoger_rpc::{memory_client, methods};
 
 /// Request lines (`METHOD /path`) + their Authorization headers.
 type Seen = Arc<Mutex<Vec<(String, Option<String>)>>>;
@@ -240,7 +240,7 @@ async fn waking_on_a_size_and_the_default_size_reach_the_edge() {
     let client = memory_client(core.rpc_service());
     let org = core.workspace.org_id().to_string();
 
-    let woke: zeron_proto::CloudSession = client
+    let woke: vardoger_proto::CloudSession = client
         .call_as(
             methods::CLOUD_SESSION_WAKE,
             serde_json::json!({ "chatId": "chat-1", "machine": "xlarge" }),
@@ -250,14 +250,14 @@ async fn waking_on_a_size_and_the_default_size_reach_the_edge() {
     assert_eq!(woke.state, CloudState::Starting);
     assert_eq!(woke.machine.as_deref(), Some("xlarge"));
     // A caller from before sizes (only a chat id) still wakes it as it is.
-    let _: zeron_proto::CloudSession = client
+    let _: vardoger_proto::CloudSession = client
         .call_as(
             methods::CLOUD_SESSION_WAKE,
             serde_json::json!({ "chatId": "chat-1" }),
         )
         .await
         .unwrap();
-    let fresh: zeron_proto::CloudSession = client
+    let fresh: vardoger_proto::CloudSession = client
         .call_as(
             methods::CLOUD_SESSION_RETRY,
             serde_json::json!({ "chatId": "chat-1", "machine": "large" }),
@@ -266,7 +266,7 @@ async fn waking_on_a_size_and_the_default_size_reach_the_edge() {
         .unwrap();
     assert_eq!(fresh.state, CloudState::Provisioning);
     let refused = client
-        .call_as::<zeron_proto::CloudSession>(
+        .call_as::<vardoger_proto::CloudSession>(
             methods::CLOUD_SESSION_WAKE,
             serde_json::json!({ "chatId": "chat-1", "machine": "small" }),
         )
@@ -465,9 +465,9 @@ fn cloud_edge(request: &str, body: &str) -> (u16, String) {
 
 /// `Mutate createChat` with `body`'s fields.
 async fn create(
-    client: &zeron_rpc::RpcClient,
+    client: &vardoger_rpc::RpcClient,
     body: serde_json::Value,
-) -> Result<serde_json::Value, zeron_rpc::RpcError> {
+) -> Result<serde_json::Value, vardoger_rpc::RpcError> {
     let mut op = serde_json::json!({ "op": "createChat" });
     op.as_object_mut()
         .unwrap()
@@ -481,7 +481,7 @@ async fn create(
 /// would), optionally with a GitHub origin.
 async fn local_project(
     core: &EngineCore,
-    client: &zeron_rpc::RpcClient,
+    client: &vardoger_rpc::RpcClient,
     dir: &std::path::Path,
     space_id: &str,
     github_repo: Option<&str>,
@@ -560,7 +560,7 @@ async fn chats_run_on_cloud_get_their_own_session_machines() {
 
     // An agent naming another of the person's devices starts its chat
     // there; naming the parent's machine, or none, it shares that machine.
-    use zeron_rpc::RpcService as _;
+    use vardoger_rpc::RpcService as _;
     let rpc = core.rpc_service();
     let agent_creates = |chat_id: &str, device: Option<String>| {
         let mut op = serde_json::json!({
@@ -570,8 +570,8 @@ async fn chats_run_on_cloud_get_their_own_session_machines() {
         if let Some(device) = device {
             op["deviceId"] = serde_json::json!(device);
         }
-        zeron_rpc::with_caller(
-            zeron_rpc::Caller::Agent { chat: None },
+        vardoger_rpc::with_caller(
+            vardoger_rpc::Caller::Agent { chat: None },
             rpc.handle(methods::MUTATE, op),
         )
     };
@@ -623,8 +623,8 @@ async fn chats_run_on_cloud_get_their_own_session_machines() {
     .await
     .unwrap();
     assert_eq!(session_bodies("chat-isolated")[0]["reach"], "isolated");
-    zeron_rpc::with_caller(
-        zeron_rpc::Caller::Agent { chat: None },
+    vardoger_rpc::with_caller(
+        vardoger_rpc::Caller::Agent { chat: None },
         rpc.handle(
             methods::MUTATE,
             serde_json::json!({
@@ -739,7 +739,7 @@ async fn cloud_branches_are_github_branches_default_first() {
     )
     .unwrap();
     let client = memory_client(core.rpc_service());
-    let refs: Vec<zeron_proto::RepoRef> = client
+    let refs: Vec<vardoger_proto::RepoRef> = client
         .call_as(
             methods::LIST_CLOUD_BRANCHES,
             serde_json::json!({ "repo": "acme/app", "defaultBranch": "main" }),
@@ -771,7 +771,7 @@ async fn catalogs_for_cloud_devices_are_answered_here() {
         Some(EdgeConfig::with_static_token(edge_url, "dev-user")),
     )
     .unwrap();
-    core.workspace.upsert_device_row(&zeron_proto::Device {
+    core.workspace.upsert_device_row(&vardoger_proto::Device {
         id: "cloud-acct".into(),
         name: "Cloud".into(),
         platform: "cloud".into(),
@@ -779,7 +779,7 @@ async fn catalogs_for_cloud_devices_are_answered_here() {
         created_at: None,
         version: None,
         cursor_sdk_version: None,
-        capabilities: vec![zeron_proto::CLOUD_ACCOUNT_CAPABILITY.into()],
+        capabilities: vec![vardoger_proto::CLOUD_ACCOUNT_CAPABILITY.into()],
     });
     let client = memory_client(core.rpc_service());
 
@@ -795,7 +795,7 @@ async fn catalogs_for_cloud_devices_are_answered_here() {
             .unwrap();
         let mut ids: Vec<&str> = harnesses.iter().filter_map(|h| h["id"].as_str()).collect();
         ids.sort_unstable();
-        let mut cloud: Vec<&str> = zeron_proto::CLOUD_HARNESSES.to_vec();
+        let mut cloud: Vec<&str> = vardoger_proto::CLOUD_HARNESSES.to_vec();
         cloud.sort_unstable();
         assert_eq!(ids, cloud, "{harnesses:?}");
         assert!(harnesses.iter().all(|h| h["installed"] == true));
@@ -988,7 +988,7 @@ async fn provider_switch_is_refused_for_a_host_that_cannot_switch() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(refused.contains("newer Zeron"), "{refused}");
+    assert!(refused.contains("newer Vardoger"), "{refused}");
     // The same provider (a model or effort change) still goes through.
     switch("old-host-chat", "claude-code").await.unwrap();
     // This engine hosts its own chats and switches them.
@@ -1164,7 +1164,7 @@ async fn github_logins_are_listed_and_changed_one_at_a_time() {
 /// now. One still within its time is left to go as it is.
 #[tokio::test]
 async fn a_message_that_waited_days_for_its_machine_goes_once_when_woken() {
-    use zeron_doc::{SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
+    use vardoger_doc::{SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
     let (edge_url, seen) = scripted_edge(|request, _| {
         if request.contains("/wake") {
             return (
@@ -1193,7 +1193,7 @@ async fn a_message_that_waited_days_for_its_machine_goes_once_when_woken() {
     const DAY: i64 = 24 * 60 * 60 * 1000;
     let now = chrono::Utc::now().timestamp_millis();
     let run = |prompt: &str, message: &str| SessionCommandPayload::Run {
-        request: zeron_proto::RunRequest {
+        request: vardoger_proto::RunRequest {
             mcp: None,
             prompt: prompt.into(),
             harness: None,
@@ -1201,7 +1201,7 @@ async fn a_message_that_waited_days_for_its_machine_goes_once_when_woken() {
             reasoning: None,
             model_options: Default::default(),
             cwd: "/tmp".into(),
-            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: true,
             access: Default::default(),
             plan: false,
@@ -1247,7 +1247,7 @@ async fn a_message_that_waited_days_for_its_machine_goes_once_when_woken() {
             .collect()
     };
     let wake = || async {
-        let _: zeron_proto::CloudSession = client
+        let _: vardoger_proto::CloudSession = client
             .call_as(
                 methods::CLOUD_SESSION_WAKE,
                 serde_json::json!({ "chatId": "cloud-chat", "machine": "xlarge" }),

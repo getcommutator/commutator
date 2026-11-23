@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use tokio_util::sync::CancellationToken;
-use zeron_proto::PreviewService;
+use vardoger_proto::PreviewService;
 #[async_trait::async_trait]
 pub trait TokenSource: Send + Sync {
     async fn token(&self) -> anyhow::Result<String>;
@@ -344,7 +344,7 @@ mod tests {
     }
 }
 
-/// `zeron_sync::wake::beat_interval`, which this crate doesn't link: ticks on
+/// `vardoger_sync::wake::beat_interval`, which this crate doesn't link: ticks on
 /// whole multiples of `period` of wall-clock time, so this ping wakes the
 /// engine at the same instants as its other sockets' pings. The first tick is
 /// the next such instant, not at once (the socket was just proven by its

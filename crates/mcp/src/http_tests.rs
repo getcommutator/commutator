@@ -1,9 +1,9 @@
 use super::*;
 
-use crate::zeron::Zeron;
+use crate::vardoger::Vardoger;
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use zeron_rpc::{RpcError, RpcReply, RpcService, memory_client, methods};
+use vardoger_rpc::{RpcError, RpcReply, RpcService, memory_client, methods};
 
 /// What the fake engine saw: `AwaitBackground`'s chat per call, and whether
 /// a blocked call was dropped (cancelled).
@@ -55,11 +55,11 @@ async fn server(engine: Arc<Engine>) -> McpHttpServer {
 
 fn factory(engine: Arc<Engine>) -> ToolsFactory {
     Arc::new(move |origin: &Origin| {
-        let service = zeron_rpc::agent_service(
+        let service = vardoger_rpc::agent_service(
             engine.clone(),
             origin.chat_id.clone().unwrap_or_default(),
         );
-        Arc::new(Tools::new(Arc::new(Zeron::with_client(
+        Arc::new(Tools::new(Arc::new(Vardoger::with_client(
             memory_client(service),
             origin.clone(),
         ))))
@@ -182,7 +182,7 @@ async fn one_run_s_token_acts_only_as_its_own_chat() {
 
     // And underneath the tools: the engine connection a token's calls use
     // refuses what would act on another chat, whatever the params say.
-    let client = memory_client(zeron_rpc::agent_service(engine.clone(), "chat-a".into()));
+    let client = memory_client(vardoger_rpc::agent_service(engine.clone(), "chat-a".into()));
     let refused = client
         .call(methods::AWAIT_BACKGROUND, json!({ "chatId": "chat-b", "taskIds": ["t"], "waiting": true }))
         .await
@@ -219,7 +219,7 @@ async fn modern_requests_are_stateless_and_header_checked() {
     assert_eq!(listed["result"]["resultType"], "complete");
     assert_eq!(listed["result"]["cacheScope"], "private");
     assert!(listed["result"]["ttlMs"].is_u64());
-    assert_eq!(listed["result"]["_meta"][META_SERVER_INFO]["name"], "zeron");
+    assert_eq!(listed["result"]["_meta"][META_SERVER_INFO]["name"], "vardoger");
 
     // Headers must match the body.
     let call = modern(3, "tools/call", json!({ "name": "wait_on_background", "arguments": { "task_ids": ["t"] } }));

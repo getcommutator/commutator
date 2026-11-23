@@ -7,7 +7,7 @@
 //! models of every provider it's signed in to), and on Cloud those are the
 //! vault's, handed to each run by the credential broker. So after a run's
 //! environment is prepared, the agent's credential variables become its
-//! discovery environment ([`zeron_harness::catalog_env`]), the catalog is
+//! discovery environment ([`vardoger_harness::catalog_env`]), the catalog is
 //! discovered with them, and it is sent to the edge (`POST /runner/models`)
 //! with the run's credential fingerprint. At most once per (agent,
 //! fingerprint) per [`REPUBLISH_AFTER`]; a new fingerprint (another account,
@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
-use zeron_proto::providers::{CloudDelivery, cloud_credentials, runs_on_cloud};
-use zeron_proto::{HarnessId, Model};
+use vardoger_proto::providers::{CloudDelivery, cloud_credentials, runs_on_cloud};
+use vardoger_proto::{HarnessId, Model};
 
 use crate::registry::{CatalogPublisher, HarnessRegistry};
 
@@ -40,12 +40,12 @@ pub trait CatalogSink: Send + Sync {
 /// `POST {edge}/runner/models` with the runner bearer.
 pub struct EdgeSink {
     url: String,
-    tokens: Arc<dyn zeron_rpc::TokenSource>,
+    tokens: Arc<dyn vardoger_rpc::TokenSource>,
     http: reqwest::Client,
 }
 
 impl EdgeSink {
-    pub fn new(edge_url: &str, tokens: Arc<dyn zeron_rpc::TokenSource>) -> Self {
+    pub fn new(edge_url: &str, tokens: Arc<dyn vardoger_rpc::TokenSource>) -> Self {
         Self {
             url: format!("{}/runner/models", edge_url.trim_end_matches('/')),
             tokens,
@@ -125,7 +125,7 @@ pub fn credential_env(
             // Logins handed to an agent's own credential API (OpenCode's)
             // ride one variable its harness installs on any server it boots,
             // discovery's included.
-            CloudDelivery::Api => Some(vec![zeron_harness::opencode::CREDENTIALS_ENV]),
+            CloudDelivery::Api => Some(vec![vardoger_harness::opencode::CREDENTIALS_ENV]),
             // A file is already where discovery reads it.
             CloudDelivery::File => None,
         })
@@ -151,7 +151,7 @@ fn usable_with(harness: HarnessId, models: Vec<Model>, env: &BTreeMap<String, St
         return models;
     }
     let chatgpt = env
-        .get(zeron_harness::opencode::CREDENTIALS_ENV)
+        .get(vardoger_harness::opencode::CREDENTIALS_ENV)
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
         .and_then(|list| list.as_array().cloned())
         .is_some_and(|list| list.iter().any(|c| c["integrationID"] == "openai"));
@@ -225,7 +225,7 @@ impl ModelPublisher {
         }
         let models = match discovered {
             Ok(catalog) if catalog.source == "live" && !catalog.models.is_empty() => {
-                usable_with(harness, catalog.models, &zeron_harness::catalog_env::get(harness))
+                usable_with(harness, catalog.models, &vardoger_harness::catalog_env::get(harness))
             }
             Ok(catalog) => {
                 tracing::info!(harness = harness.as_str(), source = catalog.source,
@@ -263,7 +263,7 @@ const PRIME_AFTER: Duration = Duration::from_secs(20);
 /// anything for it first: its CLI is there, or (Cursor) it runs on an SDK its
 /// own discovery installs.
 fn discoverable_here(harness: HarnessId) -> bool {
-    harness == HarnessId::Cursor || zeron_harness::install::installed(harness)
+    harness == HarnessId::Cursor || vardoger_harness::install::installed(harness)
 }
 
 impl ModelPublisher {
@@ -291,7 +291,7 @@ impl ModelPublisher {
                 if !discoverable(harness) {
                     continue;
                 }
-                let mut request = zeron_proto::RunRequest {
+                let mut request = vardoger_proto::RunRequest {
                     mcp: None,
                     prompt: String::new(),
                     harness: Some(harness),
@@ -299,7 +299,7 @@ impl ModelPublisher {
                     reasoning: None,
                     model_options: serde_json::Map::new(),
                     cwd: std::env::temp_dir().to_string_lossy().into_owned(),
-                    sandbox: zeron_proto::SandboxLevel::ReadOnly,
+                    sandbox: vardoger_proto::SandboxLevel::ReadOnly,
                     auto_approve: false,
                     access: Default::default(),
                     plan: false,
@@ -337,7 +337,7 @@ impl CatalogPublisher for ModelPublisher {
             return;
         }
         // Discovery runs with this run's keys from now on, whoever asks.
-        zeron_harness::catalog_env::set(harness, credential_env(harness, env));
+        vardoger_harness::catalog_env::set(harness, credential_env(harness, env));
         if tokio::runtime::Handle::try_current().is_err() {
             return;
         }
@@ -353,8 +353,8 @@ mod tests {
     use super::*;
     use crate::registry::RunEnvironment;
     use futures::stream::BoxStream;
-    use zeron_harness::{Harness, HarnessError, RunControls};
-    use zeron_proto::{AgentEvent, ReasoningLevel, RunRequest, SteeringMode};
+    use vardoger_harness::{Harness, HarnessError, RunControls};
+    use vardoger_proto::{AgentEvent, ReasoningLevel, RunRequest, SteeringMode};
 
     /// The catalog environment is process-wide: tests that set Muse's take
     /// turns.
@@ -381,7 +381,7 @@ mod tests {
             &[]
         }
         async fn models(&self) -> Result<Vec<Model>, HarnessError> {
-            let key = zeron_harness::catalog_env::get(HarnessId::Muse)
+            let key = vardoger_harness::catalog_env::get(HarnessId::Muse)
                 .remove("META_API_KEY")
                 .unwrap_or_default();
             Ok(vec![Model {
@@ -416,7 +416,7 @@ mod tests {
         ) -> Result<(), String> {
             let key = lock(&self.0).clone();
             request.env.insert("META_API_KEY".into(), key);
-            request.env.insert(zeron_proto::ORIGIN_ENV.into(), "chat".into());
+            request.env.insert(vardoger_proto::ORIGIN_ENV.into(), "chat".into());
             Ok(())
         }
         async fn credential(&self, _harness: HarnessId, _chat_id: Option<&str>) -> Option<String> {
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(discovery.keys().collect::<Vec<_>>(), ["META_API_KEY"]);
         // Preparing a run publishes in the background.
         publisher.prepared(HarnessId::Muse, &run.env);
-        assert_eq!(zeron_harness::catalog_env::get(HarnessId::Muse), discovery);
+        assert_eq!(vardoger_harness::catalog_env::get(HarnessId::Muse), discovery);
         for _ in 0..200 {
             if !lock(&sink.0).is_empty() {
                 break;
@@ -494,13 +494,13 @@ mod tests {
             .prepare_run(HarnessId::Muse, None, &mut run)
             .await
             .unwrap();
-        zeron_harness::catalog_env::set(HarnessId::Muse, credential_env(HarnessId::Muse, &run.env));
+        vardoger_harness::catalog_env::set(HarnessId::Muse, credential_env(HarnessId::Muse, &run.env));
         assert!(publisher.refresh(HarnessId::Muse).await);
         assert_eq!(
             lock(&sink.0).last().cloned(),
             Some((HarnessId::Muse, vec!["model-for-k2".to_string()], "meta-key:k2".to_string()))
         );
-        zeron_harness::catalog_env::set(HarnessId::Muse, BTreeMap::new());
+        vardoger_harness::catalog_env::set(HarnessId::Muse, BTreeMap::new());
     }
 
     #[tokio::test]
@@ -521,7 +521,7 @@ mod tests {
             lock(&sink.0).clone(),
             vec![(HarnessId::Muse, vec!["model-for-boot".to_string()], "meta-key:boot".to_string())]
         );
-        zeron_harness::catalog_env::set(HarnessId::Muse, BTreeMap::new());
+        vardoger_harness::catalog_env::set(HarnessId::Muse, BTreeMap::new());
     }
 
     #[test]
@@ -545,7 +545,7 @@ mod tests {
         };
         let ids = |models: Vec<Model>| models.into_iter().map(|m| m.id).collect::<Vec<_>>();
         let signed_in = BTreeMap::from([(
-            zeron_harness::opencode::CREDENTIALS_ENV.to_string(),
+            vardoger_harness::opencode::CREDENTIALS_ENV.to_string(),
             r#"[{"integrationID":"openai","value":{"type":"oauth"}}]"#.to_string(),
         )]);
         assert_eq!(
@@ -582,16 +582,16 @@ mod tests {
         // OpenCode's sign-ins ride its handoff variable into discovery too.
         let mut env = env;
         env.insert(
-            zeron_harness::opencode::CREDENTIALS_ENV.to_string(),
+            vardoger_harness::opencode::CREDENTIALS_ENV.to_string(),
             "[]".to_string(),
         );
         assert!(
             credential_env(HarnessId::Opencode, &env)
-                .contains_key(zeron_harness::opencode::CREDENTIALS_ENV)
+                .contains_key(vardoger_harness::opencode::CREDENTIALS_ENV)
         );
         assert!(
             !credential_env(HarnessId::Pi, &env)
-                .contains_key(zeron_harness::opencode::CREDENTIALS_ENV)
+                .contains_key(vardoger_harness::opencode::CREDENTIALS_ENV)
         );
     }
 }

@@ -1,5 +1,5 @@
 //! AgentAccounts — the logins of every agent CLI on this device that has one
-//! (feature-inventory §3.7 "Agent accounts"; port of zeron's
+//! (feature-inventory §3.7 "Agent accounts"; port of vardoger's
 //! `agent-accounts.ts`).
 //!
 //! Grok, Devin, OpenCode, Pi and Hermes live in [`stores`] (credential
@@ -16,7 +16,7 @@
 //! | Hermes   | yes    | no¹    | `hermes auth add` (device code) | yes  |
 //!
 //! ¹ Hermes keeps every account in its own credential pool and rotates
-//! through it itself; zeron lists the pool and adds to it through Hermes'
+//! through it itself; vardoger lists the pool and adds to it through Hermes'
 //! own CLI, but never rewrites it.
 //!
 //! ² Per model provider: these agents keep one login per provider in one
@@ -37,7 +37,7 @@
 //! - **Cursor** — `~/.cursor/sdk/auth.json`: the Cursor SDK's credential store
 //!   (`StoredSdkCredentials`) holding the named, expiring user API key its
 //!   browser login mints. Deliberately SEPARATE from `cursor-agent login`'s
-//!   whole-account session tokens, which zeron never reads.
+//!   whole-account session tokens, which vardoger never reads.
 //! - **Antigravity** — its ACP server keeps one Google login per
 //!   `GEMINI_HOME`: a token blob in the macOS Keychain (service `gemini`) or
 //!   `antigravity-acp/acp_token.json`, plus the method in `settings.json`.
@@ -65,7 +65,7 @@
 //!    Codex spawns `codex login` against a throwaway `CODEX_HOME` and polls
 //!    until its loopback callback lands; Antigravity runs its server's
 //!    `authenticate`. A login run for ANOTHER device (`requester`) publishes
-//!    its callback port to [`zeron_preview::login`], so the requester can
+//!    its callback port to [`vardoger_preview::login`], so the requester can
 //!    forward its own loopback to it over the P2P link.
 //!
 //! Usage probes: all three providers expose the rate-limit view their own CLIs render
@@ -93,7 +93,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use zeron_proto::{
+use vardoger_proto::{
     AgentAccount, AgentAccountWarning, AgentAccountsSnapshot, AgentAuthKind, AgentLoginMode,
     AgentLoginPoll, AgentLoginStart, AgentLoginStatus, AgentUsageWindow, CodexResetCredit,
     CodexResetCredits, CodexResetOutcome, HarnessId,
@@ -229,7 +229,7 @@ pub struct AgentAccountsConfig {
     /// Hermes' `HERMES_HOME` (default `~/.hermes`) — holds `auth.json`.
     pub hermes_home: PathBuf,
     /// The user's real config root (`$XDG_CONFIG_HOME` or `~/.config`): what
-    /// each zeron-kept Muse account's root mirrors (see [`muse`]).
+    /// each vardoger-kept Muse account's root mirrors (see [`muse`]).
     pub muse_config_root: PathBuf,
 }
 
@@ -258,7 +258,7 @@ impl AgentAccountsConfig {
             claude_config_file,
             codex_home: env_dir("CODEX_HOME").unwrap_or_else(|| home_dir().join(".codex")),
             cursor_sdk_auth_file: home_dir().join(".cursor").join("sdk").join("auth.json"),
-            antigravity_home: zeron_harness::acp::antigravity_home().ok(),
+            antigravity_home: vardoger_harness::acp::antigravity_home().ok(),
             antigravity_keychain: keychain
                 && std::env::var_os("AGY_ACP_FORCE_FILE_STORAGE")
                     .is_none_or(|v| !matches!(v.to_str(), Some("1" | "true"))),
@@ -376,7 +376,7 @@ struct SlotProfile {
     auth_kind: AgentAuthKind,
 }
 
-/// One saved login (`{slotId}.json`), same field surface as zeron's slot files.
+/// One saved login (`{slotId}.json`), same field surface as vardoger's slot files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Slot {
@@ -468,7 +468,7 @@ enum LoginFlow {
     Spawned {
         harness: HarnessId,
         /// The login child; monitored (try_wait) + killable from cancel.
-        child: Arc<Mutex<Option<zeron_harness::process::Child>>>,
+        child: Arc<Mutex<Option<vardoger_harness::process::Child>>>,
         /// Throwaway dir, reclaimed on cancel/completion.
         home: PathBuf,
         /// What finishing looks like.
@@ -634,7 +634,7 @@ enum NoCredentials {
     Missing,
     /// Cursor's minted key is past its expiry.
     KeyExpired,
-    /// The provider behind this login has no usage view zeron can read
+    /// The provider behind this login has no usage view vardoger can read
     /// (a Hermes API key for some other vendor, Pi's Copilot session).
     Unsupported,
 }
@@ -876,7 +876,7 @@ struct Inner {
     inflight_refreshes: Mutex<std::collections::HashSet<String>>,
     claude_credentials: Mutex<Option<CachedClaudeCredentials>>,
     /// Callback ports of logins run for another device (see module docs).
-    callback_routes: zeron_preview::login::CallbackRoutes,
+    callback_routes: vardoger_preview::login::CallbackRoutes,
     /// Who an opaque live token belongs to (Pi's Claude login, a Copilot
     /// token), by token fingerprint — one profile call per token, not per
     /// list; a failed lookup waits [`IDENTITY_RETRY`] before the next. See
@@ -934,7 +934,7 @@ impl AgentAccounts {
     /// (the engine's P2P service, which serves them to the requester).
     pub fn with_callback_routes(
         config: AgentAccountsConfig,
-        routes: zeron_preview::login::CallbackRoutes,
+        routes: vardoger_preview::login::CallbackRoutes,
     ) -> Self {
         Self::with_endpoints(config, ProbeEndpoints::default(), routes)
     }
@@ -942,7 +942,7 @@ impl AgentAccounts {
     fn with_endpoints(
         config: AgentAccountsConfig,
         endpoints: ProbeEndpoints,
-        callback_routes: zeron_preview::login::CallbackRoutes,
+        callback_routes: vardoger_preview::login::CallbackRoutes,
     ) -> Self {
         // Startup sweep: a previous process that crashed mid-login leaves
         // `.login-<uuid>` throwaway CODEX_HOME dirs — each may hold live OAuth
@@ -1048,7 +1048,7 @@ impl AgentAccounts {
             return (installer.installed)(harness);
         }
         lock(&self.inner.cli_overrides).contains_key(&harness)
-            || zeron_harness::install::installed(harness)
+            || vardoger_harness::install::installed(harness)
     }
 
     /// Install `harness`'s CLI as Settings' Install does. Dropping the future
@@ -1057,9 +1057,9 @@ impl AgentAccounts {
         let seam = lock(&self.inner.installer).as_ref().map(|i| i.install.clone());
         match seam {
             Some(install) => install(harness).await,
-            None => zeron_harness::install::install_harness(
+            None => vardoger_harness::install::install_harness(
                 harness,
-                zeron_harness::CancellationToken::new(),
+                vardoger_harness::CancellationToken::new(),
             )
             .await
             .map_err(|error| error.to_string()),
@@ -1067,12 +1067,12 @@ impl AgentAccounts {
     }
 
     /// The ACP harness for `harness`'s CLI, honouring [`Self::override_cli`].
-    fn acp_harness(&self, harness: HarnessId) -> Option<zeron_harness::AcpHarness> {
+    fn acp_harness(&self, harness: HarnessId) -> Option<vardoger_harness::AcpHarness> {
         let acp = match harness {
-            HarnessId::Grok => zeron_harness::AcpHarness::grok(),
-            HarnessId::Devin => zeron_harness::AcpHarness::devin(),
-            HarnessId::Hermes => zeron_harness::AcpHarness::hermes(),
-            HarnessId::Antigravity => zeron_harness::AcpHarness::antigravity(),
+            HarnessId::Grok => vardoger_harness::AcpHarness::grok(),
+            HarnessId::Devin => vardoger_harness::AcpHarness::devin(),
+            HarnessId::Hermes => vardoger_harness::AcpHarness::hermes(),
+            HarnessId::Antigravity => vardoger_harness::AcpHarness::antigravity(),
             _ => return None,
         };
         Some(match lock(&self.inner.cli_overrides).get(&harness) {
@@ -1179,7 +1179,7 @@ impl AgentAccounts {
                 message,
             });
         }
-        // A login Zeron can't read or switch (the Keychain's, a key, Gemini
+        // A login Vardoger can't read or switch (the Keychain's, a key, Gemini
         // Enterprise): one row of its own, when no token file is live.
         let antigravity = match antigravity_in_file {
             true => None,
@@ -1203,7 +1203,7 @@ impl AgentAccounts {
         .into_iter()
         .map(|harness| (harness, self.read_slots(harness)))
         .collect();
-        // Muse: the zeron-kept account runs use (none: Muse's own login).
+        // Muse: the vardoger-kept account runs use (none: Muse's own login).
         if let Some(slot) = self.muse_active() {
             active_keys
                 .entry(HarnessId::Muse)
@@ -1307,7 +1307,7 @@ impl AgentAccounts {
                 });
             }
         }
-        // An Antigravity login whose token zeron can't read: one active,
+        // An Antigravity login whose token vardoger can't read: one active,
         // unswitchable row, and no usage (nothing to ask Google with).
         if let Some(login) = antigravity {
             accounts.push(login.account());
@@ -1323,7 +1323,7 @@ impl AgentAccounts {
     ///
     /// Refused for Hermes (and by [`Self::forget`]): Hermes owns its
     /// credential pool and rotates through it itself — a running Hermes
-    /// would write its own order back over any change — so zeron keeps it
+    /// would write its own order back over any change — so vardoger keeps it
     /// read-only (see [`stores`]).
     pub async fn activate(
         &self,
@@ -1341,7 +1341,7 @@ impl AgentAccounts {
     ) -> Result<AgentAccountsSnapshot, EngineError> {
         if harness == HarnessId::Hermes {
             return Err(EngineError::Other(
-                "Hermes picks from its own credential pool — zeron doesn't reorder it. Use \
+                "Hermes picks from its own credential pool — vardoger doesn't reorder it. Use \
                  `hermes auth` to manage it."
                     .into(),
             ));
@@ -1433,12 +1433,12 @@ impl AgentAccounts {
     }
 
     /// Claude Code's own refresh lock (see
-    /// [`zeron_harness::claude::refresh_lock`]), held while the live Claude
+    /// [`vardoger_harness::claude::refresh_lock`]), held while the live Claude
     /// login is read and replaced.
     async fn claude_refresh_lock(
         &self,
-    ) -> Result<zeron_harness::claude::refresh_lock::RefreshLock, EngineError> {
-        zeron_harness::claude::refresh_lock::RefreshLock::acquire(
+    ) -> Result<vardoger_harness::claude::refresh_lock::RefreshLock, EngineError> {
+        vardoger_harness::claude::refresh_lock::RefreshLock::acquire(
             &self.inner.config.claude_config_dir,
             CLAUDE_REFRESH_LOCK_WAIT,
         )
@@ -1452,7 +1452,7 @@ impl AgentAccounts {
     }
 
     /// A saved Claude login about to become live, checked first. Its access
-    /// token expired (or never said when): refresh it here — zeron is the
+    /// token expired (or never said when): refresh it here — vardoger is the
     /// only holder of a slot that isn't live — so a spent refresh token is
     /// refused with a way out instead of installed, where the CLI's
     /// `invalid_grant` would wipe it: the user signed out of everything.
@@ -1580,7 +1580,7 @@ impl AgentAccounts {
     }
 
     /// Whether a per-provider agent has a live entry under `store_key` at
-    /// all, identified or not — a live login zeron can't identify is still
+    /// all, identified or not — a live login vardoger can't identify is still
     /// never replaced unasked.
     fn has_live_entry(&self, harness: HarnessId, store_key: Option<&str>) -> bool {
         match harness {
@@ -1689,10 +1689,10 @@ impl AgentAccounts {
             }
             HarnessId::Devin => remove_if_exists(&self.inner.config.devin_credentials_file)?,
             // Its token file: a login it keeps elsewhere (the Keychain) runs
-            // again, as before a sign-in through Zeron.
+            // again, as before a sign-in through Vardoger.
             HarnessId::Antigravity => {
                 let home = self.antigravity_home()?;
-                remove_if_exists(&zeron_harness::acp::antigravity_token_file(home))?
+                remove_if_exists(&vardoger_harness::acp::antigravity_token_file(home))?
             }
             HarnessId::Opencode | HarnessId::Pi => {
                 let key = store_key
@@ -1735,7 +1735,7 @@ impl AgentAccounts {
             return Err(EngineError::Other("Unknown account.".into()));
         }
         if harness == HarnessId::Hermes {
-            // Hermes' rows are its own pool, not zeron slots.
+            // Hermes' rows are its own pool, not vardoger slots.
             return Err(EngineError::Other(
                 "Hermes keeps this login in its own credential pool — remove it with \
                  `hermes auth remove`."
@@ -1805,7 +1805,7 @@ impl AgentAccounts {
     /// keeps a login per provider (`provider`: OpenCode's `openai` /
     /// `github-copilot`, Pi's `openai-codex` / `github-copilot`, Hermes'
     /// `openai-codex` / `nous` / `xai-oauth` —
-    /// `zeron_proto::providers::login_options`); `None` picks the agent's
+    /// `vardoger_proto::providers::login_options`); `None` picks the agent's
     /// default. The new login joins its provider's group only: it takes
     /// over that provider's live login when there is none (or it re-signs
     /// that one in), and never touches another provider's.
@@ -2012,8 +2012,8 @@ impl AgentAccounts {
                 &[("Content-Type", "text/html; charset=utf-8")],
                 &format!(
                     "<!doctype html><title>Sign-in failed</title><p>{}</p>\
-                     <p>Return to Zeron to try again.</p>",
-                    html_escape(&zeron_harness::redact::redact_output(&error.to_string()))
+                     <p>Return to Vardoger to try again.</p>",
+                    html_escape(&vardoger_harness::redact::redact_output(&error.to_string()))
                 ),
             ),
         };
@@ -2069,7 +2069,7 @@ impl AgentAccounts {
         requester: Option<&str>,
     ) -> AgentLoginStart {
         let login_id = new_id();
-        let name = zeron_proto::providers::provider_name(harness);
+        let name = vardoger_proto::providers::provider_name(harness);
         let state = Arc::new(Mutex::new(TaskLoginState {
             message: Some(format!("Installing {name} on this computer…")),
             requester: requester.map(str::to_string),
@@ -2211,17 +2211,17 @@ impl AgentAccounts {
         &self,
         login_id: String,
         harness: HarnessId,
-        mut command: zeron_harness::process::Command,
+        mut command: vardoger_harness::process::Command,
         home: PathBuf,
         completion: SpawnedCompletion,
         scan_url: fn(&str) -> Option<String>,
         requester: Option<&str>,
     ) -> Result<AgentLoginStart, EngineError> {
         command
-            .stdin(zeron_harness::process::Stdio::null())
-            .stdout(zeron_harness::process::Stdio::piped())
-            .stderr(zeron_harness::process::Stdio::piped());
-        let child = match zeron_harness::process::spawn_agent(&mut command) {
+            .stdin(vardoger_harness::process::Stdio::null())
+            .stdout(vardoger_harness::process::Stdio::piped())
+            .stderr(vardoger_harness::process::Stdio::piped());
+        let child = match vardoger_harness::process::spawn_agent(&mut command) {
             Ok(child) => child,
             Err(err) => {
                 let _ = std::fs::remove_dir_all(&home);
@@ -2274,12 +2274,12 @@ impl AgentAccounts {
         // login-shell snapshot, install dirs — the Windows npm payload
         // included) and compose the same child PATH a chat run gets, so
         // account login never diverges from what the harness can launch.
-        let mut command = match zeron_harness::codex::login_command(&home) {
+        let mut command = match vardoger_harness::codex::login_command(&home) {
             Ok(command) => command,
             Err(err) => {
                 let _ = std::fs::remove_dir_all(&home);
                 return Err(EngineError::Other(match err {
-                    zeron_harness::HarnessError::NotInstalled(hint) => {
+                    vardoger_harness::HarnessError::NotInstalled(hint) => {
                         format!(
                             "The `codex` CLI was not found on this device — install it first. ({hint})"
                         )
@@ -2289,9 +2289,9 @@ impl AgentAccounts {
             }
         };
         command
-            .stdin(zeron_harness::process::Stdio::null())
-            .stdout(zeron_harness::process::Stdio::piped())
-            .stderr(zeron_harness::process::Stdio::piped());
+            .stdin(vardoger_harness::process::Stdio::null())
+            .stdout(vardoger_harness::process::Stdio::piped())
+            .stderr(vardoger_harness::process::Stdio::piped());
         // The CLI opens the authorization tab itself (via the `webbrowser`
         // crate) AND the app opens the page when this start reply lands —
         // users got TWO identical auth.openai.com tabs. `webbrowser` prefers
@@ -2420,13 +2420,13 @@ impl AgentAccounts {
             .cloned();
         let mut command = match cli {
             Some(cli) => {
-                let mut command = zeron_harness::process::Command::new(cli);
+                let mut command = vardoger_harness::process::Command::new(cli);
                 command.arg("login").env("CODEX_HOME", &home);
                 command
             }
-            None => zeron_harness::codex::login_command(&home).map_err(|err| {
+            None => vardoger_harness::codex::login_command(&home).map_err(|err| {
                 EngineError::Other(match err {
-                    zeron_harness::HarnessError::NotInstalled(hint) => format!(
+                    vardoger_harness::HarnessError::NotInstalled(hint) => format!(
                         "The `codex` CLI was not found on this device — install it first. ({hint})"
                     ),
                     other => format!("Could not resolve the codex CLI for login: {other}"),
@@ -2434,15 +2434,15 @@ impl AgentAccounts {
             })?,
         };
         command
-            .stdin(zeron_harness::process::Stdio::null())
-            .stdout(zeron_harness::process::Stdio::piped())
-            .stderr(zeron_harness::process::Stdio::piped());
+            .stdin(vardoger_harness::process::Stdio::null())
+            .stdout(vardoger_harness::process::Stdio::piped())
+            .stderr(vardoger_harness::process::Stdio::piped());
         // The app opens the one authorization tab (see `start_codex_login`).
         #[cfg(unix)]
         if let Some(noop_browser) = ensure_noop_browser(&self.inner.config.root_dir()) {
             command.env("BROWSER", noop_browser);
         }
-        let child = zeron_harness::process::spawn_agent(&mut command).map_err(|err| {
+        let child = vardoger_harness::process::spawn_agent(&mut command).map_err(|err| {
             EngineError::Other(if err.kind() == std::io::ErrorKind::NotFound {
                 "The `codex` CLI was not found on this device — install it first.".into()
             } else {
@@ -2523,7 +2523,7 @@ impl AgentAccounts {
         let login_id = new_id();
         let home = self.login_home(&login_id)?;
         let shred = ShredOnDrop(home.clone());
-        let command = zeron_harness::cursor::login_command(&home.join("auth.json"))
+        let command = vardoger_harness::cursor::login_command(&home.join("auth.json"))
             .await
             .map_err(|e| EngineError::Other(format!("Could not start the Cursor login: {e}")))?;
         self.start_file_capture(
@@ -2643,7 +2643,7 @@ impl AgentAccounts {
             .and_then(|root| ensure_noop_browser(&root));
         #[cfg(not(unix))]
         let browser = None;
-        let options = zeron_harness::acp::SignInOptions {
+        let options = vardoger_harness::acp::SignInOptions {
             browser,
             // Its Google sign-in, whatever method this device's own
             // Antigravity is set to.
@@ -2658,15 +2658,15 @@ impl AgentAccounts {
         let task_state = state.clone();
         let this = self.clone();
         let handle = tokio::spawn(async move {
-            // Its sign-in is its ACP server's: a pinned archive Zeron
+            // Its sign-in is its ACP server's: a pinned archive Vardoger
             // installs itself (as Settings' Install does), so connecting it
             // for Cloud never needs Antigravity set up on this computer.
-            if !zeron_harness::install::installed(HarnessId::Antigravity) {
+            if !vardoger_harness::install::installed(HarnessId::Antigravity) {
                 lock(&task_state).message =
                     Some("Installing Antigravity's sign-in on this computer…".into());
-                let installed = zeron_harness::install::install_harness(
+                let installed = vardoger_harness::install::install_harness(
                     HarnessId::Antigravity,
-                    zeron_harness::CancellationToken::new(),
+                    vardoger_harness::CancellationToken::new(),
                 )
                 .await;
                 lock(&task_state).message = None;
@@ -2681,7 +2681,7 @@ impl AgentAccounts {
             let progress_state = task_state.clone();
             let signed_in = acp
                 .sign_in_with(options, move |progress| {
-                    if let zeron_harness::acp::SignInProgress::OpenBrowser(url) = progress {
+                    if let vardoger_harness::acp::SignInProgress::OpenBrowser(url) = progress {
                         lock(&progress_state).url.get_or_insert(url);
                     }
                 })
@@ -2792,7 +2792,7 @@ impl AgentAccounts {
         &self,
         harness: HarnessId,
         login_id: String,
-        mut command: zeron_harness::process::Command,
+        mut command: vardoger_harness::process::Command,
         shred: ShredOnDrop,
         scan_url: fn(&str) -> Option<String>,
         read: fn(&Path) -> Result<Option<serde_json::Value>, String>,
@@ -2800,11 +2800,11 @@ impl AgentAccounts {
         catalog: Option<CatalogPublisher>,
     ) -> Result<AgentLoginStart, EngineError> {
         command
-            .stdin(zeron_harness::process::Stdio::null())
-            .stdout(zeron_harness::process::Stdio::piped())
-            .stderr(zeron_harness::process::Stdio::piped());
+            .stdin(vardoger_harness::process::Stdio::null())
+            .stdout(vardoger_harness::process::Stdio::piped())
+            .stderr(vardoger_harness::process::Stdio::piped());
         let cli = stores::cli_name(harness);
-        let child = zeron_harness::process::spawn_agent(&mut command).map_err(|err| {
+        let child = vardoger_harness::process::spawn_agent(&mut command).map_err(|err| {
             EngineError::Other(if err.kind() == std::io::ErrorKind::NotFound {
                 format!("The `{cli}` CLI was not found on this device — install it first.")
             } else {
@@ -2880,17 +2880,17 @@ impl AgentAccounts {
     /// Antigravity: its ACP server's Google sign-in (`oauth-personal`) into a
     /// throwaway `GEMINI_HOME`, its token kept in a file there — never a
     /// session already on this computer (the Keychain's), whose account
-    /// zeron can't name or switch, so "Sign in" always asks Google and the
+    /// vardoger can't name or switch, so "Sign in" always asks Google and the
     /// account picked is the one saved. The token is saved as a slot named
     /// by its Google account, and goes live when no other file login is
-    /// (Zeron's runs read it: `zeron_harness::acp::antigravity_reads_token_file`).
+    /// (Vardoger's runs read it: `vardoger_harness::acp::antigravity_reads_token_file`).
     /// Polls carry the browser url once the server prints it.
     fn start_antigravity_login(
         &self,
         requester: Option<&str>,
     ) -> Result<AgentLoginStart, EngineError> {
         if let Some(home) = &self.inner.config.antigravity_home
-            && zeron_harness::acp::antigravity_saved_auth_method(home)
+            && vardoger_harness::acp::antigravity_saved_auth_method(home)
                 .is_some_and(|method| method != "oauth-personal")
         {
             return Ok(self.start_antigravity_method_login(requester));
@@ -2910,7 +2910,7 @@ impl AgentAccounts {
             .and_then(|root| ensure_noop_browser(&root));
         #[cfg(not(unix))]
         let browser = None;
-        let options = zeron_harness::acp::SignInOptions {
+        let options = vardoger_harness::acp::SignInOptions {
             browser,
             method: Some("oauth-personal".into()),
             env: vec![
@@ -2930,7 +2930,7 @@ impl AgentAccounts {
             let progress_state = task_state.clone();
             let signed_in = acp
                 .sign_in_with(options, move |progress| {
-                    if let zeron_harness::acp::SignInProgress::OpenBrowser(url) = progress {
+                    if let vardoger_harness::acp::SignInProgress::OpenBrowser(url) = progress {
                         lock(&progress_state).url.get_or_insert(url);
                     }
                 })
@@ -2956,7 +2956,7 @@ impl AgentAccounts {
                             .save_new_login(HarnessId::Antigravity, &detected)
                             .await
                             .map_err(|e| e.to_string()),
-                        None => Err("Antigravity saved a Google login zeron can't read.".into()),
+                        None => Err("Antigravity saved a Google login vardoger can't read.".into()),
                     }
                 }
                 Err(message) => Err(message),
@@ -3008,13 +3008,13 @@ impl AgentAccounts {
         let keychain = self.inner.config.antigravity_keychain;
         let acp = self
             .acp_harness(HarnessId::Antigravity)
-            .unwrap_or_else(zeron_harness::AcpHarness::antigravity);
+            .unwrap_or_else(vardoger_harness::AcpHarness::antigravity);
         let task_state = state.clone();
         let handle = tokio::spawn(async move {
             let progress_state = task_state.clone();
             let mut outcome = acp
                 .sign_in(browser, move |progress| {
-                    if let zeron_harness::acp::SignInProgress::OpenBrowser(url) = progress {
+                    if let vardoger_harness::acp::SignInProgress::OpenBrowser(url) = progress {
                         lock(&progress_state).url = Some(url);
                     }
                 })
@@ -3052,7 +3052,7 @@ impl AgentAccounts {
         }
     }
 
-    /// Cursor: the SDK's own PKCE browser flow, driven through the zeron shim
+    /// Cursor: the SDK's own PKCE browser flow, driven through the vardoger shim
     /// in login mode. The minted key lands in a throwaway store file (never
     /// the live `~/.cursor/sdk/auth.json`), then snapshots into a slot on
     /// poll — mirroring codex's throwaway `CODEX_HOME`.
@@ -3060,7 +3060,7 @@ impl AgentAccounts {
         self.reap_spawned_flows(HarnessId::Cursor);
         let login_id = new_id();
         let home = self.login_home(&login_id)?;
-        let cmd = zeron_harness::cursor::login_command(&home.join("auth.json"))
+        let cmd = vardoger_harness::cursor::login_command(&home.join("auth.json"))
             .await
             .map_err(|e| {
                 let _ = std::fs::remove_dir_all(&home);
@@ -3399,7 +3399,7 @@ impl AgentAccounts {
             return Ok(AgentLoginPoll {
                 code: None,
                 status: AgentLoginStatus::Error,
-                message: Some(zeron_harness::redact::redact_output(&message)),
+                message: Some(vardoger_harness::redact::redact_output(&message)),
                 url: None,
                 callback_port: None,
             });
@@ -3473,7 +3473,7 @@ impl AgentAccounts {
                 Some(Err(message)) => AgentLoginPoll {
                 code: None,
                     status: AgentLoginStatus::Error,
-                    message: Some(zeron_harness::redact::redact_output(message)),
+                    message: Some(vardoger_harness::redact::redact_output(message)),
                     url: None,
                     callback_port: None,
                 },
@@ -3608,7 +3608,7 @@ impl AgentAccounts {
         }
     }
 
-    /// Lazy TTL sweep (zeron uses a background fiber; native reaps on the next
+    /// Lazy TTL sweep (vardoger uses a background fiber; native reaps on the next
     /// accounts call — same bound, no standing task).
     fn sweep_flows(&self) {
         let stale: Vec<String> = lock(&self.inner.flows)
@@ -3668,17 +3668,17 @@ impl AgentAccounts {
     }
 
     /// Antigravity's live Google login in its token file — what a sign-in
-    /// through Zeron writes, and what Zeron's runs then read
-    /// ([`zeron_harness::acp::antigravity_reads_token_file`]) — unless its home
+    /// through Vardoger writes, and what Vardoger's runs then read
+    /// ([`vardoger_harness::acp::antigravity_reads_token_file`]) — unless its home
     /// is set to another method, which runs instead.
     async fn detect_antigravity_file(&self) -> Option<Detected> {
         let home = self.inner.config.antigravity_home.as_ref()?;
-        if zeron_harness::acp::antigravity_saved_auth_method(home)
+        if vardoger_harness::acp::antigravity_saved_auth_method(home)
             .is_some_and(|method| method != "oauth-personal")
         {
             return None;
         }
-        let token = read_json(&zeron_harness::acp::antigravity_token_file(home))?;
+        let token = read_json(&vardoger_harness::acp::antigravity_token_file(home))?;
         let email = self.antigravity_email(&token).await;
         antigravity_file_login(&token, email)
     }
@@ -3724,7 +3724,7 @@ impl AgentAccounts {
     /// for (everything else in them kept).
     fn write_antigravity_token(&self, token: &serde_json::Value) -> Result<(), EngineError> {
         let home = self.antigravity_home()?;
-        let file = zeron_harness::acp::antigravity_token_file(home);
+        let file = vardoger_harness::acp::antigravity_token_file(home);
         if let Some(dir) = file.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -4407,7 +4407,7 @@ impl AgentAccounts {
         })
     }
 
-    /// Whether `slot` is provably NOT the grant Claude Code runs on, so zeron
+    /// Whether `slot` is provably NOT the grant Claude Code runs on, so vardoger
     /// may rotate its refresh token. `is_active` alone isn't proof: it is
     /// false whenever the live identity couldn't be read (`~/.claude.json`
     /// mid-rewrite), and rotating the CLI's own refresh token logs it out.
@@ -4706,7 +4706,7 @@ mod keychain {
 
 // ── Antigravity ─────────────────────────────────────────────────────────────
 
-/// Antigravity's live login, as far as zeron can see it without its secret.
+/// Antigravity's live login, as far as vardoger can see it without its secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AntigravityLogin {
     /// The canonical auth method (`oauth-personal`, `oauth-business`, …).
@@ -4786,7 +4786,7 @@ fn antigravity_file_login(token: &serde_json::Value, email: Option<String>) -> O
 }
 
 async fn detect_antigravity_login(home: &Path, keychain: bool) -> Option<AntigravityLogin> {
-    let method = zeron_harness::acp::antigravity_saved_auth_method(home)
+    let method = vardoger_harness::acp::antigravity_saved_auth_method(home)
         .unwrap_or_else(|| "oauth-personal".into());
     let token = match method.as_str() {
         "oauth-personal" => Some(("acp_token.json", "antigravity-acp")),
@@ -4907,7 +4907,7 @@ fn claude_plan(org_type: Option<&str>, tier: Option<&str>) -> Option<String> {
 }
 
 fn codex_plan(plan: Option<&str>) -> Option<String> {
-    zeron_proto::plan_usage::codex_plan(plan)
+    vardoger_proto::plan_usage::codex_plan(plan)
 }
 
 /// Compose a target Claude login with the machine's current shared fields.
@@ -5168,7 +5168,7 @@ fn cursor_key_usable(auth: &serde_json::Value) -> bool {
 }
 
 fn parse_when(value: Option<&serde_json::Value>) -> Option<DateTime<Utc>> {
-    zeron_proto::plan_usage::parse_when(value)
+    vardoger_proto::plan_usage::parse_when(value)
 }
 
 fn usage_key(harness: HarnessId, account_key: &str) -> String {
@@ -5336,7 +5336,7 @@ fn usage_error_message(
         ProbeError::Http { status, .. } => format!("Usage check failed ({status})"),
         ProbeError::Network { timeout: true } => format!("{provider} didn't respond{retry}"),
         ProbeError::Network { .. } => format!("Couldn't reach {provider}{retry}"),
-        ProbeError::Schema => "Usage format changed — update zeron".to_string(),
+        ProbeError::Schema => "Usage format changed — update vardoger".to_string(),
         ProbeError::NoCredentials {
             why: NoCredentials::ApiKey,
         } => "API keys have no plan usage".to_string(),
@@ -5350,7 +5350,7 @@ fn usage_error_message(
             why: NoCredentials::Unsupported,
         } => "No usage view for this login".to_string(),
         ProbeError::UntrustedEndpoint => {
-            "Usage skipped — this login names a server zeron doesn't recognize".to_string()
+            "Usage skipped — this login names a server vardoger doesn't recognize".to_string()
         }
     })
 }
@@ -5384,9 +5384,9 @@ pub(crate) fn usage_windows_from_reply(
 }
 
 /// Antigravity's limits per group of models, and its paid plan
-/// ([`zeron_proto::plan_usage::antigravity`]).
+/// ([`vardoger_proto::plan_usage::antigravity`]).
 pub(super) fn antigravity_usage_snapshot(body: &serde_json::Value) -> Option<UsageSnapshot> {
-    zeron_proto::plan_usage::antigravity(body).map(|(windows, plan_label)| UsageSnapshot {
+    vardoger_proto::plan_usage::antigravity(body).map(|(windows, plan_label)| UsageSnapshot {
         windows,
         plan_label,
         codex_reset_credits: None,
@@ -5395,7 +5395,7 @@ pub(super) fn antigravity_usage_snapshot(body: &serde_json::Value) -> Option<Usa
 
 /// Codex `/wham/usage`: primary/secondary windows + the live plan.
 fn codex_usage_snapshot(body: &serde_json::Value) -> Option<UsageSnapshot> {
-    zeron_proto::plan_usage::codex(body).map(|(windows, plan_label)| UsageSnapshot {
+    vardoger_proto::plan_usage::codex(body).map(|(windows, plan_label)| UsageSnapshot {
         windows,
         plan_label,
         codex_reset_credits: None,
@@ -5405,7 +5405,7 @@ fn codex_usage_snapshot(body: &serde_json::Value) -> Option<UsageSnapshot> {
 /// Windows from Claude's `/api/oauth/usage`: the 5-hour session and weekly
 /// buckets, each a 0-100 `utilization` with an RFC3339 `resets_at`.
 fn claude_usage_windows(body: &serde_json::Value) -> Option<UsageSnapshot> {
-    zeron_proto::plan_usage::claude(body).map(|windows| UsageSnapshot {
+    vardoger_proto::plan_usage::claude(body).map(|windows| UsageSnapshot {
         windows,
         plan_label: None,
         codex_reset_credits: None,
@@ -5423,8 +5423,8 @@ fn cursor_bucket_windows(body: &serde_json::Value) -> Vec<AgentUsageWindow> {
     };
     let resets_at = json_ms(body.get("billingCycleEnd"));
     [
-        (zeron_proto::CURSOR_USAGE_CURSOR, "autoPercentUsed"),
-        (zeron_proto::CURSOR_USAGE_OTHER, "apiPercentUsed"),
+        (vardoger_proto::CURSOR_USAGE_CURSOR, "autoPercentUsed"),
+        (vardoger_proto::CURSOR_USAGE_OTHER, "apiPercentUsed"),
     ]
     .into_iter()
     .filter_map(|(label, field)| {
@@ -5444,7 +5444,7 @@ fn cursor_bucket_windows(body: &serde_json::Value) -> Vec<AgentUsageWindow> {
 fn cursor_grok_window(body: &serde_json::Value) -> Option<AgentUsageWindow> {
     let percent = body.get("usagePercent").and_then(|v| v.as_f64())?;
     Some(AgentUsageWindow {
-        label: zeron_proto::CURSOR_USAGE_GROK.to_string(),
+        label: vardoger_proto::CURSOR_USAGE_GROK.to_string(),
         used_fraction: (percent / 100.0).clamp(0.0, 1.0) as f32,
         resets_at: body
             .get("nextResetTimestampUtc")
@@ -5608,15 +5608,15 @@ fn ensure_noop_browser(root: &Path) -> Option<PathBuf> {
 }
 
 /// A "browser" that records the url it was asked to open into
-/// `$ZERON_LOGIN_URL_FILE` instead of opening it — so the app opens the
+/// `$VARDOGER_LOGIN_URL_FILE` instead of opening it — so the app opens the
 /// one tab (on the requesting device, for a remote login) even when the CLI
 /// never prints its sign-in url. Unix only, like [`ensure_noop_browser`].
 #[cfg(unix)]
 fn ensure_recording_browser(root: &Path) -> Option<PathBuf> {
     // `umask 077`: should the file not exist yet, it's still owner-only
     // (the sign-in pre-creates it 0600).
-    const SCRIPT: &str = "#!/bin/sh\numask 077\n[ -n \"$ZERON_LOGIN_URL_FILE\" ] && \
-                          printf '%s\\n' \"$1\" >> \"$ZERON_LOGIN_URL_FILE\"\nexit 0\n";
+    const SCRIPT: &str = "#!/bin/sh\numask 077\n[ -n \"$VARDOGER_LOGIN_URL_FILE\" ] && \
+                          printf '%s\\n' \"$1\" >> \"$VARDOGER_LOGIN_URL_FILE\"\nexit 0\n";
     let path = root.join(".record-browser");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(SCRIPT) {
         std::fs::write(&path, SCRIPT).ok()?;
@@ -5649,7 +5649,7 @@ fn scan_shim_fatal(output: &str) -> Option<String> {
 }
 
 type LoginChildHandles = (
-    Arc<Mutex<Option<zeron_harness::process::Child>>>,
+    Arc<Mutex<Option<vardoger_harness::process::Child>>>,
     Arc<Mutex<String>>,
     Arc<Mutex<Option<Option<i32>>>>,
 );
@@ -5658,7 +5658,7 @@ type LoginChildHandles = (
 /// (the URL can land on either stream), and a monitor polls `try_wait` so the
 /// child is reaped without owning it — the cancel path needs concurrent kill
 /// access.
-fn wire_login_child(mut child: zeron_harness::process::Child) -> LoginChildHandles {
+fn wire_login_child(mut child: vardoger_harness::process::Child) -> LoginChildHandles {
     let output = Arc::new(Mutex::new(String::new()));
     for pipe in [
         child
@@ -5730,7 +5730,7 @@ fn login_child_failure(code: Option<i32>, output: &Mutex<String>) -> String {
         .last()
         .unwrap_or("sign-in failed")
         .to_string();
-    zeron_harness::redact::redact_output(&last)
+    vardoger_harness::redact::redact_output(&last)
 }
 
 /// Wait for a captured `codex login` to write a ChatGPT token set into its
@@ -5958,7 +5958,7 @@ fn muse_login_record(auth: &serde_json::Value) -> Option<&serde_json::Value> {
 
 /// Kills a captured sign-in's CLI when its task ends or is aborted (cancel,
 /// a superseding sign-in, engine shutdown).
-struct KillOnDrop(Arc<Mutex<Option<zeron_harness::process::Child>>>);
+struct KillOnDrop(Arc<Mutex<Option<vardoger_harness::process::Child>>>);
 
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
@@ -6350,7 +6350,7 @@ mod tests {
             home
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(HarnessId, Vec<String>)>();
-        let publisher: CatalogPublisher = Arc::new(move |harness, models: Vec<zeron_proto::Model>| {
+        let publisher: CatalogPublisher = Arc::new(move |harness, models: Vec<vardoger_proto::Model>| {
             let tx = tx.clone();
             Box::pin(async move {
                 let _ = tx.send((harness, models.into_iter().map(|m| m.id).collect()));
@@ -6545,12 +6545,12 @@ mod tests {
     fn codex_window_labels_track_the_window_span() {
         // Codex free tier: one 30-day window (observed live:
         // limit_window_seconds = 2_592_000) — NOT a week.
-        assert_eq!(zeron_proto::plan_usage::codex_window_label(2_592_000), "Month");
+        assert_eq!(vardoger_proto::plan_usage::codex_window_label(2_592_000), "Month");
         // Plus: 5-hour primary + weekly secondary.
-        assert_eq!(zeron_proto::plan_usage::codex_window_label(18_000), "Session");
-        assert_eq!(zeron_proto::plan_usage::codex_window_label(604_800), "Week");
+        assert_eq!(vardoger_proto::plan_usage::codex_window_label(18_000), "Session");
+        assert_eq!(vardoger_proto::plan_usage::codex_window_label(604_800), "Week");
         // Unknown/absent span falls back to the shortest label.
-        assert_eq!(zeron_proto::plan_usage::codex_window_label(0), "Session");
+        assert_eq!(vardoger_proto::plan_usage::codex_window_label(0), "Session");
     }
 
     #[test]
@@ -7514,7 +7514,7 @@ mod login_tests {
         assert_eq!(cfg["oauthAccount"]["accountUuid"], "acct-a");
         // Claude Code's refresh locks are released.
         for lock in
-            zeron_harness::claude::refresh_lock::lock_paths(&config(tmp.path()).claude_config_dir)
+            vardoger_harness::claude::refresh_lock::lock_paths(&config(tmp.path()).claude_config_dir)
         {
             assert!(!lock.exists(), "{}", lock.display());
         }
@@ -7529,7 +7529,7 @@ mod login_tests {
         accounts.write_slot(&other).unwrap();
         // A Claude Code process is saving a refreshed pair.
         let claude_dir = config(tmp.path()).claude_config_dir;
-        let [held, _] = zeron_harness::claude::refresh_lock::lock_paths(&claude_dir);
+        let [held, _] = vardoger_harness::claude::refresh_lock::lock_paths(&claude_dir);
         std::fs::create_dir_all(&held).unwrap();
 
         let switch = tokio::spawn({
@@ -7736,7 +7736,7 @@ mod login_tests {
     async fn a_relayed_callback_reaches_only_the_requesters_login_port() {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let tmp = tempfile::tempdir().unwrap();
-        let routes = zeron_preview::login::CallbackRoutes::default();
+        let routes = vardoger_preview::login::CallbackRoutes::default();
         let accounts = AgentAccounts::with_callback_routes(config(tmp.path()), routes.clone());
         // The CLI's loopback listener, waiting for the browser.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -7781,7 +7781,7 @@ mod login_tests {
     #[tokio::test]
     async fn a_login_for_another_device_publishes_its_callback_until_it_ends() {
         let tmp = tempfile::tempdir().unwrap();
-        let routes = zeron_preview::login::CallbackRoutes::default();
+        let routes = vardoger_preview::login::CallbackRoutes::default();
         let accounts = AgentAccounts::with_callback_routes(config(tmp.path()), routes.clone());
         // A local login publishes nothing.
         let local = accounts.start_login(HarnessId::ClaudeCode).await.unwrap();

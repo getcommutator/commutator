@@ -12,7 +12,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use serde_json::Value;
-use zeron_proto::AgentEvent;
+use vardoger_proto::AgentEvent;
 
 use crate::HarnessError;
 
@@ -58,7 +58,7 @@ pub(crate) fn message(ineligible: &Ineligible) -> String {
 }
 
 /// the access token antigravity runs on, when it keeps it as a file in
-/// `home` (a cloud machine's, a sign-in zeron made): `antigravity-acp/
+/// `home` (a cloud machine's, a sign-in vardoger made): `antigravity-acp/
 /// acp_token.json`'s `token`.
 fn token_in(home: &Path) -> Option<String> {
     let bytes = std::fs::read(home.join("antigravity-acp").join("acp_token.json")).ok()?;
@@ -154,10 +154,10 @@ mod tests {
     }
 
     /// a turn without the refusal passes as it came; antigravity keeping its
-    /// token where zeron can't read it (the keychain) adds nothing either.
+    /// token where vardoger can't read it (the keychain) adds nothing either.
     #[tokio::test]
     async fn only_a_refused_turn_with_a_readable_token_is_explained() {
-        let done = || Ok(AgentEvent::Done { status: zeron_proto::DoneStatus::Completed, result: None, error: None, session_id: None });
+        let done = || Ok(AgentEvent::Done { status: vardoger_proto::DoneStatus::Completed, result: None, error: None, session_id: None });
         let text = |t: &str| Ok(AgentEvent::TextDelta { text: t.into() });
         let collect = |events: Vec<Result<AgentEvent, HarnessError>>, home| async move {
             explain_refusals(stream::iter(events).boxed(), home).collect::<Vec<_>>().await

@@ -1,5 +1,5 @@
 [package]
-name = "zeron"
+name = "vardoger"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,25 +7,25 @@ publish.workspace = true
 
 # Shared by both binaries.
 [lib]
-name = "zeron_app"
+name = "vardoger_app"
 path = "src/lib.rs"
 
 [[bin]]
-name = "zeron"
+name = "vardoger"
 path = "src/main.rs"
 
 [[bin]]
-name = "zeron-engine"
-path = "src/bin/zeron-engine.rs"
+name = "vardoger-engine"
+path = "src/bin/vardoger-engine.rs"
 
 [dependencies]
-zeron-engine.workspace = true
-zeron-rpc.workspace = true
-zeron-update.workspace = true
-zeron-cli.workspace = true
-zeron-mcp.workspace = true
-zeron-notify.workspace = true
-zeron-sync.workspace = true
+vardoger-engine.workspace = true
+vardoger-rpc.workspace = true
+vardoger-update.workspace = true
+vardoger-cli.workspace = true
+vardoger-mcp.workspace = true
+vardoger-notify.workspace = true
+vardoger-sync.workspace = true
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true

@@ -1,12 +1,12 @@
 //! An agent process parked between turns with nothing pending is stopped
-//! after a short idle period ([`zeron_engine::sessions::AGENT_IDLE_STOP`]
-//! while its chat is open anywhere, [`zeron_engine::sessions::UNWATCHED_IDLE_STOP`]
+//! after a short idle period ([`vardoger_engine::sessions::AGENT_IDLE_STOP`]
+//! while its chat is open anywhere, [`vardoger_engine::sessions::UNWATCHED_IDLE_STOP`]
 //! when it's open nowhere),
 //! where its driver resumes sessions whole; the next message resumes it.
 //! Nothing pending is ever stopped: background work, a scheduled wake-up, a
 //! question, another device reading along.
 //!
-//! And an agent's Zeron MCP tools come from the engine itself, over a token
+//! And an agent's Vardoger MCP tools come from the engine itself, over a token
 //! that names its run's chat and dies with the run.
 //!
 //! The harness models one agent process per `run()`: `run()` is a spawn, the
@@ -21,10 +21,10 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
-use zeron_engine::sessions::{AGENT_IDLE_STOP, UNWATCHED_IDLE_STOP};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls, TurnControl};
-use zeron_proto::{
+use vardoger_engine::sessions::{AGENT_IDLE_STOP, UNWATCHED_IDLE_STOP};
+use vardoger_engine::{EngineCore, HarnessRegistry};
+use vardoger_harness::{Harness, HarnessError, RunControls, TurnControl};
+use vardoger_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode, ToolCall,
 };
@@ -39,8 +39,8 @@ struct Ledger {
     resumes: Mutex<Vec<Option<String>>>,
     prompts: Mutex<Vec<String>>,
     turn: Mutex<Option<TurnControl>>,
-    /// Each spawn's Zeron MCP server, as the host stamped it.
-    mcp: Mutex<Vec<Option<zeron_proto::McpServer>>>,
+    /// Each spawn's Vardoger MCP server, as the host stamped it.
+    mcp: Mutex<Vec<Option<vardoger_proto::McpServer>>>,
     /// The real process standing in for the agent CLI, told to the host.
     process: Mutex<Option<u32>>,
     /// Starts a wake turn (one nobody sent) with this prompt.
@@ -104,11 +104,11 @@ impl Harness for Agent {
     fn configured_mcp_servers(
         &self,
         request: &RunRequest,
-    ) -> Vec<zeron_harness::process::KnownServer> {
+    ) -> Vec<vardoger_harness::process::KnownServer> {
         if !request.env.contains_key("CLAUDE_CONFIG_DIR") {
             return Vec::new();
         }
-        zeron_harness::claude::configured_mcp_servers(
+        vardoger_harness::claude::configured_mcp_servers(
             &request.env,
             std::path::Path::new(&request.cwd),
         )
@@ -568,7 +568,7 @@ async fn post(url: &str, token: &str, body: &str) -> (u16, String) {
 }
 
 #[tokio::test]
-async fn a_run_s_zeron_tools_come_from_the_engine_on_a_token_that_dies_with_it() {
+async fn a_run_s_vardoger_tools_come_from_the_engine_on_a_token_that_dies_with_it() {
     let rig = rig(true);
     rig.core
         .sessions
@@ -578,15 +578,15 @@ async fn a_run_s_zeron_tools_come_from_the_engine_on_a_token_that_dies_with_it()
     rig.send("hello").await;
     let mcp = rig.ledger.mcp.lock().unwrap()[0]
         .clone()
-        .expect("the host stamps Zeron's server");
+        .expect("the host stamps Vardoger's server");
     let http = mcp.http.clone().expect("served over HTTP by the engine");
     assert!(http.url.starts_with("http://127.0.0.1:"), "{}", http.url);
     let token = http.bearer_token().expect("a bearer token").to_owned();
     // Agents that speak only stdio get the small forwarder, not the engine.
     assert_eq!(mcp.args, ["mcp-proxy"]);
-    assert_eq!(mcp.env.get(zeron_proto::McpServer::TOKEN_ENV), Some(&token));
+    assert_eq!(mcp.env.get(vardoger_proto::McpServer::TOKEN_ENV), Some(&token));
     assert_eq!(
-        mcp.env.get(zeron_proto::McpServer::URL_ENV),
+        mcp.env.get(vardoger_proto::McpServer::URL_ENV),
         Some(&http.url)
     );
     assert!(
@@ -650,7 +650,7 @@ impl AgentProcess {
             .spawn()
             .unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while zeron_harness::process::unexpected_descendants(agent.id(), &[]).len() < secs.len() {
+        while vardoger_harness::process::unexpected_descendants(agent.id(), &[]).len() < secs.len() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the child never started"
@@ -660,7 +660,7 @@ impl AgentProcess {
         Self(agent)
     }
 
-    /// Leading its own process group, as Zeron starts agents, with no child
+    /// Leading its own process group, as Vardoger starts agents, with no child
     /// left: its shell ran `sleep <secs> &` and exited, so the sleep is
     /// re-parented to init but still in the agent's group.
     fn with_orphan_in_its_group(secs: &str) -> Self {
@@ -715,7 +715,7 @@ impl Drop for AgentProcess {
     fn drop(&mut self) {
         // SAFETY: the test's own process group: `sh` and its `sleep`.
         let pid = self.0.id() as i32;
-        for child in zeron_harness::process::unexpected_descendants(pid as u32, &[]) {
+        for child in vardoger_harness::process::unexpected_descendants(pid as u32, &[]) {
             if let Some(child) = child
                 .split_whitespace()
                 .next()
@@ -793,8 +793,8 @@ async fn an_agent_whose_only_child_is_its_mcp_server_is_stopped() {
     let agent = AgentProcess::with_child("3604");
     *rig.ledger.process.lock().unwrap() = Some(agent.0.id());
     let mut first = request("hello");
-    first.mcp = Some(zeron_proto::McpServer {
-        name: "zeron".into(),
+    first.mcp = Some(vardoger_proto::McpServer {
+        name: "vardoger".into(),
         command: "sleep".into(),
         args: vec!["3604".into()],
         ..Default::default()
@@ -891,7 +891,7 @@ async fn the_idle_stop_never_ends_a_new_chat_being_written_and_always_ends_one_l
     rig.send("hello").await;
     let service = rig.core.rpc_service();
     let warm = |chat: &'static str, typed: bool| {
-        let client = zeron_rpc::memory_client(service.clone());
+        let client = vardoger_rpc::memory_client(service.clone());
         async move {
             let answer = client
                 .call(
