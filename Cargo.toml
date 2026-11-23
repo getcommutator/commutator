@@ -12,6 +12,8 @@ members = [
     "crates/launch",
     "crates/markdown",
     "crates/mcp",
+    "crates/mobile",
+    "crates/mobile-bindgen",
     "crates/notify",
     "crates/orb",
     "crates/preview",
@@ -20,10 +22,13 @@ members = [
     "crates/rpc",
     "crates/sync",
     "crates/syntax",
+    "crates/term",
     "crates/term-link",
     "crates/text",
     "crates/update",
     "crates/visual",
+    "crates/visual-gpu",
+    "crates/zatex",
     "crates/voice-media",
     "crates/voice-session",
 ]
@@ -58,6 +63,9 @@ vardoger-markdown = { path = "crates/markdown" }
 vardoger-syntax = { path = "crates/syntax" }
 vardoger-text = { path = "crates/text" }
 vardoger-account = { path = "crates/account" }
+vardoger-term = { path = "crates/term" }
+vardoger-visual-gpu = { path = "crates/visual-gpu" }
+zatex = { path = "crates/zatex" }
 
 # CRDT
 loro = "1.17"
@@ -157,3 +165,23 @@ debug = true
 # Scenes rasterize in software every frame the camera moves.
 [profile.dev.package.vardoger-visual]
 opt-level = 3
+
+[profile.dev.package.vardoger-visual-gpu]
+opt-level = 3
+
+# Mobile core (scripts/ios/build-core.sh). Always optimized — layout and sync
+# run on the phone's hot paths, so even Debug app builds link an -O core.
+[profile.mobile]
+inherits = "release"
+lto = false
+strip = false
+debug = "line-tables-only"
+incremental = false
+codegen-units = 16
+
+# TestFlight/App Store archives.
+[profile.mobile-dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

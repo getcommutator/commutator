@@ -54,6 +54,7 @@ run_cargo() {
     ${KEEP[@]+"${KEEP[@]}"} \
     PATH="$CARGO_DIRS:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     IPHONEOS_DEPLOYMENT_TARGET=26.0 \
+    CARGO_INCREMENTAL=0 \
     CARGO_TARGET_DIR="$ROOT/target" \
     ${CORE_ENV:-} \
     cargo "$@"
@@ -61,7 +62,9 @@ run_cargo() {
 
 cd "$ROOT"
 CORE_ENV="$LUAU_ENV" run_cargo build --locked -p vardoger-mobile --lib --profile "$PROFILE" --target "$TARGET"
-run_cargo build --locked -p vardoger-mobile --bin uniffi-bindgen --features bindgen --profile mobile
+# The generator alone (crates/mobile-bindgen): it reads the bindings out of
+# the built library, so the core is never compiled for the host too.
+run_cargo build --locked -p vardoger-mobile-bindgen --bin uniffi-bindgen --profile mobile
 
 LIB="$ROOT/target/$TARGET/$PROFILE/libvardoger_mobile.a"
 # With its asserts, each LUAU_ASSERT keeps its Luau source file's path

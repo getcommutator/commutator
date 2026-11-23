@@ -12,18 +12,7 @@ publish.workspace = true
 name = "vardoger_mobile"
 crate-type = ["lib", "staticlib", "cdylib"]
 
-[[bin]]
-name = "uniffi-bindgen"
-path = "src/bin/uniffi-bindgen.rs"
-required-features = ["bindgen"]
-
-[features]
-bindgen = ["uniffi/cli"]
-
 [dependencies]
-vardoger-voice-session.workspace = true
-vardoger-orb.workspace = true
-vardoger-veil.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
@@ -35,6 +24,7 @@ vardoger-visual-gpu.workspace = true
 vardoger-doc.workspace = true
 vardoger-proto.workspace = true
 vardoger-client.workspace = true
+vardoger-account.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true

@@ -11,20 +11,16 @@
 //! through [`CoreClient::session_handle`] → [`vardoger_client::SessionHandle`]
 //! (`snapshot()` / `subscribe()`), never over FFI.
 
-mod cloud;
+mod account;
 pub(crate) mod companions;
 mod providers;
-pub use providers::UsageWindowInfo;
 mod session;
-mod voice;
-pub use voice::*;
 mod types;
 
 use std::sync::Arc;
 
 use vardoger_client as zc;
 
-pub use cloud::*;
 pub use session::*;
 pub use types::*;
 
@@ -118,10 +114,6 @@ impl CoreClient {
         self.client.shutdown();
     }
 
-    /// The platform restored/re-signed a newer WorkOS pair.
-    pub fn update_tokens(&self, tokens: AuthTokens) {
-        self.client.update_tokens(tokens.into());
-    }
 
     // ── workspace reads ────────────────────────────────────────────────────
 
@@ -405,45 +397,7 @@ impl CoreClient {
             .collect()
     }
 
-    /// Cloud's model catalog for `harness`: the edge's list, else the last
-    /// one read, else the static list.
-    pub async fn cloud_models(&self, harness: String) -> Vec<ModelInfo> {
-        let client = self.client.clone();
-        let fallback = harness.clone();
-        on_runtime(async move { Ok(client.cloud_models(&harness).await) })
-            .await
-            .unwrap_or_else(|_| zc::catalog::fallback_models(&fallback))
-            .into_iter()
-            .map(Into::into)
-            .collect()
-    }
 
-    /// Ask for session notifications on this device (APNs token as hex,
-    /// "production" | "sandbox", and which kinds).
-    pub async fn register_push_target(
-        &self,
-        token: String,
-        environment: String,
-        prefs: PushPrefs,
-    ) -> CoreResult<()> {
-        let client = self.client.clone();
-        on_runtime(async move {
-            client
-                .register_push_target(
-                    &token,
-                    &environment,
-                    zc::PushPrefs { done: prefs.done, input: prefs.input, failed: prefs.failed },
-                )
-                .await
-        })
-        .await
-    }
-
-    /// Stop session notifications to this device.
-    pub async fn unregister_push_target(&self) -> CoreResult<()> {
-        let client = self.client.clone();
-        on_runtime(async move { client.unregister_push_target().await }).await
-    }
 
     pub async fn list_refs(
         &self,
@@ -552,17 +506,6 @@ impl CoreClient {
         self.client.set_network_online(online);
     }
 
-    /// The OS network path changed (another interface or route): direct
-    /// connections re-pair now; terminals ride the relay meanwhile.
-    pub fn network_path_changed(&self) {
-        self.client.network_path_changed();
-    }
-
-    /// Start pairing with the computer hosting `chat_id` (a terminal is
-    /// about to open there), so it starts on the direct link.
-    pub fn warm_direct(&self, chat_id: String) {
-        self.client.warm_direct(&chat_id);
-    }
 
     /// App returned to the foreground: resume, redial/probe rooms.
     pub fn on_foreground(&self) {
@@ -582,70 +525,6 @@ impl CoreClient {
 }
 
 // ── static helpers ─────────────────────────────────────────────────────────
-
-/// Production edge base URL.
-#[uniffi::export]
-pub fn auth_production_edge_url() -> String {
-    zc::auth::PRODUCTION_EDGE_URL.to_owned()
-}
-
-/// OAuth callback scheme (`vardoger`).
-#[uniffi::export]
-pub fn auth_callback_scheme() -> String {
-    zc::auth::CALLBACK_SCHEME.to_owned()
-}
-
-/// WorkOS AuthKit authorize URL (start of the web-auth session).
-#[uniffi::export]
-pub fn workos_authorize_url(state: String) -> String {
-    zc::auth::workos_authorize_url(&state)
-}
-
-/// `code`/`state` (or the provider error) of a `vardoger://callback?…` URL.
-#[uniffi::export]
-pub fn parse_auth_callback(url: String) -> Option<AuthCallback> {
-    zc::auth::parse_auth_callback(&url).map(Into::into)
-}
-
-/// Exchange an authorization code for an (unscoped) token pair.
-#[uniffi::export]
-pub async fn auth_exchange_code(edge_url: String, code: String) -> CoreResult<AuthExchange> {
-    let exchange = zc::auth::exchange_code(&edge_url, &code).await?;
-    Ok(AuthExchange {
-        user: exchange.user.into(),
-        tokens: exchange.tokens.into(),
-    })
-}
-
-/// Organizations the (unscoped) access token's user belongs to.
-#[uniffi::export]
-pub async fn auth_list_orgs(edge_url: String, access_token: String) -> CoreResult<Vec<AuthOrg>> {
-    Ok(zc::auth::list_orgs(&edge_url, &access_token)
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect())
-}
-
-/// Rotate the pair; `organization_id` scopes the access token to an org.
-#[uniffi::export]
-pub async fn auth_refresh(
-    edge_url: String,
-    refresh_token: String,
-    organization_id: Option<String>,
-) -> CoreResult<AuthTokens> {
-    Ok(
-        zc::auth::refresh(&edge_url, &refresh_token, organization_id.as_deref())
-            .await?
-            .into(),
-    )
-}
-
-/// A JWT's `exp` claim (epoch seconds).
-#[uniffi::export]
-pub fn jwt_expiry(jwt: String) -> Option<i64> {
-    zc::auth::jwt_expiry(&jwt)
-}
 
 /// Static harness catalog (the device-unreachable fallback).
 #[uniffi::export]

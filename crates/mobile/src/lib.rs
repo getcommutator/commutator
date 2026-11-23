@@ -3,15 +3,11 @@
 //! - [`client_ffi`]: account, workspace and session state (wraps `vardoger-client`).
 //! - [`layout`]: analytic transcript layout — markdown → measured display lists
 //!   (wraps `vardoger-markdown` + `vardoger-text`).
-//! - [`orb`]: the desktop's voice orb as paintable frames (wraps `vardoger-orb`).
-//! - [`caption`]: the voice caption's streaming veil (wraps `vardoger-veil`).
 
 uniffi::setup_scaffolding!("vardoger_core");
 
 mod client_ffi;
 pub mod layout;
-pub mod caption;
-pub mod orb;
 pub mod terminal;
 pub mod wallpaper;
 pub mod visual;

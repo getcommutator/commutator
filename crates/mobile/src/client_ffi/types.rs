@@ -27,7 +27,7 @@ pub enum CoreError {
     HostError { message: String },
     #[error("network: {message}")]
     Network { message: String },
-    /// Credentials rejected. Irrecoverable cases also raise `AuthExpired`.
+    /// Credentials rejected (the server no longer knows this device).
     #[error("auth: {message}")]
     Auth { message: String },
     #[error("storage: {message}")]
@@ -66,8 +66,6 @@ pub type CoreResult<T> = Result<T, CoreError>;
 /// Static per-install configuration.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct CoreConfig {
-    /// Edge base URL (`auth_production_edge_url()` for prod).
-    pub edge_url: String,
     /// Writable directory for registry/doc snapshots and caches, scoped by
     /// the platform to the signed-in identity (sign-out wipes it).
     pub data_dir: String,
@@ -78,46 +76,16 @@ pub struct CoreConfig {
     /// `ios` / `android`.
     pub platform: String,
     pub app_version: String,
-    /// Run the relay layer (docs/design/relay-mobile.md). Off, this device sends what
-    /// a shipped phone does, and holds its account's chats on stored rows.
-    #[uniffi(default = false)]
-    pub relay_layer: bool,
 }
 
 impl From<CoreConfig> for zc::ClientConfig {
     fn from(c: CoreConfig) -> Self {
         zc::ClientConfig {
-            edge_url: c.edge_url,
             data_dir: c.data_dir.into(),
             device_id: c.device_id,
             device_name: c.device_name,
             platform: c.platform,
             app_version: c.app_version,
-            relay_layer: c.relay_layer,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AuthTokens {
-    pub access_token: String,
-    pub refresh_token: String,
-}
-
-impl From<zc::AuthTokens> for AuthTokens {
-    fn from(t: zc::AuthTokens) -> Self {
-        Self {
-            access_token: t.access_token,
-            refresh_token: t.refresh_token,
-        }
-    }
-}
-
-impl From<AuthTokens> for zc::AuthTokens {
-    fn from(t: AuthTokens) -> Self {
-        Self {
-            access_token: t.access_token,
-            refresh_token: t.refresh_token,
         }
     }
 }
@@ -185,17 +153,18 @@ impl From<DemoOptions> for zc::DemoOptions {
     }
 }
 
-/// How the client authenticates against the edge.
+/// Which engine the client drives.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Credentials {
-    /// WorkOS session scoped to `org_id`.
-    WorkOs {
-        user_id: String,
-        org_id: String,
-        tokens: AuthTokens,
+    /// An engine on one of the account's machines, through the relay on the
+    /// account's Vardoger server: its URL, this device's bearer `token` from
+    /// its sign-in ([`ServerSignIn`]), and the machine to drive (one of
+    /// [`server_devices`]).
+    Remote {
+        server_url: String,
+        token: String,
+        host_device_id: String,
     },
-    /// `AUTH_MODE=dev` edge: the bearer is `userId@orgId`.
-    Dev { user_id: String, org_id: String },
     /// Fully offline dataset with a simulated host.
     Demo { options: DemoOptions },
 }
@@ -203,85 +172,16 @@ pub enum Credentials {
 impl From<Credentials> for zc::Credentials {
     fn from(c: Credentials) -> Self {
         match c {
-            Credentials::WorkOs {
-                user_id,
-                org_id,
-                tokens,
-            } => zc::Credentials::WorkOs {
-                user_id,
-                org_id,
-                tokens: tokens.into(),
+            Credentials::Remote {
+                server_url,
+                token,
+                host_device_id,
+            } => zc::Credentials::Remote {
+                server_url,
+                token,
+                host_device_id,
             },
-            Credentials::Dev { user_id, org_id } => zc::Credentials::Dev { user_id, org_id },
             Credentials::Demo { options } => zc::Credentials::Demo(options.into()),
-        }
-    }
-}
-
-// ── auth ──────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AuthUser {
-    pub id: String,
-    pub email: Option<String>,
-    pub first_name: Option<String>,
-    pub last_name: Option<String>,
-}
-
-impl From<zc::auth::AuthUser> for AuthUser {
-    fn from(u: zc::auth::AuthUser) -> Self {
-        Self {
-            id: u.id,
-            email: u.email,
-            first_name: u.first_name,
-            last_name: u.last_name,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AuthOrg {
-    pub id: String,
-    pub organization_id: String,
-    pub name: String,
-}
-
-impl From<zc::auth::AuthOrg> for AuthOrg {
-    fn from(o: zc::auth::AuthOrg) -> Self {
-        Self {
-            id: o.id,
-            organization_id: o.organization_id,
-            name: o.name,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AuthExchange {
-    pub user: AuthUser,
-    /// Unscoped pair: refresh with an organization id before use.
-    pub tokens: AuthTokens,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum AuthCallback {
-    Code {
-        code: String,
-        state: Option<String>,
-    },
-    Error {
-        error: String,
-        description: Option<String>,
-    },
-}
-
-impl From<zc::auth::AuthCallback> for AuthCallback {
-    fn from(c: zc::auth::AuthCallback) -> Self {
-        match c {
-            zc::auth::AuthCallback::Code { code, state } => AuthCallback::Code { code, state },
-            zc::auth::AuthCallback::Error { error, description } => {
-                AuthCallback::Error { error, description }
-            }
         }
     }
 }
@@ -348,14 +248,6 @@ pub enum ClientEvent {
     ConnectivityChanged {
         connectivity: Connectivity,
     },
-    /// The WorkOS pair rotated — persist it now (the old refresh token is spent).
-    AuthRefreshed {
-        tokens: AuthTokens,
-    },
-    /// The session can't be refreshed any more — sign out.
-    AuthExpired {
-        reason: String,
-    },
 }
 
 impl From<zc::ClientEvent> for ClientEvent {
@@ -373,10 +265,6 @@ impl From<zc::ClientEvent> for ClientEvent {
             zc::ClientEvent::ConnectivityChanged(c) => ClientEvent::ConnectivityChanged {
                 connectivity: c.into(),
             },
-            zc::ClientEvent::AuthRefreshed(tokens) => ClientEvent::AuthRefreshed {
-                tokens: tokens.into(),
-            },
-            zc::ClientEvent::AuthExpired { reason } => ClientEvent::AuthExpired { reason },
         }
     }
 }
@@ -487,8 +375,6 @@ pub struct SessionRow {
     pub device_id: String,
     pub device_name: Option<String>,
     pub device_online: bool,
-    /// Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-    pub is_cloud: bool,
     /// Wire harness id (`claude-code`).
     pub harness: Option<String>,
     pub harness_label: Option<String>,
@@ -544,7 +430,6 @@ impl From<&zc::SessionRow> for SessionRow {
             device_id: r.device_id.clone(),
             device_name: r.device_name.clone(),
             device_online: r.device_online,
-            is_cloud: r.is_cloud,
             harness: r.harness.clone(),
             harness_label: r.harness_label.clone(),
             model: r.model.clone(),
@@ -625,10 +510,6 @@ pub struct ProjectView {
     pub device_id: String,
     pub device_name: Option<String>,
     pub device_online: bool,
-    /// Cloud: its own Cloud machine (sessions) or Cloud alone (projects).
-    pub is_cloud: bool,
-    /// `owner/name`, when the project has a GitHub repository.
-    pub github_repo: Option<String>,
     pub git_detected: bool,
     pub created_at_ms: i64,
     /// Shared by every checkout of one repository, on any device.
@@ -652,8 +533,6 @@ impl From<&zc::ProjectView> for ProjectView {
             device_id: p.device_id.clone(),
             device_name: p.device_name.clone(),
             device_online: p.device_online,
-            is_cloud: p.is_cloud,
-            github_repo: p.github_repo.clone(),
             git_detected: p.git_detected,
             created_at_ms: p.created_at_ms,
             group_key: p.group_key.clone(),
@@ -1112,12 +991,4 @@ pub struct FileMatch {
 #[uniffi::export]
 pub fn file_mention_link(path: String, is_dir: bool) -> String {
     vardoger_proto::file_mentions::local_file_link(&path, is_dir)
-}
-
-/// Which session notifications this device wants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
-pub struct PushPrefs {
-    pub done: bool,
-    pub input: bool,
-    pub failed: bool,
 }
