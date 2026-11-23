@@ -15,7 +15,8 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::TcpStream;
 use vardoger_proto::{
     AgentAccount, AgentAccountsSnapshot, AgentAuthKind, AgentLoginMode, AgentLoginPoll,
     AgentLoginStart, AgentLoginStatus, HarnessId,
@@ -185,14 +186,14 @@ impl Client {
                     let Ok((mut socket, _)) = listener.accept().await else {
                         continue;
                     };
-                    let Some(path) = crate::provider_login::read_request_target(&mut socket).await
+                    let Some(path) = read_request_target(&mut socket).await
                     else {
                         continue;
                     };
                     if path.starts_with("/favicon") {
                         let _ = socket
                             .write_all(
-                                crate::provider_login::http_response("404 Not Found", &[], "")
+                                http_response("404 Not Found", &[], "")
                                     .as_bytes(),
                             )
                             .await;
@@ -220,7 +221,7 @@ impl Client {
                     if (200..400).contains(&status) {
                         let _ = socket
                             .write_all(
-                                crate::provider_login::http_response(
+                                http_response(
                                     "302 Found",
                                     &[("Location", &done_url)],
                                     "",
@@ -232,7 +233,7 @@ impl Client {
                     }
                     let _ = socket
                         .write_all(
-                            crate::provider_login::http_response(
+                            http_response(
                                 "502 Bad Gateway",
                                 &[("Content-Type", "text/plain; charset=utf-8")],
                                 "The computer didn't accept the sign-in. Go back to Vardoger and try again.",
@@ -429,4 +430,42 @@ fn demo_accounts() -> AgentAccountsSnapshot {
         accounts,
         warnings: Vec::new(),
     }
+}
+
+/// The request target of a browser's `GET` (headers read and discarded).
+async fn read_request_target(socket: &mut TcpStream) -> Option<String> {
+    let mut head = Vec::new();
+    let mut chunk = [0u8; 2048];
+    let read = async {
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
+            let n = socket.read(&mut chunk).await.ok()?;
+            if n == 0 {
+                break;
+            }
+            head.extend_from_slice(&chunk[..n]);
+        }
+        Some(())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), read)
+        .await
+        .ok()??;
+    let line = String::from_utf8_lossy(&head);
+    let mut parts = line.lines().next()?.split_whitespace();
+    (parts.next()? == "GET").then_some(())?;
+    parts
+        .next()
+        .filter(|target| target.starts_with('/'))
+        .map(str::to_string)
+}
+
+fn http_response(status: &str, headers: &[(&str, &str)], body: &str) -> String {
+    let mut response = format!("HTTP/1.1 {status}\r\n");
+    for (name, value) in headers {
+        response.push_str(&format!("{name}: {value}\r\n"));
+    }
+    response.push_str(&format!(
+        "Content-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
+        body.len()
+    ));
+    response
 }

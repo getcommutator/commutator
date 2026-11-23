@@ -1,9 +1,9 @@
-//! Edge auth — `/auth/exchange`, `/auth/orgs`, `/auth/refresh`
-//! (edge/src/auth-routes.ts), plus the per-client bearer provider.
+//! Edge bearer — `/auth/refresh` (edge/src/auth-routes.ts) and the
+//! per-client bearer provider. Signing in (WorkOS code exchange, org
+//! picker) is not here: the platform hands the client its tokens.
 //!
 //! Two live modes, mirroring the engine:
-//! - WorkOS: paste-code exchange → access/refresh pair; a refresh scoped to an
-//!   organization adds the `org_id` claim the registry room requires.
+//! - WorkOS: an access/refresh pair, refreshed through the edge.
 //! - Dev (`AUTH_MODE=dev` edge): the bearer IS `userId@orgId`.
 //!
 //! WorkOS refresh tokens are single-use: [`TokenProvider`] single-flights every
@@ -15,8 +15,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use crate::config::AuthTokens;
 use crate::error::{ClientError, Result};
 use crate::events::{ClientEvent, EventPump};
@@ -24,124 +22,6 @@ use crate::lock;
 
 /// Refresh this long before `exp` (legacy AppConfig: 60s early margin).
 pub const EARLY_REFRESH_SECS: i64 = 60;
-
-/// Production endpoints (edge/wrangler.jsonc). Mobile always talks to prod —
-/// a stale override once broke sign-in in the worst ghost way.
-pub const PRODUCTION_EDGE_URL: &str = "https://edge.zeron.sh";
-pub const WORKOS_CLIENT_ID: &str = "client_01KWD0EAKZKD50YCQJNYSRE4BY";
-pub const WORKOS_API_BASE: &str = "https://api.workos.com";
-/// OAuth redirect: `vardoger://callback?code=…&state=…`.
-pub const CALLBACK_SCHEME: &str = "vardoger";
-
-fn percent_encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            // Bytes, not `&str` slicing: `%` before a multi-byte char would
-            // split it (and panic).
-            b'%' if i + 3 <= bytes.len() => match std::str::from_utf8(&bytes[i + 1..i + 3])
-                .ok()
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-            {
-                Some(b) => {
-                    out.push(b);
-                    i += 3;
-                    continue;
-                }
-                None => out.push(b'%'),
-            },
-            b'+' => out.push(b' '),
-            b => out.push(b),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// WorkOS AuthKit authorization-code URL (the ASWebAuthenticationSession
-/// start URL). `state` is the caller's CSRF nonce.
-pub fn workos_authorize_url(state: &str) -> String {
-    format!(
-        "{WORKOS_API_BASE}/user_management/authorize?response_type=code&client_id={}&redirect_uri={}&provider=authkit&state={}",
-        percent_encode(WORKOS_CLIENT_ID),
-        percent_encode(&format!("{CALLBACK_SCHEME}://callback")),
-        percent_encode(state),
-    )
-}
-
-/// The `code` + `state` of an OAuth callback URL, or the provider's error.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuthCallback {
-    Code {
-        code: String,
-        state: Option<String>,
-    },
-    Error {
-        error: String,
-        description: Option<String>,
-    },
-}
-
-pub fn parse_auth_callback(url: &str) -> Option<AuthCallback> {
-    let query = url.split_once('?')?.1;
-    let query = query.split('#').next().unwrap_or(query);
-    let mut params = std::collections::HashMap::new();
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        params.insert(percent_decode(key), percent_decode(value));
-    }
-    if let Some(error) = params.remove("error") {
-        return Some(AuthCallback::Error {
-            error,
-            description: params.remove("error_description"),
-        });
-    }
-    let code = params.remove("code").filter(|c| !c.is_empty())?;
-    Some(AuthCallback::Code {
-        code,
-        state: params.remove("state"),
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthUser {
-    pub id: String,
-    #[serde(default)]
-    pub email: Option<String>,
-    #[serde(default)]
-    pub first_name: Option<String>,
-    #[serde(default)]
-    pub last_name: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthOrg {
-    pub id: String,
-    pub organization_id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthExchange {
-    pub user: AuthUser,
-    pub tokens: AuthTokens,
-}
 
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -179,57 +59,6 @@ async fn check(response: reqwest::Response) -> Result<reqwest::Response> {
 
 fn net(err: reqwest::Error) -> ClientError {
     ClientError::Network(err.to_string())
-}
-
-/// WorkOS paste-code exchange.
-pub async fn exchange_code(edge_url: &str, code: &str) -> Result<AuthExchange> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Reply {
-        user: AuthUser,
-        access_token: String,
-        refresh_token: String,
-    }
-    let url = endpoint(edge_url, "auth/exchange");
-    let code = code.trim().to_owned();
-    crate::runtime::run(async move {
-        let response = http()
-            .post(url)
-            .json(&serde_json::json!({ "code": code }))
-            .send()
-            .await
-            .map_err(net)?;
-        let reply: Reply = check(response).await?.json().await.map_err(net)?;
-        Ok(AuthExchange {
-            user: reply.user,
-            tokens: AuthTokens {
-                access_token: reply.access_token,
-                refresh_token: reply.refresh_token,
-            },
-        })
-    })
-    .await
-}
-
-/// Organizations the (unscoped) access token's user belongs to.
-pub async fn list_orgs(edge_url: &str, access_token: &str) -> Result<Vec<AuthOrg>> {
-    #[derive(Deserialize)]
-    struct Reply {
-        orgs: Vec<AuthOrg>,
-    }
-    let url = endpoint(edge_url, "auth/orgs");
-    let token = access_token.to_owned();
-    crate::runtime::run(async move {
-        let response = http()
-            .get(url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(net)?;
-        let reply: Reply = check(response).await?.json().await.map_err(net)?;
-        Ok(reply.orgs)
-    })
-    .await
 }
 
 /// Rotate the pair; `organization_id` re-scopes the access token to an org
@@ -441,36 +270,6 @@ async fn refresh_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn percent_decode_handles_edges() {
-        assert_eq!(percent_decode("a%20b"), "a b");
-        assert_eq!(percent_decode("end%41"), "endA");
-        assert_eq!(percent_decode("%aé"), "%aé");
-        assert_eq!(percent_decode("%"), "%");
-    }
-
-    #[test]
-    fn authorize_url_and_callback_round_trip() {
-        let url = workos_authorize_url("s t&1");
-        assert!(
-            url.starts_with("https://api.workos.com/user_management/authorize?response_type=code")
-        );
-        assert!(url.contains("redirect_uri=vardoger%3A%2F%2Fcallback"));
-        assert!(url.contains("state=s%20t%261"));
-        assert_eq!(
-            parse_auth_callback("vardoger://callback?code=abc&state=s%20t%261"),
-            Some(AuthCallback::Code {
-                code: "abc".into(),
-                state: Some("s t&1".into())
-            })
-        );
-        assert!(matches!(
-            parse_auth_callback("vardoger://callback?error=access_denied"),
-            Some(AuthCallback::Error { .. })
-        ));
-        assert_eq!(parse_auth_callback("vardoger://callback"), None);
-    }
 
     /// A raw HTTP/1.1 responder: counts requests, answers each with `reply`.
     async fn serve_http(

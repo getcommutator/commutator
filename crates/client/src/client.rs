@@ -85,13 +85,6 @@ pub(crate) struct ClientInner {
     foreground: AtomicBool,
     synced: AtomicBool,
     pub(crate) harness_catalogs: Mutex<HashMap<String, Vec<HarnessInfo>>>,
-    /// GitHub repositories Cloud reaches, as last read (lowercased
-    /// `owner/name`): starting a Cloud session needs one, and reading it
-    /// again would hold the new chat up.
-    pub(crate) cloud_repos: Mutex<HashMap<String, crate::cloud::CloudRepoRef>>,
-    /// What Cloud machines say they are doing (updating), read while a send
-    /// waits on one ([`crate::cloud_stage`]).
-    pub(crate) cloud_stages: Mutex<crate::cloud_stage::CloudStages>,
     /// Terminals on other devices: direct link or relay, switching
     /// mid-session (the desktop engine runs the same hub).
     pub(crate) remote_terminals: vardoger_term_link::remote::RemoteTerminals,
@@ -583,134 +576,6 @@ impl ClientInner {
                 core.recompute_composer(self);
             }
         }
-        self.follow_cloud_stages();
-    }
-
-    /// The machine `device_id` (a Cloud session device) said it is installing
-    /// a release before it answers.
-    pub(crate) fn cloud_machine_updating(&self, device_id: &str) -> bool {
-        lock(&self.cloud_stages).updating(device_id)
-    }
-
-    /// The edge says this machine's wake is taking far longer than normal.
-    pub(crate) fn cloud_machine_slow(&self, device_id: &str) -> bool {
-        lock(&self.cloud_stages).slow(device_id)
-    }
-
-    /// When the machine `device_id` rebuilt its chat store from the server
-    /// copy, while its chats still show a note about it.
-    pub(crate) fn cloud_store_restored(&self, device_id: &str, now: i64) -> Option<i64> {
-        lock(&self.cloud_stages).restored(device_id, now)
-    }
-
-    fn restored_dismissed_path(&self) -> std::path::PathBuf {
-        self.config.data_dir.join("cloud-restored-dismissed.json")
-    }
-
-    /// Rebuild notes dismissed in an earlier run.
-    fn load_restored_dismissed(&self) {
-        let Ok(bytes) = std::fs::read(self.restored_dismissed_path()) else {
-            return;
-        };
-        if let Ok(dismissed) = serde_json::from_slice(&bytes) {
-            lock(&self.cloud_stages).load_dismissed(dismissed);
-        }
-    }
-
-    /// The chats on `device_id` stop saying it rebuilt its store.
-    pub(crate) fn dismiss_cloud_store_restored(&self, device_id: &str) {
-        let Some(kept) = lock(&self.cloud_stages).dismiss_restored(device_id) else {
-            return;
-        };
-        if let Ok(json) = serde_json::to_vec(&kept)
-            && let Err(error) = std::fs::write(self.restored_dismissed_path(), json)
-        {
-            tracing::debug!(%error, "dismissed restore note not kept");
-        }
-        let workspace = self.workspace.snapshot();
-        for core in self.cores() {
-            if workspace
-                .session(&core.chat_id)
-                .is_some_and(|row| row.device_id == device_id)
-            {
-                core.schedule_refresh();
-            }
-        }
-    }
-
-    /// A Cloud chat opened: read the session list now and then for what it
-    /// says about the machine (a rebuilt store).
-    pub(crate) fn glance_cloud_sessions(self: &Arc<Self>) {
-        if self.live().is_none() || !lock(&self.cloud_stages).wants_glance(crate::now_ms()) {
-            return;
-        }
-        let client = Client {
-            inner: self.clone(),
-        };
-        crate::runtime::shared().spawn(async move {
-            let read = client.cloud_sessions().await;
-            lock(&client.inner.cloud_stages).read_done(None);
-            if let Err(err) = read {
-                tracing::debug!(error = %err, "Cloud session list not read");
-            }
-        });
-    }
-
-    /// While a send waits on a Cloud machine, re-read the session list now
-    /// and then: the machine says it is updating only there.
-    fn follow_cloud_stages(self: &Arc<Self>) {
-        if self.live().is_none() {
-            return;
-        }
-        let workspace = self.workspace.snapshot();
-        let waits: Vec<crate::cloud_stage::MachineWait> = self
-            .cores()
-            .iter()
-            .filter_map(|core| {
-                let sent_at_ms = core.oldest_pending_send_ms()?;
-                let row = workspace.session(&core.chat_id)?;
-                vardoger_proto::is_cloud_device(&row.device_id, "").then(|| {
-                    crate::cloud_stage::MachineWait {
-                        chat_id: core.chat_id.clone(),
-                        device_id: row.device_id.clone(),
-                        sent_at_ms,
-                        booting: !workspace.device(&row.device_id).is_some_and(|d| d.online),
-                    }
-                })
-            })
-            .collect();
-        drop(workspace);
-        if !lock(&self.cloud_stages).wants_read(&waits, crate::now_ms()) {
-            return;
-        }
-        let client = Client {
-            inner: self.clone(),
-        };
-        crate::runtime::shared().spawn(async move {
-            // `cloud_sessions` records what it reads; this only ends the read.
-            let read = client.cloud_sessions().await;
-            lock(&client.inner.cloud_stages).read_done(None);
-            if let Err(err) = read {
-                tracing::debug!(error = %err, "Cloud session list not read");
-            }
-        });
-    }
-
-    /// The session list was read: when a machine started or stopped saying
-    /// it updates, the chats on it show it.
-    pub(crate) fn note_cloud_sessions(&self, sessions: &vardoger_proto::CloudSessions) {
-        if !lock(&self.cloud_stages).record(Some(sessions)) {
-            return;
-        }
-        let workspace = self.workspace.snapshot();
-        for core in self.cores() {
-            let on_cloud = workspace
-                .session(&core.chat_id)
-                .is_some_and(|row| vardoger_proto::is_cloud_device(&row.device_id, ""));
-            if on_cloud {
-                core.schedule_refresh();
-            }
-        }
     }
 }
 
@@ -793,8 +658,6 @@ impl Client {
             foreground: AtomicBool::new(true),
             synced: AtomicBool::new(false),
             harness_catalogs: Mutex::new(HashMap::new()),
-            cloud_repos: Mutex::new(HashMap::new()),
-            cloud_stages: Mutex::new(Default::default()),
             remote_terminals: Default::default(),
             terminals_wake: Arc::new(tokio::sync::Notify::new()),
             backgrounded_at: Mutex::new(None),
@@ -810,7 +673,6 @@ impl Client {
             }
             _ => Backend::Live(Box::new({
                 catalog::DiskCatalog::new(&inner.config.data_dir).warm_labels();
-                inner.load_restored_dismissed();
                 LiveBackend::new(
                     &inner,
                     store.ok_or_else(|| ClientError::Internal("docs store missing".into()))?,
@@ -1138,38 +1000,7 @@ impl Client {
 
     /// Remove the chat row (the doc itself stays on the edge).
     pub fn delete_session(&self, chat_id: &str) -> Result<()> {
-        let on_cloud = self
-            .inner
-            .workspace
-            .chat(chat_id)
-            .is_some_and(|chat| vardoger_proto::is_cloud_device(&chat.device_id, ""));
-        // A Cloud chat's children on Cloud go with it: its delegates (each on
-        // a machine of its own, which would otherwise outlive the parent) and
-        // its side chats (on its machine, now gone).
-        let children: Vec<String> = if on_cloud {
-            let (state, _) = self.inner.workspace.state();
-            state
-                .chats
-                .iter()
-                .filter(|chat| {
-                    chat.parent_chat_id.as_deref() == Some(chat_id)
-                        && vardoger_proto::is_cloud_device(&chat.device_id, "")
-                })
-                .map(|chat| chat.id.clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
         self.chat_write(chat_id, |doc| doc.delete_chat(chat_id))?;
-        for child in &children {
-            if let Err(err) = self.chat_write(child, |doc| doc.delete_chat(child)) {
-                tracing::warn!(chat = %child, error = %err, "deleting a Cloud chat's child failed");
-            }
-            self.forget_local_session(child);
-        }
-        if on_cloud {
-            self.delete_cloud_machines(std::iter::once(chat_id.to_owned()).chain(children).collect());
-        }
         self.forget_local_session(chat_id);
         Ok(())
     }
@@ -1423,20 +1254,7 @@ impl Client {
 
     /// Delete a project and cascade its chats' rows.
     pub fn delete_project(&self, space_id: &str) -> Result<()> {
-        let mut cloud_chats = Vec::new();
-        let deleted = self.inner.registry_write(|doc| {
-            cloud_chats = doc
-                .read_chats()?
-                .into_iter()
-                .filter(|chat| {
-                    chat.space_id.as_deref() == Some(space_id)
-                        && vardoger_proto::is_cloud_device(&chat.device_id, "")
-                })
-                .map(|chat| chat.id)
-                .collect();
-            doc.delete_space(space_id)
-        })?;
-        self.delete_cloud_machines(cloud_chats);
+        let deleted = self.inner.registry_write(|doc| doc.delete_space(space_id))?;
         let mut sessions = lock(&self.inner.sessions);
         for chat_id in deleted.chat_ids {
             sessions.remove(&chat_id);
@@ -1479,15 +1297,6 @@ impl Client {
         core.ensure_room(&self.inner);
         core.touch();
         core.refresh();
-        let on_cloud = self
-            .inner
-            .workspace
-            .snapshot()
-            .session(chat_id)
-            .is_some_and(|row| vardoger_proto::is_cloud_device(&row.device_id, ""));
-        if on_cloud {
-            self.inner.glance_cloud_sessions();
-        }
         // Upgrade recovery: older clients could persist an ACKed command
         // without its wake. Opening that chat must re-arm host discovery.
         if let Some(live) = self.inner.live()
@@ -1529,11 +1338,6 @@ impl Client {
     /// the last cached list, else the static fallback. Cached in memory for
     /// capability gating (mid-turn steering).
     pub async fn list_harnesses(&self, device_id: &str) -> Vec<HarnessInfo> {
-        // A Cloud machine runs Claude Code and Codex, every one of them: said
-        // here, so a chat on one that's asleep never waits on dialling it.
-        if let Some(list) = catalog::harnesses_without_asking(device_id) {
-            return list;
-        }
         let list = match self.inner.backend() {
             Backend::Demo(demo) => {
                 crate::providers::with_demo_toggles(true, demo.list_harnesses(device_id).await)
@@ -1581,9 +1385,6 @@ impl Client {
     pub async fn list_models(&self, device_id: &str, harness: &str) -> Vec<ModelInfo> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.list_models(harness).await,
-            Backend::Live(_) if vardoger_proto::is_cloud_device(device_id, "") => {
-                self.cloud_models(harness).await
-            }
             Backend::Live(live) => {
                 let cache = catalog::DiskCatalog::new(&self.inner.config.data_dir);
                 let reply = live

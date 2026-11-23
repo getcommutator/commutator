@@ -176,9 +176,6 @@ struct CoreState {
     context_usage: Option<ContextUsage>,
     /// Stable echo entries by message id.
     echoes: HashMap<String, Arc<Entry>>,
-    /// The Cloud setup placeholder last shown (kept so an unchanged one
-    /// keeps its `Arc` and `rev`).
-    setup_placeholder: Option<Arc<Entry>>,
     pending: Vec<PendingSend>,
     /// Delivery-grace clock per message id (retry restarts it).
     grace_started: HashMap<String, i64>,
@@ -271,7 +268,6 @@ impl SessionCore {
                     }),
                 context_usage: None,
                 echoes: HashMap::new(),
-                setup_placeholder: None,
                 pending: Vec::new(),
                 grace_started: HashMap::new(),
                 queue_actions_pending: HashSet::new(),
@@ -490,11 +486,6 @@ impl SessionCore {
         oldest_state(&lock(&self.state).pending)
     }
 
-    /// When this device's oldest unadopted send was made, if one waits.
-    pub(crate) fn oldest_pending_send_ms(&self) -> Option<i64> {
-        lock(&self.state).pending.iter().map(|p| p.sent_at_ms).min()
-    }
-
     pub(crate) fn has_pending_sends(&self) -> bool {
         !lock(&self.state).pending.is_empty()
             || self.room().is_some_and(|room| room.has_pending_pushes())
@@ -515,28 +506,6 @@ impl SessionCore {
                     row.working_since_ms,
                 )
             });
-        // A Cloud chat whose machine isn't up yet: it is being started (or
-        // woken) for the latest message. Or it is up, and installs a release
-        // before it answers (its edge says so: `cloud_stage`).
-        let machine = workspace
-            .session(&self.chat_id)
-            .filter(|row| vardoger_proto::is_cloud_device(&row.device_id, ""))
-            .map_or(MachineWait::Up, |row| {
-                if client.cloud_machine_updating(&row.device_id) {
-                    MachineWait::Updating
-                } else if client.cloud_machine_slow(&row.device_id) {
-                    MachineWait::Slow
-                } else if !workspace.device(&row.device_id).is_some_and(|d| d.online) {
-                    MachineWait::Booting
-                } else {
-                    MachineWait::Up
-                }
-            });
-        let cloud_booting = machine == MachineWait::Booting;
-        let restored_at_ms = workspace
-            .session(&self.chat_id)
-            .filter(|row| vardoger_proto::is_cloud_device(&row.device_id, ""))
-            .and_then(|row| client.cloud_store_restored(&row.device_id, now));
         drop(workspace);
         let mut transcript_event = None;
         let send_before;
@@ -555,10 +524,8 @@ impl SessionCore {
             if dirty.meta {
                 st.context_usage = self.doc.context_usage();
             }
-            // A send its machine is updating for isn't late: it gets there.
-            let held = matches!(machine, MachineWait::Updating | MachineWait::Slow);
             let echoes_changed =
-                derive_pending(&mut st, &client.config.device_id, degraded, held, now);
+                derive_pending(&mut st, &client.config.device_id, degraded, now);
             if !st.kept.is_empty() {
                 let ran: Vec<String> = st
                     .kept
@@ -583,15 +550,11 @@ impl SessionCore {
                 // read as stuck, for as long as the host stays away.
                 working: (indicator_working || streaming) && !degraded,
                 working_since_ms,
-                cloud_booting,
-                restored_at_ms,
             };
-            let placeholder_changed = refresh_setup_placeholder(&mut st, machine);
             let live_changed = previous.working != live.working
                 || previous.working_since_ms != live.working_since_ms
                 || previous.hydrated != st.hydrated
-                || previous.restored_at_ms != live.restored_at_ms
-                || placeholder_changed;
+;
             if change.is_some()
                 || echoes_changed
                 || dirty.meta
@@ -947,13 +910,10 @@ fn command_uploads(payload: &SessionCommandPayload) -> Vec<String> {
 
 /// Own run/steer commands whose message hasn't landed = pending echoes.
 /// Returns whether the echo set/states changed.
-/// `held`: the chat's Cloud machine is updating before it answers, so a send
-/// waiting on it isn't failed for its age (one that was refused still is).
 fn derive_pending(
     st: &mut CoreState,
     device_id: &str,
     degraded: bool,
-    held: bool,
     now: i64,
 ) -> bool {
     struct Attempt {
@@ -1020,10 +980,7 @@ fn derive_pending(
             .unwrap_or(attempt.first_issued);
         let parsed = attachments::parse_user_message(&attempt.text);
         let dead = attempt.dead && !attempt.live;
-        let mut state = send_state(started, degraded, dead, now);
-        if held && !dead && state == SendState::Failed {
-            state = send_state(now, degraded, false, now);
-        }
+        let state = send_state(started, degraded, dead, now);
         next.push(PendingSend {
             state,
             message_id,
@@ -1113,114 +1070,11 @@ fn derive_pending(
     changed
 }
 
-/// Where a Cloud chat's machine is with the latest message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MachineWait {
-    /// Up (or not a Cloud chat): nothing to show.
-    Up,
-    /// Being started or woken.
-    Booting,
-    /// Up, and installing a release before it answers.
-    Updating,
-    /// Its wake is taking far longer than normal (the edge kicks it meanwhile).
-    Slow,
-}
 
 #[derive(Clone, Copy)]
 struct LiveFlags {
     working: bool,
     working_since_ms: Option<i64>,
-    /// The chat's Cloud machine isn't up (see [`refresh_setup_placeholder`]).
-    #[allow(dead_code)]
-    cloud_booting: bool,
-    /// Its Cloud machine rebuilt its chat store then (a note until dismissed).
-    restored_at_ms: Option<i64>,
-}
-
-/// While a Cloud chat's machine is being started or woken for the latest
-/// message, that message gets the machine's first setup step right away —
-/// "Starting a machine" (a new chat) or "Waking the machine" — as the
-/// desktop shows it, and "Updating the machine" while it installs a release
-/// before it answers. The entry has the id the machine's own setup entry will
-/// have (`cloud_setup_entry_id`), so the real steps replace it in place; it
-/// goes as soon as anything follows the message. Returns whether it changed.
-fn refresh_setup_placeholder(st: &mut CoreState, machine: MachineWait) -> bool {
-    // Decide first (reading the transcript), then build (minting a rev).
-    let wanted = {
-        let transcript = st.tracker.entries();
-        let latest_user = st
-            .pending
-            .iter()
-            .rev()
-            .find_map(|p| st.echoes.get(&p.message_id))
-            .or_else(|| transcript.iter().rev().find(|e| e.role() == MessageRole::User));
-        latest_user.filter(|_| machine != MachineWait::Up).and_then(|message| {
-            let setup_id = vardoger_proto::cloud_setup_entry_id(&message.id);
-            // Nothing after the message in the doc, and no setup entry yet.
-            let answered = transcript.iter().any(|e| e.id == setup_id)
-                || transcript
-                    .iter()
-                    .position(|e| e.id == message.id)
-                    .is_some_and(|ix| ix + 1 < transcript.len());
-            let waking = transcript.iter().any(|e| e.role() == MessageRole::Assistant);
-            let name = if machine == MachineWait::Updating {
-                "Updating the machine"
-            } else if machine == MachineWait::Slow {
-                "Waking the machine is taking longer than usual"
-            } else if waking {
-                "Waking the machine"
-            } else {
-                "Starting a machine"
-            };
-            (!answered).then(|| (message.id.clone(), setup_id, name, message.message.created_at))
-        })
-    };
-    let next = wanted.map(|(message_id, setup_id, name, created_at)| {
-        if let Some(current) = &st.setup_placeholder
-            && current.id == setup_id
-            && matches!(current.message.parts.first(), Some(MessagePart::Tool { call: vardoger_proto::ToolCall::Unknown { name: n, .. }, .. }) if n == name)
-        {
-            return current.clone();
-        }
-        Arc::new(Entry {
-            id: setup_id.clone(),
-            rev: st.tracker.next_rev(),
-            message: Arc::new(SessionMessageEntry {
-                id: setup_id,
-                role: MessageRole::Assistant,
-                parts: vec![MessagePart::Tool {
-                    id: vardoger_proto::cloud_setup_part_id(&message_id, "machine"),
-                    call: vardoger_proto::ToolCall::Unknown { name: name.into(), input: None },
-                    is_error: false,
-                    resolved: false,
-                    output: None,
-                    diff: None,
-                    output_ref: None,
-                    output_bytes: None,
-                    diff_ref: None,
-                    diff_stats: None,
-                    subagent_ref: None,
-                    subagent_status: None,
-                    subagent_tail: None,
-                    preview_paths: Vec::new(),
-                    exit_code: None,
-                    output_truncated: false,
-                    output_lines: None,
-                    review: None,
-                }],
-                created_at: created_at + 1,
-                device_id: String::new(),
-                status: Some(MessageStatus::Streaming),
-                continuation_of: None,
-                duration_ms: None,
-            }),
-            echo: None,
-            append: None,
-        })
-    });
-    let changed = next.as_ref().map(|e| (&e.id, e.rev)) != st.setup_placeholder.as_ref().map(|e| (&e.id, e.rev));
-    st.setup_placeholder = next;
-    changed
 }
 
 fn build_snapshot(
@@ -1239,9 +1093,6 @@ fn build_snapshot(
             entries.push(echo.clone());
         }
     }
-    if let Some(placeholder) = &st.setup_placeholder {
-        entries.push(placeholder.clone());
-    }
     let index: HashMap<String, usize> = entries
         .iter()
         .enumerate()
@@ -1259,7 +1110,6 @@ fn build_snapshot(
         pending: st.pending.clone(),
         context_usage: st.context_usage,
         hydrated: st.hydrated,
-        restored_at_ms: live.restored_at_ms,
         delta: SnapshotDelta::default(),
         index: Arc::new(index),
     };
@@ -1308,21 +1158,6 @@ impl SessionHandle {
     /// The current transcript (O(1): an `Arc` clone).
     pub fn snapshot(&self) -> Arc<SessionSnapshot> {
         self.core.snapshot()
-    }
-
-    /// Stop showing that the chat's Cloud machine rebuilt its chat store
-    /// ([`SessionSnapshot::restored_at_ms`]), for every chat on it, until it
-    /// rebuilds again. Kept across launches.
-    pub fn dismiss_restored_note(&self) {
-        let Ok(client) = self.core.client() else { return };
-        let device_id = client
-            .workspace
-            .snapshot()
-            .session(&self.core.chat_id)
-            .map(|row| row.device_id.clone());
-        if let Some(device_id) = device_id {
-            client.dismiss_cloud_store_restored(&device_id);
-        }
     }
 
     /// Transcript subscription for Rust consumers (the layout engine). The
@@ -2052,155 +1887,5 @@ impl SessionHandle {
         client.after_command(&self.core, true);
         client.kick_room(&self.core.chat_id);
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod setup_placeholder_tests {
-    use super::*;
-
-    fn state_with_pending_send() -> CoreState {
-        let mut st = CoreState {
-            tracker: Tracker::new(),
-            queue: Vec::new(),
-            commands: Vec::new(),
-            held: Vec::new(),
-            kept: HashMap::new(),
-            context_usage: None,
-            echoes: HashMap::new(),
-            setup_placeholder: None,
-            pending: Vec::new(),
-            grace_started: HashMap::new(),
-            queue_actions_pending: HashSet::new(),
-            queue_error: None,
-            last_submitted: None,
-            transfer_progress: None,
-            hydrated: true,
-            transcript_revision: 0,
-            composer_revision: 0,
-        };
-        let pending = PendingSend {
-            message_id: "m1".into(),
-            text: "read the readme".into(),
-            visible_text: "read the readme".into(),
-            images: Vec::new(),
-            kind: PendingKind::Run,
-            sent_at_ms: 1_000,
-            state: crate::connectivity::SendState::Sending,
-            removable: false,
-        };
-        st.echoes.insert(
-            "m1".into(),
-            Arc::new(Entry {
-                id: "m1".into(),
-                rev: 1,
-                message: Arc::new(SessionMessageEntry {
-                    id: "m1".into(),
-                    role: MessageRole::User,
-                    parts: vec![MessagePart::Text { id: "t0".into(), text: pending.text.clone() }],
-                    created_at: 1_000,
-                    device_id: "phone".into(),
-                    status: Some(MessageStatus::Complete),
-                    continuation_of: None,
-                    duration_ms: None,
-                }),
-                echo: Some(LocalEcho { state: pending.state, sent_at_ms: 1_000 }),
-                append: None,
-            }),
-        );
-        st.pending.push(pending);
-        st
-    }
-
-    #[test]
-    fn a_new_cloud_chat_shows_its_machine_starting_until_the_machine_is_up() {
-        let mut st = state_with_pending_send();
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Booting));
-        let placeholder = st.setup_placeholder.clone().expect("placeholder under the message");
-        assert_eq!(placeholder.id, vardoger_proto::cloud_setup_entry_id("m1"));
-        assert!(placeholder.is_streaming());
-        assert!(matches!(
-            placeholder.message.parts.first(),
-            Some(MessagePart::Tool { call: vardoger_proto::ToolCall::Unknown { name, .. }, .. }) if name == "Starting a machine"
-        ));
-        // Unchanged: the same entry (row reuse), no change reported.
-        assert!(!refresh_setup_placeholder(&mut st, MachineWait::Booting));
-        assert!(Arc::ptr_eq(&placeholder, st.setup_placeholder.as_ref().unwrap()));
-        // The machine is up: the placeholder goes (its own entry takes over).
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Up));
-        assert!(st.setup_placeholder.is_none());
-    }
-
-    #[test]
-    fn a_chat_on_a_machine_that_is_up_shows_no_placeholder() {
-        let mut st = state_with_pending_send();
-        assert!(!refresh_setup_placeholder(&mut st, MachineWait::Up));
-        assert!(st.setup_placeholder.is_none());
-    }
-
-    fn step_name(st: &CoreState) -> Option<String> {
-        match st.setup_placeholder.as_ref()?.message.parts.first() {
-            Some(MessagePart::Tool { call: vardoger_proto::ToolCall::Unknown { name, .. }, .. }) => {
-                Some(name.clone())
-            }
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn a_woken_machine_that_updates_before_it_answers_says_so() {
-        let mut st = state_with_pending_send();
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Booting));
-        assert_eq!(step_name(&st).as_deref(), Some("Starting a machine"));
-        // Its heartbeat is back, and it installs a release: the same step,
-        // saying what it waits on now.
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Updating));
-        assert_eq!(st.setup_placeholder.as_ref().unwrap().id, vardoger_proto::cloud_setup_entry_id("m1"));
-        assert_eq!(step_name(&st).as_deref(), Some("Updating the machine"));
-        assert!(!refresh_setup_placeholder(&mut st, MachineWait::Updating));
-        // Done: the machine's own steps take over.
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Up));
-        assert!(st.setup_placeholder.is_none());
-    }
-
-    #[test]
-    fn a_wake_taking_longer_than_usual_says_so() {
-        let mut st = state_with_pending_send();
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Slow));
-        assert_eq!(
-            step_name(&st).as_deref(),
-            Some("Waking the machine is taking longer than usual")
-        );
-        assert!(refresh_setup_placeholder(&mut st, MachineWait::Up));
-        assert!(st.setup_placeholder.is_none());
-    }
-
-    #[test]
-    fn a_send_its_machine_updates_for_is_not_failed_for_its_age() {
-        let mut st = state_with_pending_send();
-        st.pending.clear();
-        st.echoes.clear();
-        st.commands = vec![vardoger_doc::SessionCommandEntry {
-            id: "cmd1".into(),
-            payload: SessionCommandPayload::Steer {
-                prompt: "read the readme".into(),
-                message_id: Some("m1".into()),
-            },
-            issued_by: "phone".into(),
-            issued_at: 1_000,
-            based_on: None,
-            expires_at: None,
-            status: SessionCommandStatus::Pending,
-            resolution: None,
-        }];
-        let late = 1_000 + crate::connectivity::UNDELIVERED_GRACE_MS + 1;
-        derive_pending(&mut st, "phone", false, false, late);
-        assert_eq!(st.pending[0].state, SendState::Failed, "late, nothing holds it");
-        derive_pending(&mut st, "phone", false, true, late);
-        assert_eq!(st.pending[0].state, SendState::Sending, "its machine updates first");
-        // A send that was refused failed, update or not.
-        st.commands[0].status = SessionCommandStatus::Rejected;
-        derive_pending(&mut st, "phone", false, true, late);
-        assert_eq!(st.pending[0].state, SendState::Failed);
     }
 }
