@@ -391,7 +391,7 @@ mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext, VisualTestContext};
 
-    fn test_chat(id: &str) -> zeron_proto::Chat {
+    fn test_chat(id: &str) -> vardoger_proto::Chat {
         serde_json::from_value(serde_json::json!({
             "id": id, "title": id, "deviceId": "local", "archived": false,
             "createdAt": Utc::now(),
@@ -416,7 +416,7 @@ mod tests {
                 edge_token: None,
                 org_id: None,
                 workos_client_id: None,
-                default_harness: zeron_proto::HarnessId::Mock,
+                default_harness: vardoger_proto::HarnessId::Mock,
             },
             cx,
         );
@@ -461,17 +461,17 @@ mod tests {
                     "now".into(),
                     "Project".into(),
                     None,
-                    Some(zeron_proto::ChangeRequestSummary {
+                    Some(vardoger_proto::ChangeRequestSummary {
                         provider: "github".into(),
                         number: 90,
                         title: "Pull request title".into(),
-                        url: "https://github.com/acme/zeron/pull/90".into(),
-                        state: zeron_proto::ChangeRequestState::Open,
+                        url: "https://github.com/acme/vardoger/pull/90".into(),
+                        state: vardoger_proto::ChangeRequestState::Open,
                         base_ref: "main".into(),
                         head_ref: "feature/pr".into(),
                     }),
                     None,
-                    zeron_proto::ChatIndicator::Idle,
+                    vardoger_proto::ChatIndicator::Idle,
                     false,
                     false,
                     false,

@@ -415,11 +415,11 @@ impl Shell {
     fn render_machine_asleep(
         &mut self,
         session: String,
-        state: zeron_proto::CloudState,
+        state: vardoger_proto::CloudState,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use zeron_proto::CloudState;
+        use vardoger_proto::CloudState;
         let waking = matches!(state, CloudState::Provisioning | CloudState::Starting);
         div()
             .size_full()
@@ -710,7 +710,7 @@ mod tests {
                     edge_token: None,
                     org_id: None,
                     workos_client_id: None,
-                    default_harness: zeron_proto::HarnessId::Mock,
+                    default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
             )
@@ -776,7 +776,7 @@ mod tests {
                     edge_token: None,
                     org_id: None,
                     workos_client_id: None,
-                    default_harness: zeron_proto::HarnessId::Mock,
+                    default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
             )

@@ -23,11 +23,11 @@ use gpui::{
     Subscription, Task, Window, div, prelude::*, px,
 };
 
-use zeron_engine::registry::{HarnessDescriptor, TitleSettings};
-use zeron_proto::{
+use vardoger_engine::registry::{HarnessDescriptor, TitleSettings};
+use vardoger_proto::{
     ChatConfig, FolderListing, HarnessId, Model, ReasoningLevel, RepoRef, SandboxLevel, Space,
 };
-use zeron_rpc::methods;
+use vardoger_rpc::methods;
 
 /// Display cap for the ref list (t3code shows pages of 100 with a status
 /// footer; a flat cap + "Showing X of Y refs" reads the same without
@@ -55,12 +55,12 @@ use crate::settings::composer::ComposerDefaults;
 use crate::state::{AppState, EngineHandle};
 use crate::theme::Theme;
 
-/// Dev/testing knob: `ZERON_SLOW_CATALOG_MS=<ms>` delays every harness and
+/// Dev/testing knob: `VARDOGER_SLOW_CATALOG_MS=<ms>` delays every harness and
 /// model catalog result app-side — the chip/tab/list loading states are
 /// sub-second against a warm local daemon and unstageable otherwise
-/// (headless-rig captures; same family as `ZERON_OPEN_PICKER`).
+/// (headless-rig captures; same family as `VARDOGER_OPEN_PICKER`).
 fn slow_catalog_delay() -> Option<std::time::Duration> {
-    std::env::var("ZERON_SLOW_CATALOG_MS")
+    std::env::var("VARDOGER_SLOW_CATALOG_MS")
         .ok()
         .and_then(|ms| ms.parse::<u64>().ok())
         .map(std::time::Duration::from_millis)
@@ -130,7 +130,7 @@ pub enum CheckoutPlan {
     CurrentCheckout { branch: Option<String> },
     /// Reuse the picked ref's existing worktree (a cwd override; no git).
     ReuseWorktree { path: String, branch: String },
-    /// `CreateWorktree` off `base` on send (zeron mints a `zeron/<name>`
+    /// `CreateWorktree` off `base` on send (vardoger mints a `vardoger/<name>`
     /// branch). `base: None` = refs never loaded — send falls back to the
     /// space folder rather than failing.
     NewWorktree { base: Option<String> },
@@ -168,7 +168,7 @@ impl ResolvedRunConfig {
 // ---------------------------------------------------------------------------
 
 /// The harness's default model: the first catalog row (both curated catalogs
-/// lead with the flagship — zeron's `pickDefaultModel` Opus preference maps to
+/// lead with the flagship — vardoger's `pickDefaultModel` Opus preference maps to
 /// the same row here).
 pub fn default_model(models: &[Model]) -> Option<&Model> {
     models.first()
@@ -182,7 +182,7 @@ fn selected_catalog_model<'a>(models: &'a [Model], selected: Option<&str>) -> Op
     }
 }
 
-/// A model's default reasoning: X-High when the ladder offers it (zeron
+/// A model's default reasoning: X-High when the ladder offers it (vardoger
 /// `DEFAULT_REASONING = "xhigh"`), else High, else the ladder's first entry.
 /// `None` only for ladder-less models (e.g. Haiku's thinking toggle instead).
 pub fn default_reasoning(ladder: &[ReasoningLevel]) -> Option<ReasoningLevel> {
@@ -199,7 +199,7 @@ pub fn default_reasoning(ladder: &[ReasoningLevel]) -> Option<ReasoningLevel> {
 
 /// Clamp a picked/remembered level to what the model actually offers: keep it
 /// when the ladder lists it, else fall to the model's default (never a stale
-/// or foreign level — zeron use-run-config.ts's derived-model discipline).
+/// or foreign level — vardoger use-run-config.ts's derived-model discipline).
 pub fn clamp_reasoning(
     level: Option<ReasoningLevel>,
     ladder: &[ReasoningLevel],
@@ -563,7 +563,7 @@ pub fn breadcrumbs(path: &str) -> Vec<(String, String)> {
 }
 
 /// Directory rows of a listing (files never render in the browser).
-pub fn browser_rows(listing: &FolderListing) -> Vec<&zeron_proto::FolderEntry> {
+pub fn browser_rows(listing: &FolderListing) -> Vec<&vardoger_proto::FolderEntry> {
     listing.entries.iter().filter(|e| e.is_dir).collect()
 }
 
@@ -577,7 +577,7 @@ pub fn browser_rows(listing: &FolderListing) -> Vec<&zeron_proto::FolderEntry> {
 const NO_ACTIVE_ROW: usize = usize::MAX;
 
 /// One project-picker row: every space of a project
-/// ([`zeron_proto::view::project_key`]), named for its representative.
+/// ([`vardoger_proto::view::project_key`]), named for its representative.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProjectRow {
     key: String,
@@ -765,7 +765,7 @@ pub struct Pickers {
     /// emits the local device's title settings instead of a composer draft.
     /// `config.harness` then only tracks the tab being browsed.
     title: Option<TitleSettings>,
-    /// Sticky last-used picks (zeron `zeron.composer.defaults:v1`): seeds the
+    /// Sticky last-used picks (vardoger `vardoger.composer.defaults:v1`): seeds the
     /// new-chat chips and is rewritten on every new-chat pick.
     defaults: ComposerDefaults,
     /// Where [`Self::defaults`] persists (`{data_dir}/composer-defaults.json`);
@@ -871,7 +871,7 @@ pub struct Pickers {
     /// [`Self::toggle`]'s programmatic clear (see the subscription).
     search_reset_muted: bool,
     focus: FocusHandle,
-    /// `ZERON_OPEN_PICKER` boot: keep claiming focus until it sticks, so
+    /// `VARDOGER_OPEN_PICKER` boot: keep claiming focus until it sticks, so
     /// keyboard nav drives the data-side-opened popover (headless rigs have
     /// no synthetic pointer, but synthetic keys do arrive).
     boot_focus_pending: bool,
@@ -992,7 +992,7 @@ impl Pickers {
                 this.config.checkout = if state
                     .read(cx)
                     .selected_space_row()
-                    .is_some_and(|space| zeron_proto::is_cloud_device(&space.device_id, ""))
+                    .is_some_and(|space| vardoger_proto::is_cloud_device(&space.device_id, ""))
                 {
                     CheckoutKind::Cloud
                 } else {
@@ -1046,10 +1046,10 @@ impl Pickers {
             this.ensure_harnesses(true, cx);
             cx.notify();
         });
-        // Dev/testing knob: `ZERON_OPEN_PICKER=model|traits|repo|branch` boots
+        // Dev/testing knob: `VARDOGER_OPEN_PICKER=model|traits|repo|branch` boots
         // with that popover open — synthetic input can't reach the app on
         // headless compositors, so captures need a data-side path.
-        let boot_open = match std::env::var("ZERON_OPEN_PICKER").ok().as_deref() {
+        let boot_open = match std::env::var("VARDOGER_OPEN_PICKER").ok().as_deref() {
             _ if title.is_some() => None,
             Some("model") => Some(PickerKind::HarnessModel),
             Some("traits") => Some(PickerKind::HarnessModel),
@@ -1081,7 +1081,7 @@ impl Pickers {
         let starts_on_cloud = state
             .read(cx)
             .selected_space_row()
-            .is_some_and(|space| zeron_proto::is_cloud_device(&space.device_id, ""));
+            .is_some_and(|space| vardoger_proto::is_cloud_device(&space.device_id, ""));
         let device_owner = state.read(cx).effective_device_id();
         let catalog_owner = Self::catalog_device(state.read(cx));
         Self {
@@ -1205,7 +1205,7 @@ impl Pickers {
     fn offered(&self, list: &[HarnessDescriptor]) -> Vec<HarnessDescriptor> {
         let mut offered = offered_harnesses(list);
         if self.title.is_some() {
-            offered.retain(|d| zeron_harness::supports_titles(d.id) && d.id != HarnessId::Mock);
+            offered.retain(|d| vardoger_harness::supports_titles(d.id) && d.id != HarnessId::Mock);
         }
         offered
     }
@@ -1294,7 +1294,7 @@ impl Pickers {
         // Fall back to the first OFFERED harness: the registry lists the mock
         // harness first, and resolving chips against it would boot the
         // new-chat canvas onto "Mock" instead of Claude Code + its default
-        // model (it stays available under `ZERON_HARNESS=mock`).
+        // model (it stays available under `VARDOGER_HARNESS=mock`).
         fresh.and_then(|list| offered_harnesses(list).first().map(|d| d.id))
     }
 
@@ -1459,7 +1459,7 @@ impl Pickers {
                 list.iter().find(|h| h.id == selected)
             })
             .is_some_and(|h| {
-                h.supports_steering && h.steering_mode == zeron_proto::SteeringMode::StepBoundary
+                h.supports_steering && h.steering_mode == vardoger_proto::SteeringMode::StepBoundary
             })
     }
 
@@ -1538,7 +1538,7 @@ impl Pickers {
         cx.notify();
     }
 
-    /// Capture knob (`ZERON_OPEN_DIALOG=model`): open the combined
+    /// Capture knob (`VARDOGER_OPEN_DIALOG=model`): open the combined
     /// harness/model menu programmatically.
     /// A jump-slot press while the model menu is open. The shell's session
     /// bindings (Mod+1…9) win the dispatch race — gpui runs a matched
@@ -1962,7 +1962,7 @@ impl Pickers {
         // device is Cloud itself, with no engine to answer): it always lists
         // GitHub's branches — by the project's own repository name while
         // Cloud's repository list is still loading.
-        let on_cloud = zeron_proto::is_cloud_device(&space.device_id, "");
+        let on_cloud = vardoger_proto::is_cloud_device(&space.device_id, "");
         let cloud: Option<(String, Option<String>)> =
             if self.config.checkout == CheckoutKind::Cloud || on_cloud {
                 match self.cloud_repo(cx) {
@@ -2725,7 +2725,7 @@ impl Pickers {
 
     /// The Cloud repository of the selected project, when a session there
     /// can run on Cloud: its GitHub origin is a repository Cloud reaches.
-    fn cloud_repo(&self, cx: &App) -> Option<zeron_proto::GithubRepo> {
+    fn cloud_repo(&self, cx: &App) -> Option<vardoger_proto::GithubRepo> {
         let state = self.state.read(cx);
         let space = state.selected_space_row()?;
         state.cloud_repo_for(space).cloned()
@@ -2746,7 +2746,7 @@ impl Pickers {
         self.state
             .read(cx)
             .selected_space_row()
-            .is_some_and(|space| zeron_proto::is_cloud_device(&space.device_id, ""))
+            .is_some_and(|space| vardoger_proto::is_cloud_device(&space.device_id, ""))
     }
 
     /// The checkout menu's rows: this folder or a new worktree (Cloud is a
@@ -2839,7 +2839,7 @@ impl Pickers {
         let state = self.state.read(cx);
         let mut rows: Vec<ProjectRow> = Vec::new();
         for space in &state.spaces {
-            let key = zeron_proto::view::project_key(space);
+            let key = vardoger_proto::view::project_key(space);
             if rows.iter().any(|row| row.key == key) {
                 continue;
             }
@@ -2874,7 +2874,7 @@ impl Pickers {
             .state
             .read(cx)
             .selected_space_row()
-            .map(zeron_proto::view::project_key);
+            .map(vardoger_proto::view::project_key);
         selected
             .and_then(|key| self.project_rows(cx).iter().position(|row| row.key == key))
             .unwrap_or(NO_ACTIVE_ROW)
@@ -2889,7 +2889,7 @@ impl Pickers {
             let Some(member) = state
                 .spaces
                 .iter()
-                .find(|s| zeron_proto::view::project_key(s) == key)
+                .find(|s| vardoger_proto::view::project_key(s) == key)
             else {
                 return;
             };
@@ -2979,7 +2979,7 @@ impl Pickers {
             let members: Vec<_> = state
                 .project_members(space)
                 .into_iter()
-                .filter(|member| !zeron_proto::is_cloud_device(&member.device_id, ""))
+                .filter(|member| !vardoger_proto::is_cloud_device(&member.device_id, ""))
                 .collect();
             return members
                 .iter()
@@ -3000,7 +3000,7 @@ impl Pickers {
                 .chain(
                     // Cloud, while it's on and reaches the project's repository.
                     state.cloud_repo_for(space).map(|_| DeviceRow {
-                        device_id: zeron_proto::CLOUD_ACCOUNTS_DEVICE.to_string(),
+                        device_id: vardoger_proto::CLOUD_ACCOUNTS_DEVICE.to_string(),
                         name: crate::cloud::CLOUD_LABEL.to_string(),
                         space: None,
                         detail: None,
@@ -3010,7 +3010,7 @@ impl Pickers {
                 .collect();
         }
         // Cloud's per-session machines are not pickable.
-        let mut devices: Vec<&zeron_proto::Device> = state.listed_devices().collect();
+        let mut devices: Vec<&vardoger_proto::Device> = state.listed_devices().collect();
         devices.sort_by_key(|d| {
             (
                 local.as_deref() != Some(d.id.as_str()),
@@ -3246,11 +3246,11 @@ impl Pickers {
             .state
             .read(cx)
             .selected_space_row()
-            .map(zeron_proto::view::project_key);
+            .map(vardoger_proto::view::project_key);
         let active = self.active;
         let no_project_index = rows.len();
         let scrollbar = popover::rail(self, "space-scrollbar", &theme, cx);
-        let (spaces, profile): (Vec<Option<zeron_proto::Space>>, Option<String>) = {
+        let (spaces, profile): (Vec<Option<vardoger_proto::Space>>, Option<String>) = {
             let state = self.state.read(cx);
             (
                 rows.iter()
@@ -3258,12 +3258,12 @@ impl Pickers {
                         state
                             .spaces
                             .iter()
-                            .find(|space| zeron_proto::view::project_key(space) == row.key)
+                            .find(|space| vardoger_proto::view::project_key(space) == row.key)
                             .cloned()
                     })
                     .collect(),
                 match &state.auth {
-                    Some(zeron_proto::AuthState::SignedIn { user, org_id }) => {
+                    Some(vardoger_proto::AuthState::SignedIn { user, org_id }) => {
                         Some(format!("{}:{org_id:?}", user.id))
                     }
                     _ => None,
@@ -3718,7 +3718,7 @@ impl Pickers {
         let id: SharedString = format!("{base}-{}", cx.entity_id()).into();
         let open = self.open_kind() == Some(kind);
         let resizing = kind == PickerKind::HarnessModel && self.chip_resizing;
-        // Ghost pill (zeron composer/styles.tsx `pill`): `h-8 rounded-lg px-2.5
+        // Ghost pill (vardoger composer/styles.tsx `pill`): `h-8 rounded-lg px-2.5
         // gap-1.5 text-[12px] font-medium text-muted-foreground`, icons size-4,
         // hover/open wash — no border, no caret; the actions row stays quiet.
         div()
@@ -3745,7 +3745,7 @@ impl Pickers {
             .rounded(px(8.0))
             .text_size(crate::typography::ui_rems(12.0))
             .font_weight(gpui::FontWeight::MEDIUM)
-            // zeron composer/styles.tsx `pill`: `transition-colors` — the wash
+            // vardoger composer/styles.tsx `pill`: `transition-colors` — the wash
             // and text brighten fade over 150ms.
             .text_color(motion::hover_blend(
                 &id,
@@ -4151,7 +4151,7 @@ impl Pickers {
             };
             let is_worktree = chat.cwd.as_deref().is_some_and(|cwd| cwd != space.path);
             // A Cloud chat runs on its own machine's clone of the repository.
-            let (icon_path, label) = if zeron_proto::is_cloud_device(&chat.device_id, "") {
+            let (icon_path, label) = if vardoger_proto::is_cloud_device(&chat.device_id, "") {
                 (crate::icons::CLOUD, "Cloud")
             } else if is_worktree {
                 (crate::icons::WORKTREE, "Worktree")
@@ -4284,7 +4284,7 @@ impl Pickers {
         let theme = Theme::of(cx).for_popup();
         popover::popover_card(&theme)
             .w(px(width))
-            // zeron caps its tallest picker at min(640px, 75vh).
+            // vardoger caps its tallest picker at min(640px, 75vh).
             .max_h(px(self.menu_geometry().height))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -4320,7 +4320,7 @@ impl Pickers {
     }
 
     /// [`Self::popover_frame`] without the p-1 inset — the harness/model
-    /// picker's rail + list panes bleed to the card edge (zeron
+    /// picker's rail + list panes bleed to the card edge (vardoger
     /// harness-model-picker.tsx `className="w-80 p-0"`).
     fn popover_frame_flush(
         &self,
@@ -6269,7 +6269,7 @@ pub(crate) fn normalize_model_rows(harness: HarnessId, models: Vec<Model>) -> Ve
             .to_ascii_lowercase()
     }
     let catalog = match harness {
-        HarnessId::ClaudeCode => zeron_harness::claude::catalog::static_models(),
+        HarnessId::ClaudeCode => vardoger_harness::claude::catalog::static_models(),
         _ => Vec::new(),
     };
     // Curated label for an id: exact normalized match, else — for bare
@@ -6310,15 +6310,15 @@ pub(crate) fn normalize_model_rows(harness: HarnessId, models: Vec<Model>) -> Ve
                     }
                 }
                 if !model.options.iter().any(|o| o.id == "contextWindow") {
-                    model.options.push(zeron_proto::ModelOption {
+                    model.options.push(vardoger_proto::ModelOption {
                         id: "contextWindow".into(),
                         label: "Context Window".into(),
                         choices: vec![
-                            zeron_proto::ModelOptionChoice {
+                            vardoger_proto::ModelOptionChoice {
                                 id: "200k".into(),
                                 label: "200K".into(),
                             },
-                            zeron_proto::ModelOptionChoice {
+                            vardoger_proto::ModelOptionChoice {
                                 id: "1m".into(),
                                 label: "1M".into(),
                             },
@@ -6357,10 +6357,10 @@ pub(crate) fn harness_brand_icon(harness: HarnessId) -> (&'static str, Option<gp
     }
 }
 
-/// `ZERON_HARNESS=mock` (the e2e/dev rig) opts the mock harness into the UI;
+/// `VARDOGER_HARNESS=mock` (the e2e/dev rig) opts the mock harness into the UI;
 /// production launches never set it, so the mock never surfaces there.
 fn mock_harness_enabled() -> bool {
-    std::env::var("ZERON_HARNESS")
+    std::env::var("VARDOGER_HARNESS")
         .ok()
         .as_deref()
         .map(str::trim)
@@ -6370,7 +6370,7 @@ fn mock_harness_enabled() -> bool {
 /// Production pickers AND chip resolution hide the mock harness — the
 /// registry always lists it, but it must never surface in real UI (neither in
 /// the picker rail nor as the eager default the chips resolve against).
-/// `ZERON_HARNESS=mock` shows it; otherwise it only remains when it's
+/// `VARDOGER_HARNESS=mock` shows it; otherwise it only remains when it's
 /// literally all there is (a dev build with no real harness registered).
 pub fn visible_harnesses(list: &[HarnessDescriptor]) -> Vec<HarnessDescriptor> {
     visible_harnesses_impl(list, mock_harness_enabled())
@@ -6406,7 +6406,7 @@ fn offered_harnesses_impl(list: &[HarnessDescriptor], allow_mock: bool) -> Vec<H
         .into_iter()
         .filter(|d| {
             d.installed
-                && (zeron_engine::registry::descriptor_enabled(d)
+                && (vardoger_engine::registry::descriptor_enabled(d)
                     || (allow_mock && d.id == HarnessId::Mock))
         })
         .collect()
@@ -6471,7 +6471,7 @@ fn resizing_chip_text(
 /// or a tier/speed option offering `fast` (Codex, Devin). Off is the default
 /// when fast isn't, else the other choice — Cursor runs some models fast by
 /// default. Every model then gets the same fast-mode UI.
-fn fast_mode_values(option: &zeron_proto::ModelOption) -> Option<(&str, &str)> {
+fn fast_mode_values(option: &vardoger_proto::ModelOption) -> Option<(&str, &str)> {
     let has = |id: &str| option.choices.iter().any(|choice| choice.id == id);
     let on = if matches!(option.id.as_str(), "fastMode" | "fast_mode") && has("on") {
         "on"
@@ -6554,7 +6554,7 @@ fn attach_overlay_end(
 impl Render for Pickers {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        // A ZERON_OPEN_PICKER popover never went through `toggle`, so claim
+        // A VARDOGER_OPEN_PICKER popover never went through `toggle`, so claim
         // its keyboard focus here (re-claim until it sticks — the shell's
         // first-paint fallback focuses the composer after our first render).
         if self.boot_focus_pending {
@@ -6609,7 +6609,7 @@ impl Render for Pickers {
         // opens, and rail switches inside the picker are instant.
         self.ensure_harnesses(false, cx);
         self.prefetch_models(false, cx);
-        // A popover opened data-side (ZERON_OPEN_PICKER) never went through
+        // A popover opened data-side (VARDOGER_OPEN_PICKER) never went through
         // `toggle`, so kick its loads here (all ensure_* are idempotent).
         if matches!(
             self.open_kind(),
@@ -6618,7 +6618,7 @@ impl Render for Pickers {
         {
             self.ensure_refs(false, cx);
         }
-        // Chip shows the model's display name alone (zeron `modelText`); the
+        // Chip shows the model's display name alone (vardoger `modelText`); the
         // harness reads from the brand mark beside it. Never "Default model":
         // before the catalog lands the remembered label (or the configured id)
         // names the pick; the loaded list then resolves it to a concrete row.
@@ -6784,7 +6784,7 @@ impl Render for Pickers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeron_proto::{FolderEntry, Model, ModelOption, ModelOptionChoice};
+    use vardoger_proto::{FolderEntry, Model, ModelOption, ModelOptionChoice};
 
     struct ModelShortcutHost {
         focus_sub: Option<gpui::Subscription>,
@@ -6966,9 +6966,9 @@ mod tests {
         (state, pickers)
     }
 
-    fn host_device(switches: bool) -> zeron_proto::Device {
+    fn host_device(switches: bool) -> vardoger_proto::Device {
         let capabilities: Vec<&str> = if switches {
-            vec![zeron_proto::capabilities::PROVIDER_SWITCH_V1]
+            vec![vardoger_proto::capabilities::PROVIDER_SWITCH_V1]
         } else {
             vec![]
         };
@@ -7007,7 +7007,7 @@ mod tests {
                     .unwrap(),
                 );
                 state.selected_space = Some("cloud-project".into());
-                state.set_test_engine(EngineHandle::from_test_client(zeron_rpc::RpcClient::new(
+                state.set_test_engine(EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(
                     out, inbound,
                 )));
                 state
@@ -7109,7 +7109,7 @@ mod tests {
             cx.set_global(Theme::dark());
             let (state, pickers) = side_chat_picker(true, cx);
             state.update(cx, |state, _| {
-                state.set_test_engine(EngineHandle::from_test_client(zeron_rpc::RpcClient::new(
+                state.set_test_engine(EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(
                     out, inbound,
                 )));
             });
@@ -7185,12 +7185,12 @@ mod tests {
         });
     }
 
-    fn running_session(chat_id: &str) -> zeron_proto::Session {
-        zeron_proto::Session {
+    fn running_session(chat_id: &str) -> vardoger_proto::Session {
+        vardoger_proto::Session {
             last_completed_turn: None,
             chat_id: chat_id.into(),
             device_id: "local".into(),
-            status: zeron_proto::SessionStatus::Working,
+            status: vardoger_proto::SessionStatus::Working,
             started_at: Some(chrono::Utc::now()),
             updated_at: chrono::Utc::now(),
             running_subagents: 0,
@@ -7212,7 +7212,7 @@ mod tests {
             cx.set_global(Theme::dark());
             let (state, pickers) = side_chat_picker(false, cx);
             state.update(cx, |state, _| {
-                state.set_test_engine(EngineHandle::from_test_client(zeron_rpc::RpcClient::new(
+                state.set_test_engine(EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(
                     out, inbound,
                 )));
             });
@@ -7234,7 +7234,7 @@ mod tests {
         cx.update(|cx| {
             let row = state.read(cx).selected_chat_row().unwrap().config.clone().unwrap();
             assert_eq!(row.harness, HarnessId::Codex);
-            assert_eq!(row.sandbox, zeron_proto::SandboxLevel::ReadOnly, "sandbox is kept");
+            assert_eq!(row.sandbox, vardoger_proto::SandboxLevel::ReadOnly, "sandbox is kept");
 
             // A turn starts: the switch is refused until it ends.
             state.update(cx, |state, _| {
@@ -7852,7 +7852,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         cx.update(|cx| cx.set_global(Theme::dark()));
-        let project = |id: &str, repo: Option<&str>| zeron_proto::Space {
+        let project = |id: &str, repo: Option<&str>| vardoger_proto::Space {
             id: id.into(),
             device_id: "mac".into(),
             path: format!("/code/{id}"),
@@ -7864,8 +7864,8 @@ mod tests {
             github_repo: repo.map(str::to_string),
             created_at: chrono::Utc::now(),
         };
-        let cloud_on = |credits: f64| zeron_proto::CloudStatus {
-            state: zeron_proto::CloudState::Ready,
+        let cloud_on = |credits: f64| vardoger_proto::CloudStatus {
+            state: vardoger_proto::CloudState::Ready,
             device_id: Some("cloud-1".into()),
             available: true,
             credits: Some(credits),
@@ -7884,7 +7884,7 @@ mod tests {
                     project("other", Some("someone/else")),
                 ];
                 state.selected_space = Some("app".into());
-                state.cloud_repos = Some(vec![zeron_proto::GithubRepo {
+                state.cloud_repos = Some(vec![vardoger_proto::GithubRepo {
                     full_name: "acme/app".into(),
                     clone_url: "https://github.com/acme/app.git".into(),
                     default_branch: "main".into(),
@@ -7913,8 +7913,8 @@ mod tests {
                 // Signed out, even a (stale) Cloud-on status offers no Cloud.
                 assert_eq!(devices(pickers, cx), [("Studio".to_string(), false)]);
                 pickers.state.update(cx, |state, _| {
-                    state.auth = Some(zeron_proto::AuthState::SignedIn {
-                        user: zeron_proto::UserProfile {
+                    state.auth = Some(vardoger_proto::AuthState::SignedIn {
+                        user: vardoger_proto::UserProfile {
                             id: "u".into(),
                             email: "u@example.com".into(),
                             name: None,
@@ -9249,7 +9249,7 @@ mod tests {
             can_install: false,
             enabled: Some(true),
             reasoning_levels: Vec::new(),
-            steering_mode: zeron_proto::SteeringMode::StepBoundary,
+            steering_mode: vardoger_proto::SteeringMode::StepBoundary,
             supports_steering: false,
         }
     }
@@ -10199,7 +10199,7 @@ mod tests {
     #[test]
     fn windows_folder_paths_and_breadcrumbs() {
         assert_eq!(
-            parent_path(r"D:\Random\zeron"),
+            parent_path(r"D:\Random\vardoger"),
             Some(r"D:\Random".to_string())
         );
         assert_eq!(parent_path(r"D:\Random"), Some(r"D:\".to_string()));
@@ -10207,10 +10207,10 @@ mod tests {
         assert_eq!(parent_path(r"D:\"), None);
         assert_eq!(parent_path("D:"), None);
         assert_eq!(child_path(r"D:\", "Random"), r"D:\Random");
-        assert_eq!(child_path(r"D:\Random", "zeron"), r"D:\Random\zeron");
-        let crumbs = breadcrumbs(r"D:\Random\zeron");
+        assert_eq!(child_path(r"D:\Random", "vardoger"), r"D:\Random\vardoger");
+        let crumbs = breadcrumbs(r"D:\Random\vardoger");
         let labels: Vec<&str> = crumbs.iter().map(|(l, _)| l.as_str()).collect();
-        assert_eq!(labels, [r"D:\", "Random", "zeron"]);
+        assert_eq!(labels, [r"D:\", "Random", "vardoger"]);
         assert_eq!(crumbs[0].1, r"D:\");
         assert_eq!(crumbs[1].1, r"D:\Random");
         assert_eq!(breadcrumbs(r"D:\").len(), 1);
@@ -10328,9 +10328,9 @@ mod tests {
         // Case-insensitive; the length indexes into the NAME's bytes.
         assert_eq!(completion_prefix_len("Documents", "doc"), Some(3));
         assert_eq!(&"Documents"[3..], "uments");
-        assert_eq!(completion_prefix_len("zeron", "zeron"), Some(5));
-        assert_eq!(completion_prefix_len("zeron", ""), Some(0));
-        assert_eq!(completion_prefix_len("zeron", "dev"), None);
+        assert_eq!(completion_prefix_len("vardoger", "vardoger"), Some(5));
+        assert_eq!(completion_prefix_len("vardoger", ""), Some(0));
+        assert_eq!(completion_prefix_len("vardoger", "dev"), None);
         // Longer than the name → not a prefix.
         assert_eq!(completion_prefix_len("dev", "devel"), None);
         // Multibyte names slice on a char boundary.
@@ -10382,13 +10382,13 @@ mod tests {
         assert_eq!(typed_path_target("D:", home), Some(r"D:\".into()));
         assert_eq!(typed_path_target("D:/", home), Some(r"D:\".into()));
         assert_eq!(
-            typed_path_target(r"D:\Random\zeron\", home),
-            Some(r"D:\Random\zeron".into())
+            typed_path_target(r"D:\Random\vardoger\", home),
+            Some(r"D:\Random\vardoger".into())
         );
         // Forward slashes normalise so the crumb trail can match the path.
         assert_eq!(
-            typed_path_target("D:/Random/zeron", None),
-            Some(r"D:\Random\zeron".into())
+            typed_path_target("D:/Random/vardoger", None),
+            Some(r"D:\Random\vardoger".into())
         );
         assert!(is_typed_path(r"D:\x"));
         assert!(is_typed_path("/x") && is_typed_path("~"));
@@ -10411,7 +10411,7 @@ mod tests {
                     is_repo: false,
                 },
                 FolderEntry {
-                    name: "zeron".into(),
+                    name: "vardoger".into(),
                     is_dir: true,
                     is_repo: true,
                 },
@@ -10420,7 +10420,7 @@ mod tests {
         };
         // Files never show as rows.
         assert_eq!(browser_rows(&listing).len(), 2);
-        assert_eq!(browser_rows(&listing)[1].name, "zeron");
+        assert_eq!(browser_rows(&listing)[1].name, "vardoger");
     }
 
     #[test]
@@ -10494,7 +10494,7 @@ mod tests {
             id,
             name: name.into(),
             supports_steering: true,
-            steering_mode: zeron_proto::SteeringMode::StepBoundary,
+            steering_mode: vardoger_proto::SteeringMode::StepBoundary,
             reasoning_levels: vec![],
             installed: true,
             can_install: false,
@@ -10510,7 +10510,7 @@ mod tests {
         assert_eq!(visible[0].id, HarnessId::ClaudeCode);
         let only_mock = vec![descriptor(HarnessId::Mock, "Mock")];
         assert_eq!(visible_harnesses_impl(&only_mock, false).len(), 1);
-        // …and opted back in by ZERON_HARNESS=mock (the e2e rig).
+        // …and opted back in by VARDOGER_HARNESS=mock (the e2e rig).
         assert_eq!(visible_harnesses_impl(&mixed, true).len(), 2);
         assert_eq!(visible_harnesses_impl(&mixed, true)[0].id, HarnessId::Mock);
     }
@@ -10521,7 +10521,7 @@ mod tests {
             id,
             name: name.into(),
             supports_steering: true,
-            steering_mode: zeron_proto::SteeringMode::StepBoundary,
+            steering_mode: vardoger_proto::SteeringMode::StepBoundary,
             reasoning_levels: vec![],
             installed: true,
             can_install: false,
@@ -10574,7 +10574,7 @@ mod tests {
                 id,
                 name: name.into(),
                 supports_steering: true,
-                steering_mode: zeron_proto::SteeringMode::StepBoundary,
+                steering_mode: vardoger_proto::SteeringMode::StepBoundary,
                 reasoning_levels: vec![],
                 installed,
                 can_install: false,

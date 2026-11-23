@@ -1,5 +1,5 @@
 [package]
-name = "zeron-ui"
+name = "vardoger-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -63,24 +63,24 @@ name = "compact-picker-fixture"
 required-features = ["compact-picker-fixture"]
 
 [dependencies]
-zeron-voice-media.workspace = true
-zeron-voice-session.workspace = true
-zeron-orb.workspace = true
-zeron-veil.workspace = true
-zeron-voice = { path = "../voice" }
+vardoger-voice-media.workspace = true
+vardoger-voice-session.workspace = true
+vardoger-orb.workspace = true
+vardoger-veil.workspace = true
+vardoger-voice = { path = "../voice" }
 url = "2"
-zeron-proto.workspace = true
+vardoger-proto.workspace = true
 similar.workspace = true
-zeron-doc.workspace = true
-zeron-engine.workspace = true
-zeron-harness.workspace = true
-zeron-rpc.workspace = true
-zeron-update.workspace = true
-zeron-notify.workspace = true
-zeron-syntax.workspace = true
-zeron-theme.workspace = true
-zeron-visual.workspace = true
-zeron-visual-gpu.workspace = true
+vardoger-doc.workspace = true
+vardoger-engine.workspace = true
+vardoger-harness.workspace = true
+vardoger-rpc.workspace = true
+vardoger-update.workspace = true
+vardoger-notify.workspace = true
+vardoger-syntax.workspace = true
+vardoger-theme.workspace = true
+vardoger-visual.workspace = true
+vardoger-visual-gpu.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
@@ -93,11 +93,11 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 pulldown-cmark.workspace = true
-zeron-markdown.workspace = true
+vardoger-markdown.workspace = true
 zatex = { workspace = true, features = ["bundled"] }
 html5ever = "0.39"
 alacritty_terminal.workspace = true
-zeron-term.workspace = true
+vardoger-term.workspace = true
 base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
 usvg = "0.46"

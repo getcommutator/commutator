@@ -1,16 +1,16 @@
 //! Settings → General: device-addressed git settings — where new worktrees
-//! go, and whether agents' commits credit Zeron.
+//! go, and whether agents' commits credit Vardoger.
 
 use gpui::{AnyElement, Context, Entity, Render, Task, Window, div, prelude::*, px};
-use zeron_proto::{FolderListing, WorktreeSettings, WorktreeSettingsStatus};
-use zeron_rpc::methods;
+use vardoger_proto::{FolderListing, WorktreeSettings, WorktreeSettingsStatus};
+use vardoger_rpc::methods;
 
 use super::widgets;
 use crate::icons;
 use crate::popover::Loadable;
 use crate::state::AppState;
 use crate::theme::Theme;
-use zeron_proto::device_paths::{child_folder as child_path, parent_folder as folder_parent};
+use vardoger_proto::device_paths::{child_folder as child_path, parent_folder as folder_parent};
 
 pub(super) struct WorktreeSettingsCard {
     state: Entity<AppState>,
@@ -26,8 +26,8 @@ pub(super) struct WorktreeSettingsCard {
     browsing: bool,
     folders: Loadable<FolderListing>,
     folder_task: Option<Task<()>>,
-    /// Whether agents' commits on the device credit Zeron.
-    credit: Loadable<zeron_engine::commit_credit::CommitCreditStatus>,
+    /// Whether agents' commits on the device credit Vardoger.
+    credit: Loadable<vardoger_engine::commit_credit::CommitCreditStatus>,
     credit_saving: bool,
     credit_task: Option<Task<()>>,
 }
@@ -170,13 +170,13 @@ impl WorktreeSettingsCard {
                 .call(method, params)
                 .await
                 .map_err(|error| match error {
-                    zeron_rpc::RpcError::UnknownMethod(_) => {
-                        "Update Zeron on the selected device to change this.".to_string()
+                    vardoger_rpc::RpcError::UnknownMethod(_) => {
+                        "Update Vardoger on the selected device to change this.".to_string()
                     }
                     _ => error.to_string(),
                 })
                 .and_then(|value| {
-                    serde_json::from_value::<zeron_engine::commit_credit::CommitCreditStatus>(value)
+                    serde_json::from_value::<vardoger_engine::commit_credit::CommitCreditStatus>(value)
                         .map_err(|error| error.to_string())
                 });
             this.update(cx, |card, cx| {
@@ -218,7 +218,7 @@ impl WorktreeSettingsCard {
                 div()
                     .flex_1()
                     .min_w(px(160.0))
-                    .child(widgets::row_title(theme, "Credit Zeron in commits"))
+                    .child(widgets::row_title(theme, "Credit Vardoger in commits"))
                     .child(widgets::meta_line(
                         theme,
                         vec![div().truncate().child(meta).into_any_element()],
@@ -229,7 +229,7 @@ impl WorktreeSettingsCard {
                     .id("commit-credit-toggle")
                     .flex_none()
                     .role(gpui::Role::Switch)
-                    .aria_label("Credit Zeron in commits")
+                    .aria_label("Credit Vardoger in commits")
                     .aria_toggled(if enabled {
                         gpui::Toggled::True
                     } else {
@@ -270,8 +270,8 @@ impl WorktreeSettingsCard {
                 .call(method, params)
                 .await
                 .map_err(|error| match error {
-                    zeron_rpc::RpcError::UnknownMethod(_) => {
-                        "Update Zeron on the selected device to configure worktree locations."
+                    vardoger_rpc::RpcError::UnknownMethod(_) => {
+                        "Update Vardoger on the selected device to configure worktree locations."
                             .to_string()
                     }
                     _ => error.to_string(),
@@ -615,7 +615,7 @@ impl Render for WorktreeSettingsCard {
             None => "Loading…".into(),
         }];
         if overridden {
-            meta.push("Set by ZERON_WORKTREES_DIR".into());
+            meta.push("Set by VARDOGER_WORKTREES_DIR".into());
         }
         let meta = meta
             .into_iter()

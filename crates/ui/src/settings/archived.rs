@@ -6,8 +6,8 @@ use gpui::{
     AnyElement, Context, Entity, SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 
-use zeron_proto::Chat;
-use zeron_rpc::methods;
+use vardoger_proto::Chat;
+use vardoger_rpc::methods;
 
 use crate::popover;
 use crate::settings::widgets;
@@ -170,7 +170,7 @@ impl ArchivedPage {
             .read(cx)
             .chats
             .iter()
-            .filter(|c| ids.contains(&c.id) && zeron_proto::is_cloud_device(&c.device_id, ""))
+            .filter(|c| ids.contains(&c.id) && vardoger_proto::is_cloud_device(&c.device_id, ""))
             .count();
         let theme = Theme::of(cx).for_popup();
         // Same card as the sidebar's single "Delete session?" confirmation.
@@ -269,11 +269,11 @@ impl Render for ArchivedPage {
                     .clone()
                     .unwrap_or_else(|| "Untitled session".into())
                     .into();
-                // Unknown device → no fragment at all (zeron renders the
+                // Unknown device → no fragment at all (vardoger renders the
                 // device span only when the name resolves); a Cloud chat's
                 // own machine isn't a device worth naming either.
                 let device: Option<SharedString> =
-                    (!zeron_proto::is_cloud_device(&chat.device_id, ""))
+                    (!vardoger_proto::is_cloud_device(&chat.device_id, ""))
                         .then(|| device_names.get(&chat.device_id).cloned().map(Into::into))
                         .flatten();
                 let time_ago: SharedString = crate::state::format_time_ago(
@@ -285,7 +285,7 @@ impl Render for ArchivedPage {
                     crate::state::chat_location(&chat).map(Into::into);
                 let is_busy = busy.as_deref() == Some(chat.id.as_str());
                 let chat_id = chat.id.clone();
-                // zeron settings.archived.tsx row: archive tile, medium title
+                // vardoger settings.archived.tsx row: archive tile, medium title
                 // + tabular time, quiet device · location meta, Unarchive.
                 div()
                     .id(("archived-row", ix))
@@ -344,7 +344,7 @@ impl Render for ArchivedPage {
                             )
                             .child({
                                 // device · location, separator at the line's
-                                // own tone (zeron: a plain span inheriting
+                                // own tone (vardoger: a plain span inheriting
                                 // `text-muted-foreground/55`).
                                 let mut meta = div()
                                     .mt(px(2.0))
@@ -409,7 +409,7 @@ impl Render for ArchivedPage {
             .collect();
 
         let body: AnyElement = if items.is_empty() {
-            // Centered empty state (zeron settings.archived.tsx).
+            // Centered empty state (vardoger settings.archived.tsx).
             div()
                 .mt(px(96.0))
                 .flex()
@@ -419,7 +419,7 @@ impl Render for ArchivedPage {
                 .text_color(theme.text_muted)
                 .child(
                     // `opacity-40` on top of the inherited muted/50 — an
-                    // effectively ~20% glyph (zeron settings.archived.tsx).
+                    // effectively ~20% glyph (vardoger settings.archived.tsx).
                     crate::icons::icon(crate::icons::ARCHIVE_MINIMALISTIC)
                         .size(px(28.0))
                         .text_color(theme.text_muted.opacity(0.2)),
@@ -652,7 +652,7 @@ mod tests {
         let (out, mut requests) = tokio::sync::mpsc::channel(16);
         let (replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(zeron_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| {
             crate::settings::init(Default::default(), dir.path(), cx);

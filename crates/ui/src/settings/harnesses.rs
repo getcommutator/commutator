@@ -23,14 +23,14 @@ use gpui::{
     px,
 };
 
-use zeron_engine::registry::{HarnessDescriptor, descriptor_enabled};
+use vardoger_engine::registry::{HarnessDescriptor, descriptor_enabled};
 
-use zeron_proto::{
+use vardoger_proto::{
     HarnessId, HarnessUpdateFailureKind, HarnessUpdatePhase, HarnessUpdatePolicy,
     HarnessUpdateStatus,
 };
 
-use zeron_rpc::methods;
+use vardoger_rpc::methods;
 
 use crate::motion;
 use crate::pickers::visible_harnesses;
@@ -88,7 +88,7 @@ fn install_hint(harness: HarnessId, enabled: bool, can_install: bool) -> String 
     } else {
         format!("Install the {} CLI to enable", cli_name(harness))
     };
-    if !can_install && let Some(command) = zeron_harness::install::manual_command(harness) {
+    if !can_install && let Some(command) = vardoger_harness::install::manual_command(harness) {
         format!("{hint}. Install with `{command}`")
     } else {
         hint
@@ -153,7 +153,7 @@ fn harness_update_label(status: &HarnessUpdateStatus, theme: &Theme) -> (SharedS
         None => detail.to_owned(),
     };
     let version_only = || installed.clone().unwrap_or_default();
-    // An installed release this Zeron can't run explains failing runs: it
+    // An installed release this Vardoger can't run explains failing runs: it
     // outranks everything but an update in flight.
     if let Some(compatibility) = &status.compatibility
         && matches!(
@@ -180,7 +180,7 @@ fn harness_update_label(status: &HarnessUpdateStatus, theme: &Theme) -> (SharedS
         HarnessUpdatePhase::Dormant
         | HarnessUpdatePhase::Checking
         | HarnessUpdatePhase::Current => version_only(),
-        // The row's Update button already says it; one Zeron can only
+        // The row's Update button already says it; one Vardoger can only
         // describe (a command to run yourself) is just the version too.
         HarnessUpdatePhase::Available | HarnessUpdatePhase::ManualActionRequired
             if status.can_apply =>
@@ -550,9 +550,9 @@ impl HarnessesPage {
             || {
                 engine
                     .engine_info()
-                    .supports(zeron_proto::capabilities::HARNESS_UPDATES_V1)
+                    .supports(vardoger_proto::capabilities::HARNESS_UPDATES_V1)
             },
-            |device| state.device_supports(device, zeron_proto::capabilities::HARNESS_UPDATES_V1),
+            |device| state.device_supports(device, vardoger_proto::capabilities::HARNESS_UPDATES_V1),
         )
     }
 
@@ -687,7 +687,7 @@ impl HarnessesPage {
                     .await
                     .map_err(|error| error.to_string())
                     .and_then(|value| {
-                        serde_json::from_value::<zeron_proto::AgentAccountsSnapshot>(value)
+                        serde_json::from_value::<vardoger_proto::AgentAccountsSnapshot>(value)
                             .map_err(|error| error.to_string())
                     })
             {
@@ -939,7 +939,7 @@ impl HarnessesPage {
     /// Whether the page shows Cloud's providers: the accounts every Cloud
     /// machine uses, kept by the vault rather than installed on a device.
     fn targets_cloud(&self) -> bool {
-        self.target_device.as_deref() == Some(zeron_proto::CLOUD_ACCOUNTS_DEVICE)
+        self.target_device.as_deref() == Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE)
     }
 
     /// The page-header device switcher (the Accounts pattern): platform glyph
@@ -999,7 +999,7 @@ impl HarnessesPage {
                     .text_color(muted)
                     .into_any_element()
             }));
-            targets.push(Some(zeron_proto::CLOUD_ACCOUNTS_DEVICE.to_string()));
+            targets.push(Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.to_string()));
         }
         let selected = match targets
             .iter()
@@ -1576,28 +1576,28 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Loading;
-                page.sign_in(None, zeron_proto::HarnessId::Codex, cx);
+                page.sign_in(None, vardoger_proto::HarnessId::Codex, cx);
                 assert_eq!(page.expanded_harness, None, "nothing to open yet");
                 page.harnesses =
-                    super::Loadable::Ready(vec![zeron_engine::registry::HarnessDescriptor {
-                        id: zeron_proto::HarnessId::Codex,
+                    super::Loadable::Ready(vec![vardoger_engine::registry::HarnessDescriptor {
+                        id: vardoger_proto::HarnessId::Codex,
                         name: "Codex".into(),
                         supports_steering: false,
-                        steering_mode: zeron_proto::SteeringMode::TurnBoundary,
+                        steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
                         reasoning_levels: Vec::new(),
                         installed: true,
                         can_install: false,
                         enabled: Some(true),
                     }]);
                 page.run_pending_sign_in(cx);
-                assert_eq!(page.expanded_harness, Some(zeron_proto::HarnessId::Codex));
+                assert_eq!(page.expanded_harness, Some(vardoger_proto::HarnessId::Codex));
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(zeron_proto::HarnessId::Codex)
+                    Some(vardoger_proto::HarnessId::Codex)
                 );
                 assert_eq!(page.pending_sign_in, None, "started once");
             })
@@ -1617,11 +1617,11 @@ mod tests {
             let state = cx.new(|_| crate::state::AppState::new());
             super::HarnessesPage::new(state, cx)
         });
-        let descriptor = |id, name: &str| zeron_engine::registry::HarnessDescriptor {
+        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor {
             id,
             name: name.into(),
             supports_steering: false,
-            steering_mode: zeron_proto::SteeringMode::TurnBoundary,
+            steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed: true,
             can_install: false,
@@ -1630,13 +1630,13 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Ready(vec![
-                    descriptor(zeron_proto::HarnessId::ClaudeCode, "Claude Code"),
-                    descriptor(zeron_proto::HarnessId::Codex, "Codex"),
+                    descriptor(vardoger_proto::HarnessId::ClaudeCode, "Claude Code"),
+                    descriptor(vardoger_proto::HarnessId::Codex, "Codex"),
                 ]);
-                page.toggle_agent_details(zeron_proto::HarnessId::ClaudeCode, cx);
+                page.toggle_agent_details(vardoger_proto::HarnessId::ClaudeCode, cx);
                 assert_eq!(
                     page.expanded_harness,
-                    Some(zeron_proto::HarnessId::ClaudeCode)
+                    Some(vardoger_proto::HarnessId::ClaudeCode)
                 );
                 assert_eq!(
                     page.accounts_page
@@ -1644,7 +1644,7 @@ mod tests {
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(zeron_proto::HarnessId::ClaudeCode)
+                    Some(vardoger_proto::HarnessId::ClaudeCode)
                 );
             })
             .unwrap();
@@ -1652,15 +1652,15 @@ mod tests {
             .unwrap();
         window
             .update(cx, |page, _, cx| {
-                page.toggle_agent_details(zeron_proto::HarnessId::Codex, cx);
-                assert_eq!(page.expanded_harness, Some(zeron_proto::HarnessId::Codex));
+                page.toggle_agent_details(vardoger_proto::HarnessId::Codex, cx);
+                assert_eq!(page.expanded_harness, Some(vardoger_proto::HarnessId::Codex));
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(zeron_proto::HarnessId::Codex)
+                    Some(vardoger_proto::HarnessId::Codex)
                 );
             })
             .unwrap();
@@ -1670,17 +1670,17 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Ready(vec![descriptor(
-                    zeron_proto::HarnessId::Antigravity,
+                    vardoger_proto::HarnessId::Antigravity,
                     "Antigravity",
                 )]);
-                page.toggle_agent_details(zeron_proto::HarnessId::Antigravity, cx);
+                page.toggle_agent_details(vardoger_proto::HarnessId::Antigravity, cx);
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(zeron_proto::HarnessId::Antigravity)
+                    Some(vardoger_proto::HarnessId::Antigravity)
                 );
             })
             .unwrap();
@@ -1702,8 +1702,8 @@ mod tests {
         let window = cx.add_window(|_, cx| {
             let state = cx.new(|_| {
                 let mut state = crate::state::AppState::new();
-                state.cloud_status = Some(zeron_proto::CloudStatus {
-                    state: zeron_proto::CloudState::Ready,
+                state.cloud_status = Some(vardoger_proto::CloudStatus {
+                    state: vardoger_proto::CloudState::Ready,
                     device_id: Some("cloud-1".into()),
                     available: true,
                     ..Default::default()
@@ -1711,14 +1711,14 @@ mod tests {
                 state
             });
             let mut page = super::HarnessesPage::new(state, cx);
-            page.set_target_device(Some(zeron_proto::CLOUD_ACCOUNTS_DEVICE.into()), cx);
+            page.set_target_device(Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.into()), cx);
             page
         });
-        let descriptor = |id, name: &str| zeron_engine::registry::HarnessDescriptor {
+        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor {
             id,
             name: name.into(),
             supports_steering: false,
-            steering_mode: zeron_proto::SteeringMode::TurnBoundary,
+            steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed: true,
             can_install: true,
@@ -1729,14 +1729,14 @@ mod tests {
                 assert!(page.targets_cloud());
                 assert!(!page.supports_updates(cx), "Cloud has no harness updates");
                 page.harnesses = super::Loadable::Ready(vec![
-                    descriptor(zeron_proto::HarnessId::ClaudeCode, "Claude Code"),
-                    descriptor(zeron_proto::HarnessId::Codex, "Codex"),
+                    descriptor(vardoger_proto::HarnessId::ClaudeCode, "Claude Code"),
+                    descriptor(vardoger_proto::HarnessId::Codex, "Codex"),
                 ]);
-                page.toggle_agent_details(zeron_proto::HarnessId::Codex, cx);
+                page.toggle_agent_details(vardoger_proto::HarnessId::Codex, cx);
                 assert!(page.accounts_page.is_some());
                 // Rows count each provider's accounts from the shared list
                 // (drawn below: "1 account" for Claude, "No account" for Codex).
-                let account: zeron_proto::AgentAccount =
+                let account: vardoger_proto::AgentAccount =
                     serde_json::from_value(serde_json::json!({
                         "id": "a", "harness": "claude-code", "email": "a@example.com",
                         "planLabel": null, "active": true
@@ -1745,8 +1745,8 @@ mod tests {
                 cx.default_global::<crate::settings::accounts::AccountsSnapshotCache>()
                     .0
                     .insert(
-                        Some(zeron_proto::CLOUD_ACCOUNTS_DEVICE.into()),
-                        zeron_proto::AgentAccountsSnapshot {
+                        Some(vardoger_proto::CLOUD_ACCOUNTS_DEVICE.into()),
+                        vardoger_proto::AgentAccountsSnapshot {
                             accounts: vec![account],
                             warnings: Vec::new(),
                         },
