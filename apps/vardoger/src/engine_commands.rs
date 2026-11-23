@@ -35,9 +35,5 @@ pub fn run_engine_command(command: EngineCommand) -> anyhow::Result<()> {
         }
         EngineCommand::Mcp => crate::run_mcp(),
         EngineCommand::Engine => crate::background::run(),
-        EngineCommand::DiscoverModels(harness) => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(vardoger_engine::sign_in_catalog::print_discovered(&harness))
-        }
     }
 }

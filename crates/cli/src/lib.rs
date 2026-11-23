@@ -90,14 +90,6 @@ enum Command {
     /// the old version just before it hands over.
     #[command(name = "update-watchdog", hide = true)]
     UpdateWatchdog,
-    /// An agent's models, discovered now with the credentials this process's
-    /// environment points it at, as JSON on stdout: what a Cloud sign-in on
-    /// this computer keeps as the new account's (started by the engine).
-    #[command(name = "discover-models", hide = true)]
-    DiscoverModels {
-        /// The agent (`antigravity`, `grok`, …).
-        harness: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -126,7 +118,6 @@ pub enum EngineCommand {
     Status,
     Sync,
     Mcp,
-    DiscoverModels(String),
 }
 
 /// Where this binary runs [`EngineCommand`]s.
@@ -215,7 +206,7 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
             mode,
             matches!(
                 &cli.command,
-                Some(Command::Mcp | Command::DiscoverModels { .. })
+                Some(Command::Mcp)
             ),
         );
     }
@@ -236,7 +227,6 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
         Some(Command::Status) => engine(EngineCommand::Status),
         Some(Command::Sync) => engine(EngineCommand::Sync),
         Some(Command::Mcp) => engine(EngineCommand::Mcp),
-        Some(Command::DiscoverModels { harness }) => engine(EngineCommand::DiscoverModels(harness)),
         #[cfg(target_os = "linux")]
         Some(Command::Appshot) => Launch::Appshot,
         Some(Command::Update { check }) => Launch::Done(
@@ -270,8 +260,7 @@ impl Command {
             | Self::Logout
             | Self::Status
             | Self::Sync
-            | Self::Mcp
-            | Self::DiscoverModels { .. } => true,
+            | Self::Mcp => true,
             #[cfg(target_os = "linux")]
             Self::Appshot => false,
             Self::Update { .. } | Self::UpdateWatchdog | Self::Daemon { .. } => false,

@@ -66,7 +66,6 @@ pub mod repos;
 pub mod rpc;
 pub mod run_journal;
 pub mod self_schedule;
-pub mod sign_in_catalog;
 pub mod sessions;
 pub mod source_control;
 pub mod spaces;

@@ -100,7 +100,6 @@ use vardoger_proto::{
 };
 
 use crate::repos::home_dir;
-use crate::sign_in_catalog::CatalogPublisher;
 use crate::{EngineError, new_id, now_ms};
 
 /// What a relayed sign-in callback answered ([`AgentAccounts::relay_callback`]):
@@ -437,17 +436,6 @@ impl Detected {
 
 // ── login flows ─────────────────────────────────────────────────────────────
 
-/// Where a CAPTURED sign-in goes instead of this device: the Cloud credential
-/// vault's upload ([`AgentAccounts::start_capture_login`]). Called with the
-/// provider's credential blob — Codex's `auth.json`, Claude's `claudeAiOauth`
-/// — and answers the user-facing reason on failure. `Fn`, not `FnOnce`: a
-/// mistyped paste-code may retry the same flow.
-pub type CaptureSink = Arc<
-    dyn Fn(serde_json::Value) -> futures::future::BoxFuture<'static, Result<(), String>>
-        + Send
-        + Sync,
->;
-
 enum LoginFlow {
     Claude {
         verifier: String,
@@ -455,9 +443,6 @@ enum LoginFlow {
         /// verifier in the authorize url would defeat PKCE).
         state: String,
         started_at: Instant,
-        /// Capture-only: the redeemed tokens go here, never into a slot or
-        /// this device's live Claude store.
-        capture: Option<CaptureSink>,
     },
     /// A spawned login child polled to completion: `codex login` against a
     /// throwaway `CODEX_HOME`, the cursor shim's login mode minting into a
@@ -1894,23 +1879,17 @@ impl AgentAccounts {
     /// `localhost:<port>/callback` we serve, finishing when the browser lands
     /// there. Pasting the code is the fallback when no port can be bound.
     async fn start_claude_login(&self) -> AgentLoginStart {
-        self.start_claude_login_with(None).await
-    }
-
-    /// [`Self::start_claude_login`]; with `capture`, the redeemed tokens go
-    /// there instead of a slot / the live login.
-    async fn start_claude_login_with(&self, capture: Option<CaptureSink>) -> AgentLoginStart {
         match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await {
             Ok(listener) => match listener.local_addr() {
-                Ok(address) => self.start_claude_loopback_login(listener, address.port(), capture),
+                Ok(address) => self.start_claude_loopback_login(listener, address.port()),
                 Err(error) => {
                     tracing::warn!(%error, "Claude login callback has no port; pasting the code instead");
-                    self.start_claude_paste_login_with(capture)
+                    self.start_claude_paste_login()
                 }
             },
             Err(error) => {
                 tracing::warn!(%error, "no loopback port for the Claude login; pasting the code instead");
-                self.start_claude_paste_login_with(capture)
+                self.start_claude_paste_login()
             }
         }
     }
@@ -1919,7 +1898,6 @@ impl AgentAccounts {
         &self,
         listener: tokio::net::TcpListener,
         port: u16,
-        capture: Option<CaptureSink>,
     ) -> AgentLoginStart {
         let login_id = new_id();
         let (verifier, challenge) = pkce_pair();
@@ -1947,7 +1925,6 @@ impl AgentAccounts {
                     &state,
                     &verifier,
                     &redirect,
-                    capture.as_ref(),
                 )
                 .await;
             lock(&outcome_state).outcome = Some(outcome.map_err(|e| e.to_string()));
@@ -1979,7 +1956,6 @@ impl AgentAccounts {
         state: &str,
         verifier: &str,
         redirect: &str,
-        capture: Option<&CaptureSink>,
     ) -> Result<(), EngineError> {
         use tokio::io::AsyncWriteExt as _;
         let (callback, mut browser) = await_claude_callback(&listener, state).await;
@@ -1993,7 +1969,6 @@ impl AgentAccounts {
                     verifier,
                     redirect,
                     CLAUDE_LOOPBACK_SCOPES,
-                    capture,
                 )
                 .await
             }
@@ -2022,12 +1997,7 @@ impl AgentAccounts {
 
     /// The paste-code fallback: Anthropic's manual redirect shows the code
     /// for the user to paste back ([`Self::complete_login`]).
-    #[cfg(test)]
     fn start_claude_paste_login(&self) -> AgentLoginStart {
-        self.start_claude_paste_login_with(None)
-    }
-
-    fn start_claude_paste_login_with(&self, capture: Option<CaptureSink>) -> AgentLoginStart {
         let login_id = new_id();
         let (verifier, challenge) = pkce_pair();
         let state = random_url_token();
@@ -2044,7 +2014,6 @@ impl AgentAccounts {
                 verifier,
                 state,
                 started_at: Instant::now(),
-                capture,
             },
         );
         AgentLoginStart {
@@ -2315,414 +2284,6 @@ impl AgentAccounts {
         .await
     }
 
-    /// Sign in to `harness` for a credential that LEAVES this device — the
-    /// Cloud credential vault (docs/design/cloud-device.md, "Sign-in stays on
-    /// the device"). The provider's own flow runs exactly as for "Add
-    /// account", but the result goes to `capture` and nowhere else: no slot,
-    /// no live credential store or Keychain, no adoption. This device's own
-    /// login is untouched and the capturer is the grant's only refresher.
-    ///
-    /// Same lifecycle as [`Self::start_login`]: the reply is an
-    /// [`AgentLoginStart`]; a `browser` flow is polled with
-    /// [`Self::poll_login`] (`done` once `capture` succeeded, its message on
-    /// failure), a `paste-code` flow is finished with [`Self::complete_login`],
-    /// and [`Self::cancel_login`] stops either. Abandoned flows are reaped
-    /// after [`FLOW_TTL`].
-    ///
-    /// What `capture` receives: Codex's `auth.json` (also for Pi's ChatGPT —
-    /// one `codex` login serves both), Claude's `{credential, profile}`, and
-    /// for every other sign-in the vault upload itself, `{provider, material,
-    /// profile?}` (Cursor's minted key, Grok's token set, Devin's
-    /// `credentials.toml`, Pi's GitHub Copilot token).
-    pub async fn start_capture_login(
-        &self,
-        harness: HarnessId,
-        provider: Option<&str>,
-        capture: CaptureSink,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.start_capture_login_with(harness, provider, capture, None)
-            .await
-    }
-
-    /// [`Self::start_capture_login`]; with `catalog`, an agent whose new
-    /// account is all Cloud runs it on (`sign_in_catalog::discovers_at_sign_in`)
-    /// has its models discovered in the sign-in's home once the upload is
-    /// done, and they go to `catalog` (kept as that account's).
-    pub async fn start_capture_login_with(
-        &self,
-        harness: HarnessId,
-        provider: Option<&str>,
-        capture: CaptureSink,
-        catalog: Option<CatalogPublisher>,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.sweep_flows();
-        let provider = provider.filter(|p| !p.is_empty());
-        // Logins several agents share go through one capture each: Pi's
-        // Claude is Claude Code's sign-in (the `claude` login), every agent's
-        // ChatGPT is Codex's (`codex`), every Copilot is Pi's editor-app
-        // device flow (`copilot`).
-        let mut start = match (harness, provider) {
-            (HarnessId::ClaudeCode, _) | (HarnessId::Pi, Some("anthropic")) => {
-                self.reap_spawned_flows(HarnessId::ClaudeCode);
-                self.start_claude_login_with(Some(capture)).await
-            }
-            (HarnessId::Codex, _)
-            | (HarnessId::Pi, None | Some("openai-codex"))
-            | (HarnessId::Opencode, None | Some("openai"))
-            | (HarnessId::Hermes, None | Some("openai-codex")) => {
-                self.start_codex_capture(capture).await?
-            }
-            (HarnessId::Pi | HarnessId::Opencode, Some("github-copilot")) => {
-                self.start_copilot_login_with(HarnessId::Pi, Some(capture))
-                    .await?
-            }
-            (HarnessId::Hermes, Some(which @ ("nous" | "xai-oauth"))) => {
-                self.start_hermes_capture(which, capture).await?
-            }
-            (HarnessId::Cursor, _) => self.start_cursor_capture(capture, catalog).await?,
-            (HarnessId::Grok, _) => self.start_grok_capture(capture, catalog).await?,
-            (HarnessId::Devin, _) => {
-                self.start_devin_login_with(None, Some(capture), catalog)?
-            }
-            (HarnessId::Antigravity, _) => self.start_antigravity_capture(capture, catalog)?,
-            (HarnessId::Muse, _) => self.start_muse_capture(capture, catalog).await?,
-            (other, _) => {
-                return Err(EngineError::Other(format!(
-                    "{other:?} sign-ins can't be connected to Cloud"
-                )));
-            }
-        };
-        if start.callback_port.is_none() {
-            start.callback_port = loopback_port(&start.url);
-        }
-        Ok(start)
-    }
-
-    /// Codex half of [`Self::start_capture_login`]: `codex login` into a
-    /// throwaway `CODEX_HOME`; once its `auth.json` holds a ChatGPT token set
-    /// it goes to `capture` and the home is shredded. Holds ChatGPT's fixed
-    /// callback port like every Codex sign-in, so a newer one supersedes it.
-    async fn start_codex_capture(
-        &self,
-        capture: CaptureSink,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.reap_spawned_flows(HarnessId::Codex);
-        self.reap_port_flows(oauth::OPENAI_LOOPBACK_PORT);
-        let login_id = new_id();
-        let home = self.login_home(&login_id)?;
-        // From here on every exit path — error, success, cancel (abort),
-        // engine shutdown — shreds the throwaway home.
-        let shred = ShredOnDrop(home.clone());
-        let cli = lock(&self.inner.cli_overrides)
-            .get(&HarnessId::Codex)
-            .cloned();
-        let mut command = match cli {
-            Some(cli) => {
-                let mut command = vardoger_harness::process::Command::new(cli);
-                command.arg("login").env("CODEX_HOME", &home);
-                command
-            }
-            None => vardoger_harness::codex::login_command(&home).map_err(|err| {
-                EngineError::Other(match err {
-                    vardoger_harness::HarnessError::NotInstalled(hint) => format!(
-                        "The `codex` CLI was not found on this device — install it first. ({hint})"
-                    ),
-                    other => format!("Could not resolve the codex CLI for login: {other}"),
-                })
-            })?,
-        };
-        command
-            .stdin(vardoger_harness::process::Stdio::null())
-            .stdout(vardoger_harness::process::Stdio::piped())
-            .stderr(vardoger_harness::process::Stdio::piped());
-        // The app opens the one authorization tab (see `start_codex_login`).
-        #[cfg(unix)]
-        if let Some(noop_browser) = ensure_noop_browser(&self.inner.config.root_dir()) {
-            command.env("BROWSER", noop_browser);
-        }
-        let child = vardoger_harness::process::spawn_agent(&mut command).map_err(|err| {
-            EngineError::Other(if err.kind() == std::io::ErrorKind::NotFound {
-                "The `codex` CLI was not found on this device — install it first.".into()
-            } else {
-                format!("Could not start the codex sign-in: {err}")
-            })
-        })?;
-        let (child, output, exit) = wire_login_child(child);
-        let kill = KillOnDrop(child);
-        let url = await_login_url(&output, &exit, scan_openai_url).await;
-        if url.is_empty()
-            && let Some(code) = *lock(&exit)
-        {
-            return Err(EngineError::Other(login_child_failure(code, &output)));
-        }
-        let state = Arc::new(Mutex::new(TaskLoginState {
-            url: (!url.is_empty()).then(|| url.clone()),
-            ..Default::default()
-        }));
-        let task_state = state.clone();
-        let auth_file = home.join("auth.json");
-        let handle = tokio::spawn(async move {
-            let waited = tokio::time::timeout(
-                FLOW_TTL,
-                await_codex_capture(&auth_file, &output, &exit, &task_state),
-            )
-            .await
-            .unwrap_or_else(|_| Err("The sign-in timed out — start again.".into()));
-            // The CLI answers the browser right after writing auth.json; give
-            // it a moment to exit on its own, then stop it either way.
-            if waited.is_ok() {
-                for _ in 0..30 {
-                    if lock(&exit).is_some() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-            drop(kill);
-            // Off the disk before the upload: the token set lives on only in
-            // this task's memory until the capturer has it.
-            drop(shred);
-            let outcome = match waited {
-                Ok(auth) => capture(auth).await,
-                Err(message) => Err(message),
-            };
-            lock(&task_state).outcome = Some(outcome);
-        });
-        lock(&self.inner.flows).insert(
-            login_id.clone(),
-            LoginFlow::Task {
-                harness: HarnessId::Codex,
-                started_at: Instant::now(),
-                state,
-                handle,
-                // The task's own guard shreds the home; a plain remove here
-                // could beat it to the files.
-                home: None,
-                port: Some(oauth::OPENAI_LOOPBACK_PORT),
-            },
-        );
-        Ok(AgentLoginStart {
-            login_id,
-            url,
-            mode: AgentLoginMode::Browser,
-            callback_port: None,
-        })
-    }
-
-    /// Cursor half of [`Self::start_capture_login`]: the SDK's browser
-    /// sign-in mints its key into a throwaway store, and the key (with its
-    /// expiry) goes to `capture` as a `cursor-key` upload.
-    async fn start_cursor_capture(
-        &self,
-        capture: CaptureSink,
-        catalog: Option<CatalogPublisher>,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.reap_spawned_flows(HarnessId::Cursor);
-        let login_id = new_id();
-        let home = self.login_home(&login_id)?;
-        let shred = ShredOnDrop(home.clone());
-        let command = vardoger_harness::cursor::login_command(&home.join("auth.json"))
-            .await
-            .map_err(|e| EngineError::Other(format!("Could not start the Cursor login: {e}")))?;
-        self.start_file_capture(
-            HarnessId::Cursor,
-            login_id,
-            command,
-            shred,
-            scan_cursor_url,
-            cursor_capture,
-            capture,
-            catalog,
-        )
-        .await
-    }
-
-    /// Grok half of [`Self::start_capture_login`]: `grok login --device-auth`
-    /// against a throwaway `GROK_HOME`; its xAI token set goes to `capture`
-    /// as a `grok` upload (the vault refreshes it from then on).
-    async fn start_grok_capture(
-        &self,
-        capture: CaptureSink,
-        catalog: Option<CatalogPublisher>,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.reap_spawned_flows(HarnessId::Grok);
-        let login_id = new_id();
-        let home = self.login_home(&login_id)?;
-        let shred = ShredOnDrop(home.clone());
-        let mut command = self
-            .cli_command(
-                HarnessId::Grok,
-                &["--no-auto-update", "login", "--device-auth"],
-            )
-            .await?;
-        command.env("GROK_HOME", &home);
-        #[cfg(unix)]
-        if let Some(noop) = ensure_noop_browser(&self.inner.config.root_dir()) {
-            command.env("BROWSER", noop);
-        }
-        self.start_file_capture(
-            HarnessId::Grok,
-            login_id,
-            command,
-            shred,
-            stores::scan_grok_url,
-            grok_capture,
-            capture,
-            catalog,
-        )
-        .await
-    }
-
-    /// Hermes half of [`Self::start_capture_login`] (`nous`, `xai-oauth`):
-    /// `hermes auth add <provider> --type oauth --no-browser` (a device code)
-    /// against a throwaway `HERMES_HOME` — and shared Nous store — so the
-    /// new grant lands there, never in this device's pool; its record goes
-    /// to `capture` as a `nous` / `xai-oauth` upload (the vault refreshes it
-    /// from then on).
-    async fn start_hermes_capture(
-        &self,
-        provider: &str,
-        capture: CaptureSink,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.reap_spawned_flows(HarnessId::Hermes);
-        let login_id = new_id();
-        let home = self.login_home(&login_id)?;
-        let shred = ShredOnDrop(home.clone());
-        let mut command = self
-            .cli_command(
-                HarnessId::Hermes,
-                &["auth", "add", provider, "--type", "oauth", "--no-browser"],
-            )
-            .await?;
-        command
-            .env("HERMES_HOME", &home)
-            .env("HERMES_SHARED_AUTH_DIR", home.join("shared"));
-        let read: fn(&Path) -> Result<Option<serde_json::Value>, String> = match provider {
-            "nous" => hermes_nous_capture,
-            _ => hermes_xai_capture,
-        };
-        self.start_file_capture(
-            HarnessId::Hermes,
-            login_id,
-            command,
-            shred,
-            stores::scan_hermes_url,
-            read,
-            capture,
-            None,
-        )
-        .await
-    }
-
-    /// Antigravity half of [`Self::start_capture_login`]: its own Google
-    /// sign-in (ACP `authenticate`, `oauth-personal`) against a throwaway
-    /// `GEMINI_HOME`, its token stored as a file there whatever the OS
-    /// (`AGY_ACP_FORCE_FILE_STORAGE`), then uploaded as an `antigravity`
-    /// login. Google refresh tokens don't rotate, so the account's email is
-    /// looked up with a token minted from it first (best effort).
-    fn start_antigravity_capture(
-        &self,
-        capture: CaptureSink,
-        catalog: Option<CatalogPublisher>,
-    ) -> Result<AgentLoginStart, EngineError> {
-        self.reap_spawned_flows(HarnessId::Antigravity);
-        let acp = self
-            .acp_harness(HarnessId::Antigravity)
-            .ok_or_else(|| EngineError::Other("Antigravity has no sign-in".into()))?;
-        let login_id = new_id();
-        let home = self.login_home(&login_id)?;
-        let shred = ShredOnDrop(home.clone());
-        #[cfg(unix)]
-        let browser = self
-            .inner
-            .config
-            .private_root()
-            .ok()
-            .and_then(|root| ensure_noop_browser(&root));
-        #[cfg(not(unix))]
-        let browser = None;
-        let options = vardoger_harness::acp::SignInOptions {
-            browser,
-            // Its Google sign-in, whatever method this device's own
-            // Antigravity is set to.
-            method: Some("oauth-personal".into()),
-            env: vec![
-                ("GEMINI_HOME".into(), home.clone().into()),
-                ("AGY_ACP_FORCE_FILE_STORAGE".into(), "1".into()),
-            ],
-            url_filter: None,
-        };
-        let state = Arc::new(Mutex::new(TaskLoginState::default()));
-        let task_state = state.clone();
-        let this = self.clone();
-        let handle = tokio::spawn(async move {
-            // Its sign-in is its ACP server's: a pinned archive Vardoger
-            // installs itself (as Settings' Install does), so connecting it
-            // for Cloud never needs Antigravity set up on this computer.
-            if !vardoger_harness::install::installed(HarnessId::Antigravity) {
-                lock(&task_state).message =
-                    Some("Installing Antigravity's sign-in on this computer…".into());
-                let installed = vardoger_harness::install::install_harness(
-                    HarnessId::Antigravity,
-                    vardoger_harness::CancellationToken::new(),
-                )
-                .await;
-                lock(&task_state).message = None;
-                if let Err(error) = installed {
-                    drop(shred);
-                    lock(&task_state).outcome = Some(Err(format!(
-                        "Couldn't install Antigravity's sign-in on this computer: {error}"
-                    )));
-                    return;
-                }
-            }
-            let progress_state = task_state.clone();
-            let signed_in = acp
-                .sign_in_with(options, move |progress| {
-                    if let vardoger_harness::acp::SignInProgress::OpenBrowser(url) = progress {
-                        lock(&progress_state).url.get_or_insert(url);
-                    }
-                })
-                .await
-                .map_err(|e| e.to_string());
-            let found = signed_in.and_then(|()| {
-                antigravity_capture(&shred.0)?.ok_or_else(|| {
-                    "Antigravity reported a successful sign-in, but saved no Google login."
-                        .to_string()
-                })
-            });
-            let kept = SignInHome::keep(HarnessId::Antigravity, shred, catalog);
-            let outcome = match found {
-                Ok(mut upload) => {
-                    if let Some(email) = this.google_email(&upload["material"]["antigravityToken"]).await {
-                        upload["profile"] = serde_json::json!({ "email": email });
-                    }
-                    capture(upload).await
-                }
-                Err(message) => Err(message),
-            };
-            kept.after_upload(&outcome);
-            lock(&task_state).outcome = Some(outcome);
-        });
-        lock(&self.inner.flows).insert(
-            login_id.clone(),
-            LoginFlow::Task {
-                harness: HarnessId::Antigravity,
-                started_at: Instant::now(),
-                state,
-                handle,
-                home: Some(home),
-                port: None,
-            },
-        );
-        Ok(AgentLoginStart {
-            login_id,
-            url: String::new(),
-            mode: AgentLoginMode::Browser,
-            callback_port: None,
-        })
-    }
-
     /// The Google account behind an Antigravity token blob: a token minted
     /// from its refresh token (Google's don't rotate, so this costs the
     /// login nothing), then `userinfo`. `None` on any failure — it only
@@ -2778,101 +2339,6 @@ impl AgentAccounts {
             }
         };
         str_field(&info, "email").filter(|email| email.contains('@'))
-    }
-
-    /// A captured sign-in run by a CLI that writes its credential file under
-    /// the throwaway home `shred` owns: polled until `read` finds a complete
-    /// login there, which goes to `capture` once the home is shredded. The
-    /// CLI is killed and the home shredded on every exit path (done, failed,
-    /// timed out, cancelled, superseded).
-    #[allow(clippy::too_many_arguments)]
-    async fn start_file_capture(
-        &self,
-        harness: HarnessId,
-        login_id: String,
-        mut command: vardoger_harness::process::Command,
-        shred: ShredOnDrop,
-        scan_url: fn(&str) -> Option<String>,
-        read: fn(&Path) -> Result<Option<serde_json::Value>, String>,
-        capture: CaptureSink,
-        catalog: Option<CatalogPublisher>,
-    ) -> Result<AgentLoginStart, EngineError> {
-        command
-            .stdin(vardoger_harness::process::Stdio::null())
-            .stdout(vardoger_harness::process::Stdio::piped())
-            .stderr(vardoger_harness::process::Stdio::piped());
-        let cli = stores::cli_name(harness);
-        let child = vardoger_harness::process::spawn_agent(&mut command).map_err(|err| {
-            EngineError::Other(if err.kind() == std::io::ErrorKind::NotFound {
-                format!("The `{cli}` CLI was not found on this device — install it first.")
-            } else {
-                format!("Could not start the {cli} sign-in: {err}")
-            })
-        })?;
-        let (child, output, exit) = wire_login_child(child);
-        let kill = KillOnDrop(child);
-        let url = await_login_url(&output, &exit, scan_url).await;
-        let state = Arc::new(Mutex::new(TaskLoginState {
-            url: (!url.is_empty()).then(|| url.clone()),
-            ..Default::default()
-        }));
-        let task_state = state.clone();
-        let device_code = matches!(harness, HarnessId::Grok | HarnessId::Hermes);
-        let handle = tokio::spawn(async move {
-            let home = shred.0.clone();
-            let wait = async {
-                loop {
-                    // Read before checking exit: a CLI may write and exit in one tick.
-                    let exited = *lock(&exit);
-                    if let Some(found) = read(&home)? {
-                        return Ok(found);
-                    }
-                    if let Some(code) = exited {
-                        return Err(login_child_failure(code, &output));
-                    }
-                    {
-                        let output = lock(&output);
-                        let mut state = lock(&task_state);
-                        if state.url.is_none() {
-                            state.url = scan_url(&output);
-                        }
-                        if device_code && state.message.is_none() {
-                            state.message = scan_device_code(&output)
-                                .map(|code| format!("Enter the code {code} when asked."));
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-            };
-            let waited = tokio::time::timeout(FLOW_TTL, wait)
-                .await
-                .unwrap_or_else(|_| Err("The sign-in timed out — start again.".into()));
-            drop(kill);
-            let kept = SignInHome::keep(harness, shred, catalog);
-            let outcome = match waited {
-                Ok(found) => capture(found).await,
-                Err(message) => Err(message),
-            };
-            kept.after_upload(&outcome);
-            lock(&task_state).outcome = Some(outcome);
-        });
-        lock(&self.inner.flows).insert(
-            login_id.clone(),
-            LoginFlow::Task {
-                harness,
-                started_at: Instant::now(),
-                state,
-                handle,
-                home: None,
-                port: None,
-            },
-        );
-        Ok(AgentLoginStart {
-            login_id,
-            url,
-            mode: AgentLoginMode::Browser,
-            callback_port: None,
-        })
     }
 
     /// Antigravity: its ACP server's Google sign-in (`oauth-personal`) into a
@@ -3083,13 +2549,12 @@ impl AgentAccounts {
         login_id: &str,
         code: &str,
     ) -> Result<AgentAccountsSnapshot, EngineError> {
-        let (verifier, expected_state, capture) = match lock(&self.inner.flows).get(login_id) {
+        let (verifier, expected_state) = match lock(&self.inner.flows).get(login_id) {
             Some(LoginFlow::Claude {
                 verifier,
                 state,
-                capture,
                 ..
-            }) => (verifier.clone(), state.clone(), capture.clone()),
+            }) => (verifier.clone(), state.clone()),
             _ => {
                 return Err(EngineError::Other(
                     "This sign-in attempt expired — start again.".into(),
@@ -3117,7 +2582,6 @@ impl AgentAccounts {
             &verifier,
             CLAUDE_REDIRECT,
             CLAUDE_SCOPES,
-            capture.as_ref(),
         )
         .await?;
         self.remove_flow(login_id);
@@ -3138,7 +2602,6 @@ impl AgentAccounts {
         verifier: &str,
         redirect: &str,
         default_scopes: &str,
-        capture: Option<&CaptureSink>,
     ) -> Result<(), EngineError> {
         let token = self
             .inner
@@ -3240,19 +2703,6 @@ impl AgentAccounts {
         });
         if let (Some(sub), Some(map)) = (subscription_type, oauth.as_object_mut()) {
             map.insert("subscriptionType".into(), serde_json::json!(sub));
-        }
-        if let Some(capture) = capture {
-            // The login's identity rides along (never secret): Cloud keeps
-            // several logins and tells them apart by it.
-            let profile = serde_json::json!({
-                "email": email,
-                "displayName": display_name,
-                "organization": org_name,
-                "plan": claude_plan(org_type.as_deref(), rate_tier.as_deref()),
-            });
-            return capture(serde_json::json!({ "credential": oauth, "profile": profile }))
-                .await
-                .map_err(EngineError::Other);
         }
         let mut oauth_account = serde_json::json!({
             "accountUuid": account_uuid,
@@ -5694,183 +5144,6 @@ fn wire_login_child(mut child: vardoger_harness::process::Child) -> LoginChildHa
     (child, output, exit)
 }
 
-/// The user-facing reason a login child exited without credentials: its last
-/// output line, redacted (a CLI's last words can carry a url or a code).
-fn login_child_failure(code: Option<i32>, output: &Mutex<String>) -> String {
-    if code == Some(0) {
-        return "The sign-in finished without credentials.".into();
-    }
-    let output = lock(output);
-    let last = strip_ansi(&output)
-        .trim()
-        .lines()
-        .last()
-        .unwrap_or("sign-in failed")
-        .to_string();
-    vardoger_harness::redact::redact_output(&last)
-}
-
-/// Wait for a captured `codex login` to write a ChatGPT token set into its
-/// throwaway home. An API-key login can't be refreshed by the vault, so it
-/// is refused rather than uploaded.
-async fn await_codex_capture(
-    auth_file: &Path,
-    output: &Mutex<String>,
-    exit: &Mutex<Option<Option<i32>>>,
-    state: &Mutex<TaskLoginState>,
-) -> Result<serde_json::Value, String> {
-    let complete = |auth: &serde_json::Value| {
-        let tokens = auth.get("tokens")?;
-        ["id_token", "access_token", "refresh_token"]
-            .iter()
-            .all(|k| {
-                tokens
-                    .get(k)
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|v| !v.is_empty())
-            })
-            .then_some(())
-    };
-    loop {
-        // Read before checking exit: the CLI may write and exit in one tick.
-        let exited = *lock(exit);
-        if let Some(auth) = read_json(auth_file) {
-            if complete(&auth).is_some() {
-                return Ok(auth);
-            }
-            if auth.get("OPENAI_API_KEY").is_some() && auth.get("tokens").is_none() {
-                return Err(
-                    "Codex signed in with an API key, which Cloud can't refresh — sign \
-                            in with ChatGPT, or save the key as an OpenAI API key instead."
-                        .into(),
-                );
-            }
-        }
-        if let Some(code) = exited {
-            return Err(login_child_failure(code, output));
-        }
-        {
-            let mut state = lock(state);
-            if state.url.is_none() {
-                state.url = scan_openai_url(&lock(output));
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
-/// A captured Cursor sign-in's upload, once the shim minted its key into
-/// `home/auth.json`: `{provider: "cursor-key", material: {key, expiresAt?}}`.
-fn cursor_capture(home: &Path) -> Result<Option<serde_json::Value>, String> {
-    let Some(auth) = read_json(&home.join("auth.json")) else {
-        return Ok(None);
-    };
-    let Some(key) = str_field(&auth, "apiKey") else {
-        return Ok(None);
-    };
-    let mut material = serde_json::json!({ "key": key });
-    if let Some(expires_at) = auth.get("apiKeyExpiresAtMs").and_then(|v| v.as_i64()) {
-        material["expiresAt"] = serde_json::json!(expires_at);
-    }
-    let mut upload = serde_json::json!({ "provider": "cursor-key", "material": material });
-    if let Some(email) = str_field(&auth, "email") {
-        upload["profile"] = serde_json::json!({ "email": email });
-    }
-    Ok(Some(upload))
-}
-
-/// A captured Grok sign-in's upload, once `grok login` wrote a complete xAI
-/// token set to `home/auth.json`: `{provider: "grok", material: {grokAuth,
-/// scope}, profile}` — the one issuer entry the agent would use, refresh
-/// token included (the vault becomes its only refresher).
-fn grok_capture(home: &Path) -> Result<Option<serde_json::Value>, String> {
-    let Some(auth) = read_json(&home.join("auth.json")) else {
-        return Ok(None);
-    };
-    let Some(detected) = stores::parse_grok_auth(auth) else {
-        return Ok(None);
-    };
-    let (Some(entry), Some(scope)) = (detected.credentials, detected.store_key) else {
-        return Ok(None);
-    };
-    if str_field(&entry, "refresh_token").is_none() {
-        // Written in two steps by some builds: wait for the whole set.
-        return Ok(None);
-    }
-    let mut profile = serde_json::Map::new();
-    let email = &detected.profile.email;
-    if email.contains('@') {
-        profile.insert("email".into(), serde_json::json!(email));
-    }
-    if let Some(name) = &detected.profile.display_name {
-        profile.insert("displayName".into(), serde_json::json!(name));
-    }
-    if let Some(plan) = &detected.profile.plan {
-        profile.insert("plan".into(), serde_json::json!(plan));
-    }
-    Ok(Some(serde_json::json!({
-        "provider": "grok",
-        "material": { "grokAuth": entry, "scope": scope },
-        "profile": profile,
-    })))
-}
-
-/// The email a JWT names, if it is one with an `email` claim.
-fn jwt_email(token: Option<&str>) -> Option<String> {
-    let claims = jwt_claims(token?)?;
-    str_field(&claims, "email").filter(|email| email.contains('@'))
-}
-
-/// `profile` with the email, when there is one.
-fn email_profile(email: Option<String>) -> serde_json::Value {
-    match email {
-        Some(email) => serde_json::json!({ "email": email }),
-        None => serde_json::json!({}),
-    }
-}
-
-/// A captured Hermes Nous Portal sign-in, once `hermes auth add nous` wrote
-/// a complete token set to `home/auth.json` (`providers.nous`): `{provider:
-/// "nous", material: {nousAuth}, profile}`, refresh token included (the
-/// vault becomes its only refresher).
-fn hermes_nous_capture(home: &Path) -> Result<Option<serde_json::Value>, String> {
-    let Some(auth) = read_json(&home.join("auth.json")) else {
-        return Ok(None);
-    };
-    let record = &auth["providers"]["nous"];
-    if str_field(record, "access_token").is_none() || str_field(record, "refresh_token").is_none()
-    {
-        return Ok(None);
-    }
-    let email = jwt_email(record["access_token"].as_str());
-    Ok(Some(serde_json::json!({
-        "provider": "nous",
-        "material": { "nousAuth": record },
-        "profile": email_profile(email),
-    })))
-}
-
-/// A captured Hermes xAI sign-in (`providers["xai-oauth"]`, its `tokens`
-/// complete): `{provider: "xai-oauth", material: {xaiOauth}, profile}`.
-fn hermes_xai_capture(home: &Path) -> Result<Option<serde_json::Value>, String> {
-    let Some(auth) = read_json(&home.join("auth.json")) else {
-        return Ok(None);
-    };
-    let record = &auth["providers"]["xai-oauth"];
-    let tokens = &record["tokens"];
-    if str_field(tokens, "access_token").is_none() || str_field(tokens, "refresh_token").is_none()
-    {
-        return Ok(None);
-    }
-    let email = jwt_email(tokens["id_token"].as_str())
-        .or_else(|| jwt_email(tokens["access_token"].as_str()));
-    Ok(Some(serde_json::json!({
-        "provider": "xai-oauth",
-        "material": { "xaiOauth": record },
-        "profile": email_profile(email),
-    })))
-}
-
 /// A captured Antigravity Google sign-in, once its server saved the token
 /// file under the throwaway `GEMINI_HOME`: `{provider: "antigravity",
 /// material: {antigravityToken}}` (the blob names no account; the caller
@@ -5888,92 +5161,7 @@ fn antigravity_capture(home: &Path) -> Result<Option<serde_json::Value>, String>
     })))
 }
 
-/// A captured Muse sign-in: its whole `auth.json` once it holds a Meta
-/// login (`{provider: "muse", material: {museAuth}, profile}`). The record
-/// is found wherever Muse nests it (`providers.meta`), by its access token.
-pub(crate) fn muse_capture(file: &Path) -> Option<serde_json::Value> {
-    let auth = read_json(file)?;
-    let login = muse_login_record(&auth)?;
-    let mut profile = serde_json::Map::new();
-    if let Some(email) = str_field(login, "user_email").filter(|e| e.contains('@')) {
-        profile.insert("email".into(), serde_json::json!(email));
-    }
-    if let Some(name) = str_field(login, "user_full_name") {
-        profile.insert("displayName".into(), serde_json::json!(name));
-    }
-    Some(serde_json::json!({
-        "provider": "muse",
-        "material": { "museAuth": auth },
-        "profile": profile,
-    }))
-}
-
-/// Muse's Meta login inside its `auth.json`: `providers.meta` when it is
-/// there, else the first object holding an `access_token` (the nesting is
-/// Muse's to change).
-fn muse_login_record(auth: &serde_json::Value) -> Option<&serde_json::Value> {
-    let meta = &auth["providers"]["meta"];
-    if str_field(meta, "access_token").is_some() {
-        return Some(meta);
-    }
-    fn find(value: &serde_json::Value, depth: usize) -> Option<&serde_json::Value> {
-        let map = value.as_object()?;
-        if map
-            .get("access_token")
-            .and_then(|v| v.as_str())
-            .is_some_and(|t| !t.is_empty())
-        {
-            return Some(value);
-        }
-        if depth == 0 {
-            return None;
-        }
-        map.values().find_map(|v| find(v, depth - 1))
-    }
-    find(auth, 3)
-}
-
-/// Kills a captured sign-in's CLI when its task ends or is aborted (cancel,
-/// a superseding sign-in, engine shutdown).
-struct KillOnDrop(Arc<Mutex<Option<vardoger_harness::process::Child>>>);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if let Some(child) = lock(&self.0).as_mut() {
-            let _ = child.start_kill();
-        }
-    }
-}
-
-/// A Cloud sign-in's throwaway home past its sign-in. Off the disk before
-/// the upload — the credential lives on only in the task's memory until the
-/// capturer has it — unless the new account's models are discovered there
-/// once the vault has it (`sign_in_catalog`): then it's shredded as that
-/// discovery ends, in seconds, on a task of its own.
-enum SignInHome {
-    Shredded,
-    Kept(HarnessId, ShredOnDrop, CatalogPublisher),
-}
-
-impl SignInHome {
-    fn keep(harness: HarnessId, shred: ShredOnDrop, catalog: Option<CatalogPublisher>) -> Self {
-        match catalog.filter(|_| crate::sign_in_catalog::discovers_at_sign_in(harness)) {
-            Some(catalog) => Self::Kept(harness, shred, catalog),
-            None => Self::Shredded,
-        }
-    }
-
-    /// The upload's done (`outcome`): discover and keep the models when it
-    /// went; the home goes either way.
-    fn after_upload(self, outcome: &Result<(), String>) {
-        if let (Self::Kept(harness, shred, catalog), Ok(())) = (self, outcome) {
-            let env = crate::sign_in_catalog::home_env(harness, &shred.0);
-            crate::sign_in_catalog::discover_then_publish(harness, env, shred, Some(catalog));
-        }
-    }
-}
-
-/// Securely deletes a captured sign-in's throwaway home when dropped: every
+/// Securely deletes a sign-in's throwaway home when dropped: every
 /// regular file is overwritten with zeros and synced before the tree is
 /// removed. Best effort by nature — copy-on-write filesystems and SSD wear
 /// levelling may keep old blocks — but nothing readable stays behind under
@@ -6310,67 +5498,6 @@ mod tests {
         assert!(entries["limited"].retry_at.is_some());
     }
 
-    /// A Cloud sign-in's home is gone before its upload, unless its agent's
-    /// new account has its models discovered there: then it stays through
-    /// the upload, the models go to the publisher, and it's gone as
-    /// discovery ends. A failed upload, or an agent that reaches several
-    /// providers (Hermes), keeps nothing.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_sign_in_home_stays_only_for_its_new_accounts_models() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let home = |name: &str| {
-            let home = dir.path().join(name);
-            std::fs::create_dir_all(&home).unwrap();
-            std::fs::write(home.join("auth.json"), "{}").unwrap();
-            home
-        };
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(HarnessId, Vec<String>)>();
-        let publisher: CatalogPublisher = Arc::new(move |harness, models: Vec<vardoger_proto::Model>| {
-            let tx = tx.clone();
-            Box::pin(async move {
-                let _ = tx.send((harness, models.into_iter().map(|m| m.id).collect()));
-            })
-        });
-
-        let plain = home("plain");
-        let kept = SignInHome::keep(HarnessId::Grok, ShredOnDrop(plain.clone()), None);
-        assert!(!plain.exists(), "no publisher: gone before the upload");
-        kept.after_upload(&Ok(()));
-
-        let hermes = home("hermes");
-        let _kept = SignInHome::keep(HarnessId::Hermes, ShredOnDrop(hermes.clone()), Some(publisher.clone()));
-        assert!(!hermes.exists(), "Hermes reaches several providers: nothing to discover");
-
-        let failed = home("failed");
-        let kept = SignInHome::keep(HarnessId::Grok, ShredOnDrop(failed.clone()), Some(publisher.clone()));
-        assert!(failed.exists(), "kept through the upload");
-        kept.after_upload(&Err("refused".into()));
-        assert!(!failed.exists(), "a failed upload: gone, nothing discovered");
-
-        // The child lists models only when pointed at the home, and only
-        // while it's still there.
-        let grok = home("grok");
-        let script = dir.path().join("engine");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\n[ \"$GROK_HOME\" = \"{}\" ] && [ -f \"$GROK_HOME/auth.json\" ] && echo '[{{\"id\":\"grok-4.7\",\"label\":\"Grok 4.7\"}}]'\n",
-                grok.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        crate::sign_in_catalog::test_exe::set(Some(script));
-        let kept = SignInHome::keep(HarnessId::Grok, ShredOnDrop(grok.clone()), Some(publisher));
-        kept.after_upload(&Ok(()));
-        let published = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
-        crate::sign_in_catalog::test_exe::set(None);
-        assert_eq!(published, (HarnessId::Grok, vec!["grok-4.7".to_string()]));
-        assert!(!grok.exists(), "gone once discovery ended");
-        assert!(rx.try_recv().is_err(), "nothing else was published");
-    }
     use super::*;
 
     /// A Keychain the engine can't use (the search and the write both
@@ -7775,442 +6902,6 @@ mod login_tests {
         assert!(!routes.is_registered(&remote.login_id));
     }
 
-    /// A capture sink that records what it is handed (the vault upload in
-    /// production), failing with `fail` when given.
-    fn recording_sink(
-        fail: Option<&'static str>,
-    ) -> (CaptureSink, Arc<Mutex<Vec<serde_json::Value>>>) {
-        let got = Arc::new(Mutex::new(Vec::new()));
-        let log = got.clone();
-        let sink: CaptureSink = Arc::new(move |value| {
-            let log = log.clone();
-            Box::pin(async move {
-                lock(&log).push(value);
-                fail.map_or(Ok(()), |message| Err(message.to_string()))
-            })
-        });
-        (sink, got)
-    }
-
-    /// [`poll_until_settled`] with room for a spawned CLI's own timing.
-    async fn poll_until_settled_slowly(accounts: &AgentAccounts, login_id: &str) -> AgentLoginPoll {
-        for _ in 0..200 {
-            let poll = accounts.poll_login(login_id).await.unwrap();
-            if poll.status != AgentLoginStatus::Pending {
-                return poll;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        panic!("login never settled");
-    }
-
-    fn no_sign_in_homes_left(root: &Path) -> bool {
-        std::fs::read_dir(config(root).root_dir())
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .all(|e| !e.file_name().to_string_lossy().starts_with(".login-"))
-            })
-            .unwrap_or(true)
-    }
-
-    #[tokio::test]
-    async fn claude_capture_hands_off_tokens_without_touching_this_device() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (token_url, _server) = token_server().await;
-        let accounts = loopback_accounts(tmp.path(), token_url);
-        // No live login: a regular sign-in would go live here at once.
-        let (sink, captured) = recording_sink(None);
-        let start = accounts
-            .start_capture_login(HarnessId::ClaudeCode, None, sink)
-            .await
-            .unwrap();
-        assert_eq!(start.mode, AgentLoginMode::Browser);
-        let port = start.callback_port.unwrap();
-        let state = reqwest::Url::parse(&start.url)
-            .unwrap()
-            .query_pairs()
-            .find(|(k, _)| k == "state")
-            .unwrap()
-            .1
-            .into_owned();
-        let response = browser_get(port, &format!("/callback?code=good-code&state={state}")).await;
-        assert!(response.starts_with("HTTP/1.1 302"), "{response}");
-        let poll = poll_until_settled(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Done, "{:?}", poll.message);
-
-        // The capturer got the claudeAiOauth blob, with the login's
-        // profile beside it (what tells two stored logins apart)…
-        let captured = lock(&captured).clone();
-        assert_eq!(captured.len(), 1);
-        let credential = &captured[0]["credential"];
-        assert_eq!(credential["accessToken"], "access");
-        assert_eq!(credential["refreshToken"], "refresh");
-        assert!(credential["expiresAt"].as_i64().unwrap() > now_ms());
-        assert!(
-            credential["scopes"]
-                .as_array()
-                .is_some_and(|s| !s.is_empty())
-        );
-        assert!(captured[0]["profile"].is_object());
-        // …and nothing landed on this device: no live credentials, no
-        // identity rewrite, no slot, no account row.
-        let config = config(tmp.path());
-        assert!(!config.claude_creds_file().exists());
-        assert!(!config.claude_config_file.exists());
-        assert!(accounts.read_slots(HarnessId::ClaudeCode).is_empty());
-        let snapshot = accounts.list(false).await.unwrap();
-        assert!(
-            !snapshot
-                .accounts
-                .iter()
-                .any(|a| a.harness == HarnessId::ClaudeCode)
-        );
-    }
-
-    #[tokio::test]
-    async fn claude_capture_keeps_the_live_login_and_reports_upload_failures() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (token_url, _server) = token_server().await;
-        let accounts = loopback_accounts(tmp.path(), token_url);
-        write_live_claude(tmp.path(), "acct-bob", "bob@example.com", "bob-token");
-        accounts.list(false).await.unwrap();
-        let live_before = std::fs::read_to_string(config(tmp.path()).claude_creds_file()).unwrap();
-        let slots_before = accounts.read_slots(HarnessId::ClaudeCode).len();
-
-        let (sink, captured) = recording_sink(Some("The vault refused that sign-in."));
-        let start = accounts
-            .start_capture_login(HarnessId::ClaudeCode, None, sink)
-            .await
-            .unwrap();
-        let state = reqwest::Url::parse(&start.url)
-            .unwrap()
-            .query_pairs()
-            .find(|(k, _)| k == "state")
-            .unwrap()
-            .1
-            .into_owned();
-        let page = browser_get(
-            start.callback_port.unwrap(),
-            &format!("/callback?code=good-code&state={state}"),
-        )
-        .await;
-        assert!(page.starts_with("HTTP/1.1 400"), "{page}");
-        assert!(page.contains("The vault refused that sign-in."), "{page}");
-        let poll = poll_until_settled(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Error);
-        assert_eq!(
-            poll.message.as_deref(),
-            Some("The vault refused that sign-in.")
-        );
-        assert_eq!(lock(&captured).len(), 1);
-        assert_eq!(
-            std::fs::read_to_string(config(tmp.path()).claude_creds_file()).unwrap(),
-            live_before,
-            "the live login is never rewritten"
-        );
-        assert_eq!(
-            accounts.read_slots(HarnessId::ClaudeCode).len(),
-            slots_before
-        );
-    }
-
-    /// A stand-in `codex` CLI: prints the authorize url, then writes
-    /// `auth_json` into `$CODEX_HOME/auth.json` and exits.
-    #[cfg(unix)]
-    fn fake_codex(root: &Path, auth_json: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let script = root.join("fake-codex");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\n\
-                 echo 'Starting local login server on http://localhost:1455.' >&2\n\
-                 echo 'https://auth.openai.com/oauth/authorize?response_type=code&state=s' >&2\n\
-                 sleep 0.3\n\
-                 printf '%s' '{auth_json}' > \"$CODEX_HOME/auth.json\"\n\
-                 sleep 0.2\n"
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        script
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn codex_capture_uploads_auth_json_and_shreds_the_throwaway_home() {
-        let tmp = tempfile::tempdir().unwrap();
-        let accounts = AgentAccounts::new(config(tmp.path()));
-        accounts.override_cli(
-            HarnessId::Codex,
-            fake_codex(
-                tmp.path(),
-                r#"{"tokens":{"id_token":"id","access_token":"at","refresh_token":"rt","account_id":"acct"},"last_refresh":"2026-10-01T00:00:00Z"}"#,
-            ),
-        );
-        let (sink, captured) = recording_sink(None);
-        let start = accounts
-            .start_capture_login(HarnessId::Codex, None, sink)
-            .await
-            .unwrap();
-        assert!(
-            start.url.starts_with("https://auth.openai.com/"),
-            "{}",
-            start.url
-        );
-        let poll = poll_until_settled_slowly(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Done, "{:?}", poll.message);
-
-        let captured = lock(&captured).clone();
-        assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0]["tokens"]["refresh_token"], "rt");
-        // The throwaway home is gone and nothing touched this device's Codex.
-        assert!(no_sign_in_homes_left(tmp.path()));
-        assert!(!config(tmp.path()).codex_auth_file().exists());
-        assert!(accounts.read_slots(HarnessId::Codex).is_empty());
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn codex_capture_refuses_an_api_key_login() {
-        let tmp = tempfile::tempdir().unwrap();
-        let accounts = AgentAccounts::new(config(tmp.path()));
-        accounts.override_cli(
-            HarnessId::Codex,
-            fake_codex(tmp.path(), r#"{"OPENAI_API_KEY":"sk-test"}"#),
-        );
-        let (sink, captured) = recording_sink(None);
-        let start = accounts
-            .start_capture_login(HarnessId::Codex, None, sink)
-            .await
-            .unwrap();
-        let poll = poll_until_settled_slowly(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Error);
-        assert!(poll.message.unwrap().contains("API key"));
-        assert!(lock(&captured).is_empty(), "nothing is uploaded");
-        assert!(no_sign_in_homes_left(tmp.path()));
-    }
-
-    /// A fake CLI that prints `url` and a device code, then writes
-    /// `contents` to `$<home_var>/auth.json`.
-    #[cfg(unix)]
-    fn fake_login_cli(
-        root: &Path,
-        name: &str,
-        home_var: &str,
-        url: &str,
-        contents: &str,
-    ) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let script = root.join(name);
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\n\
-                 echo 'Open {url} and enter the code ABCD-EFGH' >&2\n\
-                 sleep 0.3\n\
-                 printf '%s' '{contents}' > \"${home_var}/auth.json\"\n\
-                 sleep 0.2\n"
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        script
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn grok_capture_uploads_the_token_set_and_leaves_this_device_alone() {
-        let tmp = tempfile::tempdir().unwrap();
-        let accounts = AgentAccounts::new(config(tmp.path()));
-        let auth = r#"{"https://auth.x.ai::client-1":{"key":"at","refresh_token":"rt","expires_at":"2030-01-01T00:00:00Z","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client-1","user_id":"u1","email":"ada@x.ai","first_name":"Ada","subscription_tier":"SUBSCRIPTION_TIER_SUPER_GROK"}}"#;
-        accounts.override_cli(
-            HarnessId::Grok,
-            fake_login_cli(
-                tmp.path(),
-                "fake-grok",
-                "GROK_HOME",
-                "https://accounts.x.ai/device",
-                auth,
-            ),
-        );
-        let (sink, captured) = recording_sink(None);
-        let start = accounts
-            .start_capture_login(HarnessId::Grok, None, sink)
-            .await
-            .unwrap();
-        assert!(
-            start.url.starts_with("https://accounts.x.ai/"),
-            "{}",
-            start.url
-        );
-        let poll = poll_until_settled_slowly(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Done, "{:?}", poll.message);
-        let captured = lock(&captured).clone();
-        assert_eq!(captured.len(), 1);
-        let upload = &captured[0];
-        assert_eq!(upload["provider"], "grok");
-        assert_eq!(upload["material"]["scope"], "https://auth.x.ai::client-1");
-        assert_eq!(upload["material"]["grokAuth"]["refresh_token"], "rt");
-        assert_eq!(upload["profile"]["email"], "ada@x.ai");
-        assert!(no_sign_in_homes_left(tmp.path()));
-        assert!(accounts.read_slots(HarnessId::Grok).is_empty());
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn hermes_capture_uploads_its_nous_login_and_leaves_this_device_alone() {
-        let tmp = tempfile::tempdir().unwrap();
-        let accounts = AgentAccounts::new(config(tmp.path()));
-        let live = accounts.inner.config.hermes_home.join("auth.json");
-        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
-        std::fs::write(&live, r#"{"version":1,"providers":{}}"#).unwrap();
-        let auth = r#"{"version":1,"providers":{"nous":{"access_token":"nat","refresh_token":"nrt","expires_at":"2030-01-01T00:00:00Z","client_id":"hermes-cli","portal_base_url":"https://portal.nousresearch.com","inference_base_url":"https://inference-api.nousresearch.com/v1","scope":"inference:invoke"}}}"#;
-        accounts.override_cli(
-            HarnessId::Hermes,
-            fake_login_cli(
-                tmp.path(),
-                "fake-hermes",
-                "HERMES_HOME",
-                "https://portal.nousresearch.com/device",
-                auth,
-            ),
-        );
-        let (sink, captured) = recording_sink(None);
-        let start = accounts
-            .start_capture_login(HarnessId::Hermes, Some("nous"), sink)
-            .await
-            .unwrap();
-        let poll = poll_until_settled_slowly(&accounts, &start.login_id).await;
-        assert_eq!(poll.status, AgentLoginStatus::Done, "{:?}", poll.message);
-        let captured = lock(&captured).clone();
-        assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0]["provider"], "nous");
-        assert_eq!(captured[0]["material"]["nousAuth"]["refresh_token"], "nrt");
-        assert_eq!(
-            captured[0]["material"]["nousAuth"]["portal_base_url"],
-            "https://portal.nousresearch.com"
-        );
-        // This device's own pool is untouched, and the throwaway home gone.
-        assert_eq!(
-            std::fs::read_to_string(&live).unwrap(),
-            r#"{"version":1,"providers":{}}"#
-        );
-        assert!(no_sign_in_homes_left(tmp.path()));
-    }
-
-    #[test]
-    fn hermes_xai_antigravity_and_muse_captures_are_their_own_records() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-        let claims = |claims: serde_json::Value| {
-            format!(
-                "h.{}.s",
-                BASE64_URL.encode(serde_json::to_vec(&claims).unwrap())
-            )
-        };
-        // Hermes' xAI: its tokens, complete.
-        assert_eq!(hermes_xai_capture(home), Ok(None));
-        let id_token = claims(serde_json::json!({ "email": "ada@x.ai" }));
-        let auth = serde_json::json!({ "providers": { "xai-oauth": {
-            "tokens": { "access_token": "xat", "refresh_token": "xrt", "id_token": id_token },
-            "auth_mode": "oauth_device_code",
-            "discovery": { "token_endpoint": "https://auth.x.ai/oauth2/token" },
-        } } });
-        std::fs::write(home.join("auth.json"), auth.to_string()).unwrap();
-        let xai = hermes_xai_capture(home).unwrap().unwrap();
-        assert_eq!(xai["provider"], "xai-oauth");
-        assert_eq!(xai["material"]["xaiOauth"]["tokens"]["refresh_token"], "xrt");
-        assert_eq!(xai["profile"]["email"], "ada@x.ai");
-        assert_eq!(hermes_nous_capture(home), Ok(None), "no Nous login there");
-        // Antigravity: the Google token blob, once it holds a refresh token.
-        assert_eq!(antigravity_capture(home), Ok(None));
-        let acp = home.join("antigravity-acp");
-        std::fs::create_dir_all(&acp).unwrap();
-        std::fs::write(
-            acp.join("acp_token.json"),
-            r#"{"client_id":"cid","client_secret":"cs","refresh_token":"grt","token_uri":"https://oauth2.googleapis.com/token","scopes":["openid"],"project_id":"p1"}"#,
-        )
-        .unwrap();
-        let google = antigravity_capture(home).unwrap().unwrap();
-        assert_eq!(google["provider"], "antigravity");
-        assert_eq!(google["material"]["antigravityToken"]["project_id"], "p1");
-        // Muse: the whole document, its Meta login found where it nests.
-        let muse = home.join("muse.json");
-        assert_eq!(muse_capture(&muse), None);
-        std::fs::write(
-            &muse,
-            r#"{"schema_version":2,"providers":{"meta":{"mechanism":"oauth","access_token":"mat","expires_at":1900000000,"user_email":"ada@meta.com","user_full_name":"Ada L"}}}"#,
-        )
-        .unwrap();
-        let meta = muse_capture(&muse).unwrap();
-        assert_eq!(meta["provider"], "muse");
-        assert_eq!(meta["material"]["museAuth"]["schema_version"], 2);
-        assert_eq!(meta["profile"]["email"], "ada@meta.com");
-        assert_eq!(meta["profile"]["displayName"], "Ada L");
-        std::fs::write(
-            &muse,
-            r#"{"schema_version":3,"accounts":{"default":{"meta":{"access_token":"mat2"}}}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            muse_capture(&muse).unwrap()["material"]["museAuth"]["schema_version"],
-            3,
-            "found deeper, wherever Muse puts it"
-        );
-    }
-
-    #[test]
-    fn a_cursor_capture_is_its_key_and_expiry() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(cursor_capture(tmp.path()), Ok(None), "nothing minted yet");
-        std::fs::write(
-            tmp.path().join("auth.json"),
-            r#"{"apiKey":"key_1","apiKeyExpiresAtMs":1900000000000,"email":"ada@example.com"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            cursor_capture(tmp.path()).unwrap(),
-            Some(serde_json::json!({
-                "provider": "cursor-key",
-                "material": {"key": "key_1", "expiresAt": 1900000000000i64},
-                "profile": {"email": "ada@example.com"},
-            }))
-        );
-        // A token set without its refresh token isn't a login yet.
-        std::fs::write(
-            tmp.path().join("auth.json"),
-            r#"{"https://auth.x.ai::c":{"key":"at","user_id":"u"}}"#,
-        )
-        .unwrap();
-        assert_eq!(grok_capture(tmp.path()), Ok(None));
-    }
-
-    #[tokio::test]
-    async fn capture_is_offered_only_for_sign_ins_cloud_takes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let accounts = AgentAccounts::new(config(tmp.path()));
-        let (sink, _) = recording_sink(None);
-        // (Every agent's own sign-ins are offered on Cloud; these are not
-        // any agent's.)
-        for (harness, provider) in [
-            (HarnessId::Hermes, Some("qwen-oauth")),
-            (HarnessId::Opencode, Some("anthropic")),
-            (HarnessId::Pi, Some("kimi-coding")),
-            (HarnessId::Fx, None),
-            (HarnessId::Mock, None),
-        ] {
-            assert!(
-                accounts
-                    .start_capture_login(harness, provider, sink.clone())
-                    .await
-                    .is_err(),
-                "{harness:?} {provider:?}"
-            );
-        }
-        assert!(no_sign_in_homes_left(tmp.path()));
-    }
 }
 
 #[cfg(test)]
