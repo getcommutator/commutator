@@ -906,7 +906,6 @@ mod tests {
             temp.path(),
             Arc::new(crate::HarnessRegistry::new()),
             vardoger_proto::HarnessId::Mock,
-            None,
         )
         .unwrap();
         core.workspace

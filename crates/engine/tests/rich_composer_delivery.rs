@@ -239,7 +239,7 @@ async fn setup(
     let registry = HarnessRegistry::new();
     registry.register(harness.clone());
     let core =
-        EngineCore::assemble(&tmp.path().join("data"), Arc::new(registry), id, None).unwrap();
+        EngineCore::assemble(&tmp.path().join("data"), Arc::new(registry), id).unwrap();
     let client = vardoger_rpc::memory_client(core.rpc_service());
     client
         .call(

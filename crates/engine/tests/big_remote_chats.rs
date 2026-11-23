@@ -197,7 +197,7 @@ fn assemble(dir: &std::path::Path, device: &str) -> EngineCore {
     std::fs::write(dir.join("device-id"), device).unwrap();
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(Replies));
-    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None).expect("engine")
+    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock).expect("engine")
 }
 
 const CHAT: &str = "whale";
@@ -253,7 +253,7 @@ async fn agents_reach_a_huge_chat_on_another_device() {
         .unwrap();
     host.workspace.rename_chat(CHAT, "Whale").unwrap();
     seed(&host);
-    let _relay_host = host.start_host_relay(&relay);
+    let _relay_host = host.start_host_relay(&relay, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     // The reader knows the chat from the registry, not the doc: it holds none
     // of the transcript.

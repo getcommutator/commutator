@@ -214,7 +214,7 @@ fn registry_for(harness: HarnessId) -> Arc<HarnessRegistry> {
 fn assemble(dir: &std::path::Path, device_id: &str) -> EngineCore {
     std::fs::create_dir_all(dir).expect("create data dir");
     std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    EngineCore::assemble(dir, registry(), HarnessId::Mock, None).expect("engine assembles")
+    EngineCore::assemble(dir, registry(), HarnessId::Mock).expect("engine assembles")
 }
 
 async fn git(cwd: &std::path::Path, args: &[&str]) {
@@ -456,7 +456,7 @@ async fn checkout_change_request_stream_matches_locally_and_through_device_routi
         .expect("local change request subscribe");
     let local_frame = local.recv().await.expect("local initial frame");
 
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let core_a = assemble(&dirs.path().join("a"), "device-a");
     let mut link_config =
         LinkCacheConfig::new(relay_url.clone(), Arc::new(StaticToken("test-user".into())));
@@ -726,7 +726,7 @@ async fn git_status_is_computed_on_the_checkout_host_through_the_relay() {
     assert_eq!(expected["status"]["deviceId"], "host-device");
     assert!(expected["status"].get("patch").is_none());
 
-    let _host_relay = host.start_host_relay(&relay_url);
+    let _host_relay = host.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let consumer = assemble(&dirs.path().join("consumer"), "consumer-device");
     let mut config = LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
     config.probe_timeout = Duration::from_secs(5);
@@ -778,7 +778,7 @@ async fn target_device_id_routes_over_the_relay() {
 
     // Engine B hosts its device room on the fake relay.
     let core_b = assemble(&dirs.path().join("b"), "device-b");
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     // Engine A dials peers through the same relay.
     let core_a = assemble(&dirs.path().join("a"), "device-a");
@@ -1399,7 +1399,7 @@ async fn exercise_terminal_relay(projectless: bool) {
             None,
         )
         .expect("chat row on B");
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     let core_a = assemble(&dirs.path().join("a"), "device-a");
     // A conflicting local row makes accidental local dispatch observable even
@@ -1571,7 +1571,7 @@ async fn workspace_file_surface_proxies_over_the_relay() {
         .workspace
         .create_chat("chat-files", Some("space-files"), None, None, None)
         .expect("chat on B");
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     let core_a = assemble(&dirs.path().join("a-files"), "device-a");
     let mut link_config =
@@ -1914,7 +1914,7 @@ async fn files_with_no_words_queued_on_another_device_reach_the_host() {
             .rename_chat(CHAT, "Pre-titled")
             .expect("avoid auto-title run");
     }
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let mut link_config =
         LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
     link_config.probe_timeout = Duration::from_secs(5);
@@ -2046,7 +2046,7 @@ async fn a_run_from_another_device_names_the_hosts_copy_of_its_upload() {
             .rename_chat(CHAT, "Pre-titled")
             .expect("avoid auto-title run");
     }
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let mut link_config =
         LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
     link_config.probe_timeout = Duration::from_secs(5);
@@ -2189,7 +2189,7 @@ async fn queue_watch_and_single_consumption_route_to_the_remote_chat_host() {
             true,
         )
         .expect("seed held queue row");
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     let core_a = assemble(&dirs.path().join("a"), "device-a");
     let mut link_config =
@@ -2331,7 +2331,7 @@ async fn workspace_entry_mutations_are_forwarded_to_the_owning_plain_folder() {
     let (relay_url, _relay) = fake_device_room().await;
     let dirs = tempfile::tempdir().unwrap();
     let host = assemble(&dirs.path().join("host"), "mutation-host");
-    let _host_relay = host.start_host_relay(&relay_url);
+    let _host_relay = host.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let viewer = assemble(&dirs.path().join("viewer"), "mutation-viewer");
     let mut config = LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
     config.probe_timeout = Duration::from_secs(5);
@@ -2394,7 +2394,7 @@ async fn a_warm_start_for_another_device_starts_nothing() {
     let (relay_url, _relay) = fake_device_room().await;
     let dirs = tempfile::tempdir().unwrap();
     let host = assemble(&dirs.path().join("host"), "warm-host");
-    let _host_relay = host.start_host_relay(&relay_url);
+    let _host_relay = host.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     let viewer = assemble(&dirs.path().join("viewer"), "warm-viewer");
     let mut config = LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
     config.probe_timeout = Duration::from_secs(5);
@@ -2427,186 +2427,6 @@ async fn a_warm_start_for_another_device_starts_nothing() {
     assert_eq!(viewer.sessions.warm_chats(), vec![chat.to_string()]);
     viewer.shutdown().await;
     host.shutdown().await;
-}
-
-/// Full MCP discovery/create/converse flow over two real engines, a shared
-/// registry and the same device relay used by the routing tests above.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn mcp_standalone_session_executes_on_the_selected_device() {
-    use serde_json::json;
-    use vardoger_mcp::{Origin, Tools, Vardoger};
-
-    let (relay_url, relay) = fake_device_room().await;
-    let dirs = tempfile::tempdir().unwrap();
-    let a = assemble(&dirs.path().join("a"), "device-a");
-    // Mock is deliberately disabled in production catalogs. Offer a scripted
-    // Codex adapter on B so MCP exercises normal availability validation.
-    let remote_dir = dirs.path().join("b");
-    std::fs::create_dir_all(&remote_dir).unwrap();
-    std::fs::write(remote_dir.join("device-id"), "device-b").unwrap();
-    let profile = vardoger_engine::EngineProfile::development(&remote_dir, "dev-org", "dev-user");
-    let remote_store = vardoger_sync::DocsStore::open(profile.store_root()).unwrap();
-    let b = EngineCore::assemble_with_profile(
-        profile,
-        registry_for(HarnessId::Codex),
-        HarnessId::Codex,
-        None,
-    )
-    .unwrap();
-    let registry = vardoger_sync::registry::mock_server::MockRegistryServer::start().await;
-    a.workspace.connect_registry_url(&registry.url());
-    b.workspace.connect_registry_url(&registry.url());
-    let host = b.start_host_relay(&relay_url);
-    let mut config = LinkCacheConfig::new(relay_url, Arc::new(StaticToken("test-user".into())));
-    config.probe_timeout = Duration::from_secs(5);
-    a.set_links(LinkCache::new(config));
-    let client = vardoger_rpc::memory_client(a.rpc_service());
-    let tools = Tools::new(Arc::new(Vardoger::with_client(
-        client,
-        Origin {
-            chat_id: Some("coordinator".into()),
-            device_id: Some("device-a".into()),
-            ..Default::default()
-        },
-    )));
-    a.workspace
-        .create_chat("coordinator", None, Some("device-a"), None, None)
-        .unwrap();
-    let folder = dirs.path().join("remote-project");
-    std::fs::create_dir_all(&folder).unwrap();
-    b.workspace
-        .create_space(
-            "remote-project",
-            "device-b",
-            folder.to_str().unwrap(),
-            None,
-            false,
-        )
-        .unwrap();
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        let devices = tools.call("list_devices", json!({})).await.unwrap();
-        let projects = tools
-            .call("list_projects", json!({"device":"device-b"}))
-            .await;
-        if devices["devices"].as_array().unwrap().len() == 2
-            && projects
-                .as_ref()
-                .is_ok_and(|p| p["projects"].as_array().unwrap().len() == 1)
-            && tools
-                .call("list_harnesses", json!({"device":"device-b"}))
-                .await
-                .is_ok()
-        {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "discovery did not converge"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let projects = tools
-        .call("list_projects", json!({"device":"device-b"}))
-        .await
-        .unwrap();
-    let project = projects["projects"][0]["id"].as_str().unwrap();
-    tools
-        .call(
-            "list_models",
-            json!({"device":"device-b", "harness":"codex"}),
-        )
-        .await
-        .unwrap();
-    let created = tools
-        .call(
-            "create_chat",
-            json!({
-                "kind":"chat", "device":"device-b", "project":project,
-                "harness":"codex", "title":"Remote MCP session", "prompt":"execute on B",
-                "wait":true, "timeout_secs":30
-            }),
-        )
-        .await
-        .unwrap();
-    let chat_id = created["chatId"].as_str().unwrap();
-    assert_eq!(created["kind"], "chat");
-    assert!(created["parentChatId"].is_null());
-    assert_eq!(created["deviceId"], "device-b");
-    assert_eq!(created["turn"]["outcome"], "completed", "{created}");
-    assert_eq!(created["turn"]["replies"][0]["text"], "remote reply");
-    assert_eq!(created["turn"]["replies"][0]["deviceId"], "device-b");
-    let chat = b.workspace.chat(chat_id).unwrap().unwrap();
-    assert_eq!(chat.space_id.as_deref(), Some(project));
-    assert!(
-        chat.parent_chat_id.is_none(),
-        "eligible for Sessions on every client"
-    );
-    assert!(
-        a.sessions.session_status(chat_id).is_none(),
-        "A must not execute the prompt"
-    );
-    assert!(
-        b.sessions.session_status(chat_id).is_some(),
-        "B actually ran the harness"
-    );
-    let read = tools
-        .call("read_chat", json!({"chat":chat_id}))
-        .await
-        .unwrap();
-    assert!(
-        read["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|m| m["role"] == "assistant"
-                && m["text"] == "remote reply"
-                && m["deviceId"] == "device-b")
-    );
-    let sent = tools
-        .call(
-            "send_message",
-            json!({
-                "chat":chat_id, "text":"a second remote turn", "wait":true, "timeout_secs":30
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(sent["turn"]["outcome"], "completed", "{sent}");
-    assert_eq!(
-        sent["turn"]["replies"].as_array().unwrap().len(),
-        1,
-        "only the new turn"
-    );
-    assert_eq!(sent["turn"]["replies"][0]["deviceId"], "device-b");
-    let waited = tools
-        .call("wait_for_turn", json!({"chat":chat_id,"timeout_secs":2}))
-        .await
-        .unwrap();
-    assert_eq!(waited["turn"]["outcome"], "completed");
-    let interrupted = tools
-        .call("interrupt_chat", json!({"chat":chat_id}))
-        .await
-        .unwrap();
-    let interrupt_id = interrupted["commandId"].as_str().unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        // Peer-relay delivery marks the processed-command ledger directly;
-        // the command row itself arrives separately through session-doc sync.
-        if remote_store.is_processed(interrupt_id).unwrap() {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "interrupt must reach B's command ledger"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    a.shutdown().await;
-    b.shutdown().await;
-    drop(host);
-    relay.abort();
 }
 
 /// A device answering `UpdateStatus` with one report and then staying quiet, as an
@@ -2790,7 +2610,7 @@ async fn device_stats_come_from_the_named_device_through_its_relay() {
     let dirs = tempfile::tempdir().expect("tempdir");
     let a = asker(&dirs.path().join("a"), &relay_url);
     let b = assemble(&dirs.path().join("b"), "device-b");
-    let _host = b.start_host_relay(&relay_url);
+    let _host = b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
     a.workspace.upsert_device_row(&device_row("device-b", env!("CARGO_PKG_VERSION"), 0));
     let client = vardoger_rpc::memory_client(a.rpc_service());
 
@@ -2939,7 +2759,7 @@ async fn per_provider_accounts_are_managed_on_the_device_that_runs_the_agent() {
     write_pi(chatgpt("a@example.com", "acct-a"));
     core_b.agent_accounts.list(false).await.expect("seed a");
     write_pi(chatgpt("b@example.com", "acct-b"));
-    let _host = core_b.start_host_relay(&relay_url);
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
 
     let mut core_a = assemble(&dirs.path().join("a"), "device-a");
     core_a.agent_accounts = AgentAccounts::new(AgentAccountsConfig::isolated(&dirs.path().join("a-agents")));

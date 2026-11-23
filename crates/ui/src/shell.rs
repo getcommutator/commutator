@@ -6221,10 +6221,12 @@ impl Shell {
 
     fn active_sidebar_pin_profile_key(&self, cx: &App) -> Option<String> {
         let state = self.state.read(cx);
+        // A development engine scopes its data to VARDOGER_ORG_ID too.
+        let development_org = std::env::var("VARDOGER_ORG_ID").ok();
         sidebar_pin_profile_key(
             state.workspace_scope,
             state.auth.as_ref(),
-            self.boot.org_id.as_deref(),
+            development_org.as_deref(),
         )
     }
 
@@ -15019,49 +15021,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_out_synced_runtime_stops_and_reboots_local() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("session.json"),
-            r#"{"refreshToken":"still-valid","user":{"id":"user_1","email":"u@example.com"},"orgId":"org_1"}"#,
-        )
-        .unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let boot = EngineBootConfig {
-            data_dir: dir.path().to_path_buf(),
-            ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: Some("client_test".into()),
-            default_harness: vardoger_proto::HarnessId::Mock,
-        };
-        let synced = crate::state::EngineHandle::bootstrap(boot.clone())
-            .await
-            .expect("saved session opens its synced profile");
-        assert_eq!(synced.engine_info().workspace_scope, WorkspaceScope::Synced);
-
-        synced
-            .client()
-            .call(methods::SIGN_OUT, serde_json::json!({}))
-            .await
-            .expect("sign out clears credentials");
-        stop_synced_runtime(synced, port, dir.path())
-            .await
-            .expect("synced runtime drains and releases ownership");
-
-        assert!(!dir.path().join("session.json").exists());
-        let local = crate::state::EngineHandle::bootstrap(boot)
-            .await
-            .expect("same process can continue locally");
-        assert_eq!(local.engine_info().workspace_scope, WorkspaceScope::Local);
-        local.shutdown().await;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
     async fn remote_shutdown_waits_for_engine_lock_release() {
         let dir = tempfile::tempdir().unwrap();
         let lock = InstanceLock::acquire(dir.path()).unwrap();
@@ -15584,9 +15543,6 @@ mod tests {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15888,9 +15844,6 @@ mod exit_regressions {
             data_dir: dir.path().into(),
             ipc_port: 0,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: None,
             default_harness: vardoger_proto::HarnessId::Mock,
         };
         for (connection, expected) in [
@@ -15941,9 +15894,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16013,9 +15963,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16122,9 +16069,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16299,9 +16243,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16368,9 +16309,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16442,9 +16380,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16492,9 +16427,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16574,9 +16506,6 @@ mod exit_regressions {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
                         edge_url: "http://127.0.0.1:1".into(),
-                        edge_token: None,
-                        org_id: None,
-                        workos_client_id: None,
                         default_harness: vardoger_proto::HarnessId::Mock,
                     },
                     cx,
@@ -16633,9 +16562,6 @@ mod exit_regressions {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
                         edge_url: "http://127.0.0.1:1".into(),
-                        edge_token: None,
-                        org_id: None,
-                        workos_client_id: None,
                         default_harness: vardoger_proto::HarnessId::Mock,
                     },
                     cx,
@@ -16699,9 +16625,6 @@ mod exit_regressions {
                     data_dir,
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16959,9 +16882,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17144,9 +17064,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17246,9 +17163,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17331,9 +17245,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17412,9 +17323,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17485,9 +17393,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17571,9 +17476,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17628,9 +17530,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17778,9 +17677,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17898,9 +17794,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17996,9 +17889,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -18078,9 +17968,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -18156,9 +18043,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -18254,9 +18138,6 @@ mod exit_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -18432,9 +18313,6 @@ mod right_tab_mouse_regressions {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
                         edge_url: "http://127.0.0.1:1".into(),
-                        edge_token: None,
-                        org_id: None,
-                        workos_client_id: None,
                         default_harness: vardoger_proto::HarnessId::Mock,
                     },
                     cx,
@@ -18945,9 +18823,6 @@ mod settings_modal_regressions {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    edge_token: None,
-                    org_id: None,
-                    workos_client_id: None,
                     default_harness: vardoger_proto::HarnessId::Mock,
                 },
                 cx,
@@ -19016,9 +18891,6 @@ mod settings_modal_regressions {
                 data_dir: dir.into(),
                 ipc_port: 0,
                 edge_url: "http://127.0.0.1:1".into(),
-                edge_token: None,
-                org_id: None,
-                workos_client_id: None,
                 default_harness: vardoger_proto::HarnessId::Mock,
             },
             cx,

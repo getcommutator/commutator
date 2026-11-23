@@ -25,15 +25,10 @@ fn main() -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg),
         Launch::Window { open_url, safe_mode: _ } => {
             let engine = vardoger_app::engine_config_from_env();
-            // Local-only until accounts land (plan step 2): no edge bearer and
-            // no WorkOS sign-in gate on the embedded engine.
             vardoger_ui::run_app(vardoger_ui::UiConfig {
                 data_dir: engine.data_dir,
                 ipc_port: engine.ipc_port,
                 edge_url: engine.edge_url,
-                edge_token: None,
-                org_id: engine.org_id,
-                workos_client_id: None,
                 default_harness: engine.default_harness,
                 initial_url: open_url,
             });

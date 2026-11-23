@@ -1,7 +1,5 @@
 //! Construction inputs: where the edge is, who this device is, and how it
-//! authenticates. Token *persistence* stays on the platform (Keychain /
-//! Keystore): the client takes tokens in and reports rotations through
-//! [`crate::ClientEvent::AuthRefreshed`].
+//! authenticates.
 
 use std::path::PathBuf;
 
@@ -47,26 +45,9 @@ impl ClientConfig {
     }
 }
 
-/// WorkOS access/refresh pair. Refresh tokens are SINGLE-USE (rotated per
-/// refresh) — the client single-flights every refresh and hands the rotated
-/// pair back through [`crate::ClientEvent::AuthRefreshed`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthTokens {
-    pub access_token: String,
-    pub refresh_token: String,
-}
-
 /// How this client authenticates against the edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credentials {
-    /// WorkOS session scoped to `org_id` (the token carries the `org_id`
-    /// claim the registry room requires).
-    WorkOs {
-        user_id: String,
-        org_id: String,
-        tokens: AuthTokens,
-    },
     /// `AUTH_MODE=dev` edge: the bearer is `userId@orgId`.
     Dev { user_id: String, org_id: String },
     /// Fully offline, deterministic dataset with a simulated host.
@@ -84,7 +65,7 @@ impl Credentials {
 
     pub fn org_id(&self) -> &str {
         match self {
-            Credentials::WorkOs { org_id, .. } | Credentials::Dev { org_id, .. } => org_id,
+            Credentials::Dev { org_id, .. } => org_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
         }
@@ -92,7 +73,7 @@ impl Credentials {
 
     pub fn user_id(&self) -> &str {
         match self {
-            Credentials::WorkOs { user_id, .. } | Credentials::Dev { user_id, .. } => user_id,
+            Credentials::Dev { user_id, .. } => user_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
         }

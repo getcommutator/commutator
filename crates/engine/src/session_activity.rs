@@ -225,7 +225,6 @@ mod tests {
             dir.path(),
             Arc::new(crate::HarnessRegistry::new()),
             vardoger_proto::HarnessId::Mock,
-            None,
         )
         .unwrap();
         let published = |core: &crate::EngineCore| {

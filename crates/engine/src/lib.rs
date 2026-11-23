@@ -15,6 +15,7 @@ use vardoger_rpc::{RpcError, RpcReply, RpcService, methods};
 
 use vardoger_sync::DocsStore;
 
+pub mod account;
 pub mod acp_registry;
 pub mod agent_accounts;
 
@@ -38,7 +39,6 @@ pub fn build_id() -> &'static str {
 pub mod auth;
 mod change_request_store;
 pub mod change_requests;
-mod chat2_checkpoint;
 pub mod chat2_host;
 mod chat_persistence;
 pub mod commands;
@@ -82,16 +82,14 @@ pub mod workspace_search;
 mod worktree_settings;
 
 pub use agent_accounts::{AgentAccounts, AgentAccountsConfig};
-pub use auth::{
-    Auth, AuthConfig, AuthState, AuthUser, OrgMembership, ScreenHint, SignInOptions,
-};
+pub use auth::{Auth, AuthState, AuthUser};
 pub use change_requests::{ChangeRequestCacheKey, CheckoutChangeRequests};
 pub use diff_sync::{
     CheckoutDiffSync, DiffFileTextPair, DiffSidecar, DiffSnapshot, TreeSnapshot, TurnSnapshot,
     capture_commit_diff, capture_diff, capture_diff_against, capture_turn_diff,
     discard_working_tree, merge_base, read_diff_file_text, snapshot_tree, working_diff_base,
 };
-pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig, EdgeConfig};
+pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig};
 pub use instance_lock::InstanceLock;
 pub use profile::EngineProfile;
 pub use project_actions::ProjectActionsStore;
@@ -151,18 +149,10 @@ pub struct EngineConfig {
     pub data_dir: PathBuf,
     /// Edge base URL.
     pub edge_url: String,
-    /// Explicit development bearer for edge room joins. Synced WorkOS runtimes
-    /// obtain their bearer from [`Auth`]; development stays offline when this is absent.
-    pub edge_token: Option<String>,
     /// Localhost IPC port for the UI.
     pub ipc_port: u16,
     /// Harness for doc-command runs on chats without a workspace `config` row.
     pub default_harness: HarnessId,
-    /// Workspace-doc org (`ws/{orgId}` room). `None` = `$VARDOGER_ORG_ID` or the dev default.
-    /// In WorkOS mode the signed-in session's org wins.
-    pub org_id: Option<String>,
-    /// WorkOS client id — enables real auth; `None` = dev mode (bearer = `edge_token`).
-    pub workos_client_id: Option<String>,
 }
 
 /// The assembled engine core — also constructible without the IPC server for tests
@@ -216,24 +206,22 @@ impl EngineCore {
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
     ) -> Result<Self, EngineError> {
         let org_id = env_or("VARDOGER_ORG_ID", DEFAULT_ORG_ID);
         let user_id = env_or("VARDOGER_USER_ID", DEFAULT_USER_ID);
         let profile = EngineProfile::development(data_dir, &org_id, &user_id);
-        Self::assemble_with_profile(profile, registry, default_harness, edge)
+        Self::assemble_with_profile(profile, registry, default_harness)
     }
 
     pub fn assemble_with_identity(
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
         org_id: &str,
         user_id: &str,
     ) -> Result<Self, EngineError> {
         let profile = EngineProfile::synced(data_dir, org_id, user_id);
-        Self::assemble_with_profile(profile, registry, default_harness, edge)
+        Self::assemble_with_profile(profile, registry, default_harness)
     }
 
     /// Assemble the engine against one resolved, immutable workspace profile.
@@ -241,7 +229,6 @@ impl EngineCore {
         profile: EngineProfile,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
     ) -> Result<Self, EngineError> {
         let data_dir = profile.device_root();
         std::fs::create_dir_all(data_dir)?;
@@ -249,7 +236,7 @@ impl EngineCore {
         // SQLite snapshots + journals. Taken before any store opens or the IPC
         // port binds; held (and kernel-released on crash) for the engine's life.
         let lock = InstanceLock::acquire(data_dir)?;
-        Self::assemble_with_profile_locked(profile, registry, default_harness, edge, lock)
+        Self::assemble_with_profile_locked(profile, registry, default_harness, lock)
     }
 
     /// Assemble against a pre-acquired [`InstanceLock`]. The headed app takes
@@ -259,7 +246,6 @@ impl EngineCore {
         profile: EngineProfile,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
         lock: InstanceLock,
     ) -> Result<Self, EngineError> {
         let data_dir = profile.device_root();
@@ -284,7 +270,6 @@ impl EngineCore {
             DocHostConfig {
                 device_id: device_id.clone(),
                 default_harness,
-                edge: edge.clone(),
             },
         );
         let workspace = WorkspaceHost::open(
@@ -295,7 +280,6 @@ impl EngineCore {
                 platform: std::env::consts::OS.to_string(),
                 org_id: profile.org_id().to_string(),
                 user_id: profile.user_id().to_string(),
-                edge: edge.clone(),
                 local_only: matches!(profile.scope(), WorkspaceScope::Local),
             },
         )?;
@@ -389,7 +373,7 @@ impl EngineCore {
             registry.clone(),
             repos.clone(),
         ));
-        let diff_sync = CheckoutDiffSync::start(repos.clone(), workspace.clone(), &device_id, edge);
+        let diff_sync = CheckoutDiffSync::start(repos.clone(), workspace.clone(), &device_id);
         // Turn starts snapshot the checkout tree — the "Latest turn" diff base.
         let turn_diff = diff_sync.clone();
         sessions.set_turn_listener(Arc::new(move |chat_id, cwd| {
@@ -447,22 +431,15 @@ impl EngineCore {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(auth);
     }
 
-    /// The attached auth service, or a lazily-created dev-mode one (in-process embeds
-    /// that never wired WorkOS still answer AuthStatus honestly).
+    /// The attached auth service, or a lazily-created one (in-process embeds
+    /// that never attached one still answer AuthStatus honestly).
     pub fn auth(&self) -> Auth {
         let mut slot = self
             .auth
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        slot.get_or_insert_with(|| {
-            let dev_user = std::env::var("VARDOGER_EDGE_TOKEN")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "dev-user".into());
-            let mut config = AuthConfig::new("http://localhost:27640", std::env::temp_dir());
-            config.dev_user_id = dev_user;
-            Auth::new(config)
-        })
+        // (Tests assemble cores without one: nobody signed in.)
+        slot.get_or_insert_with(|| Auth::new(std::env::temp_dir().join("vardoger-no-account")))
         .clone()
     }
 
@@ -512,13 +489,29 @@ impl EngineCore {
             .map_err(|e| EngineError::Other(e.to_string()))
     }
 
-    /// Start hosting our device room: serve the full RPC surface to relay clients and
-    /// warm-open chat docs on nudges (§7 cold-chat command delivery). The token source
-    /// re-reads auth on every (re)dial, so token refreshes take effect at reconnect.
-    pub fn start_host_relay(&self, edge_url: &str) -> vardoger_rpc::HostRelay {
-        let auth = self.auth();
-        let config =
-            vardoger_rpc::HostRelayConfig::new(edge_url, self.device_id.clone(), Arc::new(auth));
+    /// Host our device room at `url` as this engine's own device id, dialing
+    /// with `token` (tests; production goes through [`Self::start_account_relay`]).
+    pub fn start_host_relay(
+        &self,
+        url: &str,
+        token: Arc<dyn vardoger_rpc::TokenSource>,
+    ) -> vardoger_rpc::HostRelay {
+        self.host_relay_to(url, &self.device_id, token)
+    }
+
+    /// Host our device room on the Vardoger server this machine signed in
+    /// to ([`account::Account`]), as the device the server knows it as.
+    pub fn start_account_relay(&self, account: &account::Account) -> vardoger_rpc::HostRelay {
+        self.host_relay_to(&account.server_url, &account.device_id, account.token_source())
+    }
+
+    fn host_relay_to(
+        &self,
+        url: &str,
+        device_id: &str,
+        token: Arc<dyn vardoger_rpc::TokenSource>,
+    ) -> vardoger_rpc::HostRelay {
+        let config = vardoger_rpc::HostRelayConfig::new(url, device_id, token);
         let doc_host = self.doc_host.clone();
         let on_nudge: vardoger_rpc::NudgeHandler = Arc::new(move |chat_id: String| {
             match doc_host.enqueue_wakeup(&chat_id) {
@@ -589,16 +582,6 @@ impl EngineCore {
         // releases the next queued row. Freeze first so quitting never starts
         // recovered work while the engine is being torn down.
         self.doc_host.pause_all_queues();
-        // Decided here, from the auth state at the stop, so every way an
-        // engine goes down (headless, background, in-process) agrees.
-        let auth = self
-            .auth
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if auth.is_some_and(|auth| forgoes_revival(self.workspace_scope, &auth.state())) {
-            self.sessions.forgo_revival();
-        }
         self.sessions.shutdown().await;
         self.terminals.shutdown();
         self.commands.shutdown().await;
@@ -693,13 +676,6 @@ impl EngineRuntime {
 
     pub async fn shutdown(&self) {
         self.stop_notifier();
-        // While the edge is still reachable: a relaying chat's newest changes may
-        // be only here, and a device opening it while this one is off would get
-        // an older checkpoint.
-        self.core
-            .doc_host
-            .checkpoint_relayed_chats_before_stop(std::time::Duration::from_secs(5))
-            .await;
         self.disconnect_edge();
         self.core.shutdown().await;
     }
@@ -731,88 +707,22 @@ impl Engine {
         Self { config }
     }
 
-    /// Resolve the shared dev/WorkOS auth configuration for headed and headless
-    /// modes. A clean WorkOS boot deliberately avoids probing Edge: signed-out
-    /// installations must be able to start locally without network access.
-    pub async fn build_auth(config: &EngineConfig) -> Auth {
-        let mut auth_config = AuthConfig::new(config.edge_url.clone(), config.data_dir.clone());
-        auth_config.workos_client_id = config.workos_client_id.clone();
-        if let Ok(base) = std::env::var("VARDOGER_WORKOS_API_BASE")
-            && !base.trim().is_empty()
-        {
-            auth_config.workos_api_base = base;
-        }
-        auth_config.callback_port = Some(
-            std::env::var("VARDOGER_CALLBACK_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(27641),
-        );
-        if let Some(token) = &config.edge_token {
-            auth_config.dev_user_id = token.clone();
-        }
-        Auth::new(auth_config)
+    /// This machine's sign-in, as saved in the data dir.
+    pub fn build_auth(config: &EngineConfig) -> Auth {
+        Auth::new(config.data_dir.clone())
     }
 
-    /// Capture the workspace boundary once, before refresh or sign-in can mutate auth.
-    pub fn initial_workspace_scope(auth: &Auth) -> WorkspaceScope {
-        if !auth.workos_enabled() {
-            WorkspaceScope::Development
-        } else if auth.loaded_workos_session() && !auth.keeps_chats_local() {
-            WorkspaceScope::Synced
-        } else {
-            // Signed out, or signed in with chats kept on this device: the
-            // local profile, with no edge transports.
-            WorkspaceScope::Local
-        }
+    /// Every engine opens the local profile.
+    pub fn initial_workspace_scope(_auth: &Auth) -> WorkspaceScope {
+        WorkspaceScope::Local
     }
 
-    /// Resolve a profile for the captured scope. A synced session without an
-    /// organization returns `None` until onboarding selects one; it never falls
-    /// through to the local or development profile.
     pub fn resolve_profile(
         config: &EngineConfig,
-        auth: &Auth,
-        scope: WorkspaceScope,
+        _auth: &Auth,
+        _scope: WorkspaceScope,
     ) -> Result<Option<EngineProfile>, EngineError> {
-        match scope {
-            WorkspaceScope::Local => EngineProfile::local(&config.data_dir).map(Some),
-            WorkspaceScope::Development => {
-                let dev_token_org = config
-                    .edge_token
-                    .as_deref()
-                    .and_then(|token| token.split_once('@'))
-                    .map(|(_, org)| org.to_string())
-                    .filter(|org| !org.is_empty());
-                let org_id = dev_token_org
-                    .or(config.org_id.clone())
-                    .unwrap_or_else(|| env_or("VARDOGER_ORG_ID", DEFAULT_ORG_ID));
-                let user_id = auth
-                    .user_id()
-                    .unwrap_or_else(|| env_or("VARDOGER_USER_ID", DEFAULT_USER_ID));
-                Ok(Some(EngineProfile::development(
-                    &config.data_dir,
-                    &org_id,
-                    &user_id,
-                )))
-            }
-            WorkspaceScope::Synced => {
-                let state = auth.state();
-                let Some(user) = state.user() else {
-                    return Err(EngineError::Other(
-                        "captured synced session no longer exposes its user identity".into(),
-                    ));
-                };
-                let Some(org_id) = state.org_id() else {
-                    return Ok(None);
-                };
-                Ok(Some(EngineProfile::synced(
-                    &config.data_dir,
-                    org_id,
-                    &user.id,
-                )))
-            }
-        }
+        EngineProfile::local(&config.data_dir).map(Some)
     }
 
     /// Resolve the one-shot identity served before profile stores are available.
@@ -866,57 +776,18 @@ impl Engine {
         profile: EngineProfile,
         lock: Option<InstanceLock>,
     ) -> anyhow::Result<EngineRuntime> {
-        let edge_enabled = match profile.scope() {
-            WorkspaceScope::Local => false,
-            WorkspaceScope::Synced => {
-                // Validate the persisted session in the BACKGROUND: the probe
-                // still transitions auth to SignedOut on definitive revocation
-                // (and warms the single-flight refresh every first dial waits
-                // on), but assembly — and the viewport blocked on it — no
-                // longer stalls on a WorkOS round trip that can take seconds
-                // on a bad link. Everything shown at boot is local anyway.
-                let auth_probe = auth.clone();
-                tokio::spawn(async move {
-                    let _ = auth_probe.access_token().await;
-                });
-                true
-            }
-            // Dev Auth always exposes `dev_user_id` as its synthetic access
-            // token, including when WorkOS was merely disabled with
-            // VARDOGER_WORKOS_CLIENT_ID="". Only an explicitly configured,
-            // non-empty bearer opts this runtime into Edge rooms and relays.
-            WorkspaceScope::Development => config
-                .edge_token
-                .as_deref()
-                .is_some_and(|token| !token.trim().is_empty()),
-        };
-        if edge_enabled {
-            // OS network-path events (macOS NWPathMonitor): the instant the
-            // path returns every parked reconnect backoff redials, and while
-            // the OS says there is no path the dial loops park instead of
-            // burning attempts. No-op on platforms without a monitor.
-            vardoger_sync::net_path::spawn_path_monitor();
-        }
-        let device_id = load_or_create_device_id(profile.device_root())?;
-        let edge = edge_enabled.then(|| {
-            EdgeConfig::new(config.edge_url.clone(), Arc::new(auth.clone())).with_device(device_id)
-        });
-
-        let preview_org = profile.org_id().to_string();
         let registry = Arc::new(default_registry());
         let core = match lock {
             Some(lock) => EngineCore::assemble_with_profile_locked(
                 profile,
                 registry,
                 config.default_harness,
-                edge.clone(),
                 lock,
             )?,
             None => EngineCore::assemble_with_profile(
                 profile,
                 registry,
                 config.default_harness,
-                edge.clone(),
             )?,
         };
         core.set_auth(auth.clone());
@@ -974,12 +845,7 @@ impl Engine {
                 }
             });
         }
-        let preview_signaling = edge_enabled.then(|| vardoger_preview::signaling::Config {
-            edge_url: config.edge_url.clone(),
-            org_id: preview_org,
-            tokens: Arc::new(auth.clone()),
-        });
-        core.previews.start(projects, preview_signaling).await;
+        core.previews.start(projects, None).await;
         // Release checker: polls GitHub releases hourly (wall clock); headless
         // installs with VARDOGER_AUTO_UPDATE=1 apply + restart themselves — gated
         // on quiescence so a restart never lands under a live run or open PTY.
@@ -1022,24 +888,16 @@ impl Engine {
         // never waits on — or dies inside — an npm run.
         vardoger_harness::acp::prewarm_managed_adapters();
 
-        let host_relay = edge.as_ref().map(|edge| {
-            let mut link_config =
-                vardoger_rpc::LinkCacheConfig::new(edge.url.clone(), Arc::new(auth.clone()));
-            // Registry-dark dial gate: devices with no recent presence fail
-            // fast with zero dials; presence returning un-parks them (the
-            // peer-alive hook below clears any cooldown at the same moment).
-            let workspace_for_liveness = core.workspace.clone();
-            link_config.liveness = Some(Arc::new(move |device_id: &str| {
-                workspace_for_liveness.peer_liveness(device_id)
-            }));
-            let links = vardoger_rpc::LinkCache::new(link_config);
-            let links_for_presence = links.clone();
-            core.workspace
-                .set_peer_alive_hook(Arc::new(move |device_id: &str| {
-                    links_for_presence.reset_cooldown(device_id);
-                }));
-            core.set_links(links);
-            core.start_host_relay(&edge.url)
+        // Signed in to a Vardoger server: the account's other devices reach
+        // this one through its relay, and it reaches theirs.
+        let host_relay = auth.account().map(|account| {
+            vardoger_sync::net_path::spawn_path_monitor();
+            core.set_links(vardoger_rpc::LinkCache::new(vardoger_rpc::LinkCacheConfig::new(
+                account.server_url.clone(),
+                account.token_source(),
+            )));
+            tracing::info!(server = %account.server_url, "hosting this machine's device room");
+            core.start_account_relay(&account)
         });
 
         let notifier = desktop_notify::enabled()
@@ -1051,7 +909,7 @@ impl Engine {
         })
     }
 
-    /// Run until ctrl-c: auth (dev or WorkOS), sessions engine + doc host + command
+    /// Run until ctrl-c: auth, sessions engine + doc host + command
     /// executor, IPC server, and — when edge+auth are ready — the device-room host
     /// relay + peer link cache (targetDeviceId routing).
     pub async fn run(self) -> anyhow::Result<()> {
@@ -1060,21 +918,8 @@ impl Engine {
 
         std::fs::create_dir_all(&config.data_dir)?;
         update_trial::boot(&config.data_dir)?;
-        let auth = Self::build_auth(&config).await;
-        let mut auth_state = auth.watch_state();
-        let workspace_scope = Self::initial_workspace_scope(&auth);
-        let mut profile = Self::resolve_profile(&config, &auth, workspace_scope)?;
-        let _refresh_loop = auth.spawn_refresh_loop();
-
-        // A captured cloud session without an organization must finish onboarding
-        // before its profile can open. A clean signed-out install is local and never
-        // enters the terminal sign-in flow.
-        if workspace_scope == WorkspaceScope::Synced && profile.is_none() {
-            terminal_sign_in(&auth).await?;
-            profile = Self::resolve_profile(&config, &auth, workspace_scope)?;
-        }
-        let profile = profile
-            .ok_or_else(|| EngineError::Other("synced workspace profile is not ready".into()))?;
+        let auth = Self::build_auth(&config);
+        let profile = EngineProfile::local(&config.data_dir)?;
 
         let runtime = Self::assemble_runtime(&config, auth, profile).await?;
         // The desktop app or `vardoger update` may install a newer binary under
@@ -1127,25 +972,10 @@ impl Engine {
                     tracing::info!("headless shutdown requested over IPC");
                 }
             }
-            _ = wait_for_signed_out(&mut auth_state), if workspace_scope == WorkspaceScope::Synced => {
-                // Edge transports observe the same auth signal and close at
-                // once. Leave a brief reply window for a SignOut RPC before
-                // the localhost server itself is aborted.
-                runtime.disconnect_edge();
-                tracing::info!("headless authentication revoked; stopping synced runtime");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
         }
         tracing::info!("shutting down");
         corruption_watch.abort();
         server.abort();
-        // No token refresh mid-exchange when the next engine takes over the
-        // session file (a refresh token is single-use).
-        runtime
-            .core()
-            .auth()
-            .quiesce_refresh(std::time::Duration::from_secs(10))
-            .await;
         runtime.shutdown().await;
         Ok(())
     }
@@ -1166,27 +996,6 @@ fn watch_store_corruption(store: PathBuf) -> tokio::task::JoinHandle<()> {
             }
         }
     })
-}
-
-/// Whether a stopping engine's cut-off turns stay ended rather than revive on
-/// the next boot ([`EngineCore::shutdown`] asks): a synced engine whose
-/// account is signed out by the time it stops, whichever stop reached it
-/// first — the auth watcher, or the app's StopEngine right after its SignOut.
-/// Sign-out is the user ending the session, like a Stop. A local engine is
-/// signed out as a matter of course.
-pub(crate) fn forgoes_revival(scope: WorkspaceScope, auth: &AuthState) -> bool {
-    scope == WorkspaceScope::Synced && matches!(auth, AuthState::SignedOut)
-}
-
-async fn wait_for_signed_out(state: &mut tokio::sync::watch::Receiver<AuthState>) {
-    loop {
-        if matches!(&*state.borrow(), AuthState::SignedOut) {
-            return;
-        }
-        if state.changed().await.is_err() {
-            return;
-        }
-    }
 }
 
 /// Ctrl-C or SIGTERM. systemd/launchd stop (and the auto-updater's service
@@ -1240,166 +1049,12 @@ pub async fn serve_ipc(
     )))
 }
 
-/// Block until the WorkOS session is signed in AND org-scoped. On a TTY, print the
-/// headless (paste-code) sign-in URL, read the pasted `state.code` from stdin, and
-/// run workspace onboarding (create / auto-join / numbered picker). Off a TTY this
-/// errors immediately — a daemon under systemd/launchd must load the session that
-/// `vardoger login` persisted, never wait on a prompt nobody can see.
-pub async fn terminal_sign_in(auth: &Auth) -> Result<(), EngineError> {
-    use std::io::IsTerminal;
-    let interactive = std::io::stdin().is_terminal();
-    let mut state_rx = auth.watch_state();
-    let mut stdin_reader: Option<tokio::task::JoinHandle<()>> = None;
-    let mut org_reader: Option<tokio::task::JoinHandle<()>> = None;
-    loop {
-        let state = state_rx.borrow().clone();
-        match state {
-            AuthState::SignedIn { user, org_id } => {
-                tracing::info!(email = %user.email, org = org_id.as_deref().unwrap_or("<none>"),
-                    "auth: session ready");
-                break;
-            }
-            AuthState::NeedsOrganization { user } => {
-                if !interactive {
-                    // No reader tasks have been spawned on this path (both spawns
-                    // are TTY-gated), so an early return leaks nothing.
-                    return Err(EngineError::Other(format!(
-                        "signed in as {} but no workspace is selected — run `vardoger login` on this machine to pick one",
-                        user.email
-                    )));
-                }
-                if org_reader.is_none() {
-                    // Workspace onboarding on the TTY (old vardoger's
-                    // `backend login` flow): create if none, auto-join a
-                    // single membership, numbered picker otherwise.
-                    println!("Signed in as {}.", user.email);
-                    org_reader = Some(tokio::spawn(run_org_onboarding(auth.clone())));
-                }
-            }
-            AuthState::SignedOut => {
-                if !interactive {
-                    return Err(EngineError::Other(
-                        "not signed in — run `vardoger login` on this machine first".into(),
-                    ));
-                }
-                if stdin_reader.is_none() {
-                    let url = auth.start_headless_sign_in();
-                    println!("Sign in to Vardoger:\n\n  {url}\n");
-                    println!("Then paste the code shown in the browser here and press enter.");
-                    let auth = auth.clone();
-                    stdin_reader = Some(tokio::spawn(async move {
-                        loop {
-                            let Some(line) = read_stdin_line().await else {
-                                return;
-                            };
-                            let pasted = line.trim();
-                            if pasted.is_empty() {
-                                continue;
-                            }
-                            match auth.complete_sign_in(pasted).await {
-                                Ok(()) => return,
-                                Err(err) => println!("Sign-in failed: {err}"),
-                            }
-                        }
-                    }));
-                }
-            }
-        }
-        if state_rx.changed().await.is_err() {
-            break;
-        }
-    }
-    if let Some(reader) = stdin_reader {
-        reader.abort();
-    }
-    if let Some(reader) = org_reader {
-        reader.abort();
-    }
-    Ok(())
-}
-
-/// One line from stdin (blocking read off the runtime). `None` = stdin closed.
-async fn read_stdin_line() -> Option<String> {
-    tokio::task::spawn_blocking(|| {
-        let mut line = String::new();
-        match std::io::stdin().read_line(&mut line) {
-            Ok(0) | Err(_) => None, // EOF / error
-            Ok(_) => Some(line),
-        }
-    })
-    .await
-    .ok()
-    .flatten()
-}
-
-/// TTY workspace onboarding for an org-less session (ports old vardoger's
-/// `backend login` flow): no memberships → prompt a name and create; exactly
-/// one → auto-join; several → numbered picker. Success flips the auth state to
-/// `SignedIn`, which ends [`wait_for_sign_in`]'s wait (and aborts this task).
-async fn run_org_onboarding(auth: Auth) {
-    let orgs = match auth.list_orgs().await {
-        Ok(orgs) => orgs,
-        Err(err) => {
-            println!(
-                "Could not list workspaces ({err}) — create or select one from the Vardoger UI to continue."
-            );
-            return;
-        }
-    };
-    match orgs.len() {
-        0 => {
-            println!("No workspaces yet — name your new workspace and press enter:");
-            loop {
-                let Some(line) = read_stdin_line().await else {
-                    return;
-                };
-                let name = line.trim();
-                if name.is_empty() {
-                    continue;
-                }
-                match auth.create_org(name).await {
-                    Ok(()) => return,
-                    Err(err) => println!("Creating workspace failed: {err}"),
-                }
-            }
-        }
-        1 => {
-            let only = &orgs[0];
-            println!("Joining workspace \"{}\"…", only.name);
-            if let Err(err) = auth.select_org(&only.organization_id).await {
-                println!("Joining workspace failed: {err}");
-            }
-        }
-        _ => {
-            println!("\nYour workspaces:");
-            for (index, org) in orgs.iter().enumerate() {
-                println!("  {}. {}", index + 1, org.name);
-            }
-            println!("Pick a workspace [1-{}]:", orgs.len());
-            loop {
-                let Some(line) = read_stdin_line().await else {
-                    return;
-                };
-                let choice = line
-                    .trim()
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| n.checked_sub(1))
-                    .and_then(|index| orgs.get(index));
-                let Some(org) = choice else {
-                    println!("Pick a workspace [1-{}]:", orgs.len());
-                    continue;
-                };
-                match auth.select_org(&org.organization_id).await {
-                    Ok(()) => return,
-                    Err(err) => println!("Joining workspace failed: {err}"),
-                }
-            }
-        }
-    }
-}
-
 /// Best-effort human name for this device's registry row.
+/// What this machine is called (`VARDOGER_DEVICE_NAME`, else its own name).
+pub fn device_name(device_id: &str) -> String {
+    local_device_name(device_id)
+}
+
 fn local_device_name(device_id: &str) -> String {
     select_local_device_name(
         [
@@ -1583,6 +1238,11 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 /// Stable per-installation device id, persisted at `{data_dir}/device-id`.
+/// This machine's engine device id (created on first use).
+pub fn device_id(data_dir: &Path) -> Result<String, EngineError> {
+    load_or_create_device_id(data_dir)
+}
+
 fn load_or_create_device_id(data_dir: &Path) -> Result<String, EngineError> {
     std::fs::create_dir_all(data_dir)?;
     // EngineInfo is resolved before the lifetime InstanceLock is acquired, so
@@ -1733,34 +1393,3 @@ fn replace_empty_device_id(temp_path: &Path, path: &Path) -> std::io::Result<()>
     }
 }
 
-#[cfg(test)]
-mod revival_tests {
-    use super::*;
-
-    #[test]
-    fn only_a_signed_out_synced_engine_forgoes_revival() {
-        assert!(forgoes_revival(
-            WorkspaceScope::Synced,
-            &AuthState::SignedOut
-        ));
-        let user = AuthUser {
-            id: "u".into(),
-            email: "u@example.com".into(),
-            name: None,
-        };
-        assert!(!forgoes_revival(
-            WorkspaceScope::Synced,
-            &AuthState::SignedIn {
-                user: user.clone(),
-                org_id: Some("o".into()),
-            }
-        ));
-        assert!(!forgoes_revival(
-            WorkspaceScope::Synced,
-            &AuthState::NeedsOrganization { user }
-        ));
-        for scope in [WorkspaceScope::Local, WorkspaceScope::Development] {
-            assert!(!forgoes_revival(scope, &AuthState::SignedOut));
-        }
-    }
-}

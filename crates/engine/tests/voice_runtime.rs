@@ -39,7 +39,6 @@ async fn native_core(temp: &tempfile::TempDir) -> EngineCore {
         EngineProfile::local(&temp.path().join("data")).unwrap(),
         registry,
         HarnessId::Codex,
-        None,
     )
     .unwrap();
     let config =
@@ -383,7 +382,6 @@ async fn remote_voice_crosses_two_engines_and_owner_drop_releases_host() {
         EngineProfile::local(viewer_dir.path()).unwrap(),
         Arc::new(HarnessRegistry::new()),
         HarnessId::Codex,
-        None,
     )
     .unwrap();
     let mut links = LinkCacheConfig::new(url, Arc::new(StaticToken("test".into())));

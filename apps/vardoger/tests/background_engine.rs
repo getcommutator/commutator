@@ -20,9 +20,6 @@ fn background_engine_serves_its_port_and_stops_on_request() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_vardoger-engine"))
         .env("VARDOGER_DATA_DIR", dir.path())
         .env("VARDOGER_IPC_PORT", port.to_string())
-        // Development auth with no bearer: an offline runtime.
-        .env("VARDOGER_WORKOS_CLIENT_ID", "")
-        .env_remove("VARDOGER_EDGE_TOKEN")
         .env("VARDOGER_EDGE_URL", "http://127.0.0.1:1")
         .env("VARDOGER_DISABLE_NOTIFICATIONS", "1")
         .env("VARDOGER_AUTO_UPDATE", "0")

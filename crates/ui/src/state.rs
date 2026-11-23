@@ -97,12 +97,6 @@ pub struct EngineBootConfig {
     pub ipc_port: u16,
     /// Edge base URL for the embedded engine.
     pub edge_url: String,
-    /// Bearer for edge room joins; `None` runs offline.
-    pub edge_token: Option<String>,
-    /// Workspace org override for explicit dev-mode runs.
-    pub org_id: Option<String>,
-    /// WorkOS client id for production authentication.
-    pub workos_client_id: Option<String>,
     /// Harness for doc-command runs until per-chat config lands (M4).
     pub default_harness: HarnessId,
 }
@@ -140,7 +134,6 @@ struct InProcessEngine {
     service: Arc<dyn RpcService>,
     runtime: Arc<tokio::sync::Mutex<Option<EngineRuntime>>>,
     boot_task: tokio::task::JoinHandle<()>,
-    refresh_task: tokio::task::JoinHandle<()>,
     /// Serves this engine to other viewports over the IPC port. `None` when the
     /// port was already taken — the window still works over its own transport.
     ipc_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -169,15 +162,7 @@ impl EngineBackend for InProcessEngine {
             // listener is closed before bootstrap reports an assembly failure.
             let _ = ipc.await;
         }
-        // As the background engine does: no token refresh may be mid-exchange
-        // when another engine takes over the session file (single-use token).
-        self.refresh_task.abort();
         if let Some(runtime) = self.runtime.lock().await.take() {
-            runtime
-                .core()
-                .auth()
-                .quiesce_refresh(std::time::Duration::from_secs(10))
-                .await;
             runtime.shutdown().await;
         }
     }
@@ -290,11 +275,8 @@ impl EngineHandle {
         let engine_config = EngineConfig {
             data_dir: config.data_dir,
             edge_url: config.edge_url,
-            edge_token: config.edge_token,
             ipc_port: config.ipc_port,
             default_harness: config.default_harness,
-            org_id: config.org_id,
-            workos_client_id: config.workos_client_id,
         };
         let launching = LAUNCH_BACKGROUND_ENGINE.load(std::sync::atomic::Ordering::SeqCst);
         if Self::should_launch_background(launching, engine_config.ipc_port).await
@@ -368,20 +350,16 @@ impl EngineHandle {
                 service,
                 runtime: deferred.runtime.clone(),
                 boot_task,
-                refresh_task: deferred.refresh_task,
                 ipc_task: tokio::sync::Mutex::new(ipc_task),
                 client,
             }),
             engine_info: deferred.engine_info,
             deferred_state: Some(state_rx.clone()),
         };
-        // Local, development, and already-resolved synced profiles need no
-        // authentication UI while assembling. Keep the viewport Connecting
-        // until their stores and journals are actually open, and surface a
-        // boot failure through the existing bootstrap error path.
-        if deferred.profile_is_resolved
-            && let Err(message) = wait_for_deferred_engine(&mut state_rx).await
-        {
+        // The profile is always known up front (no sign-in gate): keep the
+        // viewport Connecting until its stores and journals are open, and
+        // surface a boot failure through the bootstrap error path.
+        if let Err(message) = wait_for_deferred_engine(&mut state_rx).await {
             handle.shutdown().await;
             return Err(anyhow::anyhow!(message));
         }
@@ -4713,9 +4691,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4743,9 +4718,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: free_port().await,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None, // offline
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4781,9 +4753,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: Some("client_test".into()),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4840,9 +4809,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4878,9 +4844,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None, // offline
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4927,9 +4890,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None, // offline
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         };
         let (a, b) = tokio::join!(
@@ -5036,9 +4996,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await
@@ -5063,9 +5020,6 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             ipc_port: free_port().await,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: Some("client_test".into()),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -5110,7 +5064,6 @@ mod tests {
             daemon_dir.path(),
             Arc::new(default_registry()),
             HarnessId::Mock,
-            None,
         )
         .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5129,9 +5082,6 @@ mod tests {
             data_dir: ui_dir.path().to_path_buf(),
             ipc_port: port,
             edge_url: "http://127.0.0.1:1".into(),
-            edge_token: None,
-            org_id: None,
-            workos_client_id: None,
             default_harness: HarnessId::Mock,
         })
         .await

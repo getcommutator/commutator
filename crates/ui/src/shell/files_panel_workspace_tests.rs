@@ -199,9 +199,6 @@ fn files_panel_workspace_navigation_and_external_updates() {
                 data_dir: data,
                 ipc_port: port,
                 edge_url: String::new(),
-                edge_token: None,
-                org_id: None,
-                workos_client_id: None,
                 default_harness: vardoger_proto::HarnessId::Mock,
             };
             let state = cx.new(|_| AppState::new());

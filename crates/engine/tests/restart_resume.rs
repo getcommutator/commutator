@@ -142,7 +142,7 @@ impl Harness for RecordingHarness {
 fn assemble(dir: &std::path::Path, harness: RecordingHarness) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(harness));
-    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     // Served, as the engine's port is right after assembly: a turn revived on
     // boot waits for it (see `a_revived_turn_waits_for_the_port_its_vardoger_tools_dial`).
@@ -555,7 +555,7 @@ async fn persistent_session_serves_multiple_turns_on_one_child() {
         side_chats_only: Default::default(),
         code_mode: Default::default(),
     }));
-    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     pre_title(&core);
 
@@ -627,7 +627,7 @@ async fn a_switched_credential_replaces_the_parked_session() {
         code_mode: Default::default(),
     }));
     registry.set_run_environment(Arc::new(SwitchableCredential(credential.clone())));
-    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     pre_title(&core);
 
@@ -699,7 +699,7 @@ async fn a_credential_decided_while_preparing_keeps_the_parked_session() {
         code_mode: Default::default(),
     }));
     registry.set_run_environment(Arc::new(DecidedWhilePreparing(Arc::new(Mutex::new(None)))));
-    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     pre_title(&core);
 
@@ -737,7 +737,7 @@ async fn switched_native_subagents_replace_the_parked_session() {
         side_chats_only: side_chats_only.clone(),
         code_mode: Default::default(),
     }));
-    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::ClaudeCode, None)
+    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::ClaudeCode)
         .expect("engine core assembles");
     // A served IPC port: runs carry Vardoger's own MCP server.
     core.sessions.set_ipc_port(27699);
@@ -792,7 +792,7 @@ async fn a_parked_side_chat_stays_warm_when_native_subagents_switch() {
         side_chats_only: side_chats_only.clone(),
         code_mode: Default::default(),
     }));
-    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::ClaudeCode, None)
+    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::ClaudeCode)
         .expect("engine core assembles");
     core.sessions.set_ipc_port(27699);
     core.workspace
@@ -853,7 +853,7 @@ async fn switched_code_mode_replaces_the_parked_session() {
         side_chats_only: Default::default(),
         code_mode: code_mode.clone(),
     }));
-    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::Codex, None)
+    let core = EngineCore::assemble(&dir, registry.clone(), HarnessId::Codex)
         .expect("engine core assembles");
     pre_title(&core);
 
@@ -1045,7 +1045,7 @@ async fn a_revived_turn_waits_for_the_port_its_vardoger_tools_dial() {
         fail_starts: Default::default(),
     }));
     // Assembled, the port not served yet.
-    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(
@@ -1441,7 +1441,6 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
             &dir,
             Arc::new(vardoger_engine::default_registry()),
             HarnessId::ClaudeCode,
-            None,
         )
         .expect("engine core assembles")
     };

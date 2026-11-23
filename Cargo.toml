@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/vardoger",
+    "apps/vardoger-server",
     "crates/cli",
     "crates/client",
     "crates/doc",

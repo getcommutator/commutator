@@ -1,16 +1,7 @@
 //! An engine served before its profile is open. Identity (`EngineInfo`) and
 //! the auth surface answer at once; every other call waits until the profile
-//! assembles — immediately for local, development and already-resolved
-//! synced profiles, after the viewport finishes organization onboarding for a
-//! captured synced session that doesn't have one yet. Existing subscriptions
-//! attach to the assembled service without reconnecting.
-//!
-//! While the account still has setup to finish (signed in, no organization
-//! chosen: [`DeferredState::Onboarding`]), plugin and template calls answer
-//! at once with `setup_incomplete` (`RpcError::Capability`), the app's cue
-//! to say "Finish setting up your account", instead of hanging until setup
-//! ends. Every other call waits exactly as before (the GPUI app's onboarding
-//! relies on it).
+//! assembles. Existing subscriptions attach to the assembled service without
+//! reconnecting.
 //!
 //! Both owners of a desktop engine use it: the app's background engine
 //! ([`crate::Engine::run_managed`]) and the app's in-process fallback.
@@ -29,9 +20,6 @@ use crate::{Auth, Engine, EngineConfig, EngineProfile, EngineRuntime, InstanceLo
 /// Where assembly stands.
 #[derive(Clone, Debug)]
 pub enum DeferredState {
-    /// Signed in, but the account's setup isn't finished (no organization
-    /// chosen): assembly hasn't started and may not for a long while.
-    Onboarding,
     /// Assembling (or about to): data calls wait, briefly.
     Waiting,
     Ready,
@@ -68,7 +56,7 @@ impl RpcService for DeferredEngineRpc {
         loop {
             let current = { state.borrow().clone() };
             match current {
-                DeferredState::Onboarding | DeferredState::Waiting => {}
+                DeferredState::Waiting => {}
                 DeferredState::Ready => {
                     let service = self.service.get().ok_or_else(|| {
                         RpcError::Failed("engine became ready without an RPC service".into())
@@ -82,16 +70,12 @@ impl RpcService for DeferredEngineRpc {
     }
 }
 
-/// What a call that needs the workspace answers while the account's setup
-/// isn't finished: the app says "Finish setting up your account".
-pub const SETUP_INCOMPLETE: &str = "setup_incomplete";
-
 /// Wait for assembly's outcome.
 pub async fn wait(state: &mut watch::Receiver<DeferredState>) -> Result<(), String> {
     loop {
         let current = { state.borrow().clone() };
         match current {
-            DeferredState::Onboarding | DeferredState::Waiting => {}
+            DeferredState::Waiting => {}
             DeferredState::Ready => return Ok(()),
             DeferredState::Failed(message) => return Err(message),
         }
@@ -110,32 +94,22 @@ pub struct DeferredEngine {
     pub engine_info: EngineInfo,
     pub auth: Auth,
     pub workspace_scope: WorkspaceScope,
-    /// The profile was known at startup: no onboarding stands between
-    /// startup and assembly.
-    pub profile_is_resolved: bool,
     /// The assembled runtime, once there is one.
     pub runtime: Arc<Mutex<Option<EngineRuntime>>>,
-    pub refresh_task: JoinHandle<()>,
     state_tx: Option<watch::Sender<DeferredState>>,
     state: watch::Receiver<DeferredState>,
     assembled: Arc<OnceCell<Arc<dyn RpcService>>>,
-    initial_profile: Option<Option<EngineProfile>>,
+    initial_profile: Option<EngineProfile>,
 }
 
 impl DeferredEngine {
     /// Resolve auth and identity (no stores opened yet).
     pub async fn prepare(config: &EngineConfig) -> anyhow::Result<Self> {
-        let auth = Engine::build_auth(config).await;
+        let auth = Engine::build_auth(config);
         let workspace_scope = Engine::initial_workspace_scope(&auth);
-        let initial_profile = Engine::resolve_profile(config, &auth, workspace_scope)?;
-        let profile_is_resolved = initial_profile.is_some();
+        let initial_profile = EngineProfile::local(&config.data_dir)?;
         let engine_info = Engine::engine_info(config, workspace_scope)?;
-        let refresh_task = auth.spawn_refresh_loop();
-        let (state_tx, state) = watch::channel(if profile_is_resolved {
-            DeferredState::Waiting
-        } else {
-            DeferredState::Onboarding
-        });
+        let (state_tx, state) = watch::channel(DeferredState::Waiting);
         let assembled = Arc::new(OnceCell::new());
         let service: Arc<dyn RpcService> = Arc::new(DeferredEngineRpc {
             auth: AuthRpc::new(auth.clone()),
@@ -148,9 +122,7 @@ impl DeferredEngine {
             engine_info,
             auth,
             workspace_scope,
-            profile_is_resolved,
             runtime: Arc::new(Mutex::new(None)),
-            refresh_task,
             state_tx: Some(state_tx),
             state,
             assembled,
@@ -181,7 +153,6 @@ impl DeferredEngine {
             .take()
             .expect("spawn_boot called twice");
         let auth = self.auth.clone();
-        let workspace_scope = self.workspace_scope;
         let runtime_slot = self.runtime.clone();
         let assembled = self.assembled.clone();
         // Agents' MCP servers get the scoped token, never the app's.
@@ -190,37 +161,7 @@ impl DeferredEngine {
         // assembly — held through sign-in onboarding too, because this
         // process owns the data dir from the moment it decided to host it.
         tokio::spawn(async move {
-            let profile = match initial_profile {
-                Some(profile) => profile,
-                None => {
-                    let mut auth_state = auth.watch_state();
-                    while !auth_state.borrow().is_signed_in() {
-                        if auth_state.changed().await.is_err() {
-                            state_tx.send_replace(DeferredState::Failed(
-                                "authentication state closed before workspace onboarding".into(),
-                            ));
-                            return;
-                        }
-                    }
-                    match Engine::resolve_profile(&config, &auth, workspace_scope) {
-                        Ok(Some(profile)) => {
-                            // Set up: assembling now, so calls wait for it.
-                            state_tx.send_replace(DeferredState::Waiting);
-                            profile
-                        }
-                        Ok(None) => {
-                            state_tx.send_replace(DeferredState::Failed(
-                                "workspace onboarding completed without an organization".into(),
-                            ));
-                            return;
-                        }
-                        Err(err) => {
-                            state_tx.send_replace(DeferredState::Failed(err.to_string()));
-                            return;
-                        }
-                    }
-                }
-            };
+            let profile = initial_profile;
 
             match Engine::assemble_runtime_with_lock(&config, auth, profile, lock).await {
                 Ok(runtime) => {
@@ -264,7 +205,7 @@ mod tests {
 
     fn engine(state: watch::Receiver<DeferredState>) -> (tempfile::TempDir, DeferredEngineRpc) {
         let dir = tempfile::tempdir().unwrap();
-        let auth = crate::Auth::new(crate::AuthConfig::new("https://edge.invalid", dir.path()));
+        let auth = crate::Auth::new(dir.path());
         let rpc = DeferredEngineRpc {
             auth: AuthRpc::new(auth),
             engine_info: EngineInfo {
@@ -280,11 +221,10 @@ mod tests {
         (dir, rpc)
     }
 
-    /// The staging pass: signed in with no organization chosen, identity
-    /// answers and every other call waits as it always did.
+    /// Identity answers at once; every other call waits for assembly.
     #[tokio::test]
-    async fn calls_wait_while_the_account_is_being_set_up() {
-        let (state_tx, state) = watch::channel(DeferredState::Onboarding);
+    async fn calls_wait_while_the_engine_assembles() {
+        let (state_tx, state) = watch::channel(DeferredState::Waiting);
         let (_dir, rpc) = engine(state);
         assert!(rpc.handle(methods::ENGINE_INFO, serde_json::json!({})).await.is_ok());
         for method in [methods::WATCH_CHATS, methods::LIST_HARNESSES, methods::MUTATE, methods::QUEUE_MESSAGE] {
@@ -292,10 +232,6 @@ mod tests {
             assert!(waiting.is_err(), "{method} waits for the workspace");
         }
 
-        // Set up and assembling: calls wait (briefly) for it, as before.
-        state_tx.send_replace(DeferredState::Waiting);
-        let waiting = tokio::time::timeout(Duration::from_millis(100), rpc.handle(methods::WATCH_CHATS, serde_json::json!({}))).await;
-        assert!(waiting.is_err(), "assembling: waits rather than refusing");
         // And a failed assembly still answers its reason.
         state_tx.send_replace(DeferredState::Failed("boom".into()));
         let failed = rpc.handle(methods::WATCH_CHATS, serde_json::json!({})).await;

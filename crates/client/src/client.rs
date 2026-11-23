@@ -13,7 +13,7 @@ use vardoger_proto::{Chat, ChatConfig, SidebarPinChange, SidebarSectionChange};
 use crate::attachments::{self, AttachmentCache};
 use crate::auth::TokenProvider;
 use crate::catalog::{self, HarnessInfo, ModelInfo};
-use crate::config::{AuthTokens, ClientConfig, Credentials};
+use crate::config::{ClientConfig, Credentials};
 use crate::connectivity::{
     Connectivity, ConnectivityState, ConnectivityTracker, RawConnectivity, SendState,
 };
@@ -773,11 +773,6 @@ impl Client {
         // Dropping the cores stops their rooms (each flushes its snapshot).
         lock(&self.inner.sessions).clear();
         self.inner.attachment_cache.clear();
-    }
-
-    /// The platform restored/re-signed a newer WorkOS pair.
-    pub fn update_tokens(&self, tokens: AuthTokens) {
-        self.inner.tokens.update_tokens(tokens);
     }
 
     // ── workspace reads ────────────────────────────────────────────────────

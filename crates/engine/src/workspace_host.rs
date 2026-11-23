@@ -30,10 +30,8 @@ use tokio::sync::watch;
 use vardoger_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
 use vardoger_proto::projectless;
 use vardoger_proto::{Chat, ChatConfig, Device, HarnessId, Session, SidebarPreferencesState, Space};
-use vardoger_sync::{DocsStore, RegistryClient, RegistryTuning};
+use vardoger_sync::{DocsStore, RegistryClient};
 
-use crate::doc_host::EdgeConfig;
-use crate::http_error::describe_http_error;
 use crate::{EngineError, now_ms};
 
 /// Legacy Loro workspace snapshot row — now only read once, as the migration
@@ -60,35 +58,7 @@ const DIAL_GATE_DARK_MS: i64 = 5 * 60_000;
 /// beats = offline). Also the "peer is reachable" signal that clears the
 /// peer-dial cooldown.
 const PRESENCE_FRESH_MS: i64 = 45_000;
-/// Relay-status probe cadence. Presence heartbeats ride the registry room, so
-/// any registry pathology (or our own room connection being down) silently
-/// starves them — and every device looks offline while its relay works fine.
-/// Before believing "offline", ask the device's DeviceRoom
-/// (`GET /device/{id}/status` → `hostConnected`), which tracks the host socket
-/// authoritatively and shares no machinery with the registry room. Probes only
-/// run for devices whose heartbeat is stale, so the steady state (healthy
-/// room, fresh beats) sends no extra traffic.
-const RELAY_PROBE_INTERVAL_MS: u64 = 30_000;
-/// How often to ask the relay about a device last heard from `quiet_ms` ago.
-/// A device that just went quiet is most likely a starved heartbeat (what the
-/// probe exists to catch), so it's asked every [`RELAY_PROBE_INTERVAL_MS`]; one
-/// gone for hours or days (a closed laptop, a Cloud machine asleep) is
-/// genuinely offline, and asking every 30 s, for each such device on the
-/// account, was most of a signed-in engine's idle network work. Its coming
-/// back is heard from its own heartbeat and boot stamp, not from this probe.
-fn relay_probe_every(quiet_ms: i64) -> std::time::Duration {
-    const MINUTE: i64 = 60_000;
-    let secs = match quiet_ms {
-        ms if ms < 10 * MINUTE => RELAY_PROBE_INTERVAL_MS / 1000,
-        ms if ms < 60 * MINUTE => 120,
-        ms if ms < 24 * 60 * MINUTE => 300,
-        _ => 600,
-    };
-    std::time::Duration::from_secs(secs)
-}
 
-/// Per-request timeout for a relay-status probe.
-const RELAY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Debounce window for local snapshot saves after a change.
 const SNAPSHOT_DEBOUNCE_MS: u64 = 1_000;
 /// Snapshot debounce when only the server's rows changed. Those come back
@@ -98,38 +68,6 @@ const SNAPSHOT_DEBOUNCE_MS: u64 = 1_000;
 /// 2.5 MB snapshot. Local writes keep [`SNAPSHOT_DEBOUNCE_MS`].
 const REMOTE_SNAPSHOT_DEBOUNCE_MS: u64 = 30_000;
 
-/// Initial-join retry backoff (base, cap). A first registry-room join that
-/// fails must not strand the device offline until an app restart — retry until
-/// it lands. Jittered so N devices restarting together don't resynchronize
-/// their retries into a thundering herd on the cold DO.
-pub(crate) const JOIN_RETRY_BASE: std::time::Duration = std::time::Duration::from_millis(500);
-/// 16s, matching the room clients' BACKOFF_CAP: the cap only bounds the dark
-/// window when every event wake (online bus, system wake, token change)
-/// missed, so it trades a few extra dials/minute for a tighter worst case.
-pub(crate) const JOIN_RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(16);
-
-pub(crate) async fn token_changed(changes: &mut Option<tokio::sync::watch::Receiver<u64>>) {
-    match changes {
-        Some(changes) => {
-            let _ = changes.changed().await;
-        }
-        None => std::future::pending::<()>().await,
-    }
-}
-
-async fn token_revoked(token: &Option<Arc<dyn vardoger_rpc::TokenSource>>) -> bool {
-    match token {
-        Some(token) => matches!(token.token().await, Err(vardoger_rpc::TokenError::SignedOut)),
-        // Fixed test/dev URLs have no revocable credential source.
-        None => false,
-    }
-}
-
-/// Quiet-probe cadence for the registry room: fixed at 15 minutes. One room
-/// per engine, so the fixed cadence costs ~100 DO wakes/day total, and the
-/// probe is deadline-checked — a mute room is detected within
-/// probe cadence + 10s instead of hours (2026-08-04 deaf-socket lesson).
-const REGISTRY_PROBE_QUIET: std::time::Duration = std::time::Duration::from_secs(900);
 /// Deaf-socket escalation: live peer presence dark this long after the
 /// tripwire probe → redial on a fresh socket (see `check_presence_deafness`).
 const PRESENCE_DEAF_REDIAL_MS: i64 = 60_000;
@@ -153,16 +91,6 @@ struct PresenceWatch {
     probed: bool,
 }
 
-/// Cheap decorrelation jitter (0–500ms) without pulling in a rng — derived from
-/// the sub-nanosecond wall clock. Mirrors the device relay's `jitter()`.
-pub(crate) fn join_retry_jitter() -> std::time::Duration {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    std::time::Duration::from_millis(u64::from(nanos) % 500)
-}
-
 /// A new projectless chat's cwd: the scratch folder the creating client
 /// already picked, else one named for the chat. Older clients send `~` (or
 /// nothing); new chats never run in the host's home.
@@ -179,11 +107,7 @@ fn new_projectless_cwd(
 
 /// This device's advertised capabilities.
 fn device_capabilities() -> Vec<String> {
-    let mut capabilities = vardoger_proto::capabilities::current();
-    if crate::doc_host::relay_layer_enabled() {
-        capabilities.push(vardoger_proto::relay_gen::CHAT_RELAY_CAPABILITY.to_string());
-    }
-    capabilities
+    vardoger_proto::capabilities::current()
 }
 
 #[derive(Debug, Clone)]
@@ -197,9 +121,6 @@ pub struct WorkspaceHostConfig {
     /// The signed-in user — registries are per-user (`reg1/{orgId}/{userId}`):
     /// spaces/sessions are private to their owner, never org-visible.
     pub user_id: String,
-    /// When present, the host joins `/registry/{orgId}/ws`. `None` = fully offline
-    /// (local snapshots only; the registry still drives everything device-side).
-    pub edge: Option<EdgeConfig>,
     /// The profile can never attach an edge (`WorkspaceScope::Local`), so
     /// registry writes fold straight into the local rows instead of queueing
     /// for acks that will never come. Only then: a replica that may attach
@@ -443,7 +364,6 @@ impl WorkspaceHost {
                 .unwrap_or_default(),
         });
         let (changed_tx, changed_rx) = watch::channel(0u64);
-        let edge_less = config.edge.is_none();
 
         let host = Self {
             inner: Arc::new(WorkspaceHostInner {
@@ -456,7 +376,7 @@ impl WorkspaceHost {
                 spaces_tx,
                 sidebar_preferences_tx,
                 room: Mutex::new(None),
-                registry_synced_tx: watch::Sender::new(edge_less),
+                registry_synced_tx: watch::Sender::new(true),
                 changed_tx,
                 presence_seen: Mutex::new(std::collections::HashMap::new()),
                 claimed: Mutex::default(),
@@ -483,152 +403,8 @@ impl WorkspaceHost {
         // the VACUUM on its own thresholds, so ordinary boots only checkpoint.
         let store = host.inner.store.clone();
         tokio::task::spawn_blocking(move || store.reclaim_free_space());
-        host.join_room();
         tokio::spawn(workspace_task(Arc::downgrade(&host.inner), changed_rx));
-        if host.inner.config.edge.is_some() {
-            tokio::spawn(relay_probe_task(Arc::downgrade(&host.inner)));
-        }
         Ok(host)
-    }
-
-    /// Edge room join — offline-tolerant: a failed join logs and stays local-first.
-    fn join_room(&self) {
-        let Some(edge) = &self.inner.config.edge else {
-            return;
-        };
-        let org_id = self.inner.config.org_id.clone();
-        // Per-dial URL provider: the bearer is re-read on every (re)connect.
-        let url = edge.room_url(format!("/registry/{org_id}/ws"));
-        self.spawn_join(url, edge.token_changes(), Some(edge.token.clone()));
-    }
-
-    /// Test seam: join a registry room at a fixed WebSocket URL without an
-    /// `EdgeConfig` — integration tests wire hosts to an in-process mock
-    /// server through this. Production always goes through [`Self::join_room`].
-    #[doc(hidden)]
-    pub fn connect_registry_url(&self, url: &str) {
-        self.spawn_join(Arc::new(vardoger_sync::StaticUrl(url.to_string())), None, None);
-    }
-
-    fn spawn_join(
-        &self,
-        url: Arc<dyn vardoger_sync::UrlProvider>,
-        mut token_changes: Option<tokio::sync::watch::Receiver<u64>>,
-        token: Option<Arc<dyn vardoger_rpc::TokenSource>>,
-    ) {
-        // A room will ack from here on (the test seam joins edge-less
-        // hosts): queue writes again, re-seeding any folded local-only ones.
-        self.mutate(|doc| doc.set_local_only(false));
-        let org_id = self.inner.config.org_id.clone();
-        let reg = self.inner.reg.clone();
-        let device_id = self.inner.config.device_id.clone();
-        let weak = Arc::downgrade(&self.inner);
-        tokio::spawn(async move {
-            let mut wake = vardoger_sync::wake::subscribe();
-            let mut online = vardoger_sync::wake::subscribe_online();
-            // `RegistryClient` only self-reconnects AFTER a first successful
-            // join; an INITIAL failure (a 500 from an overloaded DO, a token
-            // racing a refresh, an edge deploy) must not end this task and
-            // leave the device offline until an app restart. Retry the first
-            // join on a capped, jittered backoff so a transient blip self-heals.
-            let mut backoff = JOIN_RETRY_BASE;
-            loop {
-                if weak.upgrade().is_none() {
-                    return; // host dropped
-                }
-                let tuning = RegistryTuning {
-                    probe_quiet: REGISTRY_PROBE_QUIET,
-                    ..RegistryTuning::default()
-                };
-                // Production path (token present): dual transport — the WS
-                // dials as before, and a plain-HTTPS pull/push seam derived
-                // from the same URL provider bootstraps the doc in ~1 RTT
-                // and keeps syncing at backoff cadence when the socket can't
-                // connect (airplane-wifi networks strip WS upgrades).
-                let result = if token.is_some() {
-                    RegistryClient::connect_via_transport(
-                        url.clone(),
-                        reg.clone(),
-                        &device_id,
-                        tuning,
-                        Arc::new(WsDerivedRegistryTransport::new(url.clone())),
-                    )
-                    .await
-                } else {
-                    RegistryClient::connect_via_tuned(url.clone(), reg.clone(), &device_id, tuning)
-                        .await
-                };
-                match result {
-                    Ok(client) => {
-                        let client = Arc::new(client);
-                        client.set_presence(now_ms());
-                        let mut events = client.events();
-                        if token_revoked(&token).await {
-                            return;
-                        }
-                        let Some(inner) = weak.upgrade() else { return };
-                        *lock(&inner.room) = Some(client.clone());
-                        inner
-                            .room_joined_at
-                            .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
-                        inner.bump_changed();
-                        tracing::info!(org = %org_id, "registry room joined");
-                        drop(inner);
-                        // The slot is the sole owner. This lets engine-level
-                        // revocation close the socket synchronously by taking it.
-                        drop(client);
-                        // The event pump lives for the client's whole life
-                        // (across its self-reconnects); it ends only when the
-                        // client is dropped at host teardown.
-                        loop {
-                            tokio::select! {
-                                event = events.recv() => {
-                                    let Some(inner) = weak.upgrade() else { return };
-                                    if !inner.on_registry_event(event) {
-                                        break;
-                                    }
-                                }
-                                _ = token_changed(&mut token_changes) => {
-                                    if token_revoked(&token).await {
-                                        tracing::info!(org = %org_id,
-                                            "registry credentials removed; leaving room");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(inner) = weak.upgrade() {
-                            *lock(&inner.room) = None;
-                        }
-                        return;
-                    }
-                    Err(err) => {
-                        tracing::warn!(org = %org_id, error = %err, backoff_ms = backoff.as_millis() as u64,
-                            "registry room join failed; retrying");
-                    }
-                }
-                // Drain stale online events so only successes DURING this
-                // wait cut it short (our own failed dial doesn't count).
-                while online.try_recv().is_ok() {}
-                tokio::select! {
-                    _ = tokio::time::sleep(backoff + join_retry_jitter()) => {
-                        backoff = (backoff * 2).min(JOIN_RETRY_CAP);
-                    }
-                    _ = wake.recv() => {
-                        backoff = JOIN_RETRY_BASE;
-                    }
-                    _ = online.recv() => {
-                        backoff = JOIN_RETRY_BASE;
-                    }
-                    _ = token_changed(&mut token_changes) => {
-                        if token_revoked(&token).await {
-                            return;
-                        }
-                        backoff = JOIN_RETRY_BASE;
-                    }
-                }
-            }
-        });
     }
 
     /// Close the current registry membership before account-scoped state is
@@ -740,12 +516,7 @@ impl WorkspaceHost {
     }
 
     pub fn registry_synced(&self) -> bool {
-        if self.inner.config.edge.is_none() {
-            return true;
-        }
-        lock(&self.inner.room)
-            .as_ref()
-            .is_some_and(|room| room.stats().synced)
+        true
     }
 
     /// Probe the registry room's liveness NOW (window-focus sweep). Probes are
@@ -775,13 +546,7 @@ impl WorkspaceHost {
     /// Whether this engine was configured with edge transports at all
     /// (`false` = local profile: connectivity is `Disabled`, hide the pill).
     pub fn edge_expected(&self) -> bool {
-        self.inner.config.edge.is_some()
-    }
-
-    /// The edge this workspace syncs through (`None` = local/offline profile)
-    /// — also where account-scoped HTTP calls (Cloud, vault) go.
-    pub fn edge(&self) -> Option<&EdgeConfig> {
-        self.inner.config.edge.as_ref()
+        false
     }
 
     /// The workspace org (`ws3/{orgId}/…` rooms, `/cloud/{orgId}` routes).
@@ -1584,46 +1349,6 @@ impl WorkspaceHostInner {
         self.publish_lists(false);
     }
 
-    /// One registry room event; `false` when the client is gone.
-    fn on_registry_event(
-        &self,
-        event: Result<vardoger_sync::RegistryEvent, tokio::sync::broadcast::error::RecvError>,
-    ) -> bool {
-        use tokio::sync::broadcast::error::RecvError;
-        match event {
-            Ok(vardoger_sync::RegistryEvent::Connected) => {
-                // Re-join: restart the dial gate's warm-up clock (presence map
-                // is empty again; silence isn't evidence yet).
-                self.room_joined_at
-                    .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
-                self.bump_changed();
-            }
-            Ok(vardoger_sync::RegistryEvent::Applied) => self.bump_changed(),
-            Ok(vardoger_sync::RegistryEvent::Presence) => self.publish_presence(),
-            Ok(vardoger_sync::RegistryEvent::Disconnected) => {}
-            // Events were dropped (the pump fell behind): any of them may
-            // have been an applied frame, and a presence frame no longer
-            // republishes everything. Republish (and save) as for one.
-            Err(RecvError::Lagged(_)) => self.bump_changed(),
-            Err(RecvError::Closed) => return false,
-        }
-        true
-    }
-
-    /// A presence frame changes only the device overlay (`overlay_presence`):
-    /// every row change also bumps `changed_tx`, which runs the full publish.
-    /// So a heartbeat re-reads the devices alone, not every chat and session.
-    fn publish_presence(&self) {
-        let devices = lock(&self.reg).read_devices();
-        match devices {
-            Ok(mut devices) => {
-                self.overlay_presence(&mut devices);
-                publish_if_changed(&self.devices_tx, devices);
-            }
-            Err(err) => tracing::warn!(error = %err, "registry read failed"),
-        }
-    }
-
     fn publish_lists(&self, clock_tick: bool) {
         let registry_synced = lock(&self.room)
             .as_ref()
@@ -2009,106 +1734,6 @@ fn merge_sessions(device_id: &str, rows: &[Session], local: &[Session]) -> Vec<S
     list
 }
 
-/// Background task: relay-verified presence. Every [`RELAY_PROBE_INTERVAL_MS`],
-/// for each known device whose merged heartbeat freshness has gone stale, ask
-/// its DeviceRoom whether the host socket is live (`/device/{id}/status`); a
-/// positive answer refreshes the presence cache so the overlay keeps the badge
-/// online. The DeviceRoom shares no machinery with the registry room, so a
-/// false "offline" now requires BOTH independent paths to be down — at which
-/// point the device is, for every purpose the app has, genuinely offline.
-/// Steady state (healthy room, fresh heartbeats) probes nothing.
-async fn relay_probe_task(weak: Weak<WorkspaceHostInner>) {
-    // On the beat grid (`vardoger_sync::wake`): it wakes with the sockets' pings.
-    let mut tick =
-        vardoger_sync::wake::beat_interval(std::time::Duration::from_millis(RELAY_PROBE_INTERVAL_MS));
-    let client = reqwest::Client::new();
-    // When each device was last probed (epoch ms).
-    let mut probed: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    loop {
-        tick.tick().await;
-        let Some(inner) = weak.upgrade() else { return };
-        let Some(edge) = inner.config.edge.clone() else {
-            return;
-        };
-        let self_id = inner.config.device_id.clone();
-        let now = now_ms();
-        let stale: Vec<String> = {
-            let Ok(devices) = lock(&inner.reg).read_devices() else {
-                continue;
-            };
-            let seen = lock(&inner.presence_seen);
-            // (Deleted devices aren't listed: a retired Cloud machine is never asked.)
-            probed.retain(|id, _| devices.iter().any(|d| &d.id == id));
-            devices
-                .into_iter()
-                .filter(|d| d.id != self_id)
-                .filter(|d| {
-                    let heard = seen
-                        .get(&d.id)
-                        .copied()
-                        .into_iter()
-                        .chain(d.last_seen_at.map(|at| at.timestamp_millis()))
-                        .max();
-                    if heard.is_some_and(|ms| now.saturating_sub(ms) < PRESENCE_FRESH_MS) {
-                        return false;
-                    }
-                    let quiet = heard.map_or(i64::MAX, |ms| now.saturating_sub(ms));
-                    probed.get(&d.id).is_none_or(|at| {
-                        now.saturating_sub(*at) >= relay_probe_every(quiet).as_millis() as i64
-                    })
-                })
-                .map(|d| d.id)
-                .collect()
-        };
-        for id in &stale {
-            probed.insert(id.clone(), now);
-        }
-        drop(inner);
-        if stale.is_empty() {
-            continue;
-        }
-        let Ok(bearer) = edge.bearer().await else {
-            continue; // no usable token yet
-        };
-        let mut refreshed = false;
-        for device_id in stale {
-            let url = format!(
-                "{}/device/{}/status",
-                edge.url.trim_end_matches('/'),
-                device_id
-            );
-            let response = client
-                .get(&url)
-                .bearer_auth(&bearer)
-                .timeout(RELAY_PROBE_TIMEOUT)
-                .send()
-                .await;
-            let Ok(response) = response else { continue };
-            if !response.status().is_success() {
-                continue;
-            }
-            let Ok(body) = response.json::<serde_json::Value>().await else {
-                continue;
-            };
-            if body
-                .get("hostConnected")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
-                let Some(inner) = weak.upgrade() else { return };
-                lock(&inner.presence_seen).insert(device_id.clone(), now_ms());
-                tracing::debug!(device = %device_id, "presence: relay-verified alive");
-                refreshed = true;
-            }
-        }
-        // Presence changed, not a row: republish the devices (a plain publish
-        // skips lists whose rows didn't change).
-        if refreshed && let Some(inner) = weak.upgrade() {
-            inner.publish_presence();
-        }
-    }
-}
-
 /// Background task: reacts to registry changes (local mutations and applied
 /// server frames) by re-publishing the watch channels and debouncing snapshots,
 /// and refreshes presence every [`PRESENCE_INTERVAL_MS`]. Holds only a weak
@@ -2116,9 +1741,7 @@ async fn relay_probe_task(weak: Weak<WorkspaceHostInner>) {
 async fn workspace_task(weak: Weak<WorkspaceHostInner>, mut changed_rx: watch::Receiver<u64>) {
     // Presence is other devices' and ours to them, through the edge: a
     // local profile (no edge, this device alone) has none to refresh.
-    let synced = weak
-        .upgrade()
-        .is_some_and(|inner| inner.config.edge.is_some());
+    let synced = false;
     // On the beat grid, with the sockets' pings (`vardoger_sync::wake`).
     let mut presence =
         vardoger_sync::wake::beat_interval(std::time::Duration::from_millis(PRESENCE_INTERVAL_MS));
@@ -2203,204 +1826,10 @@ fn device_name_on_boot(existing_name: Option<&str>, detected_name: &str) -> Stri
         .to_string()
 }
 
-/// Plain-HTTPS registry pull/push derived from the SAME WebSocket URL
-/// provider the dial uses (`wss://…/registry/{org}/ws?token=…&device=…`):
-/// swap the scheme, swap the `/ws` leaf for `/rows` or `/push`, keep the
-/// fresh token+device the provider already mints per attempt. No second
-/// auth path to maintain, and the `?beat=1` keeps presence alive for a
-/// device that can only reach the edge over HTTPS.
-struct WsDerivedRegistryTransport {
-    url: Arc<dyn vardoger_sync::UrlProvider>,
-    client: reqwest::Client,
-}
-
-impl WsDerivedRegistryTransport {
-    fn new(url: Arc<dyn vardoger_sync::UrlProvider>) -> Self {
-        Self {
-            url,
-            client: reqwest::Client::new(),
-        }
-    }
-
-    async fn leaf_url(
-        provider: &Arc<dyn vardoger_sync::UrlProvider>,
-        leaf: &str,
-    ) -> Result<(reqwest::Url, Option<String>), vardoger_sync::SyncError> {
-        let ws = provider.url().await?;
-        let mut u = reqwest::Url::parse(&ws)
-            .map_err(|e| vardoger_sync::SyncError::Protocol(format!("bad ws url: {e}")))?;
-        let scheme = if u.scheme() == "wss" { "https" } else { "http" };
-        let _ = u.set_scheme(scheme);
-        let path = u.path().to_string();
-        let Some(base) = path.strip_suffix("/ws") else {
-            return Err(vardoger_sync::SyncError::Protocol(
-                "ws url without /ws leaf".into(),
-            ));
-        };
-        let new_path = format!("{base}/{leaf}");
-        u.set_path(&new_path);
-        // Move the WS URL's ?token= into a bearer header (HTTP supports
-        // headers; query strings can reach request logs). Other params
-        // (device) stay.
-        let token = u
-            .query_pairs()
-            .find(|(k, _)| k == "token")
-            .map(|(_, v)| v.into_owned());
-        let kept: Vec<(String, String)> = u
-            .query_pairs()
-            .filter(|(k, _)| k != "token")
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
-        u.query_pairs_mut().clear();
-        for (k, v) in kept {
-            u.query_pairs_mut().append_pair(&k, &v);
-        }
-        Ok((u, token))
-    }
-}
-
-impl vardoger_sync::RegistryTransport for WsDerivedRegistryTransport {
-    fn fetch(
-        &self,
-        since: u64,
-    ) -> futures::future::BoxFuture<'static, Result<String, vardoger_sync::SyncError>> {
-        let provider = self.url.clone();
-        let client = self.client.clone();
-        Box::pin(async move {
-            let (mut u, token) = Self::leaf_url(&provider, "rows").await?;
-            u.query_pairs_mut()
-                .append_pair("since", &since.to_string())
-                .append_pair("beat", "1");
-            let mut req = client.get(u);
-            if let Some(token) = token {
-                req = req.bearer_auth(token);
-            }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| vardoger_sync::SyncError::WebSocket(describe_http_error(e)))?;
-            if !resp.status().is_success() {
-                return Err(vardoger_sync::SyncError::Protocol(format!(
-                    "registry pull http {}",
-                    resp.status()
-                )));
-            }
-            resp.text()
-                .await
-                .map_err(|e| vardoger_sync::SyncError::WebSocket(describe_http_error(e)))
-        })
-    }
-
-    fn push(
-        &self,
-        body: String,
-    ) -> futures::future::BoxFuture<'static, Result<String, vardoger_sync::SyncError>> {
-        let provider = self.url.clone();
-        let client = self.client.clone();
-        Box::pin(async move {
-            let (u, token) = Self::leaf_url(&provider, "push").await?;
-            let mut req = client
-                .post(u)
-                .header("content-type", "application/json")
-                .body(body);
-            if let Some(token) = token {
-                req = req.bearer_auth(token);
-            }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| vardoger_sync::SyncError::WebSocket(describe_http_error(e)))?;
-            if !resp.status().is_success() {
-                return Err(vardoger_sync::SyncError::Protocol(format!(
-                    "registry push http {}",
-                    resp.status()
-                )));
-            }
-            resp.text()
-                .await
-                .map_err(|e| vardoger_sync::SyncError::WebSocket(describe_http_error(e)))
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
-    #[test]
-    fn relay_probes_slow_down_with_how_long_a_device_has_been_gone() {
-        let minute = 60_000;
-        assert_eq!(relay_probe_every(0).as_secs(), 30);
-        assert_eq!(relay_probe_every(9 * minute).as_secs(), 30);
-        assert_eq!(relay_probe_every(30 * minute).as_secs(), 120);
-        assert_eq!(relay_probe_every(5 * 60 * minute).as_secs(), 300);
-        assert_eq!(relay_probe_every(3 * 24 * 60 * minute).as_secs(), 600);
-        assert_eq!(
-            relay_probe_every(i64::MAX).as_secs(),
-            600,
-            "never heard from"
-        );
-    }
-    use super::{device_name_on_boot, linked_worktree_root, relay_probe_every};
-
-    #[tokio::test]
-    async fn registry_http_sync_retains_dns_cause() {
-        use super::*;
-        use crate::http_error::test_support::FailingDns;
-        use vardoger_sync::RegistryTransport;
-
-        let dns = Arc::new(FailingDns::default());
-        let transport = WsDerivedRegistryTransport {
-            url: Arc::new(vardoger_sync::StaticUrl(
-                "wss://edge.invalid/registry/org/ws?token=token-secret".into(),
-            )),
-            client: dns.client(),
-        };
-        let pull = transport.fetch(0).await.unwrap_err();
-        let push = transport.push("{}".into()).await.unwrap_err();
-        for error in [pull, push] {
-            let message = error.to_string();
-            assert!(message.contains("injected DNS lookup failure"), "{message}");
-            assert!(!message.contains("token-secret"), "{message}");
-        }
-    }
-
-    /// The event pump falling behind (the broadcast channel overflowed)
-    /// drops events, applied frames among them. That must still republish
-    /// and save: presence frames no longer republish everything.
-    #[tokio::test]
-    async fn a_lagged_registry_event_pump_still_republishes() {
-        use super::*;
-        let dir = tempfile::tempdir().unwrap();
-        let host = WorkspaceHost::open(
-            Arc::new(DocsStore::open(dir.path()).unwrap()),
-            WorkspaceHostConfig {
-                device_id: "test-device".into(),
-                device_name: "Test device".into(),
-                platform: "macos".into(),
-                org_id: "test-org".into(),
-                user_id: "test-user".into(),
-                edge: None,
-                local_only: true,
-            },
-        )
-        .unwrap();
-        // A real overflow: capacity 2, five sends, the receiver lags.
-        let (tx, mut rx) = tokio::sync::broadcast::channel(2);
-        for _ in 0..5 {
-            tx.send(vardoger_sync::RegistryEvent::Applied).unwrap();
-        }
-        let lagged = rx.recv().await;
-        assert!(matches!(lagged, Err(tokio::sync::broadcast::error::RecvError::Lagged(_))));
-        let mut changed = host.inner.changed_tx.subscribe();
-        changed.mark_unchanged();
-        assert!(host.inner.on_registry_event(lagged));
-        assert!(changed.has_changed().unwrap(), "a lagged pump dropped applied frames silently");
-        drop(tx);
-        while let Ok(event) = rx.try_recv() {
-            assert!(host.inner.on_registry_event(Ok(event)));
-        }
-        assert!(!host.inner.on_registry_event(Err(tokio::sync::broadcast::error::RecvError::Closed)));
-    }
+    use super::{device_name_on_boot, linked_worktree_root};
 
     /// A crash loses nothing local: what is on disk 1.5 s after a local
     /// write holds it, even while server changes keep arriving (their long
@@ -2419,7 +1848,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: true,
             },
         )
@@ -2469,7 +1897,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: true,
             },
         )
@@ -2515,7 +1942,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: true,
             },
         )
@@ -2588,7 +2014,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 // Local-only: writes fold in, nothing waits in `pending` (with
                 // no transport, unsent writes would keep every save prompt).
                 local_only: true,
@@ -2640,7 +2065,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: false,
             },
         )
@@ -2697,7 +2121,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: false,
             },
         )
@@ -2741,7 +2164,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: false,
             },
         )
@@ -2771,7 +2193,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: false,
             },
         )
@@ -2883,7 +2304,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: true,
             },
         )
@@ -2905,43 +2325,6 @@ mod tests {
             host.record_session(&running_session(Utc::now() + chrono::Duration::seconds(i)));
         }
         assert_eq!(host.read(|doc| doc.pending_len()), 0);
-    }
-
-    #[tokio::test]
-    async fn synced_profile_coalesces_a_bloated_registry() {
-        use super::*;
-
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(DocsStore::open(dir.path()).unwrap());
-        save_bloated_registry(&store, 5_000);
-        let host = WorkspaceHost::open(
-            store.clone(),
-            WorkspaceHostConfig {
-                device_id: "test-device".into(),
-                device_name: "Test device".into(),
-                platform: "macos".into(),
-                org_id: "test-org".into(),
-                user_id: "test-user".into(),
-                // Unreachable edge: writes queue (and retry) without acks.
-                edge: Some(EdgeConfig::with_static_token("http://127.0.0.1:1", "test")),
-                local_only: false,
-            },
-        )
-        .unwrap();
-        // The session row and this boot's device row: in flight at most once
-        // plus one coalesced unsent op each.
-        assert!(host.read(|doc| doc.pending_ops_len()) <= 4);
-        for i in 0..100 {
-            host.record_session(&running_session(Utc::now() + chrono::Duration::seconds(i)));
-        }
-        assert!(host.read(|doc| doc.pending_ops_len()) <= 4);
-        let saved = store.load_snapshot(REGISTRY_DOC_ID).unwrap().unwrap();
-        assert!(
-            RegistryDoc::from_bytes(&saved, "test-device")
-                .unwrap()
-                .pending_ops_len()
-                <= 4
-        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2990,7 +2373,6 @@ mod tests {
                 platform: "macos".into(),
                 org_id: "test-org".into(),
                 user_id: "test-user".into(),
-                edge: None,
                 local_only: true,
             },
         )
