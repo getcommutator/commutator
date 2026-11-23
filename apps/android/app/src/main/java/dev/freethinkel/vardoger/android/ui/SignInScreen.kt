@@ -14,20 +14,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,7 +47,7 @@ import dev.freethinkel.vardoger.android.core.AppModel
 fun SignInScreen(model: AppModel) {
     val context = LocalContext.current
     val error by model.signInError.collectAsState()
-    val orgs by model.orgChoice.collectAsState()
+    var server by rememberSaveable { mutableStateOf(model.credentials.lastServerUrl ?: "") }
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -66,17 +69,28 @@ fun SignInScreen(model: AppModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(48.dp))
+        Spacer(Modifier.height(40.dp))
+        OutlinedTextField(
+            value = server,
+            onValueChange = { server = it },
+            label = { Text("Your Vardoger server") },
+            placeholder = { Text("https://vardoger.example.com") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
-                val url = model.beginSignIn()
+                val url = model.beginSignIn(server) ?: return@Button
                 CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url))
             },
+            enabled = server.startsWith("https://") || server.startsWith("http://"),
             modifier = Modifier.fillMaxWidth().heightIn(min = ButtonDefaults.MediumContainerHeight),
             shapes = ButtonDefaults.shapes(),
             contentPadding = ButtonDefaults.contentPaddingFor(ButtonDefaults.MediumContainerHeight),
         ) {
-            Text("Sign in", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
+            Text("Continue with Google", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
         }
         Spacer(Modifier.height(12.dp))
         OutlinedButton(
@@ -90,25 +104,5 @@ fun SignInScreen(model: AppModel) {
             Spacer(Modifier.height(20.dp))
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
         }
-    }
-    orgs?.let { (list, choice) ->
-        AlertDialog(
-            onDismissRequest = { choice.complete(null) },
-            title = { Text("Choose an organization") },
-            text = {
-                Column {
-                    for (org in list) {
-                        ListItem(
-                            headlineContent = { Text(org.name) },
-                            trailingContent = {
-                                TextButton(onClick = { choice.complete(org) }) { Text("Open") }
-                            },
-                        )
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { choice.complete(null) }) { Text("Cancel") } },
-        )
     }
 }

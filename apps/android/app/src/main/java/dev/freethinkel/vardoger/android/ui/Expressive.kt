@@ -155,47 +155,6 @@ fun FloatingNavBar(items: List<NavItem>, modifier: Modifier = Modifier, trailing
     }
 }
 
-/**
- * "New session" — the always-there primary action above the nav (the iOS
- * accessory bar), with the live summary of what needs attention.
- */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-fun NewSessionBar(
-    summary: String?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    /** A call is up: the voice strip takes the label's place. */
-    voiceLive: Boolean = false,
-    /** Voice at the trailing end (idle button, or the live call strip with `Modifier.weight(1f)`). */
-    voice: (@Composable RowScope.() -> Unit)? = null,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
-    ) {
-        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) { ZIcon(ZIcons.NewSession, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onPrimary) }
-            Spacer(Modifier.width(14.dp))
-            if (!voiceLive) Text("New session", style = MaterialTheme.typography.titleMediumEmphasized, modifier = Modifier.weight(1f))
-            if (summary != null && !voiceLive) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 12.dp)) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-                    Spacer(Modifier.width(6.dp))
-                    Text(summary, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            voice?.invoke(this)
-        }
-    }
-}
-
 val FloatingChromePadding = PaddingValues(bottom = 176.dp)
 
 /** The page tone behind the status bar once `list` scrolls content under it. */

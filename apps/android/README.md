@@ -1,7 +1,11 @@
 # Vardoger for Android
 
-A Jetpack Compose viewport onto the vardoger mesh, built on the same Rust mobile
-core as the iOS app (`crates/mobile`). **Rust decides what to paint and
+A Jetpack Compose viewport onto one of your machines, built on the same Rust
+mobile core as the iOS app (`crates/mobile`). As on iOS, it signs in to your
+Vardoger server (Google, PKCE, back to `vardoger://auth`), lists the account's
+machines and drives the picked one's engine through the server's relay. Cut
+from Zeron's app, with no backend here: Cloud, Providers/agent accounts,
+onboarding, voice, direct terminals and the local-network permission. **Rust decides what to paint and
 where; Kotlin paints, scrolls and handles gestures.** The transcript's text
 measurement, markdown layout, prefix-sum virtualization and display lists are
 the exact code iOS runs — see [`docs/mobile-rewrite.md`](../../docs/mobile-rewrite.md).
@@ -31,56 +35,7 @@ iterating on Kotlin; `VARDOGER_ANDROID_ABIS=arm64-v8a` builds one ABI.
 
 ## Releases
 
-`.github/workflows/android.yml` (run by `ci.yml`) builds a release APK and
-Google Play App Bundle (`.aab`, arm64, the core at the `mobile-dist` profile)
-whenever the app or the Rust core changes: pull requests that touch the app or
-the mobile core (or carry the `ci:full` label) get it as workflow artifacts,
-and pushes to `main` publish the APK to
-`zeron.sh/releases/vardoger-android-arm64.apk` — the website's Android download —
-with a copy per build (`vardoger-<version>-<build>-android-arm64.apk`) and `.sha256`s.
-
-The version is the workspace's (`Cargo.toml`); the build number grows with each
-run. Publishing needs the upload key in repository secrets
-(`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-`ANDROID_KEY_PASSWORD`) so each build installs over the last; without them the
-APK is debug-signed and not published. Locally, `VARDOGER_ANDROID_KEYSTORE` (and
-the three variables beside it) signs `assembleRelease` the same way.
-
-### Google Play testing
-
-Every Android workflow run also saves an `android-aab` artifact (bundle and
-SHA-256 checksum, retained for 90 days). Builds from `main` or a manual run use
-the release key; pull requests use a debug key and cannot upload to Play.
-The APK and bundle share the same version code, `1000 + GITHUB_RUN_NUMBER`.
-Start a **new run**, rather than rerunning an uploaded build, to get a new code.
-
-For the first release, download `android-aab` from Actions and upload the `.aab`
-in Play Console → Test and release → Testing → Open testing. Complete the app's
-required declarations, signing setup, and review before opening the test.
-
-To enable subsequent automatic uploads:
-
-1. Enable the Google Play Android Developer API in a Google Cloud project.
-2. Create a service account and grant it access to **Vardoger only** in Play Console
-   → Users and permissions, with app read access and permission to release to
-   testing tracks. It does not need production, financial, or account admin access.
-3. Store its JSON key in the repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
-4. Set repository variable `PLAY_UPLOAD_ENABLED=true`. Pushes to `main` that
-   trigger the Android workflow will then upload the signed bundle to open testing
-   (`beta`). `PLAY_TRACK=internal` selects internal testing instead.
-5. The default `PLAY_RELEASE_STATUS=draft` leaves the uploaded release ready in
-   Console. Once the app's initial setup/review is complete, set it to `completed`
-   to roll future uploads out to testers, subject to Google's review.
-
-For a manual build/upload, run **Android** on `main`, check `upload_play`, and
-choose `beta` (open testing) or `internal`, plus `draft` or `completed`.
-Manual runs leave the website download unchanged. Only testing tracks are
-accepted; this workflow does not release to production.
-
-The Play upload job is serialized. Avoid editing a release in Console during
-an upload. If Play rejects a release, the signed artifact remains downloadable
-and the workflow reports the error. Missing credentials never fall back to a
-debug-signed Play upload.
+Zeron's release workflow (APK on zeron.sh, Play uploads) was not ported.
 
 ## Layout
 
@@ -96,12 +51,11 @@ transcript/  TranscriptState (layout engine + viewport: anchoring, follow the
 terminal/    TerminalView (a shell on the chat's host: paints the Rust
              emulator's frames, IME and hardware keys, scrollback fling,
              pinch to resize, selection), TerminalGlyphs (box drawing, blocks)
-ui/          Sign-in and the welcome pages, sessions (a Material 3 bottom
+ui/          Sign-in and the machine picker, sessions (a Material 3 bottom
              app bar with the New session FAB), session + composer,
              companions (subagents, side chats, terminals: chips above the
              composer and a sheet), subagent transcripts, terminal + key bar,
-             new session (Cloud too), search, settings, and Cloud: Providers,
-             an agent's accounts, Cloud, Billing, GitHub, Cloud projects.
+             new session, search, settings.
              TabletShell: large screens (≥ 700dp wide) put the sessions
              sidebar beside the open session and its companions in an
              inspector column (iPad's split); Settings is a dialog there.
@@ -125,10 +79,9 @@ adb shell am start -n dev.freethinkel.vardoger.android/.MainActivity \
 | `--ez fast true` / `--ez longreply true` | Demo stream speed / reply length |
 | `--ez big true` / `--ez huge true` | Demo transcripts with 120 / 600 turns |
 | `--es route chat:<id>` / `new` / `search` / `settings` (`more`) / `archived` | Open a screen at launch (with nobody signed in, on the demo) |
-| `--es route cloud` / `cloud:billing` / `cloud:repos` / `billing` / `providers[:cloud\|:<device id>]` / `accounts:cloud:<harness>` / `accounts:device:<id>:<harness>` / `new:cloud` / `welcome[:<step>]` | Cloud pages, a new session set to Cloud, the welcome pages |
-| `--ez cloud true` | Offer Cloud in the demo (its pages read the demo's Cloud) |
 | `--es companion companions` / `terminal` / `side-chat:<id>` / `subagent:<tool id>` / `model-picker` | With `route chat:<id>`, open the companions sheet, a terminal, a side chat, a subagent or the model picker over it (`model-picker` also works with `route new`) |
 | `--ez terminal-demo true` | The opened terminal types a short script (screenshots) |
 | `--ez signedout true` | Clear stored credentials |
+| `--es account "<server url> <token> <device id>"` `[--es host <machine id>]` | A device token minted on a local server (`cargo run -p vardoger-client --example remote_stack`; from the emulator the server is `http://10.0.2.2:<port>`), as if signed in (debuggable builds) |
 | `--es wallpaper <path>` / `none` | Set (or clear) the wallpaper from a file the app can read, e.g. `adb push art.jpg /data/local/tmp/ && adb shell run-as dev.freethinkel.vardoger.android cp /data/local/tmp/art.jpg files/` then `--es wallpaper /data/user/0/dev.freethinkel.vardoger.android/files/art.jpg` |
 | `--es wallpaper-effect <none\|dither\|ascii\|halftone\|scanlines>` | Wallpaper effect |

@@ -10,12 +10,10 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONObject
-import uniffi.vardoger_core.AuthTokens
-import uniffi.vardoger_core.Credentials
 
 /**
- * Credentials and the signed-in account's display identity, in app-private
- * storage (the client itself only knows ids). Tokens are sealed with an
+ * This phone's sign-in to the account's Vardoger server and the machine it
+ * drives, in app-private storage. Tokens are sealed with an
  * Android Keystore key (the iOS Keychain's counterpart): the key never
  * leaves the keystore, so a copied preferences file can't be replayed.
  */
@@ -56,49 +54,51 @@ class CredentialStore(context: Context) {
         return legacy
     }
 
-    fun stored(): Credentials? {
+    /** This phone's sign-in to the account's Vardoger server. */
+    data class Account(val serverUrl: String, val token: String, val deviceId: String, val email: String, val name: String?)
+
+    /** The machine whose engine this phone drives. */
+    data class Host(val id: String, val name: String)
+
+    fun account(): Account? {
         val json = storedJson()?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
-        return when (json.optString("kind")) {
-            "workos" -> Credentials.WorkOs(
-                json.getString("userId"),
-                json.getString("orgId"),
-                AuthTokens(json.getString("access"), json.getString("refresh")),
-            )
-            "dev" -> Credentials.Dev(json.getString("userId"), json.getString("orgId"))
-            else -> null
-        }
+        if (json.optString("kind") != "server") return null
+        return Account(
+            json.getString("serverUrl"),
+            json.getString("token"),
+            json.getString("deviceId"),
+            json.getString("email"),
+            json.optString("name").ifEmpty { null },
+        )
     }
 
-    fun store(credentials: Credentials) {
-        val json = when (credentials) {
-            is Credentials.WorkOs -> JSONObject()
-                .put("kind", "workos")
-                .put("userId", credentials.userId)
-                .put("orgId", credentials.orgId)
-                .put("access", credentials.tokens.accessToken)
-                .put("refresh", credentials.tokens.refreshToken)
-            is Credentials.Dev -> JSONObject().put("kind", "dev").put("userId", credentials.userId).put("orgId", credentials.orgId)
-            is Credentials.Demo -> return
-        }
+    fun store(account: Account) {
+        val json = JSONObject()
+            .put("kind", "server")
+            .put("serverUrl", account.serverUrl)
+            .put("token", account.token)
+            .put("deviceId", account.deviceId)
+            .put("email", account.email)
+            .put("name", account.name ?: "")
         prefs.edit().putString("sealed", seal(json.toString())).remove("credentials").apply()
     }
 
-    fun updateTokens(tokens: AuthTokens) {
-        val current = stored() as? Credentials.WorkOs ?: return
-        store(Credentials.WorkOs(current.userId, current.orgId, tokens))
-    }
+    var host: Host?
+        get() = prefs.getString("hostId", null)?.let { Host(it, prefs.getString("hostName", null) ?: it) }
+        set(value) {
+            prefs.edit().putString("hostId", value?.id).putString("hostName", value?.name).apply()
+        }
+
+    /** The last server signed in to (the sign-in page's field). Kept across sign-outs. */
+    var lastServerUrl: String?
+        get() = prefs.getString("lastServerUrl", null)
+        set(value) = prefs.edit().putString("lastServerUrl", value).apply()
 
     fun clear() {
+        val server = lastServerUrl
         prefs.edit().clear().apply()
+        lastServerUrl = server
     }
-
-    data class Profile(val name: String? = null, val email: String? = null, val orgName: String? = null)
-
-    var profile: Profile
-        get() = Profile(prefs.getString("name", null), prefs.getString("email", null), prefs.getString("orgName", null))
-        set(value) {
-            prefs.edit().putString("name", value.name).putString("email", value.email).putString("orgName", value.orgName).apply()
-        }
 
     private companion object {
         const val KEY_ALIAS = "vardoger-credentials"

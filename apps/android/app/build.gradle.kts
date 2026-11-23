@@ -97,7 +97,7 @@ android {
         res.directories.add(iconsOut.get().asFile.resolve("res").path)
     }
 
-    // Compressed: the APK is downloaded from zeron.sh, not delivered by Play
+    // Compressed: the APK is downloaded, not delivered by Play
     // (which compresses for transfer itself); about a third of the size.
     packaging {
         jniLibs { useLegacyPackaging = true }
@@ -124,7 +124,6 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.coroutines.android)
     implementation("${libs.jna.get()}@aar")
-    implementation(libs.webrtc)
     debugImplementation(libs.compose.ui.tooling)
     testImplementation(libs.junit)
 }

@@ -106,8 +106,6 @@ fun Composer(
     row: SessionRow?,
     transcript: TranscriptState,
     draft: ComposerModel,
-    /** Asked before a new message goes out; false keeps it (a Cloud chat out of credits). */
-    beforeSend: () -> Boolean = { true },
     /** Open the model picker once (a debug launch extra, for screenshots). */
     openModelPicker: Boolean = false,
 ) {
@@ -205,7 +203,6 @@ fun Composer(
             restoreStash()
             return
         }
-        if (!beforeSend()) return
         val body = draft.encoded()
         try {
             val queued = running && delivery == Delivery.Queue
@@ -472,11 +469,10 @@ private fun SessionModelPicker(client: CoreClient, c: ComposerState, row: Sessio
     val sendPending = c.sendState == uniffi.vardoger_core.SendState.SENDING || c.sendState == uniffi.vardoger_core.SendState.QUEUED
     val hostSwitches = c.host.capabilities.providerSwitch
     val canSwitch = hostSwitches && !c.live.turnRunning && !sendPending
-    val cloud = row?.isCloud == true
     // The host's providers, read ahead so the picker opens with its tabs.
     var hostHarnesses by remember { mutableStateOf<List<uniffi.vardoger_core.HarnessInfo>>(emptyList()) }
-    LaunchedEffect(c.host.deviceId, canSwitch, cloud) {
-        if (canSwitch && !cloud && hostHarnesses.isEmpty()) hostHarnesses = runCatching { client.listHarnesses(c.host.deviceId) }.getOrNull().orEmpty()
+    LaunchedEffect(c.host.deviceId, canSwitch) {
+        if (canSwitch && hostHarnesses.isEmpty()) hostHarnesses = runCatching { client.listHarnesses(c.host.deviceId) }.getOrNull().orEmpty()
     }
     // No model of its own: it runs the provider's default, so that's the one named and ticked.
     val fallback = remember(harness) { fallbackModels(harness).firstOrNull() }
@@ -485,17 +481,13 @@ private fun SessionModelPicker(client: CoreClient, c: ComposerState, row: Sessio
         suspend fun rowsFor(h: String): List<ModelPickerRow> {
             // A host that doesn't answer gets the built-in catalog, as one that errors does.
             val listed = within(5_000) {
-                if (cloud) runCatching { client.cloudModels(h) }.getOrNull() else runCatching { client.listModels(c.host.deviceId, h) }.getOrNull()
+                runCatching { client.listModels(c.host.deviceId, h) }.getOrNull()
             }
             return (listed?.takeIf { it.isNotEmpty() } ?: fallbackModels(h)).map { ModelPickerRow(it.id, it.label, it.description) }
         }
         val label = row?.harnessLabel ?: uniffi.vardoger_core.agentLoginRules(harness).name.ifEmpty { harness }
-        // A computer offers what it reports; Cloud runs the agents it has accounts for.
-        val others = if (!canSwitch) emptyList() else if (cloud) {
-            dev.freethinkel.vardoger.android.core.CloudStore.agents.map { it.harness to it.name }
-        } else {
-            hostHarnesses.filter { it.offered }.map { it.id to it.label }
-        }
+        // A computer offers what it reports.
+        val others = if (!canSwitch) emptyList() else hostHarnesses.filter { it.offered }.map { it.id to it.label }
         val tabs = listOf(ModelPickerTab(harness, label) { rowsFor(harness) }) +
             others.filter { it.first != harness }.map { (h, l) -> ModelPickerTab(h, l, "Your next message continues this chat with $l.") { rowsFor(h) } }
         val note = when {
@@ -508,8 +500,8 @@ private fun SessionModelPicker(client: CoreClient, c: ComposerState, row: Sessio
             tabs,
             harness,
             currentModel,
-            host = if (cloud) "Cloud" else c.host.name ?: "This computer",
-            hostIcon = if (cloud) ZIcons.Cloud else ZIcons.Laptop,
+            host = c.host.name ?: "This computer",
+            hostIcon = ZIcons.Laptop,
             note = note,
             onPick = { picked, model ->
                 // Re-checked at the pick: a turn may have started since the sheet opened.

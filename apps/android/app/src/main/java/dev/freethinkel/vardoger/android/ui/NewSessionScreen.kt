@@ -54,9 +54,6 @@ import uniffi.vardoger_core.reasoningLabel
 
 private data class ModelChoice(val harness: String, val harnessLabel: String, val model: ModelInfo)
 
-/** Cloud's catalog in [modelCache] (no device id is empty or starts with NUL). */
-private const val CLOUD_MODELS = "\u0000cloud"
-
 /** The last catalog each host reported, so chips open on real model names. */
 private val modelCache = HashMap<String, List<ModelChoice>>()
 
@@ -75,7 +72,6 @@ fun NewSessionScreen(
     model: AppModel,
     onClose: (() -> Unit)?,
     onCreated: (String) -> Unit,
-    onOpenBilling: () -> Unit = {},
     /** Focus the prompt at once (a large screen's page at launch waits: the keyboard would cover the column). */
     focusOnAppear: Boolean = true,
 ) {
@@ -108,24 +104,9 @@ fun NewSessionScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    val cloud = model.cloud
-    LaunchedEffect(Unit) { if (cloud.info == null) cloud.refresh() }
-    // A Cloud project runs only on Cloud: hidden where this account isn't offered it.
-    val projects = workspace?.projects.orEmpty().filter { !it.isCloud || model.cloudOffered }
+    val projects = workspace?.projects.orEmpty()
     val hosts = workspace?.devices.orEmpty().filter { it.isExecutionHost }
     val project = projects.firstOrNull { it.id == draft.projectId }
-    // On its own Cloud machine: a Cloud project, or Cloud picked for a project whose repository Cloud reaches.
-    val runsOnCloud = project != null && (project.isCloud || (draft.cloud && (cloud.reaches(project.githubRepo) || model.isDemo && model.cloudOffered)))
-    val cloudReach = project != null && model.cloudOffered && (project.isCloud || cloud.reaches(project.githubRepo) || model.isDemo && project.githubRepo != null)
-    // `route new:cloud` (screenshots): open on Cloud for the first project Cloud can run.
-    LaunchedEffect(projects.size) {
-        if (model.launch.route == "new:cloud" && !draft.cloud) {
-            projects.firstOrNull { it.isCloud || it.githubRepo != null }?.let { draft = draft.copy(projectId = it.id, hostId = null, branch = null, cloud = true) }
-        }
-    }
-    var starting by remember { mutableStateOf(false) }
-    var cloudFailure by remember { mutableStateOf<String?>(null) }
-    var cloudProject by remember { mutableStateOf(false) }
     LaunchedEffect(workspace) {
         if (draft.projectId == null && draft.hostId == null) {
             draft = draft.copy(projectId = (projects.firstOrNull { it.deviceOnline } ?: projects.firstOrNull())?.id)
@@ -136,28 +117,14 @@ fun NewSessionScreen(
         }
     }
     val deviceId = project?.deviceId ?: draft.hostId ?: ""
-    // Cloud runs the agents it has accounts for (Claude Code, Codex), listed by the edge.
-    val modelsKey = if (runsOnCloud) CLOUD_MODELS else deviceId
+    val modelsKey = deviceId
 
     // Models for the draft's host: cached (or the built-in catalog) at once, then the host's own list.
     var models by remember(modelsKey) {
-        mutableStateOf(modelCache[modelsKey] ?: catalogModels().filter { !runsOnCloud || it.harness in dev.freethinkel.vardoger.android.core.CloudStore.harnesses })
-    }
-    LaunchedEffect(modelsKey, models) {
-        if (runsOnCloud && models.none { it.harness == draft.harness }) models.firstOrNull()?.let { draft = draft.copy(harness = it.harness, model = null, effort = null) }
+        mutableStateOf(modelCache[modelsKey] ?: catalogModels())
     }
     LaunchedEffect(modelsKey, client) {
         val c = client ?: return@LaunchedEffect
-        if (runsOnCloud) {
-            val fresh = dev.freethinkel.vardoger.android.core.CloudStore.agents.flatMap { a ->
-                runCatching { c.cloudModels(a.harness) }.getOrNull().orEmpty().map { ModelChoice(a.harness, a.name, it) }
-            }
-            if (fresh.isNotEmpty()) {
-                modelCache[CLOUD_MODELS] = fresh
-                models = fresh
-            }
-            return@LaunchedEffect
-        }
         if (deviceId.isEmpty()) return@LaunchedEffect
         val harnesses = runCatching { c.listHarnesses(deviceId) }.getOrNull() ?: return@LaunchedEffect
         val fresh = harnesses.filter { it.offered }.flatMap { h ->
@@ -173,35 +140,8 @@ fun NewSessionScreen(
 
     LaunchedEffect(Unit) { if (focusOnAppear) focus.requestFocus() }
 
-    /** Cloud: the edge mints the machine first (a moment), then the chat opens with the message waiting in it. */
-    fun createOnCloud() {
-        if (starting) return
-        fun outOfCredits() = scope.launch {
-            if (snackbar.showSnackbar(dev.freethinkel.vardoger.android.core.CloudStore.OUT_OF_CREDITS, "Add credits") == androidx.compose.material3.SnackbarResult.ActionPerformed) onOpenBilling()
-        }
-        if (cloud.outOfCredits) {
-            outOfCredits()
-            return
-        }
-        starting = true
-        scope.launch {
-            try {
-                val id = model.createCloudSession(draft.copy(model = draft.model ?: choice?.model?.id), composer.encoded(), composer.images.map { it.outgoing })
-                created = true
-                model.newSessionText = ""
-                model.newSessionImages = emptyList()
-                onCreated(id)
-            } catch (e: Exception) {
-                if (dev.freethinkel.vardoger.android.core.CloudStore.isOutOfCredits(e)) outOfCredits() else cloudFailure = dev.freethinkel.vardoger.android.core.CloudStore.message(e)
-            } finally {
-                starting = false
-            }
-        }
-    }
-
     fun create() {
         model.lastDraft = draft
-        if (runsOnCloud) return createOnCloud()
         val id = model.createSession(draft.copy(model = draft.model ?: choice?.model?.id), composer.encoded(), composer.images.map { it.outgoing })
         if (id != null) {
             created = true
@@ -247,16 +187,6 @@ fun NewSessionScreen(
                     )
                 }
             }
-            // "Starting on Cloud…" above the composer while the machine is minted.
-            androidx.compose.animation.AnimatedVisibility(starting) {
-                androidx.compose.material3.Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.padding(bottom = 10.dp)) {
-                    androidx.compose.foundation.layout.Row(Modifier.padding(start = 10.dp, end = 18.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.LoadingIndicator(Modifier.size(28.dp))
-                        androidx.compose.foundation.layout.Spacer(Modifier.size(8.dp))
-                        Text("Starting on Cloud…", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
             MentionSuggestions(
                 composer,
                 search = { q ->
@@ -278,19 +208,17 @@ fun NewSessionScreen(
                     .widthIn(max = 768.dp)
                     .onGloballyPositioned { composerBounds = it.boundsInRoot() },
             ) {
-                ProjectChip(draft, projects, onPick = { draft = it }, onNewProject = { newProject = true }, onNewCloudProject = if (model.cloudOffered) ({ cloudProject = true }) else null)
-                HostChip(draft, project, projects, hosts, runsOnCloud, cloudReach, cloud.credits) { draft = it }
-                if (runsOnCloud && project?.githubRepo != null) {
-                    CloudBranchChip(model, draft, project.githubRepo!!) { draft = it }
-                } else if (project != null && project.gitDetected) {
+                ProjectChip(draft, projects, onPick = { draft = it }, onNewProject = { newProject = true })
+                HostChip(draft, project, projects, hosts) { draft = it }
+                if (project != null && project.gitDetected) {
                     BranchChip(model, draft, project.deviceId, project.path) { draft = it }
                 }
                 ModelChip(
                     draft,
                     choice,
                     models,
-                    host = if (runsOnCloud) "Cloud" else project?.deviceName ?: hosts.firstOrNull { it.id == draft.hostId }?.name ?: "This computer",
-                    hostIcon = if (runsOnCloud) ZIcons.Cloud else ZIcons.Laptop,
+                    host = project?.deviceName ?: hosts.firstOrNull { it.id == draft.hostId }?.name ?: "This computer",
+                    hostIcon = ZIcons.Laptop,
                     openAtStart = model.launch.companion == "model-picker",
                 ) { draft = it }
                 val efforts = choice?.model?.reasoningLevels.orEmpty()
@@ -300,26 +228,6 @@ fun NewSessionScreen(
                 }
             }
         }
-    }
-    if (cloudProject) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { cloudProject = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            CloudRepoPickerScreen(model, onBack = { cloudProject = false }, onCreated = { id ->
-                cloudProject = false
-                draft = draft.copy(projectId = id, hostId = null, branch = null, cloud = true)
-            })
-        }
-    }
-    cloudFailure?.let { message ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { cloudFailure = null },
-            icon = { ZIcon(ZIcons.Cloud, null) },
-            title = { Text("Couldn't start on Cloud") },
-            text = { Text(message) },
-            confirmButton = { androidx.compose.material3.TextButton(onClick = { cloudFailure = null }) { Text("OK") } },
-        )
     }
     if (newProject) {
         NewProjectScreen(model, onDismiss = { newProject = false }) { id ->
@@ -335,8 +243,6 @@ private fun ProjectChip(
     projects: List<uniffi.vardoger_core.ProjectView>,
     onPick: (dev.freethinkel.vardoger.android.core.NewSessionDraft) -> Unit,
     onNewProject: () -> Unit,
-    /** Make a GitHub repository a project on Cloud (when Cloud is offered). */
-    onNewCloudProject: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     val project = projects.firstOrNull { it.id == draft.projectId }
@@ -351,7 +257,7 @@ private fun ProjectChip(
     if (open) ProjectSheet(draft, projects, onDismiss = { open = false }, onNewProject = {
         open = false
         onNewProject()
-    }, onNewCloudProject = onNewCloudProject?.let { run -> { open = false; run() } }) {
+    }) {
         onPick(it)
         open = false
     }
@@ -367,7 +273,6 @@ private fun ProjectSheet(
     projects: List<uniffi.vardoger_core.ProjectView>,
     onDismiss: () -> Unit,
     onNewProject: () -> Unit,
-    onNewCloudProject: (() -> Unit)?,
     onPick: (dev.freethinkel.vardoger.android.core.NewSessionDraft) -> Unit,
 ) {
     val sheet = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -407,7 +312,7 @@ private fun ProjectSheet(
                             ?: members.firstOrNull { it.deviceId == device }
                             ?: members.firstOrNull { it.deviceOnline }
                             ?: first
-                        onPick(draft.copy(projectId = pick.id, hostId = null, branch = if (pick.id == draft.projectId && !draft.cloud) draft.branch else null, cloud = pick.isCloud))
+                        onPick(draft.copy(projectId = pick.id, hostId = null, branch = if (pick.id == draft.projectId) draft.branch else null))
                     }
                 }
             }
@@ -416,7 +321,7 @@ private fun ProjectSheet(
                 ProjectRow(
                     selected = draft.projectId == null,
                     index = 0,
-                    count = if (onNewCloudProject != null) 3 else 2,
+                    count = 2,
                     leading = { IconTile(ZIcons.Home) },
                     title = "No project",
                     supporting = "Run in a host's home folder",
@@ -427,27 +332,13 @@ private fun ProjectSheet(
                 ProjectRow(
                     selected = false,
                     index = 1,
-                    count = if (onNewCloudProject != null) 3 else 2,
+                    count = 2,
                     leading = { IconTile(ZIcons.Plus) },
                     title = "New project…",
                     supporting = "Pick a folder on one of your computers",
                     mono = false,
                     onClick = onNewProject,
                 )
-            }
-            if (onNewCloudProject != null) {
-                item("new-cloud") {
-                    ProjectRow(
-                        selected = false,
-                        index = 2,
-                        count = 3,
-                        leading = { IconTile(ZIcons.Cloud) },
-                        title = "New Cloud project…",
-                        supporting = "A GitHub repository, run on Cloud machines",
-                        mono = false,
-                        onClick = onNewCloudProject,
-                    )
-                }
             }
         }
     }
@@ -504,67 +395,29 @@ private fun HostChip(
     project: uniffi.vardoger_core.ProjectView?,
     projects: List<uniffi.vardoger_core.ProjectView>,
     hosts: List<uniffi.vardoger_core.DeviceView>,
-    /** The session runs on its own Cloud machine. */
-    onCloud: Boolean = false,
-    /** Cloud can run this project's sessions. */
-    cloudOffered: Boolean = false,
-    credits: Double? = null,
     onPick: (dev.freethinkel.vardoger.android.core.NewSessionDraft) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     val checkouts = remember(project, projects) {
         if (project == null) emptyList()
-        else projects.filter { it.groupKey == project.groupKey && !it.isCloud }.sortedWith(compareBy({ (it.deviceName ?: "").lowercase() }, { it.path }))
+        else projects.filter { it.groupKey == project.groupKey }.sortedWith(compareBy({ (it.deviceName ?: "").lowercase() }, { it.path }))
     }
     val title = when {
-        onCloud -> "Cloud"
         project != null -> project.deviceName ?: "Host"
         else -> hosts.firstOrNull { it.id == draft.hostId }?.name ?: "Choose host"
     }
-    ContextChip(title, leading = { ZIcon(if (onCloud) ZIcons.Cloud else ZIcons.Laptop, null, Modifier.size(16.dp)) }, onClick = { open = true }) {
+    ContextChip(title, leading = { ZIcon(ZIcons.Laptop, null, Modifier.size(16.dp)) }, onClick = { open = true }) {
         val choices = if (checkouts.isNotEmpty()) {
             checkouts.map { p ->
                 val shared = checkouts.count { it.deviceId == p.deviceId } > 1
-                MenuChoice(p.deviceName ?: "Host", p.id == draft.projectId && !onCloud, if (shared) p.path else if (p.deviceOnline) "Online" else "Offline") {
-                    onPick(draft.copy(projectId = p.id, hostId = null, branch = if (p.id == draft.projectId && !onCloud) draft.branch else null, cloud = false))
+                MenuChoice(p.deviceName ?: "Host", p.id == draft.projectId, if (shared) p.path else if (p.deviceOnline) "Online" else "Offline") {
+                    onPick(draft.copy(projectId = p.id, hostId = null, branch = if (p.id == draft.projectId) draft.branch else null))
                 }
             }
         } else {
             hosts.map { h -> MenuChoice(h.name, h.id == draft.hostId, if (h.online) "Online" else "Offline") { onPick(draft.copy(hostId = h.id)) } }
         }
-        // Its own machine on Cloud, from a branch of the repository.
-        val cloudChoice = if (cloudOffered) listOf(
-            MenuChoice("Cloud", onCloud, credits?.let { "${dev.freethinkel.vardoger.android.core.CloudStore.credits(it)} credits left" } ?: "Its own machine", leading = { ZIcon(ZIcons.Cloud, null, Modifier.size(20.dp)) }) {
-                onPick(draft.copy(cloud = true, branch = null, worktree = false))
-            },
-        ) else emptyList()
-        ChoiceMenu(open, { open = false }, listOf(MenuSection("Run on", choices), MenuSection(null, cloudChoice)))
-    }
-}
-
-/** A Cloud session starts from a branch of the repository (GitHub's, through Cloud). */
-@Composable
-private fun CloudBranchChip(
-    model: AppModel,
-    draft: dev.freethinkel.vardoger.android.core.NewSessionDraft,
-    repo: String,
-    onPick: (dev.freethinkel.vardoger.android.core.NewSessionDraft) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    var branches by remember(repo) { mutableStateOf<List<String>?>(null) }
-    val client by model.client.collectAsState()
-    LaunchedEffect(open, repo) {
-        if (open && branches == null) branches = runCatching { client?.githubBranches(repo) }.getOrNull().orEmpty()
-    }
-    ContextChip(
-        draft.branch?.let { "From $it" } ?: "Default branch",
-        leading = { ZIcon(ZIcons.Branch, null, Modifier.size(16.dp)) },
-        onClick = { open = true },
-    ) {
-        ChoiceMenu(open, { open = false }, listOf(
-            MenuSection(null, listOf(MenuChoice("Default branch", draft.branch == null) { onPick(draft.copy(branch = null)) })),
-            MenuSection("Branch", branches.orEmpty().map { b -> MenuChoice(b, b == draft.branch) { onPick(draft.copy(branch = b)) } }),
-        ))
+        ChoiceMenu(open, { open = false }, listOf(MenuSection("Run on", choices)))
     }
 }
 

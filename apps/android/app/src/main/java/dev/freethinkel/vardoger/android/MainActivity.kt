@@ -16,7 +16,8 @@ import dev.freethinkel.vardoger.android.ui.VardogerRoot
  * Launch extras mirror the iOS launch arguments, e.g.
  * `adb shell am start -n dev.freethinkel.vardoger.android/.MainActivity --ez demo true --es route chat:chat-veil`
  * (`--es wallpaper <path>` sets the wallpaper from a file the app can read).
- * A real stack in a debuggable build: `--es dev-user <id> --es dev-org <id> --es edge http://10.0.2.2:<port>`.
+ * A local stack in a debuggable build (crates/client/examples/remote_stack.rs):
+ * `--es account "http://10.0.2.2:<port> <token> <device id>" --es host <machine id>`.
  */
 class MainActivity : ComponentActivity() {
     private val model get() = (application as VardogerApplication).model
@@ -41,16 +42,10 @@ class MainActivity : ComponentActivity() {
                 route = extras?.getString("route"),
                 companion = extras?.getString("companion"),
                 terminalDemo = extras?.getBoolean("terminal-demo") == true,
-                cloud = extras?.getBoolean("cloud") == true,
                 wallpaper = extras?.getString("wallpaper"),
                 wallpaperEffect = extras?.getString("wallpaper-effect"),
-                voicePreview = extras?.getBoolean("voice-preview") == true,
-                voiceStage = extras?.getBoolean("voice-stage") == true,
-                remoteVoice = extras?.getBoolean("remote-voice") == true,
-                voiceSelfTest = extras?.getBoolean("voice-selftest") == true,
-                dev = rig?.getString("dev-user")?.let { user -> rig.getString("dev-org")?.let { org -> user to org } },
-                edge = rig?.getString("edge"),
-                noRelayLayer = rig?.getBoolean("no-relay-layer") == true,
+                account = rig?.getString("account"),
+                host = rig?.getString("host"),
                 sendOnOpen = rig?.getString("send-on-open"),
             ),
         )
@@ -98,18 +93,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleCallback(intent: Intent?) {
-        // The call notification (or `vardoger://voice`) returns to the stage.
-        if (dev.freethinkel.vardoger.android.voice.VoiceController.opensStage(intent)) {
-            if (model.voice.live) model.voice.requestStage()
-            return
-        }
         val data = intent?.data ?: return
-        if (data.scheme != "vardoger") return
-        if (data.host == "callback") model.handleCallback(data.toString()) else model.browser.links.tryEmit(data)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        model.browser.resumes.tryEmit(Unit)
+        if (data.scheme == "vardoger" && data.host == "auth") model.handleCallback(data.toString())
     }
 }

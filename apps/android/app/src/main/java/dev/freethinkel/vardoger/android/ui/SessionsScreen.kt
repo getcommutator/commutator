@@ -90,15 +90,15 @@ private val SEARCH_BAR_HEIGHT = 56.dp
 
 /**
  * The Material 3 search bar on top of the list, as Gmail has it: the list's
- * options behind the leading menu, "Search sessions" opening search, voice
- * when a host can take a call, and the account's avatar opening Settings.
+ * options behind the leading menu, "Search sessions" opening search, and the
+ * account's avatar opening Settings.
  */
 @Composable
 private fun SessionsSearchBar(
     onSearch: () -> Unit,
     onSettings: () -> Unit,
     account: String,
-    actions: @Composable RowScope.() -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
     menu: @Composable (open: Boolean, dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -179,8 +179,6 @@ fun SessionsScreen(
     selected: String? = null,
     onSearch: () -> Unit = {},
     onSettings: () -> Unit = {},
-    /** Inside the search bar, before the avatar (voice, when a host can take a call). */
-    searchActions: @Composable RowScope.() -> Unit = {},
 ) {
     val workspace by model.workspace.collectAsState()
     val connectivity by model.connectivity.collectAsState()
@@ -365,7 +363,6 @@ fun SessionsScreen(
             onSearch = onSearch,
             onSettings = onSettings,
             account = model.accountName,
-            actions = searchActions,
             menu = { open, dismiss ->
                 ActionMenu(
                     open,

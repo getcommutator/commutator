@@ -77,12 +77,21 @@ fun VardogerRoot(model: AppModel) {
     VardogerTheme(appearance) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val client by model.client.collectAsState()
+            val account by model.account.collectAsState()
+            // Signed out → sign in; signed in, no machine → pick one; else the shell.
+            val stage = when {
+                client != null -> 2
+                account != null -> 1
+                else -> 0
+            }
             Box(Modifier.fillMaxSize()) {
-                AnimatedContent(client != null, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "root") { signedIn ->
-                    if (signedIn) MainNav(model) else SignInScreen(model)
+                AnimatedContent(stage, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "root") { s ->
+                    when (s) {
+                        2 -> MainNav(model)
+                        1 -> MachinePickerScreen(model)
+                        else -> SignInScreen(model)
+                    }
                 }
-                // Mic prompt, keep-awake and the off-stage "call ended" snackbar.
-                dev.freethinkel.vardoger.android.voice.VoiceHost(model.voice)
             }
         }
     }
@@ -95,20 +104,9 @@ object Routes {
     const val SEARCH = "search"
     const val SETTINGS = "settings"
     const val ARCHIVED = "archived"
-    const val VOICE = "voice"
-    const val VOICE_SETTINGS = "voice-settings"
-    const val PROVIDERS = "providers?target={target}"
-    const val CLOUD = "cloud"
-    const val BILLING = "billing"
-    const val CLOUD_REPOS = "cloud-repos"
-    const val ACCOUNTS = "accounts/{target}?signin={signin}"
-    const val WELCOME = "welcome?step={step}"
     const val TERMINAL = "terminal/{chat}?id={id}"
     const val SUBAGENT = "subagent/{parent}/{doc}?title={title}&running={running}"
     fun chat(id: String) = "chat/$id"
-    fun providers(target: String?) = "providers" + (target?.let { "?target=${Uri.encode(it)}" } ?: "")
-    fun accounts(target: String, signIn: Boolean) = "accounts/${Uri.encode(target)}?signin=$signIn"
-    fun welcome(step: String?) = "welcome" + (step?.let { "?step=${Uri.encode(it)}" } ?: "")
     fun terminal(chat: String, id: String?) = "terminal/${Uri.encode(chat)}" + (id?.let { "?id=${Uri.encode(it)}" } ?: "")
     fun subagent(parent: String, doc: String, title: String, running: Boolean) =
         "subagent/${Uri.encode(parent)}/${Uri.encode(doc)}?title=${Uri.encode(title)}&running=$running"
@@ -151,31 +149,6 @@ private fun MainNav(model: AppModel) {
             "settings", "more" -> if (wide) shell.settings = Routes.SETTINGS else nav.navigate(Routes.SETTINGS)
             "archived" -> nav.navigate(Routes.ARCHIVED)
             "chat" -> open(route.removePrefix("chat:"))
-            "welcome" -> nav.navigate(Routes.welcome(parts.getOrNull(1)))
-            // Cloud pages straight away (screenshots, tests): `cloud` · `cloud:billing` ·
-            // `cloud:repos` · `billing` · `providers[:cloud|:<device id>]` · `accounts:<target>`.
-            "cloud", "billing", "providers", "accounts" -> {
-                val target = when {
-                    parts[0] == "cloud" && parts.getOrNull(1) == "billing" -> Routes.BILLING
-                    parts[0] == "cloud" && parts.getOrNull(1) == "repos" -> Routes.CLOUD_REPOS
-                    parts[0] == "cloud" -> Routes.CLOUD
-                    parts[0] == "billing" -> Routes.BILLING
-                    parts[0] == "providers" -> Routes.providers(parts.getOrNull(1))
-                    else -> Routes.accounts(route.removePrefix("accounts:"), signIn = false)
-                }
-                if (wide) shell.settings = target else nav.navigate(target)
-            }
-        }
-    }
-    // First run after signing in: the welcome pages (once per account).
-    val client by model.client.collectAsState()
-    LaunchedEffect(client) {
-        if (client != null && model.launch.route == null && shouldShowOnboarding(context, model)) nav.navigate(Routes.welcome(null))
-    }
-    // The notification, a snackbar Retry or `voice-stage` asks for the call.
-    LaunchedEffect(Unit) {
-        model.voice.stageRequests.collect {
-            if (nav.currentDestination?.route != Routes.VOICE) nav.navigate(Routes.VOICE) { launchSingleTop = true }
         }
     }
     // A debug `companion` extra opens over the launch route's chat, once.
@@ -191,8 +164,6 @@ private fun MainNav(model: AppModel) {
             model,
             id,
             onBack = onBack,
-            onOpenVoice = { nav.navigate(Routes.VOICE) { launchSingleTop = true } },
-            onVoiceSettings = { nav.navigate(Routes.VOICE_SETTINGS) },
             onOpenSideChat = { side -> if (beside) shell.push(id, InspectorPage.SideChat(side)) else nav.navigate(Routes.chat(side)) },
             // On the phone the sender's chat goes over this one, so Back returns
             // here; beside the sidebar it takes the main column (as on iPad).
@@ -203,8 +174,6 @@ private fun MainNav(model: AppModel) {
             },
             openCompanion = companionPending?.takeIf { id == launchChat }?.also { companionPending = null },
             sendOnOpen = sendPending?.takeIf { id == launchChat }?.also { sendPending = null },
-            onOpenAccounts = { target, signIn -> nav.navigate(Routes.accounts(target.encode(), signIn)) },
-            onOpenBilling = { if (wide) shell.settings = Routes.BILLING else nav.navigate(Routes.BILLING) },
             onShowCompanions = if (beside) ({ section -> shell.toggleCompanions(id, section) }) else null,
         )
     }
@@ -238,8 +207,6 @@ private fun MainNav(model: AppModel) {
                     onSearch = { nav.navigate(Routes.SEARCH) },
                     onNew = { nav.navigate(Routes.NEW) },
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
-                    onVoice = { nav.navigate(Routes.VOICE) { launchSingleTop = true } },
-                    onVoiceSettings = { nav.navigate(Routes.VOICE_SETTINGS) },
                 )
             } else {
                 TabletShell(
@@ -263,8 +230,6 @@ private fun MainNav(model: AppModel) {
                                 onSearch = { shell.searching = true },
                                 onNew = { shell.newSession() },
                                 onArchived = { shell.settings = Routes.ARCHIVED },
-                                onVoice = { nav.navigate(Routes.VOICE) { launchSingleTop = true } },
-                                onVoiceSettings = { nav.navigate(Routes.VOICE_SETTINGS) },
                             )
                         }
                     },
@@ -274,7 +239,6 @@ private fun MainNav(model: AppModel) {
                             model,
                             onClose = null,
                             onCreated = { id -> shell.select(id) },
-                            onOpenBilling = { shell.settings = Routes.BILLING },
                             focusOnAppear = shell.draftToken > 0,
                         )
                     },
@@ -323,17 +287,6 @@ private fun MainNav(model: AppModel) {
                 onOpenSubagent = { parent, doc, title, running -> nav.navigate(Routes.subagent(parent, doc, title, running)) },
             )
         }
-        composable(Routes.VOICE) {
-            dev.freethinkel.vardoger.android.voice.VoiceStageScreen(
-                model.voice,
-                onClose = { nav.popBackStack() },
-                onOpenChat = { chatId ->
-                    nav.popBackStack()
-                    open(chatId)
-                },
-                wallpaper = model.wallpaper,
-            )
-        }
         composable(Routes.NEW) {
             NewSessionScreen(
                 model,
@@ -342,7 +295,6 @@ private fun MainNav(model: AppModel) {
                     nav.popBackStack()
                     open(id)
                 },
-                onOpenBilling = { nav.navigate(Routes.BILLING) },
             )
         }
         composable(Routes.SEARCH) {
@@ -350,14 +302,6 @@ private fun MainNav(model: AppModel) {
                 if (wide) nav.popBackStack()
                 open(id)
             })
-        }
-        composable(Routes.WELCOME, arguments = listOf(navArgument("step") { type = NavType.StringType; nullable = true })) { entry ->
-            OnboardingScreen(model, entry.arguments?.getString("step")) { startSession ->
-                nav.popBackStack()
-                if (startSession) {
-                    if (wide) shell.newSession() else nav.navigate(Routes.NEW)
-                }
-            }
         }
     }
     // Settings on a large screen: a dialog over the shell with its own pages (iPad's form sheet).
@@ -375,8 +319,7 @@ private fun MainNav(model: AppModel) {
 private val TERMINAL_DEMO = listOf("git log --oneline -5", "cargo test -p vardoger-veil")
 
 /**
- * Settings and the pages it leads to (Providers, Cloud, Billing, an agent's
- * logins, Archived, voice): on the phone's stack, or in the large-screen
+ * Settings and the pages it leads to (Archived): on the phone's stack, or in the large-screen
  * Settings dialog's own. `onClose` ends the dialog from its first page.
  */
 private fun androidx.navigation.NavGraphBuilder.settingsGraph(
@@ -393,50 +336,12 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
             SettingsScreen(
                 model,
                 onArchived = { nav.navigate(Routes.ARCHIVED) },
-                onOpenVoiceSettings = { nav.navigate(Routes.VOICE_SETTINGS) },
                 onBack = ::back,
-                onOpenProviders = { nav.navigate(Routes.providers(null)) },
-                onOpenCloud = { nav.navigate(Routes.CLOUD) },
-                onOpenBilling = { nav.navigate(Routes.BILLING) },
             )
         }
     }
     composable(Routes.ARCHIVED) {
         ArchivedScreen(model, onBack = ::back, onOpen = openChat)
-    }
-    composable(Routes.VOICE_SETTINGS) {
-        dev.freethinkel.vardoger.android.voice.VoiceSettingsScreen(model.voice, onBack = ::back)
-    }
-    composable(Routes.PROVIDERS, arguments = listOf(navArgument("target") { type = NavType.StringType; nullable = true })) { entry ->
-        ProvidersScreen(
-            model,
-            entry.arguments?.getString("target"),
-            onBack = ::back,
-            onOpenAccounts = { target -> nav.navigate(Routes.accounts(target.encode(), signIn = false)) },
-            onOpenCloud = { nav.navigate(Routes.CLOUD) },
-        )
-    }
-    composable(Routes.CLOUD) {
-        CloudSettingsScreen(
-            model,
-            onBack = ::back,
-            onOpenBilling = { nav.navigate(Routes.BILLING) },
-            onOpenAccounts = { target -> nav.navigate(Routes.accounts(target.encode(), signIn = false)) },
-            onOpenRepoPicker = { nav.navigate(Routes.CLOUD_REPOS) },
-        )
-    }
-    composable(Routes.BILLING) {
-        BillingScreen(model, onBack = ::back)
-    }
-    composable(Routes.CLOUD_REPOS) {
-        CloudRepoPickerScreen(model, onBack = ::back, onCreated = { back() })
-    }
-    composable(
-        Routes.ACCOUNTS,
-        arguments = listOf(navArgument("target") { type = NavType.StringType }, navArgument("signin") { type = NavType.BoolType; defaultValue = false }),
-    ) { entry ->
-        val target = entry.arguments?.getString("target")?.let { AccountsTarget.decode(it, model::deviceName) } ?: return@composable
-        AgentAccountsScreen(model, target, signIn = entry.arguments?.getBoolean("signin") == true, onBack = ::back)
     }
 }
 
@@ -479,7 +384,6 @@ private fun androidx.compose.foundation.layout.BoxScope.Toasts(model: AppModel, 
         Routes.HOME -> 96.dp
         Routes.CHAT, Routes.NEW -> 96.dp
         Routes.TERMINAL, Routes.SUBAGENT -> 72.dp
-        Routes.WELCOME -> 120.dp
         else -> 16.dp
     }
     SnackbarHost(host, Modifier.align(Alignment.BottomCenter).imePadding().navigationBarsPadding().padding(bottom = inset))
@@ -487,8 +391,8 @@ private fun androidx.compose.foundation.layout.BoxScope.Toasts(model: AppModel, 
 
 /**
  * The front page: the Sessions list over a Material 3 bottom app bar —
- * Settings, Search and voice as its actions, New session as its FAB (iOS's
- * bottom bar: Settings · Search · voice · New session). The bar slides away
+ * Settings and Search as its actions, New session as its FAB (iOS's
+ * bottom bar: Settings · Search · New session). The bar slides away
  * while the list scrolls down and comes back on the way up.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -501,8 +405,6 @@ private fun Home(
     onSearch: () -> Unit,
     onNew: () -> Unit,
     onArchived: () -> Unit,
-    onVoice: () -> Unit,
-    onVoiceSettings: () -> Unit,
 ) {
     // The FAB shows its label at rest and tucks to its icon while the list scrolls down (Gmail's Compose).
     var fabExpanded by rememberSaveable { mutableStateOf(true) }
@@ -523,18 +425,6 @@ private fun Home(
                 selected = selected,
                 onSearch = onSearch,
                 onSettings = onSettings,
-                searchActions = {
-                    // Tap calls (or opens the live call); hold picks the host and style.
-                    if (dev.freethinkel.vardoger.android.voice.rememberVoiceVisible(model.voice)) {
-                        dev.freethinkel.vardoger.android.voice.VoiceHeaderButton(
-                            model.voice,
-                            onOpenStage = onVoice,
-                            onOpenSettings = onVoiceSettings,
-                            size = 40.dp,
-                            container = Color.Transparent,
-                        )
-                    }
-                },
             )
         }
         ExtendedFloatingActionButton(

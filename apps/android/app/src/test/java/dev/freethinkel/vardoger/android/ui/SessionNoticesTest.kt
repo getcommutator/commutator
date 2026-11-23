@@ -34,11 +34,10 @@ class SessionNoticesTest {
     private fun banner(
         send: SendState? = null,
         host: String? = "Studio",
-        cloud: Boolean = false,
         connectivity: ConnectivityState? = ConnectivityState.CONNECTED,
         connected: Boolean = true,
         retryAt: Long? = null,
-    ) = bannerText(send, host, cloud, connectivity, connected, retryAt, nowMs = 10_000)
+    ) = bannerText(send, host, connectivity, connected, retryAt, nowMs = 10_000)
 
     @Test
     fun a_send_waiting_on_a_host_says_so() {
@@ -47,9 +46,7 @@ class SessionNoticesTest {
     }
 
     @Test
-    fun a_cloud_chats_send_waits_for_its_machine_without_a_banner() {
-        assertNull(banner(SendState.QUEUED, cloud = true))
-        assertEquals("Offline — sends are saved", banner(SendState.QUEUED, cloud = true, connectivity = ConnectivityState.OFFLINE))
+    fun offline_outranks_a_waiting_host() {
         assertEquals("Offline — sends are saved", banner(SendState.QUEUED, connectivity = ConnectivityState.OFFLINE))
     }
 

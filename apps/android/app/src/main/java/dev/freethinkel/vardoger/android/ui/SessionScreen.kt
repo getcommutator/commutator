@@ -101,8 +101,6 @@ fun SessionScreen(
     model: AppModel,
     chatId: String,
     onBack: () -> Unit,
-    onOpenVoice: () -> Unit = {},
-    onVoiceSettings: () -> Unit = {},
     onOpenSideChat: (String) -> Unit = {},
     /** An agent message's sender caption: the chat that sent it. */
     onOpenChat: (String) -> Unit = {},
@@ -112,9 +110,6 @@ fun SessionScreen(
     openCompanion: String? = null,
     /** Debug launch extra: send this once the session is open. */
     sendOnOpen: String? = null,
-    /** An agent's logins (an error card's "Log in": `signIn` starts one at once). */
-    onOpenAccounts: (AccountsTarget, signIn: Boolean) -> Unit = { _, _ -> },
-    onOpenBilling: () -> Unit = {},
     /** Companions open beside the session (the large-screen inspector) instead of over it. */
     onShowCompanions: ((CompanionSection?) -> Unit)? = null,
 ) {
@@ -200,7 +195,9 @@ fun SessionScreen(
             openImage = open,
             openSubagent = { doc, title, running -> onOpenSubagent(chatId, doc, title, running) },
             // An error card's "Log in": that agent's sign-in, started at once.
-            act = { action -> if (action == "sign-in") signInTarget(model, chatId)?.let { onOpenAccounts(it, true) } },
+            // ponytail: the phone's agent-account screens (tangled with Cloud) were
+            // cut; sign the agent in on the machine until they come back.
+            act = { action -> if (action == "sign-in") model.toast("Sign the agent in on ${model.host?.name ?: "the computer"}") },
         )
     }
     // The composer's draft outlives the panel that replaces it while the agent asks.
@@ -219,10 +216,6 @@ fun SessionScreen(
     val parentId = row?.parentChatId
     // `companion model-picker` (screenshots): the model picker opens once the session is up.
     val openPicker = remember(chatId) { openCompanion == "model-picker" }
-    val isCloud = row?.isCloud == true
-    val cloudOutOfCredits = isCloud && model.cloud.outOfCredits
-    var nudges by remember { mutableIntStateOf(0) }
-    LaunchedEffect(isCloud) { if (isCloud && model.cloud.info == null) model.cloud.refresh() }
     val companions = rememberCompanions(model, chatId, includeSideChats = parentId == null)
     var companionsSheet by remember { mutableStateOf<CompanionSection?>(null) }
     var showCompanions by remember { mutableStateOf(false) }
@@ -291,11 +284,6 @@ fun SessionScreen(
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(headerTitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMediumEmphasized)
                     Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // The session has its own composer; the call stays a tap away up here.
-                if (dev.freethinkel.vardoger.android.voice.rememberVoiceVisible(model.voice)) {
-                    dev.freethinkel.vardoger.android.voice.VoiceHeaderButton(model.voice, onOpenStage = onOpenVoice, onOpenSettings = onVoiceSettings)
-                    androidx.compose.foundation.layout.Spacer(Modifier.size(8.dp))
                 }
                 // Agents, side chats and terminals; a badge while agents work.
                 androidx.compose.material3.BadgedBox(
@@ -380,12 +368,8 @@ fun SessionScreen(
                     .imePadding()
                     .navigationBarsPadding(),
             ) {
-                // A Cloud chat out of credits says so once, above the composer.
-                androidx.compose.animation.AnimatedVisibility(cloudOutOfCredits) {
-                    CloudCreditsNotice(nudges, onAddCredits = onOpenBilling)
-                }
                 Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { Banner(composer, connectivity?.state, onRetry = { runCatching { handle.retryDelivery() } }, cloud = if (isCloud) model.cloud else null, chatId = chatId, deviceId = row?.deviceId) }
+                    Box(Modifier.weight(1f)) { Banner(composer, connectivity?.state, onRetry = { runCatching { handle.retryDelivery() } }) }
                     CompanionStrip(companions, onTap = { section -> onShowCompanions?.invoke(section) ?: run { companionsSheet = section; showCompanions = true } }, modifier = if (companions.isEmpty) Modifier else Modifier.padding(vertical = 6.dp))
                 }
                 val input = composer.openInput
@@ -393,11 +377,7 @@ fun SessionScreen(
                 if (input != null) {
                     QuestionPanel(input) { answers -> runCatching { handle.respondInput(input.requestId, answers) } }
                 } else {
-                    Composer(model, core, handle, composer, row, transcript, draft, openModelPicker = openPicker, beforeSend = {
-                        // Out of credits, a Cloud send can't wake its machine: say so instead of a send that never lands.
-                        if (cloudOutOfCredits) nudges++
-                        !cloudOutOfCredits
-                    })
+                    Composer(model, core, handle, composer, row, transcript, draft, openModelPicker = openPicker)
                 }
             }
         }
@@ -422,17 +402,14 @@ fun SessionScreen(
     }
 
     if (confirmDelete) {
-        // Permanent, like the desktop's dialog; a Cloud session's machine goes with it.
+        // Permanent, like the desktop's dialog.
         val name = row?.takeIf { it.hasTitle }?.title ?: "New session"
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmDelete = false },
             icon = { ZIcon(ZIcons.Delete, null) },
             title = { Text("Delete session?") },
             text = {
-                Text(
-                    if (row?.isCloud == true) "\u201C$name\u201D and its Cloud machine will be permanently deleted, with anything not pushed from it. This can\u2019t be undone."
-                    else "\u201C$name\u201D will be permanently deleted. This can\u2019t be undone.",
-                )
+                Text("\u201C$name\u201D will be permanently deleted. This can\u2019t be undone.")
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
@@ -468,7 +445,7 @@ private val FADE = 44.dp
 
 /** The status pill above the composer (iOS SessionChrome banner). */
 @Composable
-private fun Banner(c: ComposerState, connectivity: ConnectivityState?, onRetry: () -> Unit, cloud: dev.freethinkel.vardoger.android.core.CloudStore? = null, chatId: String = "", deviceId: String? = null) {
+private fun Banner(c: ComposerState, connectivity: ConnectivityState?, onRetry: () -> Unit) {
     // Reconnect countdowns tick each second.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val retryAt = c.room.retryAtMs
@@ -480,14 +457,7 @@ private fun Banner(c: ComposerState, connectivity: ConnectivityState?, onRetry: 
             }
         }
     }
-    // A Cloud chat whose send can't land says why: out of credits the notice
-    // above already does; a failed machine is named.
-    if (cloud != null && c.sendState == SendState.FAILED) {
-        LaunchedEffect(Unit) { cloud.refreshSessions() }
-        if (cloud.outOfCredits) return
-        cloud.sessionError(chatId, deviceId)?.let { return StatusBanner("Cloud machine: $it", "Retry" to onRetry) }
-    }
-    val text = bannerText(c.sendState, c.host.name, isCloud = cloud != null, connectivity, c.room.connected, retryAt, now) ?: return
+    val text = bannerText(c.sendState, c.host.name, connectivity, c.room.connected, retryAt, now) ?: return
     StatusBanner(text, if (c.sendState == SendState.FAILED) "Retry" to onRetry else null)
 }
 
@@ -495,7 +465,6 @@ private fun Banner(c: ComposerState, connectivity: ConnectivityState?, onRetry: 
 internal fun bannerText(
     send: SendState?,
     hostName: String?,
-    isCloud: Boolean,
     connectivity: ConnectivityState?,
     roomConnected: Boolean,
     retryAtMs: Long?,
@@ -503,8 +472,7 @@ internal fun bannerText(
 ): String? = when {
     send == SendState.FAILED -> "Not delivered"
     connectivity == ConnectivityState.OFFLINE -> "Offline — sends are saved"
-    // A Cloud chat's message waits for its machine to start or wake: the transcript's setup step says so.
-    send == SendState.QUEUED -> if (isCloud) null else "${hostName ?: "Host"} is offline — will send when it's back"
+    send == SendState.QUEUED -> "${hostName ?: "Host"} is offline — will send when it's back"
     send == SendState.SENDING -> "Sending to host…"
     !roomConnected && retryAtMs != null -> "Reconnecting in ${maxOf(1L, (retryAtMs - nowMs) / 1000)}s"
     else -> null
@@ -551,41 +519,5 @@ private fun EmptyTranscriptNotice(notice: EmptyNotice) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-    }
-}
-
-/** Whose logins an error card's "Log in" opens: Cloud's for a Cloud chat, else the host's. */
-fun signInTarget(model: AppModel, chatId: String): AccountsTarget? {
-    val row = model.row(chatId) ?: return null
-    val harness = row.harness ?: "claude-code"
-    if (row.isCloud) return dev.freethinkel.vardoger.android.core.CloudStore.agents.firstOrNull { it.harness == harness }?.let { AccountsTarget.Cloud(it) }
-    val label = row.harnessLabel ?: uniffi.vardoger_core.agentLoginRules(harness).name.ifEmpty { harness }
-    return AccountsTarget.Device(row.deviceId, model.deviceName(row.deviceId), harness, label)
-}
-
-/** "Out of Cloud credits" with its one way forward; a refused send shakes it. */
-@Composable
-private fun CloudCreditsNotice(nudges: Int, onAddCredits: () -> Unit) {
-    val shake = remember { androidx.compose.animation.core.Animatable(0f) }
-    val view = androidx.compose.ui.platform.LocalView.current
-    LaunchedEffect(nudges) {
-        if (nudges == 0) return@LaunchedEffect
-        view.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
-        for (x in listOf(-8f, 8f, -5f, 5f, -2f, 0f)) shake.animateTo(x, androidx.compose.animation.core.tween(50))
-    }
-    Surface(
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.errorContainer,
-        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-        modifier = Modifier
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .graphicsLayer { translationX = shake.value * density },
-    ) {
-        Row(Modifier.padding(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            ZIcon(ZIcons.Warning, null, Modifier.size(18.dp))
-            androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
-            Text(dev.freethinkel.vardoger.android.core.CloudStore.OUT_OF_CREDITS, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-            androidx.compose.material3.Button(onClick = onAddCredits, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) { Text("Add credits") }
-        }
     }
 }

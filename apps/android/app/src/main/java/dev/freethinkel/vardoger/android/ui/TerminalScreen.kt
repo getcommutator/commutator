@@ -119,7 +119,6 @@ fun TerminalScreen(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current.density
     val store = model.terminals
-    RequestLocalNetworkOnce(model, wanted = model.row(chatId)?.isCloud == false)
     // Re-read the chat's tabs when they come, go, or change phase.
     var storeRevision by remember { mutableIntStateOf(0) }
     LaunchedEffect(chatId) { store.changes.collect { if (it == chatId) storeRevision++ } }
@@ -139,7 +138,6 @@ fun TerminalScreen(
     var pendingScript by remember { mutableStateOf(script) }
 
     // Pair with the host while the screen slides in.
-    LaunchedEffect(chatId) { client?.warmDirect(chatId) }
 
     fun show(tab: TerminalTab) {
         val wasFocused = terminal?.hasFocus() == true

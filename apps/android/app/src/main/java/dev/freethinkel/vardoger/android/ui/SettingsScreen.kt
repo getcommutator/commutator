@@ -57,11 +57,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     model: AppModel,
     onArchived: () -> Unit,
-    onOpenVoiceSettings: () -> Unit = {},
     onBack: (() -> Unit)? = null,
-    onOpenProviders: () -> Unit = {},
-    onOpenCloud: () -> Unit = {},
-    onOpenBilling: () -> Unit = {},
 ) {
     val appearance by model.appearance.collectAsState()
     val groupByProject by model.groupByProject.collectAsState()
@@ -105,22 +101,18 @@ fun SettingsScreen(
                 }
             }
         }
-        // Agents and where they run, as the desktop groups them: Providers,
-        // then Cloud and Billing when this account is offered Cloud.
-        section("Agents")
-        item {
-            val cloud = model.cloud
-            LaunchedEffect(Unit) { cloud.refresh() }
-            val offered = model.cloudOffered
-            val count = if (offered) 3 else 1
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
-                CloudRow(0, count, "Providers", "Agents and their accounts on each device", leading = { IconTile(ZIcons.Bot) }, onClick = onOpenProviders)
-                if (offered) {
-                    CloudRow(1, count, "Cloud", cloud.problem?.title ?: cloud.githubAccount?.let { "GitHub @$it" } ?: "Connect GitHub", leading = { IconTile(ZIcons.Cloud) }, onClick = onOpenCloud)
-                    val credits = cloud.credits?.let { "${dev.freethinkel.vardoger.android.core.CloudStore.credits(it)} credits" }
-                    val plan = cloud.billing?.plan?.let { "${it.name} plan" }
-                    CloudRow(2, count, "Billing", listOfNotNull(plan, credits).joinToString(" · ").ifEmpty { "Plans and credits" }, leading = { IconTile(ZIcons.Wallet) }, onClick = onOpenBilling)
-                }
+        // The machine this phone drives; the account's others are a tap away.
+        model.host?.takeIf { !model.isDemo }?.let { host ->
+            section("Machine")
+            item {
+                SegmentedListItem(
+                    onClick = { model.leaveMachine() },
+                    shapes = segmentedShapes(0, 1),
+                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                    leadingContent = { IconTile(ZIcons.Laptop) },
+                    supportingContent = { Text("Switch to another machine") },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                ) { Text(host.name) }
             }
         }
         section("Appearance")
@@ -186,30 +178,6 @@ fun SettingsScreen(
                     supportingContent = { (workspace?.archived?.size ?: 0).takeIf { it > 0 }?.let { Text("$it sessions") } },
                     trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
                 ) { Text("Archived sessions") }
-            }
-        }
-        item {
-            // Voice: once any registered host can run it (iOS More → Voice).
-            if (dev.freethinkel.vardoger.android.voice.rememberVoiceVisible(model.voice)) {
-                val style by model.voice.selectedStyle.collectAsState()
-                Column {
-                    Text(
-                        "Voice",
-                        style = MaterialTheme.typography.titleSmallEmphasized,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 28.dp, top = 24.dp, bottom = 8.dp),
-                    )
-                    SegmentedListItem(
-                        onClick = onOpenVoiceSettings,
-                        shapes = segmentedShapes(0, 1),
-                        colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                        leadingContent = { IconTile(dev.freethinkel.vardoger.android.R.drawable.zi_microphone) },
-                        supportingContent = {
-                            Text(style?.let { "Codex voice · ${dev.freethinkel.vardoger.android.voice.VoiceController.styleLabel(it)}" } ?: "Codex voice device and style")
-                        },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    ) { Text("Voice") }
-                }
             }
         }
         if (devices.isNotEmpty()) {

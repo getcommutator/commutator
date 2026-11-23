@@ -3,23 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Direct connections to a computer on the same network, for chats and terminals
-         (RequestLocalNetworkOnce). Without it they fall back to the relay. -->
-    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- A few seconds of delivery after leaving right after Send (DeliveryService). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
-    <!-- Voice calls (dev.freethinkel.vardoger.android.voice): the microphone, call audio
-         routing, the ongoing-call service and notification, the proximity
-         screen-off lock and call haptics. -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".VardogerApplication"
@@ -39,17 +26,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- WorkOS sign-in returns to vardoger://callback (shared with iOS). -->
+            <!-- The server's sign-in returns to vardoger://auth (shared with iOS). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="vardoger" android:host="callback" />
-                <!-- vardoger://voice returns to the call (iOS parity). -->
-                <data android:host="voice" />
-                <!-- Cloud: a provider sign-in, GitHub or Stripe hands back here. -->
-                <data android:host="signed-in" />
-                <data android:host="cloud" />
+                <data android:scheme="vardoger" android:host="auth" />
             </intent-filter>
         </activity>
         <provider
@@ -65,10 +47,5 @@
             android:name=".core.DeliveryService"
             android:exported="false"
             android:foregroundServiceType="shortService|dataSync" />
-        <!-- The ongoing voice call: keeps the microphone with the screen locked. -->
-        <service
-            android:name=".voice.VoiceCallService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
     </application>
 </manifest>

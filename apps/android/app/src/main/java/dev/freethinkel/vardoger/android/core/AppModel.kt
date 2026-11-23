@@ -10,7 +10,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
-import kotlinx.coroutines.CompletableDeferred
 import dev.freethinkel.vardoger.android.design.Appearance
 import dev.freethinkel.vardoger.android.design.ThemeMode
 import kotlinx.coroutines.MainScope
@@ -27,8 +26,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import uniffi.vardoger_core.AuthCallback
-import uniffi.vardoger_core.AuthOrg
 import uniffi.vardoger_core.ChatConfig
 import uniffi.vardoger_core.ClientEvent
 import uniffi.vardoger_core.ClientListener
@@ -48,12 +45,10 @@ import uniffi.vardoger_core.StreamSpeed
 import uniffi.vardoger_core.TranscriptScale
 import uniffi.vardoger_core.WorkspaceSnapshot
 import uniffi.vardoger_core.WorktreeSpec
-import uniffi.vardoger_core.authExchangeCode
-import uniffi.vardoger_core.authListOrgs
-import uniffi.vardoger_core.authProductionEdgeUrl
-import uniffi.vardoger_core.authRefresh
-import uniffi.vardoger_core.parseAuthCallback
-import uniffi.vardoger_core.workosAuthorizeUrl
+import uniffi.vardoger_core.ServerDevice
+import uniffi.vardoger_core.ServerSignIn
+import uniffi.vardoger_core.serverDevices
+import uniffi.vardoger_core.serverSignOut
 import java.io.File
 import java.util.UUID
 
@@ -71,24 +66,15 @@ data class LaunchOptions(
     val companion: String? = null,
     /** `--ez terminal-demo true`: the opened terminal types a short script. */
     val terminalDemo: Boolean = false,
-    /** `--ez cloud true`: offer Cloud in the demo (its pages read the demo's Cloud). */
-    val cloud: Boolean = false,
     val wallpaper: String? = null,
     val wallpaperEffect: String? = null,
-    /** `--ez voice-preview true`: the scripted call (debuggable builds). */
-    val voicePreview: Boolean = false,
-    /** `--ez voice-stage true`: open the call stage at launch (with the preview). */
-    val voiceStage: Boolean = false,
-    /** `--ez remote-voice true`: offer voice before any host advertises it. */
-    val remoteVoice: Boolean = false,
-    /** `--ez voice-selftest true`: log a host-less WebRTC offer (debuggable builds). */
-    val voiceSelfTest: Boolean = false,
-    /** `--es dev-user <id> --es dev-org <id>`: a dev bearer for an `AUTH_MODE=dev` edge, not persisted (debuggable builds). */
-    val dev: Pair<String, String>? = null,
-    /** `--es edge <url>`: a local edge in place of production (debuggable builds). */
-    val edge: String? = null,
-    /** `--ez no-relay-layer true`: behave as a build without the relay layer does, an old phone in an account of new devices (debuggable builds). */
-    val noRelayLayer: Boolean = false,
+    /**
+     * `--es account "<server url> <token> <device id>" [--es host <machine id>]`: a
+     * device token minted on a local dev server (Google can't sign in a
+     * server on localhost; debuggable builds). See crates/client/examples/remote_stack.rs.
+     */
+    val account: String? = null,
+    val host: String? = null,
     /** `--es send-on-open <text>`: with `route chat:<id>`, send this once the session is open, for rigs (debuggable builds). */
     val sendOnOpen: String? = null,
 )
@@ -104,11 +90,6 @@ class AppModel(private val app: Application) {
     val credentials = CredentialStore(app)
     val wallpaper = WallpaperStore(app)
 
-    /** The app-wide voice call (one at a time, outlives screens). */
-    val voice: dev.freethinkel.vardoger.android.voice.VoiceController by lazy {
-        dev.freethinkel.vardoger.android.voice.VoiceController(app, client, workspace)
-    }
-
     private val _client = MutableStateFlow<CoreClient?>(null)
     val client: StateFlow<CoreClient?> = _client.asStateFlow()
 
@@ -122,9 +103,11 @@ class AppModel(private val app: Application) {
     private val _sessionEvents = MutableSharedFlow<String>(extraBufferCapacity = 256)
     val sessionEvents: SharedFlow<String> = _sessionEvents
 
-    /** Organizations to pick from mid sign-in (more than one). */
-    val orgChoice = MutableStateFlow<Pair<List<AuthOrg>, CompletableDeferred<AuthOrg?>>?>(null)
     val signInError = MutableStateFlow<String?>(null)
+
+    /** Signed in to the server (the machine picker shows until a host is picked). */
+    private val _account = MutableStateFlow(credentials.account())
+    val account: StateFlow<CredentialStore.Account?> = _account.asStateFlow()
 
     /** App-wide snackbars ("Archived · Undo", open failures) shown by the shell. */
     val toasts = MutableSharedFlow<Toast>(extraBufferCapacity = 8)
@@ -193,7 +176,6 @@ class AppModel(private val app: Application) {
                     .putString("draft.harness", value.harness)
                     .putString("draft.model", value.model)
                     .putString("draft.effort", value.effort)
-                    .putBoolean("draft.cloud", value.cloud)
                     .apply()
             }
         }
@@ -204,7 +186,6 @@ class AppModel(private val app: Application) {
         harness = settings.getString("draft.harness", null) ?: "claude-code",
         model = settings.getString("draft.model", null),
         effort = settings.getString("draft.effort", null),
-        cloud = settings.getBoolean("draft.cloud", false),
     )
 
     var launch = LaunchOptions()
@@ -212,10 +193,8 @@ class AppModel(private val app: Application) {
 
     val isDemo: Boolean get() = _client.value?.isDemo() == true
     private var refreshScheduled = false
-    /** The pending sign-in's OAuth `state` (persisted: the process may die while the browser is up). */
-    private var authState: String?
-        get() = settings.getString("authState", null)
-        set(value) = settings.edit().putString("authState", value).apply()
+    /** The sign-in under way (its PKCE verifier lives in the core object). */
+    private var pendingSignIn: ServerSignIn? = null
 
     private val listener = object : ClientListener {
         override fun onEvent(event: ClientEvent) {
@@ -227,6 +206,11 @@ class AppModel(private val app: Application) {
         launch = options
         if (_client.value != null) return
         if (options.signedOut) credentials.clear()
+        options.account?.split(" ")?.takeIf { it.size == 3 }?.let { (url, token, id) ->
+            credentials.store(CredentialStore.Account(url, token, id, "dev@localhost", "Local dev"))
+            options.host?.let { credentials.host = CredentialStore.Host(it, it) }
+        }
+        _account.value = credentials.account()
         // The demo starts from the in-memory defaults, never a real account's options.
         if (options.demo) lastDraft = NewSessionDraft()
         watchNetwork()
@@ -238,15 +222,12 @@ class AppModel(private val app: Application) {
         options.wallpaperEffect?.let { name ->
             WallpaperStore.effects.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let(wallpaper::setEffect)
         }
-        if (options.remoteVoice) voice.forced = true
-        if (options.voicePreview && voice.preview() && options.voiceStage) voice.requestStage()
-        if (options.voiceSelfTest) voice.selfTest()
-        val stored = credentials.stored()
+        val stored = _account.value
+        val host = credentials.host
         when {
-            options.dev != null -> start(Credentials.Dev(options.dev.first, options.dev.second))
             // A `route` with nobody signed in opens on the demo (screenshots, tests).
             options.demo || options.route != null && stored == null -> start(Credentials.Demo(demoOptions()))
-            stored != null -> start(stored)
+            stored != null && host != null -> start(Credentials.Remote(stored.serverUrl, stored.token, host.id))
         }
         // Relative times ("4m") and staleness age without events.
         scope.launch {
@@ -271,13 +252,9 @@ class AppModel(private val app: Application) {
 
     private val coreDir get() = File(app.filesDir, "core")
 
-    /** Local docs belong to one identity: another account starts empty. */
-    private fun claimCoreDir(credentials: Credentials) {
-        val owner = when (credentials) {
-            is Credentials.WorkOs -> "${credentials.userId}/${credentials.orgId}"
-            is Credentials.Dev -> "${credentials.userId}/${credentials.orgId}"
-            is Credentials.Demo -> return
-        }
+    /** Local docs belong to one sign-in: another account starts empty. Each machine mirrors into its own folder. */
+    private fun claimCoreDir(account: CredentialStore.Account) {
+        val owner = "${account.serverUrl}|${account.deviceId}"
         val marker = File(coreDir, ".owner")
         if (runCatching { marker.readText() }.getOrNull() != owner) coreDir.deleteRecursively()
         coreDir.mkdirs()
@@ -285,30 +262,27 @@ class AppModel(private val app: Application) {
     }
 
     private fun start(credentials: Credentials): Boolean {
-        val demo = credentials is Credentials.Demo
-        val dir = if (demo) File(app.filesDir, "demo") else coreDir
-        if (!demo) claimCoreDir(credentials)
+        val account = _account.value
+        var dir = File(app.filesDir, "demo")
+        if (credentials is Credentials.Remote && account != null) {
+            claimCoreDir(account)
+            dir = File(File(coreDir, "hosts"), credentials.hostDeviceId)
+        }
         dir.mkdirs()
         val config = CoreConfig(
-            edgeUrl = edgeUrl,
             dataDir = dir.path,
-            deviceId = deviceId,
+            // The server's id for this phone: what the engine sees it as.
+            deviceId = if (credentials is Credentials.Remote) account?.deviceId ?: deviceId else deviceId,
             deviceName = deviceName(),
             platform = "android",
             appVersion = app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: "0",
-            // Not behind a remote flag: rooms have to hear this from the build for the 14 days
-            // before any engine flips (docs/design/relay-mobile.md). The room's answer decides the rest.
-            relayLayer = !launch.noRelayLayer,
         )
         return try {
             val client = CoreClient(config, credentials, listener)
-            if (credentials is Credentials.WorkOs) this.credentials.store(credentials)
             _client.value = client
             client.setNetworkOnline(networkPath.online)
             refreshWorkspace()
             client.preloadSessions()
-            cloud.refresh()
-            backfillProfile()
             true
         } catch (e: Exception) {
             Log.e("Vardoger", "core start failed", e)
@@ -319,8 +293,6 @@ class AppModel(private val app: Application) {
     fun startDemo() {
         start(Credentials.Demo(demoOptions()))
     }
-
-    val edgeUrl: String get() = launch.edge ?: authProductionEdgeUrl()
 
     private val deviceId: String
         get() {
@@ -336,69 +308,68 @@ class AppModel(private val app: Application) {
 
     // ── sign-in ────────────────────────────────────────────────────────────
 
-    /** The WorkOS authorize URL to open in a Custom Tab. */
-    fun beginSignIn(): String {
-        val state = UUID.randomUUID().toString()
-        authState = state
-        return workosAuthorizeUrl(state)
+    /** The server's Google sign-in URL to open in a Custom Tab (null: a bad address). */
+    fun beginSignIn(serverUrl: String): String? = try {
+        signInError.value = null
+        ServerSignIn(serverUrl.trim(), deviceName()).also { pendingSignIn = it }.url()
+    } catch (e: Exception) {
+        signInError.value = "That server address doesn't look right."
+        null
     }
 
-    /** `vardoger://callback?code=…`: code → tokens → org → client. */
+    /** `vardoger://auth?code=…`: redeem it for this phone's token, then pick a machine. */
     fun handleCallback(url: String) {
-        when (val cb = parseAuthCallback(url)) {
-            is AuthCallback.Code -> {
-                // Only the sign-in this app started (a forged callback could sign in as someone else).
-                if (authState == null || cb.state != authState) {
-                    signInError.value = "Sign-in was interrupted. Try again."
-                    return
-                }
-                authState = null
-                scope.launch { signIn(cb.code) }
-            }
-            is AuthCallback.Error -> signInError.value = cb.description ?: cb.error
-            null -> Unit
+        val signIn = pendingSignIn ?: run {
+            signInError.value = "Sign-in was interrupted. Try again."
+            return
         }
-    }
-
-    private suspend fun signIn(code: String) {
-        try {
-            val exchange = authExchangeCode(edgeUrl, code)
-            val orgs = authListOrgs(edgeUrl, exchange.tokens.accessToken)
-            if (orgs.isEmpty()) {
-                signInError.value = "This account isn't in an organization yet."
-                return
-            }
-            val org = if (orgs.size == 1) orgs[0] else {
-                val choice = CompletableDeferred<AuthOrg?>()
-                orgChoice.value = orgs to choice
-                choice.await().also { orgChoice.value = null } ?: return
-            }
-            val tokens = authRefresh(edgeUrl, exchange.tokens.refreshToken, org.organizationId)
-            val user = exchange.user
-            val name = listOfNotNull(user.firstName, user.lastName).map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
-            credentials.profile = CredentialStore.Profile(name.ifEmpty { null }, user.email, org.name)
-            if (!start(Credentials.WorkOs(user.id, org.organizationId, tokens))) {
-                signInError.value = "Couldn't open your workspace. Try signing in again."
-            }
-        } catch (e: Exception) {
-            signInError.value = e.message ?: "Sign-in failed"
-        }
-    }
-
-    /** Logins from before profiles were saved: recover the org name. */
-    private fun backfillProfile() {
-        val stored = credentials.stored() as? Credentials.WorkOs ?: return
-        if (credentials.profile.orgName != null) return
         scope.launch {
-            val orgs = runCatching { authListOrgs(edgeUrl, stored.tokens.accessToken) }.getOrNull() ?: return@launch
-            val org = orgs.firstOrNull { it.organizationId == stored.orgId } ?: return@launch
-            credentials.profile = credentials.profile.copy(orgName = org.name)
-            refreshWorkspace()
+            try {
+                val a = signIn.finish(url)
+                pendingSignIn = null
+                val saved = CredentialStore.Account(a.serverUrl, a.token, a.deviceId, a.email, a.name)
+                credentials.store(saved)
+                credentials.lastServerUrl = a.serverUrl
+                _account.value = saved
+            } catch (e: Exception) {
+                Log.w("Vardoger", "sign-in failed", e)
+                signInError.value = "Sign-in didn't complete. Try again."
+            }
         }
+    }
+
+    /** The account's machines (the picker's list). */
+    suspend fun machines(): List<ServerDevice> {
+        val a = _account.value ?: return emptyList()
+        return serverDevices(a.serverUrl, a.token)
+    }
+
+    /** Drive `machine`'s engine from now on. */
+    fun choose(machine: ServerDevice) {
+        val a = _account.value ?: return
+        credentials.host = CredentialStore.Host(machine.id, machine.name)
+        start(Credentials.Remote(a.serverUrl, a.token, machine.id))
+    }
+
+    /** The machine driven now. */
+    val host: CredentialStore.Host? get() = credentials.host
+
+    /** Back to the machine picker (Settings › Machine): the account stays. */
+    fun leaveMachine() {
+        terminals.signOut()
+        _client.value?.shutdown()
+        _client.value = null
+        _workspace.value = null
+        _connectivity.value = null
+        credentials.host = null
     }
 
     /** The user signing out: this device forgets the account's local docs. */
-    fun signOut() = signOutLocally(forget = true)
+    fun signOut() {
+        // The server forgets this phone too; signed out here either way.
+        _account.value?.let { a -> scope.launch { runCatching { serverSignOut(a.serverUrl, a.token, a.deviceId) } } }
+        signOutLocally(forget = true)
+    }
 
     /**
      * Drop the client. Only a sign-out the user asked for deletes the store:
@@ -406,18 +377,17 @@ class AppModel(private val app: Application) {
      * the `.owner` marker still keeps a different account out of it.
      */
     private fun signOutLocally(forget: Boolean) {
-        voice.stop()
         val wasDemo = isDemo
         endDeliveryHold()
         lastDeliveryActivity = 0L
         terminals.signOut()
-        cloud.reset()
         _client.value?.shutdown()
         _client.value = null
         _workspace.value = null
         _connectivity.value = null
         if (!wasDemo) {
             credentials.clear()
+            _account.value = null
             if (forget) coreDir.deleteRecursively()
         }
         // Nothing of the account stays in memory (or seeds the next one's new session).
@@ -429,14 +399,14 @@ class AppModel(private val app: Application) {
     val accountName: String
         get() = when {
             isDemo -> "Demo"
-            _client.value == null -> "Signed out"
-            else -> credentials.profile.let { it.name ?: it.email ?: "Signed in" }
+            else -> _account.value?.let { it.name ?: it.email } ?: "Signed out"
         }
 
     val accountDetail: String
-        get() = if (isDemo) "Offline demo workspace" else credentials.profile.let { p ->
-            listOfNotNull(if (p.name != null) p.email else null, p.orgName).joinToString(" · ").ifEmpty { "Vardoger account" }
-        }
+        get() = if (isDemo) "Offline demo workspace" else _account.value?.let { a ->
+            val server = runCatching { android.net.Uri.parse(a.serverUrl).host }.getOrNull() ?: a.serverUrl
+            listOfNotNull(if (a.name != null) a.email else null, server).joinToString(" · ")
+        } ?: "Vardoger account"
 
     // ── events ─────────────────────────────────────────────────────────────
 
@@ -446,8 +416,6 @@ class AppModel(private val app: Application) {
             is ClientEvent.SessionChanged -> _sessionEvents.tryEmit(event.chatId)
             is ClientEvent.ComposerChanged -> _sessionEvents.tryEmit(event.chatId)
             is ClientEvent.ConnectivityChanged -> _connectivity.value = event.connectivity
-            is ClientEvent.AuthRefreshed -> credentials.updateTokens(event.tokens)
-            is ClientEvent.AuthExpired -> signOutLocally(forget = false)
         }
     }
 
@@ -472,13 +440,12 @@ class AppModel(private val app: Application) {
     /**
      * iOS suspends a backgrounded app, which is what stops its sockets. Android may not for
      * hours (before 14, a process just stays running with its keepalives waking the radio),
-     * so once delivery has had its time the core is told to let go of them. Not during a
-     * call, which runs in the background on purpose.
+     * so once delivery has had its time the core is told to let go of them.
      */
     private val rest = object : Runnable {
         override fun run() {
             if (inForeground) return
-            if (voice.live) main.postDelayed(this, REST_RECHECK_MS) else _client.value?.onBackgroundIdle()
+            _client.value?.onBackgroundIdle()
         }
     }
 
@@ -540,10 +507,7 @@ class AppModel(private val app: Application) {
             Log.i("Vardoger", "network: ${if (it) "online" else "no path"}")
             _client.value?.setNetworkOnline(it)
         },
-        pathChanged = {
-            Log.i("Vardoger", "network: path changed")
-            _client.value?.networkPathChanged()
-        },
+        pathChanged = {},
     )
 
     private fun watchNetwork() {
@@ -616,15 +580,6 @@ class AppModel(private val app: Application) {
         _workspace.value?.devices?.firstOrNull { it.id == deviceId }?.name ?: "its computer"
 
     // ── companions (side chats, subagents, terminals) ──────────────────────
-
-    /** Cloud for this account (status, GitHub, agent logins, billing). */
-    val cloud = CloudStore(scope, { _client.value }, { refreshWorkspace() })
-
-    /** Pages opened in the browser that hand back through a `vardoger://` link. */
-    val browser = BrowserReturns()
-
-    /** Cloud is offered here (the demo shows it with `--ez cloud true`). */
-    val cloudOffered: Boolean get() = if (isDemo) launch.cloud else cloud.available
 
     /** Every chat's terminals (shells on their hosts). */
     val terminals = TerminalStore(app) { _client.value }
@@ -700,30 +655,6 @@ class AppModel(private val app: Application) {
         drafts.save(chatId, if (draft.isEmpty()) text else draft + "\n" + text)
     }
 
-    /** A Cloud chat created whose first message didn't go out yet (key → chat). */
-    private var unsentCloudChat: Pair<String, String>? = null
-
-    /**
-     * A session on its own Cloud machine in `draft.projectId` (a Cloud
-     * project, or any project whose repository Cloud reaches): the edge mints
-     * the machine, then the first message is sent as usual — it waits in the
-     * chat until the machine is up.
-     */
-    suspend fun createCloudSession(draft: NewSessionDraft, text: String, attachments: List<uniffi.vardoger_core.OutgoingAttachment>): String {
-        val client = _client.value ?: throw uniffi.vardoger_core.CoreException.Closed()
-        val spaceId = draft.projectId ?: throw uniffi.vardoger_core.CoreException.InvalidArgument("Choose a project")
-        val config = ChatConfig(draft.harness, draft.model, draft.effort, emptyMap(), SandboxLevel.WORKSPACE_WRITE)
-        // A retry after a failed first send reuses that chat (and machine), while nothing it was made with changed.
-        val key = "$spaceId|${draft.branch.orEmpty()}|${draft.harness}|${draft.model.orEmpty()}"
-        val chatId = unsentCloudChat?.takeIf { it.first == key && client.sessionRow(it.second) != null }?.second
-            ?: client.createCloudSession(spaceId, config, draft.branch, null).also { unsentCloudChat = key to it }
-        client.openSession(chatId).send(SendRequest(text, attachments, null, BusyPolicy.QUEUE))
-        unsentCloudChat = null
-        noteDeliveryActivity()
-        refreshWorkspace()
-        return chatId
-    }
-
     /** Create the chat and send its first message. */
     fun createSession(draft: NewSessionDraft, text: String, attachments: List<uniffi.vardoger_core.OutgoingAttachment> = emptyList()): String? {
         val client = _client.value ?: return null
@@ -751,7 +682,6 @@ class AppModel(private val app: Application) {
 
 /** Past [DeliveryService]'s 25 s, so a message sent just before leaving goes first. */
 private const val REST_AFTER_MS = 30_000L
-private const val REST_RECHECK_MS = 60_000L
 
 /** A snackbar raised from anywhere in the app. */
 class Toast(val message: String, val action: String? = null, val run: (() -> Unit)? = null)
@@ -790,6 +720,4 @@ data class NewSessionDraft(
     val effort: String? = null,
     val branch: String? = null,
     val worktree: Boolean = false,
-    /** Run on its own Cloud machine (a project whose repository Cloud reaches). */
-    val cloud: Boolean = false,
 )
