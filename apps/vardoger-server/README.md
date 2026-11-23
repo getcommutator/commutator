@@ -18,6 +18,12 @@ VARDOGER_SERVER_ADDR=127.0.0.1:8787 \
 ```
 
 - `VARDOGER_ALLOWED_EMAILS`: comma-separated; only these Google accounts can sign in.
+- `VARDOGER_ICE_URLS` (optional): comma-separated `stun:`/`turn:`/`turns:` URLs
+  handed to every device on its signaling socket, replacing the devices' default
+  (Google's public STUN); `VARDOGER_TURN_USERNAME` and `VARDOGER_TURN_CREDENTIAL`
+  sign in to the TURN ones. Without TURN, two devices that are both behind
+  symmetric NAT (many cellular networks) can't connect directly: terminals stay on
+  the relay, previews don't open.
 - `VARDOGER_SERVER_DB` defaults to `./vardoger-server.db`; `VARDOGER_SERVER_ADDR` to `127.0.0.1:8787`.
 
 ## Google OAuth client
@@ -36,4 +42,6 @@ ingress:
 
 WebSockets pass through a Cloudflare tunnel as is. Relay dials carry the
 device token in the URL (`?token=`), which is how the engine's relay client
-dials; keep request logging off on the tunnel and the server.
+dials; keep request logging off on the tunnel and the server. Preview
+signaling (`/preview/ws`) is a WebSocket too; the WebRTC traffic it sets up
+goes device to device (or through TURN), never through this server.

@@ -29,6 +29,7 @@ async fn serve(db: &std::path::Path) -> (Arc<App>, String) {
             google_client_id: "unused".into(),
             google_client_secret: "unused".into(),
             allowed_emails: vec!["me@example.com".into()],
+            ice_servers: Vec::new(),
         },
         db,
     )

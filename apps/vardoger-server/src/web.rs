@@ -314,6 +314,7 @@ mod tests {
                 google_client_id: "id".into(),
                 google_client_secret: "secret".into(),
                 allowed_emails: vec!["me@example.com".into()],
+                ice_servers: Vec::new(),
             },
             &dir.join("db"),
         )

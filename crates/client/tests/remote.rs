@@ -46,6 +46,7 @@ fn a_chat_round_trips_through_a_remote_engine() {
             google_client_id: "unused".into(),
             google_client_secret: "unused".into(),
             allowed_emails: vec!["me@example.com".into()],
+            ice_servers: Vec::new(),
         },
         &server_dir.path().join("db"),
     )

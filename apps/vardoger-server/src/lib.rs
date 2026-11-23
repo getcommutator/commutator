@@ -28,8 +28,11 @@
 //! - `POST /auth/redeem {code, verifier}` → `{token, deviceId, user}`.
 //! - `GET  /me`, `GET /devices`, `DELETE /devices/{id}` (bearer).
 //! - `GET  /device/{id}/ws?role=host|client[&connId]` (bearer): the relay.
+//! - `GET  /preview/ws?device={id}` (bearer): WebRTC signaling between the
+//!   account's devices (`signal.rs`).
 
 mod relay;
+mod signal;
 mod web;
 
 use std::collections::HashMap;
@@ -59,7 +62,12 @@ pub struct Config {
     pub google_client_secret: String,
     /// Lowercased; only these Google accounts may sign in.
     pub allowed_emails: Vec<String>,
+    /// Handed to every device on its signaling socket, replacing its own
+    /// default (public STUN). Empty: devices keep their default.
+    pub ice_servers: Vec<IceServer>,
 }
+
+pub use signal::IceServer;
 
 pub struct App {
     config: Config,
@@ -69,6 +77,7 @@ pub struct App {
     /// One-time code → a signed-in user waiting for the device to redeem.
     codes: Mutex<HashMap<String, Grant>>,
     rooms: relay::Rooms,
+    signaling: signal::Signaling,
     http: reqwest::Client,
 }
 
@@ -187,6 +196,7 @@ impl App {
             signing_in: Mutex::default(),
             codes: Mutex::default(),
             rooms: relay::Rooms::default(),
+            signaling: signal::Signaling::default(),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
                 .build()?,
@@ -308,6 +318,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices", get(list_devices))
         .route("/devices/:id", delete(remove_device))
         .route("/device/:id/ws", get(relay::device_ws))
+        .route("/preview/ws", get(signal::preview_ws))
         .with_state(app)
 }
 
@@ -671,6 +682,7 @@ impl App {
         }
         lock(&self.db).execute("DELETE FROM devices WHERE id = ?1", [id])?;
         self.rooms.close_device(id);
+        self.signaling.close_device(id);
         Ok(true)
     }
 }
