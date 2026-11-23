@@ -16,9 +16,9 @@ pub fn run_engine_command(command: EngineCommand) -> anyhow::Result<()> {
                 engine.run().await
             })
         }
-        EngineCommand::Login => {
+        EngineCommand::Login { server, paste } => {
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(auth_cli::login(engine_config_from_env()))
+            runtime.block_on(auth_cli::login(engine_config_from_env(), server, paste))
         }
         EngineCommand::Logout => {
             let runtime = tokio::runtime::Runtime::new()?;

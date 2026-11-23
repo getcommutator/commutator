@@ -56,13 +56,15 @@ async fn a_phone_calls_its_machine_through_the_relay() {
     let dir = tempfile::tempdir().unwrap();
     let (app, url) = serve(&dir.path().join("db")).await;
     let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
-    let (machine, machine_token) = app.create_device(&me, "laptop", Kind::Machine).unwrap();
-    let (phone, phone_token) = app.create_device(&me, "phone", Kind::Client).unwrap();
+    let (machine, machine_token) = app
+        .create_device(&me, "laptop", Kind::Machine, None)
+        .unwrap();
+    let (phone, phone_token) = app.create_device(&me, "phone", Kind::Client, None).unwrap();
     let stranger = app
         .upsert_user("sub-other", "other@example.com", None)
         .unwrap();
     let (_, stranger_token) = app
-        .create_device(&stranger, "theirs", Kind::Client)
+        .create_device(&stranger, "theirs", Kind::Client, None)
         .unwrap();
 
     // Not up yet: the phone sees the machine, offline.
@@ -124,7 +126,9 @@ async fn a_phone_calls_its_machine_through_the_relay() {
     assert!(theirs.client(&machine).await.is_err());
 
     // Nor a revoked one (signed out from another of my devices).
-    let (_, desktop_token) = app.create_device(&me, "desktop", Kind::Client).unwrap();
+    let (_, desktop_token) = app
+        .create_device(&me, "desktop", Kind::Client, None)
+        .unwrap();
     let revoke = reqwest::Client::new()
         .delete(format!("{url}/devices/{phone}"))
         .bearer_auth(desktop_token)
@@ -141,8 +145,12 @@ async fn a_machine_may_host_only_itself() {
     let dir = tempfile::tempdir().unwrap();
     let (app, url) = serve(&dir.path().join("db")).await;
     let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
-    let (machine, _) = app.create_device(&me, "laptop", Kind::Machine).unwrap();
-    let (_, other_token) = app.create_device(&me, "desktop", Kind::Machine).unwrap();
+    let (machine, _) = app
+        .create_device(&me, "laptop", Kind::Machine, None)
+        .unwrap();
+    let (_, other_token) = app
+        .create_device(&me, "desktop", Kind::Machine, None)
+        .unwrap();
     let ws = url.replacen("http", "ws", 1);
     let refused = tokio_tungstenite::connect_async(format!(
         "{ws}/device/{machine}/ws?role=host&token={other_token}"

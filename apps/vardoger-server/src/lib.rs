@@ -198,14 +198,22 @@ impl App {
     }
 
     /// A new device of `user`: its id and bearer token (shown only here).
+    /// `id` keeps an id the device already has (an engine's own device id),
+    /// replacing that device's earlier sign-in; the caller checks it's `user`'s.
     pub fn create_device(
         &self,
         user: &str,
         name: &str,
         kind: Kind,
+        id: Option<&str>,
     ) -> anyhow::Result<(String, String)> {
-        let (id, token) = (random(), random());
-        lock(&self.db).execute(
+        let (id, token) = (id.map_or_else(random, str::to_owned), random());
+        let db = lock(&self.db);
+        db.execute(
+            "DELETE FROM devices WHERE id = ?1 AND user_id = ?2",
+            rusqlite::params![id, user],
+        )?;
+        db.execute(
             "INSERT INTO devices (id, user_id, name, kind, token_hash, created, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             rusqlite::params![id, user, name, kind.as_str(), sha256_hex(&token), now()],
@@ -460,9 +468,12 @@ async fn google_user(app: &App, code: &str) -> anyhow::Result<GoogleUser> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Redeem {
     code: String,
     verifier: String,
+    /// A machine's own engine device id, so it's one id everywhere.
+    device_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -487,7 +498,16 @@ async fn redeem(State(app): State<Arc<App>>, Json(body): Json<Redeem>) -> Respon
     if grant.expires <= Instant::now() || pkce_challenge(&body.verifier) != grant.challenge {
         return fail(StatusCode::BAD_REQUEST, "unknown or used code");
     }
-    let (device_id, token) = match app.create_device(&grant.user, &grant.name, grant.kind) {
+    let wanted = body.device_id.as_deref();
+    if let Some(id) = wanted {
+        let well_formed = !id.is_empty()
+            && id.len() <= 64
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !well_formed || app.owner_of(id).is_some_and(|owner| owner != grant.user) {
+            return fail(StatusCode::CONFLICT, "that device id is taken");
+        }
+    }
+    let (device_id, token) = match app.create_device(&grant.user, &grant.name, grant.kind, wanted) {
         Ok(created) => created,
         Err(err) => {
             tracing::error!(error = %err, "creating device");

@@ -59,9 +59,19 @@ enum Command {
     /// app closed.
     #[command(hide = true)]
     Engine,
-    /// Sign in and enable sync on the next engine start.
-    Login,
-    /// Remove the saved session and return to local-only on the next start.
+    /// Sign this machine in to a Vardoger server with Google, so the
+    /// account's other devices reach it (from the next engine start).
+    Login {
+        /// The server (`https://…`); defaults to the one signed in to before,
+        /// else `VARDOGER_SERVER_URL`.
+        #[arg(value_name = "SERVER")]
+        server: Option<String>,
+        /// Show a code to paste instead of a callback to this machine's
+        /// browser (over SSH, or with no browser here).
+        #[arg(long)]
+        paste: bool,
+    },
+    /// Sign this machine out of its Vardoger server.
     Logout,
     /// Show workspace mode, optional auth, and engine status.
     Status,
@@ -113,7 +123,7 @@ enum DaemonCommand {
 pub enum EngineCommand {
     Headless,
     Engine,
-    Login,
+    Login { server: Option<String>, paste: bool },
     Logout,
     Status,
     Sync,
@@ -222,7 +232,7 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
     match cli.command {
         Some(Command::Headless) => engine(EngineCommand::Headless),
         Some(Command::Engine) => engine(EngineCommand::Engine),
-        Some(Command::Login) => engine(EngineCommand::Login),
+        Some(Command::Login { server, paste }) => engine(EngineCommand::Login { server, paste }),
         Some(Command::Logout) => engine(EngineCommand::Logout),
         Some(Command::Status) => engine(EngineCommand::Status),
         Some(Command::Sync) => engine(EngineCommand::Sync),
@@ -256,7 +266,7 @@ impl Command {
         match self {
             Self::Headless
             | Self::Engine
-            | Self::Login
+            | Self::Login { .. }
             | Self::Logout
             | Self::Status
             | Self::Sync

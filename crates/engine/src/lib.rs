@@ -15,6 +15,7 @@ use vardoger_rpc::{RpcError, RpcReply, RpcService, methods};
 
 use vardoger_sync::DocsStore;
 
+pub mod account;
 pub mod acp_registry;
 pub mod agent_accounts;
 
@@ -527,9 +528,22 @@ impl EngineCore {
     /// warm-open chat docs on nudges (§7 cold-chat command delivery). The token source
     /// re-reads auth on every (re)dial, so token refreshes take effect at reconnect.
     pub fn start_host_relay(&self, edge_url: &str) -> vardoger_rpc::HostRelay {
-        let auth = self.auth();
-        let config =
-            vardoger_rpc::HostRelayConfig::new(edge_url, self.device_id.clone(), Arc::new(auth));
+        self.host_relay_to(edge_url, &self.device_id, Arc::new(self.auth()))
+    }
+
+    /// Host our device room on the Vardoger server this machine signed in
+    /// to ([`account::Account`]), as the device the server knows it as.
+    pub fn start_account_relay(&self, account: &account::Account) -> vardoger_rpc::HostRelay {
+        self.host_relay_to(&account.server_url, &account.device_id, account.token_source())
+    }
+
+    fn host_relay_to(
+        &self,
+        url: &str,
+        device_id: &str,
+        token: Arc<dyn vardoger_rpc::TokenSource>,
+    ) -> vardoger_rpc::HostRelay {
+        let config = vardoger_rpc::HostRelayConfig::new(url, device_id, token);
         let doc_host = self.doc_host.clone();
         let on_nudge: vardoger_rpc::NudgeHandler = Arc::new(move |chat_id: String| {
             match doc_host.enqueue_wakeup(&chat_id) {
@@ -1075,6 +1089,20 @@ impl Engine {
             core.set_links(links);
             core.start_host_relay(&edge.url)
         });
+        // Signed in to a Vardoger server: the account's other devices reach
+        // this one through its relay, and it reaches theirs.
+        let host_relay = match (host_relay, account::Account::load(&config.data_dir)) {
+            (None, Some(account)) => {
+                vardoger_sync::net_path::spawn_path_monitor();
+                core.set_links(vardoger_rpc::LinkCache::new(vardoger_rpc::LinkCacheConfig::new(
+                    account.server_url.clone(),
+                    account.token_source(),
+                )));
+                tracing::info!(server = %account.server_url, "hosting this machine's device room");
+                Some(core.start_account_relay(&account))
+            }
+            (host_relay, _) => host_relay,
+        };
 
         let notifier = desktop_notify::enabled()
             .then(|| desktop_notify::spawn(&core, config.data_dir.clone()));
@@ -1434,6 +1462,11 @@ async fn run_org_onboarding(auth: Auth) {
 }
 
 /// Best-effort human name for this device's registry row.
+/// What this machine is called (`VARDOGER_DEVICE_NAME`, else its own name).
+pub fn device_name(device_id: &str) -> String {
+    local_device_name(device_id)
+}
+
 fn local_device_name(device_id: &str) -> String {
     select_local_device_name(
         [
@@ -1617,6 +1650,11 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 /// Stable per-installation device id, persisted at `{data_dir}/device-id`.
+/// This machine's engine device id (created on first use).
+pub fn device_id(data_dir: &Path) -> Result<String, EngineError> {
+    load_or_create_device_id(data_dir)
+}
+
 fn load_or_create_device_id(data_dir: &Path) -> Result<String, EngineError> {
     std::fs::create_dir_all(data_dir)?;
     // EngineInfo is resolved before the lifetime InstanceLock is acquired, so
