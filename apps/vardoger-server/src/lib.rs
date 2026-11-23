@@ -10,6 +10,8 @@
 //! shoulder-surfed) is useless on its own.
 //!
 //! Routes:
+//! - `GET  /`: the web page: sign in with Google, see and remove devices
+//!   (`web.rs`; `/auth/web`, `/web/devices/{id}/remove`, `/web/sign-out`).
 //! - `GET  /auth/google?challenge&name&kind[&redirect]`: start sign-in.
 //! - `GET  /auth/google/callback`: Google's redirect; sends the one-time code
 //!   to `redirect`, or shows it to paste.
@@ -18,6 +20,7 @@
 //! - `GET  /device/{id}/ws?role=host|client[&connId]` (bearer): the relay.
 
 mod relay;
+mod web;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -66,6 +69,8 @@ struct SignIn {
     kind: Kind,
     redirect: Option<String>,
     expires: Instant,
+    /// Started from the web page: ends in a browser session, not a code.
+    web: bool,
 }
 
 struct Grant {
@@ -163,6 +168,11 @@ impl App {
                  token_hash TEXT NOT NULL UNIQUE,
                  created INTEGER NOT NULL,
                  last_seen INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS web_sessions (
+                 token_hash TEXT PRIMARY KEY,
+                 user_id TEXT NOT NULL REFERENCES users(id),
+                 expires INTEGER NOT NULL
              );",
         )?;
         Ok(Arc::new(Self {
@@ -280,6 +290,10 @@ impl App {
 
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
+        .route("/", get(web::home))
+        .route("/auth/web", get(web::start))
+        .route("/web/devices/:id/remove", post(web::remove_device))
+        .route("/web/sign-out", post(web::sign_out))
         .route("/auth/google", get(start_sign_in))
         .route("/auth/google/callback", get(google_callback))
         .route("/auth/redeem", post(redeem))
@@ -312,20 +326,26 @@ async fn start_sign_in(State(app): State<Arc<App>>, Query(q): Query<StartSignIn>
             "redirect must be loopback or vardoger://",
         );
     }
+    to_google(
+        &app,
+        SignIn {
+            challenge: q.challenge,
+            name: q.name.trim().to_owned(),
+            kind: q.kind,
+            redirect: q.redirect,
+            expires: Instant::now() + SIGN_IN_TTL,
+            web: false,
+        },
+    )
+}
+
+/// Remember `sign_in` and send the browser to Google's account chooser.
+fn to_google(app: &App, sign_in: SignIn) -> Response {
     let state = random();
     {
         let mut signing_in = lock(&app.signing_in);
         signing_in.retain(|_, s| s.expires > Instant::now());
-        signing_in.insert(
-            state.clone(),
-            SignIn {
-                challenge: q.challenge,
-                name: q.name.trim().to_owned(),
-                kind: q.kind,
-                redirect: q.redirect,
-                expires: Instant::now() + SIGN_IN_TTL,
-            },
-        );
+        signing_in.insert(state.clone(), sign_in);
     }
     let url = reqwest::Url::parse_with_params(
         GOOGLE_AUTHORIZE,
@@ -399,6 +419,9 @@ async fn google_callback(State(app): State<Arc<App>>, Query(q): Query<Callback>)
             );
         }
     };
+    if sign_in.web {
+        return web::signed_in(&app, &user);
+    }
     let code = random();
     {
         let mut codes = lock(&app.codes);
@@ -598,39 +621,51 @@ async fn list_devices(
         Ok(device) => device,
         Err(status) => return status.into_response(),
     };
-    let rows: rusqlite::Result<Vec<(String, String, String, i64)>> = {
-        let db = lock(&app.db);
-        let mut stmt = match db.prepare(
-            "SELECT id, name, kind, last_seen FROM devices WHERE user_id = ?1 ORDER BY created",
-        ) {
-            Ok(stmt) => stmt,
-            Err(err) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
+    match app.devices_of(&device.user, &device.id) {
+        Ok(views) => Json(views).into_response(),
+        Err(err) => fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
+    }
+}
+
+impl App {
+    /// `user`'s devices, oldest first; `current` is the one asking.
+    fn devices_of(&self, user: &str, current: &str) -> rusqlite::Result<Vec<DeviceView>> {
+        let rows: Vec<(String, String, String, i64)> = {
+            let db = lock(&self.db);
+            let mut stmt = db.prepare(
+                "SELECT id, name, kind, last_seen FROM devices WHERE user_id = ?1 ORDER BY created",
+            )?;
+            stmt.query_map([user], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?
         };
-        stmt.query_map([&device.user], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .and_then(|rows| rows.collect())
-    };
-    let rows = match rows {
-        Ok(rows) => rows,
-        Err(err) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
-    };
-    let views: Vec<DeviceView> = rows
-        .into_iter()
-        .map(|(id, name, kind, last_seen)| DeviceView {
-            online: app.rooms.host_online(&id),
-            current: id == device.id,
-            kind: if kind == "machine" {
-                Kind::Machine
-            } else {
-                Kind::Client
-            },
-            id,
-            name,
-            last_seen,
-        })
-        .collect();
-    Json(views).into_response()
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, kind, last_seen)| DeviceView {
+                online: self.rooms.host_online(&id),
+                current: id == current,
+                kind: if kind == "machine" {
+                    Kind::Machine
+                } else {
+                    Kind::Client
+                },
+                id,
+                name,
+                last_seen,
+            })
+            .collect())
+    }
+
+    /// Sign `user`'s device `id` out; `false` if it isn't theirs.
+    fn remove_device_of(&self, user: &str, id: &str) -> rusqlite::Result<bool> {
+        if self.owner_of(id).as_deref() != Some(user) {
+            return Ok(false);
+        }
+        lock(&self.db).execute("DELETE FROM devices WHERE id = ?1", [id])?;
+        self.rooms.close_device(id);
+        Ok(true)
+    }
 }
 
 /// Sign a device out for good: its token stops working and, for a machine,
@@ -645,14 +680,11 @@ async fn remove_device(
         Ok(device) => device,
         Err(status) => return status.into_response(),
     };
-    if app.owner_of(&id).as_deref() != Some(device.user.as_str()) {
-        return StatusCode::NOT_FOUND.into_response();
+    match app.remove_device_of(&device.user, &id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
     }
-    if let Err(err) = lock(&app.db).execute("DELETE FROM devices WHERE id = ?1", [&id]) {
-        return fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-    }
-    app.rooms.close_device(&id);
-    StatusCode::NO_CONTENT.into_response()
 }
 
 #[cfg(test)]
