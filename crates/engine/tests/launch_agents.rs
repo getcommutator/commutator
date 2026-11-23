@@ -138,7 +138,7 @@ fn assemble(dir: &std::path::Path, ledger: &Arc<Ledger>) -> EngineCore {
     registry.register(Arc::new(Agent {
         ledger: ledger.clone(),
     }));
-    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     core.sessions.set_ipc_port(27699);
     core

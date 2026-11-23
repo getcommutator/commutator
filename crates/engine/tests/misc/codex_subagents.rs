@@ -18,7 +18,7 @@ fn assemble(dir: &Path) -> (EngineCore, EngineProfile) {
     let registry = Arc::new(HarnessRegistry::new());
     registry.register(Arc::new(CodexHarness::new().with_executable(fixture)));
     let profile = EngineProfile::development(dir, "test-org", "test-user");
-    let core = EngineCore::assemble_with_profile(profile.clone(), registry, HarnessId::Codex, None)
+    let core = EngineCore::assemble_with_profile(profile.clone(), registry, HarnessId::Codex)
         .unwrap();
     (core, profile)
 }

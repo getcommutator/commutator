@@ -50,7 +50,7 @@ fn assemble(dir: &Path) -> (EngineCore, EngineProfile) {
     registry.register(Arc::new(ClaudeHarness::new().with_executable(fixture)));
     let profile = EngineProfile::development(dir, "test-org", "test-user");
     let core =
-        EngineCore::assemble_with_profile(profile.clone(), registry, HarnessId::ClaudeCode, None)
+        EngineCore::assemble_with_profile(profile.clone(), registry, HarnessId::ClaudeCode)
             .unwrap();
     (core, profile)
 }

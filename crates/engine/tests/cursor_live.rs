@@ -20,7 +20,6 @@ fn setup(path: &std::path::Path) -> EngineCore {
         &path.join("engine"),
         Arc::new(registry),
         HarnessId::Cursor,
-        None,
     )
     .unwrap();
     core.workspace

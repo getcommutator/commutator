@@ -39,7 +39,6 @@ pub fn build_id() -> &'static str {
 pub mod auth;
 mod change_request_store;
 pub mod change_requests;
-mod chat2_checkpoint;
 pub mod chat2_host;
 mod chat_persistence;
 pub mod commands;
@@ -90,7 +89,7 @@ pub use diff_sync::{
     capture_commit_diff, capture_diff, capture_diff_against, capture_turn_diff,
     discard_working_tree, merge_base, read_diff_file_text, snapshot_tree, working_diff_base,
 };
-pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig, EdgeConfig};
+pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig};
 pub use instance_lock::InstanceLock;
 pub use profile::EngineProfile;
 pub use project_actions::ProjectActionsStore;
@@ -209,24 +208,22 @@ impl EngineCore {
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
     ) -> Result<Self, EngineError> {
         let org_id = env_or("VARDOGER_ORG_ID", DEFAULT_ORG_ID);
         let user_id = env_or("VARDOGER_USER_ID", DEFAULT_USER_ID);
         let profile = EngineProfile::development(data_dir, &org_id, &user_id);
-        Self::assemble_with_profile(profile, registry, default_harness, edge)
+        Self::assemble_with_profile(profile, registry, default_harness)
     }
 
     pub fn assemble_with_identity(
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
         org_id: &str,
         user_id: &str,
     ) -> Result<Self, EngineError> {
         let profile = EngineProfile::synced(data_dir, org_id, user_id);
-        Self::assemble_with_profile(profile, registry, default_harness, edge)
+        Self::assemble_with_profile(profile, registry, default_harness)
     }
 
     /// Assemble the engine against one resolved, immutable workspace profile.
@@ -234,7 +231,6 @@ impl EngineCore {
         profile: EngineProfile,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
     ) -> Result<Self, EngineError> {
         let data_dir = profile.device_root();
         std::fs::create_dir_all(data_dir)?;
@@ -242,7 +238,7 @@ impl EngineCore {
         // SQLite snapshots + journals. Taken before any store opens or the IPC
         // port binds; held (and kernel-released on crash) for the engine's life.
         let lock = InstanceLock::acquire(data_dir)?;
-        Self::assemble_with_profile_locked(profile, registry, default_harness, edge, lock)
+        Self::assemble_with_profile_locked(profile, registry, default_harness, lock)
     }
 
     /// Assemble against a pre-acquired [`InstanceLock`]. The headed app takes
@@ -252,7 +248,6 @@ impl EngineCore {
         profile: EngineProfile,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
-        edge: Option<EdgeConfig>,
         lock: InstanceLock,
     ) -> Result<Self, EngineError> {
         let data_dir = profile.device_root();
@@ -277,7 +272,6 @@ impl EngineCore {
             DocHostConfig {
                 device_id: device_id.clone(),
                 default_harness,
-                edge: edge.clone(),
             },
         );
         let workspace = WorkspaceHost::open(
@@ -288,7 +282,6 @@ impl EngineCore {
                 platform: std::env::consts::OS.to_string(),
                 org_id: profile.org_id().to_string(),
                 user_id: profile.user_id().to_string(),
-                edge: edge.clone(),
                 local_only: matches!(profile.scope(), WorkspaceScope::Local),
             },
         )?;
@@ -382,7 +375,7 @@ impl EngineCore {
             registry.clone(),
             repos.clone(),
         ));
-        let diff_sync = CheckoutDiffSync::start(repos.clone(), workspace.clone(), &device_id, edge);
+        let diff_sync = CheckoutDiffSync::start(repos.clone(), workspace.clone(), &device_id);
         // Turn starts snapshot the checkout tree — the "Latest turn" diff base.
         let turn_diff = diff_sync.clone();
         sessions.set_turn_listener(Arc::new(move |chat_id, cwd| {
@@ -507,11 +500,14 @@ impl EngineCore {
             .map_err(|e| EngineError::Other(e.to_string()))
     }
 
-    /// Start hosting our device room: serve the full RPC surface to relay clients and
-    /// warm-open chat docs on nudges (§7 cold-chat command delivery). The token source
-    /// re-reads auth on every (re)dial, so token refreshes take effect at reconnect.
-    pub fn start_host_relay(&self, edge_url: &str) -> vardoger_rpc::HostRelay {
-        self.host_relay_to(edge_url, &self.device_id, Arc::new(self.auth()))
+    /// Host our device room at `url` as this engine's own device id, dialing
+    /// with `token` (tests; production goes through [`Self::start_account_relay`]).
+    pub fn start_host_relay(
+        &self,
+        url: &str,
+        token: Arc<dyn vardoger_rpc::TokenSource>,
+    ) -> vardoger_rpc::HostRelay {
+        self.host_relay_to(url, &self.device_id, token)
     }
 
     /// Host our device room on the Vardoger server this machine signed in
@@ -700,13 +696,6 @@ impl EngineRuntime {
 
     pub async fn shutdown(&self) {
         self.stop_notifier();
-        // While the edge is still reachable: a relaying chat's newest changes may
-        // be only here, and a device opening it while this one is off would get
-        // an older checkpoint.
-        self.core
-            .doc_host
-            .checkpoint_relayed_chats_before_stop(std::time::Duration::from_secs(5))
-            .await;
         self.disconnect_edge();
         self.core.shutdown().await;
     }
@@ -807,24 +796,18 @@ impl Engine {
         profile: EngineProfile,
         lock: Option<InstanceLock>,
     ) -> anyhow::Result<EngineRuntime> {
-        // Chats live on this machine; other devices reach it through its
-        // Vardoger server's relay (below), never through synced rooms.
-        let edge: Option<EdgeConfig> = None;
-
         let registry = Arc::new(default_registry());
         let core = match lock {
             Some(lock) => EngineCore::assemble_with_profile_locked(
                 profile,
                 registry,
                 config.default_harness,
-                edge.clone(),
                 lock,
             )?,
             None => EngineCore::assemble_with_profile(
                 profile,
                 registry,
                 config.default_harness,
-                edge.clone(),
             )?,
         };
         core.set_auth(auth.clone());

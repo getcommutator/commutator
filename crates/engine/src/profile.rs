@@ -380,7 +380,6 @@ mod tests {
             profile,
             std::sync::Arc::new(crate::default_registry()),
             vardoger_proto::HarnessId::Mock,
-            None,
         )
         .unwrap();
 
@@ -404,7 +403,6 @@ mod tests {
             dir.path(),
             std::sync::Arc::new(crate::default_registry()),
             vardoger_proto::HarnessId::Mock,
-            None,
         )
         .unwrap();
 

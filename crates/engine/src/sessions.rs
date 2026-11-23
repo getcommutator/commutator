@@ -5857,24 +5857,8 @@ async fn drive_run(
                     };
                     let sink = subagents.remove(parent_tool_use_id).expect("checked");
                     inner.set_running_subagents(&chat_id, subagents.len());
-                    let doc_id = sink.doc_id.clone();
-                    // FREEZE: the finished transcript uploads as a static R2
-                    // blob (`blob/{chatId}/{subDocId}`) so viewers of
-                    // finished subagents never wake the doc's room; dropping
-                    // the sink unpins the doc for the LRU and the room
-                    // idles. The live doc remains the fallback.
-                    if let Some(json) = sink.finish(&device_id, status)
-                        && let Some(host) = inner.doc_host()
-                    {
-                        host.upload_tool_sidecar(
-                            &chat_id,
-                            vardoger_doc::SidecarPayload {
-                                part_id: doc_id,
-                                output: Some(json),
-                                diff: None,
-                            },
-                        );
-                    }
+                    // Dropping the sink unpins the doc for the LRU.
+                    let _ = sink.finish(&device_id, status);
                 }
             }
             continue;
@@ -6488,20 +6472,8 @@ async fn drive_run(
     // Any subagent still streaming when the run ends freezes as-is: the
     // parent process is gone, so nothing more can arrive on this stream.
     for (parent_id, sink) in subagents.drain() {
-        let doc_id = sink.doc_id.clone();
         let _ = doc_ref.update_subagent_chip(&parent_id, None, Some("failed"), None);
-        if let Some(json) = sink.finish(&device_id, MessageStatus::Aborted)
-            && let Some(host) = inner.doc_host()
-        {
-            host.upload_tool_sidecar(
-                &chat_id,
-                vardoger_doc::SidecarPayload {
-                    part_id: doc_id,
-                    output: Some(json),
-                    diff: None,
-                },
-            );
-        }
+        let _ = sink.finish(&device_id, MessageStatus::Aborted);
     }
     inner.set_running_subagents(&chat_id, 0);
     // The runtime is gone, and its background processes with it.
@@ -7293,7 +7265,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             Arc::new(registry),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         core.workspace
@@ -7475,7 +7446,6 @@ mod tests {
             crate::doc_host::DocHostConfig {
                 device_id: "dev-test".into(),
                 default_harness: HarnessId::Mock,
-                edge: None,
             },
         );
         let handle = host.open("chat-sub-flush--sub--t1").unwrap();
@@ -7553,7 +7523,7 @@ mod tests {
         }));
         let dir = tempfile::tempdir().unwrap();
         let core =
-            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock, None)
+            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock)
                 .unwrap();
         let chat = "chat-sink-spin";
         core.sessions
@@ -7626,7 +7596,7 @@ mod tests {
         }));
         let dir = tempfile::tempdir().unwrap();
         let core =
-            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock, None)
+            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock)
                 .unwrap();
         let chat = "chat-lanes";
         core.sessions
@@ -8015,7 +7985,7 @@ mod tests {
         }));
         let dir = tempfile::tempdir().unwrap();
         let core =
-            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock, None)
+            crate::EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock)
                 .unwrap();
         core.sessions
             .dispatch(chat, HarnessId::Mock, request(), None)

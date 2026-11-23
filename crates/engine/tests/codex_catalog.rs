@@ -14,7 +14,6 @@ async fn catalog_child() {
         dir.path(),
         default_registry().into(),
         HarnessId::Codex,
-        None,
     )
     .expect("assemble isolated engine");
     let client = vardoger_rpc::memory_client(core.rpc_service());

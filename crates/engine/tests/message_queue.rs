@@ -264,7 +264,7 @@ async fn setup_with(
 fn assemble_at(path: &std::path::Path, harness: Arc<HeldHarness>) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(harness);
-    let core = EngineCore::assemble(path, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(path, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     // As the engine's own boot says (deferred.rs): this one serves no IPC
     // port. Left unsaid, a turn revived on boot waits out
@@ -1943,7 +1943,6 @@ async fn pending_update_does_not_stall_another_chats_queue_flush() {
         &tmp.path().join("data"),
         registry.clone(),
         HarnessId::ClaudeCode,
-        None,
     )
     .expect("engine core assembles");
     create_chat(&core).await;
@@ -2255,7 +2254,7 @@ async fn setup_two_providers() -> (
     let registry = HarnessRegistry::new();
     registry.register(codex.clone());
     registry.register(ag.clone());
-    let core = EngineCore::assemble(&path.join("data"), Arc::new(registry), HarnessId::Codex, None)
+    let core = EngineCore::assemble(&path.join("data"), Arc::new(registry), HarnessId::Codex)
         .expect("engine core assembles");
     core.sessions.set_no_ipc_port();
     create_chat(&core).await;

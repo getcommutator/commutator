@@ -56,7 +56,7 @@ async fn rapid_steers_preserve_children_context_and_held_queue() {
     let registry = HarnessRegistry::new();
     registry.register(harness);
     let core =
-        EngineCore::assemble(&dir.path().join("engine"), Arc::new(registry), id, None).unwrap();
+        EngineCore::assemble(&dir.path().join("engine"), Arc::new(registry), id).unwrap();
     core.workspace
         .create_space(
             "audit",

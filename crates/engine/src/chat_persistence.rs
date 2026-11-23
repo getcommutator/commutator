@@ -146,45 +146,12 @@ impl ChatPersistence {
         this
     }
 
-    pub(crate) fn cursor(&self) -> u64 {
-        self.cursor.load(Ordering::Acquire)
-    }
-
     pub(crate) fn cursor_verified(&self) -> bool {
         self.cursor_verified.load(Ordering::Acquire)
     }
 
     pub(crate) fn is_clean(&self) -> bool {
         self.saved.load(Ordering::Acquire) == self.generation.load(Ordering::Acquire)
-    }
-
-    /// Counts changes; a save records the count it started from.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
-    }
-
-    /// The change count the newest successful save covers.
-    pub(crate) fn saved_generation(&self) -> u64 {
-        self.saved.load(Ordering::Acquire)
-    }
-
-    /// Save now rather than at the end of the debounce, on the persister's
-    /// own blocking-pool worker: the caller never exports or writes.
-    pub(crate) fn request_flush(&self) {
-        if self.is_clean() {
-            return;
-        }
-        self.urgent.store(true, Ordering::Release);
-        if let Some(wake) = &self.wake {
-            let _ = wake.try_send(());
-        } else {
-            self.flush_unless_saving();
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn saves(&self) -> usize {
-        self.writes.load(Ordering::Relaxed) + self.delta_writes.load(Ordering::Relaxed)
     }
 
     pub(crate) fn snapshot_bytes(&self) -> usize {
@@ -609,17 +576,6 @@ mod tests {
         let doc = Arc::new(SessionDoc::init("whale").unwrap());
         let persistence = ChatPersistence::new(&doc, store.clone(), "whale".into(), 0);
         (dir, doc, store, persistence)
-    }
-
-    #[test]
-    fn an_unverified_cursor_opens_at_zero() {
-        let (_dir, doc, store, _) = fixture();
-        let bytes = doc.export_snapshot().unwrap();
-        store
-            .save_snapshot_with_cursor("legacy", &bytes, 500, 2)
-            .unwrap();
-        let persistence = ChatPersistence::new(&doc, store, "legacy".into(), 500);
-        assert_eq!(persistence.cursor(), 0);
     }
 
     #[tokio::test]

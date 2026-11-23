@@ -147,7 +147,6 @@ async fn projectless_terminal_resolves_home_and_preserves_explicit_paths() {
         &tmp.path().join("data"),
         Arc::new(HarnessRegistry::new()),
         HarnessId::Mock,
-        None,
     )
     .expect("engine core assembles");
     let client = vardoger_rpc::memory_client(core.rpc_service());
@@ -286,7 +285,6 @@ async fn exercise_projectless(mode: Mode) {
         &tmp.path().join("data"),
         registry.clone(),
         HarnessId::Mock,
-        None,
     )
     .expect("engine core assembles");
 
@@ -407,7 +405,7 @@ async fn exercise_projectless(mode: Mode) {
     drop(client);
     drop(core);
 
-    let core = EngineCore::assemble(&tmp.path().join("data"), registry, HarnessId::Mock, None)
+    let core = EngineCore::assemble(&tmp.path().join("data"), registry, HarnessId::Mock)
         .expect("reopen persisted engine");
     let chat = core.workspace.chat(CHAT).unwrap().unwrap();
     assert_eq!(chat.space_id, None);

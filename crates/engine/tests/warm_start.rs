@@ -245,7 +245,7 @@ fn assemble(data: &std::path::Path, seen: &Arc<Mutex<Seen>>, options: &Options) 
             launch: options.launch,
         }));
     }
-    let core = EngineCore::assemble(data, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(data, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     core.sessions.set_no_ipc_port();
     core

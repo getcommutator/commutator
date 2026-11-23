@@ -2575,7 +2575,6 @@ mod tests {
             &dir.path().join("engine"),
             Arc::new(crate::HarnessRegistry::new()),
             vardoger_proto::HarnessId::Mock,
-            None,
         )
         .unwrap();
         core.workspace

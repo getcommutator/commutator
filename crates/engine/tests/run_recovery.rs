@@ -268,7 +268,7 @@ impl Harness for HoldingHarness {
 fn assemble(dir: &std::path::Path, harness: impl Harness + 'static) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(harness));
-    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     // Served, as the engine's port is right after assembly: a turn revived on
     // boot waits for it.
@@ -826,7 +826,7 @@ fn assemble_signed_out(dir: &std::path::Path, scope: WorkspaceScope) -> EngineCo
         _ => EngineProfile::development(dir, "dev-org", "dev-user"),
     };
     let core =
-        EngineCore::assemble_with_profile(profile, Arc::new(registry), HarnessId::Mock, None)
+        EngineCore::assemble_with_profile(profile, Arc::new(registry), HarnessId::Mock)
             .expect("engine core assembles");
     core.sessions.set_ipc_port(27699);
     let auth = Auth::new(dir.join("auth"));
@@ -1146,7 +1146,7 @@ async fn a_rejected_resume_in_a_switched_chat_starts_fresh_and_says_so() {
             }),
         },
     }));
-    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     pre_title(&core);
     let turn = |harness, prompt: &'static str, id: &'static str, replies| {

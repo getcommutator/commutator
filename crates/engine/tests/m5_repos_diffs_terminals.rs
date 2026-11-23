@@ -80,7 +80,6 @@ fn assemble(dir: &Path) -> EngineCore {
         dir,
         Arc::new(HarnessRegistry::new()),
         vardoger_proto::HarnessId::Mock,
-        None,
     )
     .expect("engine assembles")
 }

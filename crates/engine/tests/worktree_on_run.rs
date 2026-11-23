@@ -200,7 +200,6 @@ async fn check_worktree_setup_and_reuse(use_project_symlink: bool, test_setup: b
         &tmp_path.join("data"),
         Arc::new(registry),
         HarnessId::Mock,
-        None,
     )
     .expect("engine core assembles");
     core.workspace
