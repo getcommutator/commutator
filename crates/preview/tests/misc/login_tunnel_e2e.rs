@@ -104,8 +104,7 @@ async fn service(dir: &std::path::Path, device: &str, edge: &str) -> PreviewServ
         .start(
             Arc::new(Scope::default),
             Some(signaling::Config {
-                edge_url: edge.into(),
-                org_id: "org".into(),
+                server_url: edge.into(),
                 tokens: Arc::new(Token),
             }),
         )

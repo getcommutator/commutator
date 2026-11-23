@@ -1,5 +1,6 @@
-//! The coordinator receives presence, catalogs and SDP only. Reconnects obtain
-//! fresh credentials and clear the previous connection's remote routes/peers.
+//! The coordinator (the account's Vardoger server, `GET /preview/ws`)
+//! receives presence, catalogs and SDP only. Reconnects obtain fresh
+//! credentials and clear the previous connection's remote routes/peers.
 use crate::{
     catalog::Catalog,
     peer::{OutgoingSignal, Peers, Signal},
@@ -16,8 +17,8 @@ pub trait TokenSource: Send + Sync {
     async fn token(&self) -> anyhow::Result<String>;
 }
 pub struct Config {
-    pub edge_url: String,
-    pub org_id: String,
+    /// The Vardoger server (`https://…`); signaling dials `/preview/ws` there.
+    pub server_url: String,
     pub tokens: Arc<dyn TokenSource>,
 }
 #[derive(Deserialize)]
@@ -33,6 +34,10 @@ enum Incoming {
     Signal {
         from: String,
         signal: Signal,
+    },
+    /// The server's STUN/TURN servers, replacing this device's default.
+    Ice {
+        servers: Vec<crate::peer::IceServer>,
     },
 }
 pub async fn run(
@@ -198,11 +203,11 @@ fn coordinator_url(
     device: &str,
     signing_in: bool,
 ) -> anyhow::Result<reqwest::Url> {
-    let mut url = reqwest::Url::parse(&config.edge_url)?;
+    let mut url = reqwest::Url::parse(&config.server_url)?;
     let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
     url.set_scheme(scheme)
         .map_err(|_| anyhow::anyhow!("invalid preview coordinator URL"))?;
-    url.set_path(&format!("/preview/{}/ws", config.org_id));
+    url.set_path("/preview/ws");
     let mut query = url.query_pairs_mut();
     query.clear().append_pair("device", device);
     if signing_in {
@@ -282,6 +287,7 @@ async fn connect(
                         match serde_json::from_str::<Incoming>(&text)? {
                             Incoming::Catalog { device, services } => catalog.set_remote(&device, services)?,
                             Incoming::Gone { device } => { catalog.remove_remote(&device); peers.gone(&device).await; }
+                            Incoming::Ice { servers } => peers.set_ice(servers),
                             Incoming::Signal { from, signal } => {
                                 anyhow::ensure!(negotiations.len() < 16, "too many concurrent preview negotiations");
                                 let peers = peers.clone();
@@ -329,17 +335,16 @@ mod tests {
     #[test]
     fn a_sign_in_joins_flagged_so_the_device_limit_lets_it_in() {
         let config = Config {
-            edge_url: "https://edge.example".into(),
-            org_id: "org".into(),
+            server_url: "https://vardoger.example".into(),
             tokens: Arc::new(NoToken),
         };
         assert_eq!(
             coordinator_url(&config, "laptop", false).unwrap().as_str(),
-            "wss://edge.example/preview/org/ws?device=laptop"
+            "wss://vardoger.example/preview/ws?device=laptop"
         );
         assert_eq!(
             coordinator_url(&config, "laptop", true).unwrap().as_str(),
-            "wss://edge.example/preview/org/ws?device=laptop&signIn=1"
+            "wss://vardoger.example/preview/ws?device=laptop&signIn=1"
         );
     }
 }

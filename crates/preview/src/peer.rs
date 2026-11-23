@@ -32,6 +32,15 @@ pub struct Signal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sdp: Option<RTCSessionDescription>,
 }
+/// A STUN or TURN server, as the signaling server hands it out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IceServer {
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub credential: Option<String>,
+}
 #[derive(Clone)]
 pub struct OutgoingSignal {
     pub to: String,
@@ -61,7 +70,8 @@ struct Inner {
     output: mpsc::Sender<OutgoingSignal>,
     changed: Arc<Notify>,
     stop: CancellationToken,
-    ice_servers: Vec<RTCIceServer>,
+    /// Read per connection: the signaling server may replace it ([`Peers::set_ice`]).
+    ice_servers: std::sync::Mutex<Vec<RTCIceServer>>,
     /// Local sockets ICE gathers host candidates from.
     udp_addrs: Vec<String>,
 }
@@ -90,13 +100,13 @@ impl Peers {
                 output,
                 changed: Arc::new(Notify::new()),
                 stop,
-                ice_servers: vec![RTCIceServer {
+                ice_servers: std::sync::Mutex::new(vec![RTCIceServer {
                     urls: vec![
                         "stun:stun.l.google.com:19302".into(),
                         "stun:stun1.l.google.com:19302".into(),
                     ],
                     ..Default::default()
-                }],
+                }]),
                 udp_addrs: vec!["0.0.0.0:0".into()],
             })),
             receiver,
@@ -106,7 +116,7 @@ impl Peers {
     /// Must be called before the handle is shared.
     pub fn set_ice_servers(&mut self, urls: Vec<String>) -> anyhow::Result<()> {
         let inner = Arc::get_mut(&mut self.0).context("preview peers already shared")?;
-        inner.ice_servers = if urls.is_empty() {
+        *inner.ice_servers.get_mut().unwrap() = if urls.is_empty() {
             Vec::new()
         } else {
             vec![RTCIceServer {
@@ -115,6 +125,17 @@ impl Peers {
             }]
         };
         Ok(())
+    }
+    /// Replace the STUN/TURN servers connections from now on gather from.
+    pub fn set_ice(&self, servers: Vec<IceServer>) {
+        *self.0.ice_servers.lock().unwrap() = servers
+            .into_iter()
+            .map(|s| RTCIceServer {
+                urls: s.urls,
+                username: s.username.unwrap_or_default(),
+                credential: s.credential.unwrap_or_default(),
+            })
+            .collect();
     }
     /// Bind ICE to these local addresses (default: every interface). Tests
     /// pair over loopback, which a host firewall doesn't filter. Must be
@@ -148,13 +169,14 @@ impl Peers {
             stop: stop.clone(),
             changed: self.0.changed.clone(),
         });
+        let ice_servers = self.0.ice_servers.lock().unwrap().clone();
         let pc: Arc<dyn PeerConnection> = Arc::new(
             PeerConnectionBuilder::new()
                 .with_runtime(crate::runtime::runtime())
                 .with_setting_engine(setting_engine())
                 .with_configuration(
                     RTCConfigurationBuilder::new()
-                        .with_ice_servers(self.0.ice_servers.clone())
+                        .with_ice_servers(ice_servers)
                         .build(),
                 )
                 .with_handler(handler.clone())
@@ -724,8 +746,8 @@ mod tests {
             urls: vec![format!("stun:{}", blackhole.local_addr().unwrap())],
             ..Default::default()
         }];
-        Arc::get_mut(&mut a.0).unwrap().ice_servers = servers.clone();
-        Arc::get_mut(&mut b.0).unwrap().ice_servers = servers;
+        *Arc::get_mut(&mut a.0).unwrap().ice_servers.get_mut().unwrap() = servers.clone();
+        *Arc::get_mut(&mut b.0).unwrap().ice_servers.get_mut().unwrap() = servers;
         let peer_b = b.clone();
         let forward_a = tokio::spawn(async move {
             while let Some(message) = a_out.recv().await {
@@ -883,8 +905,8 @@ mod tests {
         // never filters it.
         a.set_udp_addrs(vec!["127.0.0.1:0".into()]).unwrap();
         b.set_udp_addrs(vec!["127.0.0.1:0".into()]).unwrap();
-        Arc::get_mut(&mut a.0).unwrap().ice_servers.clear();
-        Arc::get_mut(&mut b.0).unwrap().ice_servers.clear();
+        Arc::get_mut(&mut a.0).unwrap().ice_servers.get_mut().unwrap().clear();
+        Arc::get_mut(&mut b.0).unwrap().ice_servers.get_mut().unwrap().clear();
         let peer_b = b.clone();
         let forward_a = tokio::spawn(async move {
             while let Some(message) = a_out.recv().await {

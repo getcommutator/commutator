@@ -67,6 +67,23 @@ impl Account {
     pub fn token_source(&self) -> std::sync::Arc<dyn vardoger_rpc::TokenSource> {
         std::sync::Arc::new(vardoger_rpc::StaticToken(self.token.clone()))
     }
+
+    /// WebRTC signaling on the server (`GET /preview/ws`), as this device.
+    pub fn preview_signaling(&self) -> vardoger_preview::signaling::Config {
+        vardoger_preview::signaling::Config {
+            server_url: self.server_url.clone(),
+            tokens: std::sync::Arc::new(PreviewToken(self.token.clone())),
+        }
+    }
+}
+
+struct PreviewToken(String);
+
+#[async_trait::async_trait]
+impl vardoger_preview::signaling::TokenSource for PreviewToken {
+    async fn token(&self) -> anyhow::Result<String> {
+        Ok(self.0.clone())
+    }
 }
 
 /// How the one-time code comes back from the browser.

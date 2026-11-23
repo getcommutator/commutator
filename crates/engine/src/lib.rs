@@ -869,7 +869,10 @@ impl Engine {
                 }
             });
         }
-        core.previews.start(projects, None).await;
+        // Signed in to a Vardoger server: its signaling pairs this machine
+        // with the account's other devices, for previews and terminals.
+        let signaling = auth.account().map(|account| account.preview_signaling());
+        core.previews.start(projects, signaling).await;
         // Release checker: polls GitHub releases hourly (wall clock); headless
         // installs with VARDOGER_AUTO_UPDATE=1 apply + restart themselves — gated
         // on quiescence so a restart never lands under a live run or open PTY.

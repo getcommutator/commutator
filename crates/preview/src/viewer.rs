@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::Catalog;
 use crate::mux::{BoxIo, Connector, Stream};
-use crate::peer::Peers;
+use crate::peer::{OutgoingSignal, Peers};
 use crate::signaling;
 
 /// Back from the background after this long, a suspended phone's
@@ -40,6 +40,8 @@ impl Connector for Refuse {
 pub struct ViewerPeers {
     /// Calls arrive from platform threads: background work goes here.
     runtime: tokio::runtime::Handle,
+    /// The other devices' preview services, as signaling lists them.
+    catalog: Catalog,
     peers: Peers,
     wake: Arc<Notify>,
     changes: Arc<watch::Sender<u64>>,
@@ -61,26 +63,99 @@ impl ViewerPeers {
         let stop = CancellationToken::new();
         let (peers, outgoing) = {
             let _entered = runtime.enter();
-            Peers::new(device_id, Arc::new(Refuse), stop.child_token())
+            Peers::new(device_id, Self::refuse(), stop.child_token())
         };
+        Ok(Self::start_with(runtime, catalog, peers, outgoing, stop, signaling))
+    }
+
+    /// What a viewer's [`Peers`] serve: nothing.
+    pub fn refuse() -> Arc<dyn Connector> {
+        Arc::new(Refuse)
+    }
+
+    /// [`Self::start`] with `peers` made by the caller (built on
+    /// [`Self::refuse`], stopped by `stop`) — to bind ICE somewhere particular.
+    pub fn start_with(
+        runtime: &tokio::runtime::Handle,
+        catalog: Catalog,
+        peers: Peers,
+        outgoing: tokio::sync::mpsc::Receiver<OutgoingSignal>,
+        stop: CancellationToken,
+        signaling: signaling::Config,
+    ) -> Self {
         let wake = Arc::new(Notify::new());
         let (resting, rest) = watch::channel(false);
         runtime.spawn(signaling::run_unless_resting(
             signaling,
-            catalog,
+            catalog.clone(),
             peers.clone(),
             outgoing,
             stop.child_token(),
             wake.clone(),
             rest,
         ));
-        Ok(Self {
+        Self {
             runtime: runtime.clone(),
+            catalog,
             peers,
             wake,
             changes: Arc::new(watch::channel(0).0),
             resting: Arc::new(resting),
             stop,
+        }
+    }
+
+    /// The account's other devices' preview services; changes arrive on
+    /// [`Self::watch_services`].
+    pub fn services(&self) -> Vec<vardoger_proto::PreviewService> {
+        self.catalog.snapshot().services
+    }
+
+    pub fn watch_services(&self) -> watch::Receiver<vardoger_proto::PreviewSnapshot> {
+        self.catalog.subscribe()
+    }
+
+    /// Serve preview `service` of `device` on a loopback port here, so a web
+    /// view can load `http://127.0.0.1:{port}/`: every connection to it is a
+    /// stream over the direct connection (paired on first use). Its HTTP,
+    /// WebSockets included, passes through untouched. Stops when the
+    /// returned [`Forward`] drops.
+    pub async fn forward(&self, device: &str, service: &str) -> anyhow::Result<Forward> {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let addr = listener.local_addr()?;
+        let stop = self.stop.child_token();
+        let (peers, device, service) = (self.peers.clone(), device.to_owned(), service.to_owned());
+        let accepting = stop.clone();
+        self.runtime.spawn(async move {
+            loop {
+                let socket = tokio::select! {
+                    _ = accepting.cancelled() => break,
+                    accepted = listener.accept() => match accepted {
+                        Ok((socket, _)) => socket,
+                        Err(_) => continue,
+                    },
+                };
+                let (peers, device, service, stop) =
+                    (peers.clone(), device.clone(), service.clone(), accepting.clone());
+                tokio::spawn(async move {
+                    let mut socket = socket;
+                    let mut stream = match peers.open(&device, &service, false).await {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            tracing::debug!(%error, "preview forward could not open");
+                            return;
+                        }
+                    };
+                    tokio::select! {
+                        _ = stop.cancelled() => {}
+                        _ = tokio::io::copy_bidirectional(&mut socket, &mut stream) => {}
+                    }
+                });
+            }
+        });
+        Ok(Forward {
+            addr,
+            _stop: stop.drop_guard(),
         })
     }
 
@@ -151,5 +226,17 @@ impl ViewerPeers {
 
     pub fn stop(&self) {
         self.stop.cancel();
+    }
+}
+
+/// A preview served on this device's loopback ([`ViewerPeers::forward`]).
+pub struct Forward {
+    pub addr: std::net::SocketAddr,
+    _stop: tokio_util::sync::DropGuard,
+}
+
+impl Forward {
+    pub fn url(&self) -> String {
+        format!("http://{}/", self.addr)
     }
 }
