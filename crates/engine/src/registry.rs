@@ -152,28 +152,6 @@ pub struct CodeModeSettings {
 type Factory = Box<dyn Fn() -> Result<Arc<dyn Harness>, HarnessError> + Send + Sync>;
 type InstalledProbe = Box<dyn Fn() -> bool + Send + Sync>;
 
-/// The harnesses a Cloud device (`VARDOGER_DEVICE_PLATFORM=cloud`) registers (every
-/// built-in agent; agents from the ACP registry stay off it) —
-/// the typed twin of [`vardoger_proto::CLOUD_HARNESSES`]. Everything else is not
-/// merely disabled but absent: never probed (`--version`, install detection,
-/// model discovery, update checks). The rule is generic to the `cloud`
-/// platform; the motivating example is a hosted sandbox whose preinstalled
-/// CLIs are lazy installer shims (Boat's, at the time of writing) that
-/// download and install the real agent when merely probed.
-pub const CLOUD_HARNESS_IDS: &[HarnessId] = &[
-    HarnessId::Codex,
-    HarnessId::ClaudeCode,
-    HarnessId::Cursor,
-    HarnessId::Devin,
-    HarnessId::Grok,
-    HarnessId::Hermes,
-    HarnessId::Fx,
-    HarnessId::Pi,
-    HarnessId::Opencode,
-    HarnessId::Antigravity,
-    HarnessId::Muse,
-];
-
 /// How long a run waits for an expected [`RunEnvironment`]: far longer than the
 /// engine's assembly, on any disk.
 const RUN_ENVIRONMENT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -246,18 +224,6 @@ pub struct HarnessRegistry {
     /// Spawn-time environment of the agent accounts vardoger keeps itself
     /// (Muse's per-account roots); after the Cloud broker, never over it.
     account_environment: Mutex<Option<Arc<dyn RunEnvironment>>>,
-    /// Credits Vardoger in agents' commits ([`crate::commit_credit`]).
-    commit_credit: std::sync::OnceLock<Arc<crate::commit_credit::CommitCredit>>,
-    /// Told of every run's prepared environment (Cloud runner only): it
-    /// keeps the account's model catalogs current on the edge.
-    catalog_publisher: std::sync::OnceLock<Arc<dyn CatalogPublisher>>,
-}
-
-/// Hears each run's prepared environment (the Cloud runner's catalog
-/// publisher, [`crate::model_publish`]). Must return at once: it is on the
-/// run's start path.
-pub trait CatalogPublisher: Send + Sync {
-    fn prepared(&self, harness: HarnessId, env: &std::collections::BTreeMap<String, String>);
 }
 
 impl Default for HarnessRegistry {
@@ -360,8 +326,6 @@ impl HarnessRegistry {
             run_environment: Mutex::new(None),
             run_environment_ready: tokio::sync::watch::channel(true).0,
             account_environment: Mutex::new(None),
-            commit_credit: std::sync::OnceLock::new(),
-            catalog_publisher: std::sync::OnceLock::new(),
         }
     }
 
@@ -398,16 +362,7 @@ impl HarnessRegistry {
             .collect()
     }
 
-    pub fn set_commit_credit(&self, credit: Arc<crate::commit_credit::CommitCredit>) {
-        let _ = self.commit_credit.set(credit);
-    }
-
-    pub fn commit_credit(&self) -> Option<&Arc<crate::commit_credit::CommitCredit>> {
-        self.commit_credit.get()
-    }
-
-    /// Fill `request.env` for a spawn of `harness` (no-op without a provider),
-    /// and credit Vardoger in its commits when that's on.
+    /// Fill `request.env` for a spawn of `harness` (no-op without a provider).
     pub async fn prepare_run(
         &self,
         harness: HarnessId,
@@ -424,18 +379,7 @@ impl HarnessRegistry {
         for environment in self.environments() {
             environment.prepare(harness, chat_id, request).await?;
         }
-        if let Some(credit) = self.commit_credit.get() {
-            credit.apply(&mut request.env);
-        }
-        if let Some(publisher) = self.catalog_publisher.get() {
-            publisher.prepared(harness, &request.env);
-        }
         Ok(())
-    }
-
-    /// Install the catalog publisher (Cloud runner only; once).
-    pub fn set_catalog_publisher(&self, publisher: Arc<dyn CatalogPublisher>) {
-        let _ = self.catalog_publisher.set(publisher);
     }
 
     /// [`RunEnvironment::credential`] (`None` without a provider).
@@ -468,17 +412,9 @@ impl HarnessRegistry {
         }
     }
 
-    /// Whether `id` exists on this device at all (a Cloud device registers
-    /// only [`CLOUD_HARNESS_IDS`]).
+    /// Whether `id` exists on this device at all.
     pub fn is_registered(&self, id: HarnessId) -> bool {
         self.slots().contains_key(&id)
-    }
-
-    /// Drop every slot `keep` rejects. Lazy slots are dropped unresolved, so
-    /// a removed harness is never probed.
-    fn retain(&self, keep: impl Fn(HarnessId) -> bool) {
-        self.slots().retain(|id, _| keep(*id));
-        self.order().retain(|id| keep(*id));
     }
 
     fn gate(&self, id: HarnessId) -> Arc<tokio::sync::RwLock<()>> {
@@ -931,26 +867,10 @@ impl HarnessRegistry {
     }
 }
 
-/// The production registry for this engine's platform (see
-/// [`registry_for_platform`]).
-pub fn default_registry() -> HarnessRegistry {
-    registry_for_platform(&crate::runner::device_platform())
-}
-
 /// The production registry: MockHarness (hidden from production pickers) plus a lazy
 /// `claude-code` slot resolved through `vardoger_harness` on first use (subprocess
-/// discovery only happens when a run/model call actually needs it). On a
-/// `cloud` platform only [`CLOUD_HARNESS_IDS`] (plus the test-only mock)
-/// are registered.
-pub fn registry_for_platform(platform: &str) -> HarnessRegistry {
-    let registry = full_registry();
-    if platform == vardoger_proto::CLOUD_PLATFORM {
-        registry.retain(|id| id == HarnessId::Mock || CLOUD_HARNESS_IDS.contains(&id));
-    }
-    registry
-}
-
-fn full_registry() -> HarnessRegistry {
+/// discovery only happens when a run/model call actually needs it).
+pub fn default_registry() -> HarnessRegistry {
     // Warm the login-shell PATH snapshot in the background so the first
     // claude/codex resolve doesn't pay the shell-startup latency inline.
     vardoger_harness::shell_env::prewarm();
@@ -1328,7 +1248,7 @@ mod tests {
     /// honors once it does.
     #[test]
     fn lazy_descriptors_offer_the_modes_their_harness_honors() {
-        let registry = full_registry();
+        let registry = default_registry();
         for described in registry.descriptors() {
             let harness = registry.resolve(described.id).unwrap();
             assert_eq!(
@@ -2079,50 +1999,6 @@ mod gate_tests {
         registry.end_update(HarnessId::Codex);
     }
 
-    #[test]
-    fn cloud_platform_registers_the_built_in_agents_only() {
-        let registry = registry_for_platform(vardoger_proto::CLOUD_PLATFORM);
-        let mut ids: Vec<HarnessId> = registry.descriptors().iter().map(|d| d.id).collect();
-        ids.retain(|id| *id != HarnessId::Mock);
-        let mut expected = CLOUD_HARNESS_IDS.to_vec();
-        ids.sort_by_key(|id| id.as_str());
-        expected.sort_by_key(|id| id.as_str());
-        assert_eq!(ids, expected);
-        // Agents added from the ACP registry stay off Cloud.
-        let agent = HarnessId::from_slug("acp.gemini").unwrap();
-        assert!(!registry.is_registered(agent));
-        let enabled = registry.enabled_set();
-        assert!(
-            enabled.iter().all(|id| CLOUD_HARNESS_IDS.contains(id)),
-            "{enabled:?}"
-        );
-        // Laptops keep the full catalog.
-        let laptop = registry_for_platform("macos");
-        assert!(laptop.is_registered(HarnessId::Cursor));
-        assert!(laptop.is_registered(HarnessId::Opencode));
-    }
-
-    #[test]
-    fn cloud_harness_ids_mirror_the_proto_contract() {
-        // `CLOUD_HARNESSES` uses the wire names, so serialize the typed ids.
-        let names: Vec<String> = CLOUD_HARNESS_IDS
-            .iter()
-            .map(|id| {
-                serde_json::to_value(id)
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .to_owned()
-            })
-            .collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let mut expected: Vec<&str> = vardoger_proto::CLOUD_HARNESSES.to_vec();
-        let mut names = names;
-        names.sort_unstable();
-        expected.sort_unstable();
-        assert_eq!(names, expected);
-    }
-
     #[tokio::test]
     async fn run_environment_fills_env_only_when_installed() {
         struct Fill;
@@ -2159,40 +2035,4 @@ mod gate_tests {
         );
     }
 
-    /// Every agent spawn carries the commit-credit hooks while that's on.
-    #[tokio::test]
-    async fn runs_carry_the_commit_credit_hooks() {
-        let data = tempfile::tempdir().unwrap();
-        let mut request: vardoger_proto::RunRequest = serde_json::from_str(
-            r#"{"prompt":"p","model":null,"reasoning":null,"cwd":".","sandbox":"workspace-write","resume":null}"#,
-        )
-        .unwrap();
-        let registry = HarnessRegistry::new();
-        let credit = Arc::new(crate::commit_credit::CommitCredit::open(data.path(), false));
-        credit.set(true).unwrap();
-        registry.set_commit_credit(credit.clone());
-        registry
-            .prepare_run(HarnessId::ClaudeCode, None, &mut request)
-            .await
-            .unwrap();
-        let hooks = data.path().join("git-hooks");
-        assert_eq!(
-            request.env.get("GIT_CONFIG_KEY_0").map(String::as_str),
-            Some("core.hooksPath")
-        );
-        assert_eq!(
-            request.env.get("GIT_CONFIG_VALUE_0").map(String::as_str),
-            Some(hooks.to_string_lossy().as_ref())
-        );
-        assert!(hooks.join("commit-msg").exists());
-
-        // Off on this device: nothing added.
-        credit.set(false).unwrap();
-        request.env.clear();
-        registry
-            .prepare_run(HarnessId::ClaudeCode, None, &mut request)
-            .await
-            .unwrap();
-        assert!(request.env.is_empty());
-    }
 }

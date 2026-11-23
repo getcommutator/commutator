@@ -755,15 +755,6 @@ struct FetchToolBlobParams {
     blob_ref: String,
 }
 
-/// Where a Cloud chat runs: its session device and that machine's checkout.
-struct CloudHost {
-    device_id: String,
-    cwd: Option<String>,
-    /// The edge wrote the chat's row (a delegate started from a Cloud
-    /// machine, which may only write rows it hosts).
-    row_written: bool,
-}
-
 /// The Mutate surface (feature-inventory §2 DataRpc), tagged by `op`.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
@@ -797,15 +788,6 @@ enum MutateParams {
         /// unknown kind reads as none (a side chat).
         #[serde(default, deserialize_with = "vardoger_proto::lenient_child_kind")]
         child_kind: Option<vardoger_proto::ChildKind>,
-        /// Run on Cloud (the checkout picker's Cloud): the chat gets its own
-        /// Cloud machine, cloning the project's GitHub repository.
-        #[serde(default)]
-        cloud: bool,
-        /// What that machine reaches (the composer's pick under Cloud); `None`
-        /// = the account's default. The person's alone: from an agent, or
-        /// another device, it is ignored.
-        #[serde(default)]
-        cloud_reach: Option<vardoger_proto::CloudReach>,
     },
     /// Create a space (device + folder pair). Idempotent by id; a live
     /// duplicate `(deviceId, path)` no-ops. `gitDetected` is seeded from the
@@ -937,8 +919,6 @@ pub struct EngineRpc {
     updater: Option<vardoger_update::Updater>,
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
     local_import: Option<crate::local_import::LocalImporter>,
-    /// Cloud runner only: vault grants (ListGithubRepos, credentialed CloneRepo).
-    credentials: Option<crate::credentials::CredentialBroker>,
     /// Viewports' window focus, for desktop banners.
     viewport_focus: crate::desktop_notify::ViewportFocus,
     engine_info: EngineInfo,
@@ -1000,7 +980,6 @@ impl EngineRpc {
             updater: None,
             harness_updates: None,
             local_import: None,
-            credentials: None,
             viewport_focus: Default::default(),
             engine_info,
         }
@@ -1070,42 +1049,10 @@ impl EngineRpc {
         self
     }
 
-    /// Attach the Cloud runner's credential broker.
-    pub fn with_credentials(mut self, broker: crate::credentials::CredentialBroker) -> Self {
-        self.credentials = Some(broker);
-        self
-    }
-
     fn auth(&self) -> Result<&Auth, RpcError> {
         self.auth
             .as_ref()
             .ok_or_else(|| RpcError::Failed("auth unavailable".into()))
-    }
-
-    /// The edge client the IPC-only Cloud / vault methods act through, as the
-    /// signed-in user of this runtime's organization — or the unavailable
-    /// stand-in (local profile, development without an edge, signed out, no
-    /// organization), which answers without any network call.
-    fn cloud(&self) -> crate::cloud_client::CloudClient {
-        use crate::cloud_client::CloudClient;
-        if self.engine_info.workspace_scope == WorkspaceScope::Local {
-            return CloudClient::unavailable();
-        }
-        let Some(edge) = self.workspace.edge() else {
-            return CloudClient::unavailable();
-        };
-        let org_id = match &self.auth {
-            Some(auth) if auth.workos_enabled() => match auth.state() {
-                crate::auth::AuthState::SignedIn {
-                    org_id: Some(org_id),
-                    ..
-                } => org_id,
-                _ => return CloudClient::unavailable(),
-            },
-            // Development bearer: the profile's org scopes every room.
-            _ => self.workspace.org_id().to_string(),
-        };
-        CloudClient::new(edge.url.clone(), org_id, edge.token.clone())
     }
 
     /// Whether the engine hosting `chat_id` can switch its provider: this one
@@ -1127,330 +1074,6 @@ impl EngineRpc {
                         && device.supports(vardoger_proto::capabilities::PROVIDER_SWITCH_V1)
                 })
             })
-    }
-
-    /// A deleted Cloud chat takes its machine with it (and whatever is
-    /// uncommitted there): otherwise the sandbox outlives every way to reach
-    /// it. Best-effort and in the background — the chat is already gone. A
-    /// chat with no machine of its own (a side chat in its parent's) has no
-    /// session to delete, and the edge says so.
-    fn delete_cloud_machines(&self, chat_ids: Vec<String>) {
-        if chat_ids.is_empty() {
-            return;
-        }
-        let cloud = self.cloud();
-        tokio::spawn(async move {
-            for chat_id in chat_ids {
-                match cloud.delete_session(&chat_id).await {
-                    Ok(_) => tracing::info!(chat = %chat_id, "deleted chat's Cloud machine"),
-                    Err(err) => {
-                        tracing::warn!(chat = %chat_id, error = %err, "Cloud machine not deleted")
-                    }
-                }
-            }
-        });
-    }
-
-    /// The logical Cloud device (no engine; the edge writes its row with the
-    /// `cloud-account` capability), as opposed to a session's device.
-    fn is_cloud_account_device(&self, device_id: &str) -> bool {
-        if crate::cloud_accounts::is_cloud_accounts_target(device_id) {
-            return true;
-        }
-        self.workspace.read_devices().is_ok_and(|devices| {
-            devices.iter().any(|d| {
-                d.id == device_id
-                    && d.capabilities
-                        .iter()
-                        .any(|c| c == vardoger_proto::CLOUD_ACCOUNT_CAPABILITY)
-            })
-        })
-    }
-
-    /// Requests aimed at a Cloud device that this engine answers itself:
-    /// harness and model catalogs come from this engine's own catalog
-    /// restricted to Cloud's harnesses (every session machine has both CLIs),
-    /// so opening a composer never dials — let alone wakes — a sandbox. The
-    /// logical Cloud device has no engine: its skill/command catalogs are the
-    /// global ones, and anything else fails fast. `None` = forward as usual.
-    async fn answer_for_cloud(
-        &self,
-        target: &str,
-        method: &str,
-        params: &serde_json::Value,
-    ) -> Option<Result<RpcReply, RpcError>> {
-        let account = self.is_cloud_account_device(target);
-        let local = |drop: &[&str]| {
-            let mut params = params.clone();
-            if let Some(map) = params.as_object_mut() {
-                for key in ["targetDeviceId"].iter().chain(drop) {
-                    map.remove(*key);
-                }
-            }
-            params
-        };
-        match method {
-            methods::LIST_HARNESSES => {
-                // Enabled = Cloud has an account to run it with (unknown
-                // while the vault can't be read: then every one is).
-                let ready = crate::cloud_accounts::ready_harnesses(&self.cloud()).await;
-                let descriptors: Vec<_> = self
-                    .registry
-                    .descriptors()
-                    .into_iter()
-                    .filter(|d| crate::registry::CLOUD_HARNESS_IDS.contains(&d.id))
-                    .map(|mut d| {
-                        d.installed = true;
-                        d.enabled = Some(ready.as_ref().is_none_or(|ready| ready.contains(&d.id)));
-                        d
-                    })
-                    .collect();
-                Some(RpcReply::value(&descriptors))
-            }
-            methods::LIST_MODELS => {
-                let p: ListModelsParams = match parse_params(local(&[])) {
-                    Ok(p) => p,
-                    Err(e) => return Some(Err(e)),
-                };
-                if !crate::registry::CLOUD_HARNESS_IDS.contains(&p.harness) {
-                    return Some(Err(RpcError::Failed(format!(
-                        "{} doesn't run on Cloud",
-                        vardoger_proto::providers::provider_name(p.harness)
-                    ))));
-                }
-                // What Cloud's machines run: the edge's list for the accounts
-                // Cloud runs the agent on (the last one read, when it's out of
-                // reach), as a phone reads it.
-                if let Some(models) = self.cloud_models(p.harness).await {
-                    return Some(RpcReply::value(&models));
-                }
-                // Nothing discovered for Cloud yet (signed in before Cloud
-                // kept a list at sign-in, and no machine has run it): the
-                // agent's own fallback models, so it can be picked for its
-                // first Cloud run, which publishes the real ones. This
-                // computer's own catalog only for an agent with none: it's
-                // whatever account this computer is signed in to (Antigravity
-                // signed in here to an account offered only Flash listed that
-                // for Cloud's), and fails where the agent isn't here at all.
-                let fallback = self
-                    .registry
-                    .resolve(p.harness)
-                    .map(|harness| harness.fallback_models())
-                    .unwrap_or_default();
-                if !fallback.is_empty() {
-                    tracing::info!(harness = p.harness.as_str(),
-                        "Cloud models: fallback list until Cloud discovers one");
-                    return Some(RpcReply::value(&fallback));
-                }
-                Some(self.handle(method, local(&[])).await)
-            }
-            methods::LIST_SKILLS | methods::LIST_COMMANDS if account => Some(
-                self.handle(method, local(&["chatId", "spaceId", "path"]))
-                    .await,
-            ),
-            _ if account => Some(Err(RpcError::Failed(
-                crate::cloud_client::ACCOUNT_DEVICE_HAS_NO_ENGINE.into(),
-            ))),
-            _ => None,
-        }
-    }
-
-    /// Cloud's models for `harness`: the edge's lists, kept on disk as they're
-    /// read, else the last ones kept; of them, the catalog discovered with the
-    /// accounts Cloud runs it on now, else its newest
-    /// ([`crate::cloud_client::CloudModelLists::for_harness`]). `None` before
-    /// the edge was ever read, or with nothing listed for it.
-    async fn cloud_models(&self, harness: HarnessId) -> Option<Vec<vardoger_proto::Model>> {
-        let key = serde_json::to_value(harness).ok()?.as_str()?.to_owned();
-        let path = self.repos.data_dir().join("cloud-models.json");
-        let cloud = self.cloud();
-        let (listed, accounts) = tokio::join!(
-            cloud.models(),
-            crate::cloud_accounts::active_accounts(&cloud, harness)
-        );
-        let listed = match listed {
-            Ok(listed) => {
-                if let Ok(bytes) = serde_json::to_vec(&listed) {
-                    if let Err(error) = std::fs::write(&path, bytes) {
-                        tracing::warn!(%error, "Could not keep Cloud's models");
-                    }
-                }
-                listed
-            }
-            Err(error) => {
-                tracing::debug!(%error, "Cloud's models: the last list kept");
-                let bytes = std::fs::read(&path).ok()?;
-                serde_json::from_slice::<crate::cloud_client::CloudModelLists>(&bytes).ok()?
-            }
-        };
-        let models = crate::cloud_client::cloud_models(listed.for_harness(&key, accounts.as_deref())?);
-        (!models.is_empty()).then_some(models)
-    }
-
-    /// `ListCloudBranches {repo, defaultBranch?}`: the branches a Cloud
-    /// session of `repo` can start from — GitHub's, through the user's
-    /// connection — the default first and marked current.
-    async fn cloud_branches(&self, params: serde_json::Value) -> Result<RpcReply, RpcError> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct P {
-            repo: String,
-            #[serde(default)]
-            default_branch: Option<String>,
-        }
-        let p: P = parse_params(params)?;
-        let mut names = self
-            .cloud()
-            .github_branches(&p.repo)
-            .await
-            .map_err(|e| RpcError::Failed(e.to_string()))?;
-        if let Some(default) = &p.default_branch {
-            names.sort_by_key(|name| name != default);
-            if !names.contains(default) {
-                names.insert(0, default.clone());
-            }
-        }
-        let refs: Vec<vardoger_proto::RepoRef> = names
-            .into_iter()
-            .map(|name| vardoger_proto::RepoRef {
-                current: p.default_branch.as_deref() == Some(name.as_str()),
-                name,
-                worktree_path: None,
-            })
-            .collect();
-        RpcReply::value(&refs)
-    }
-
-    /// Where a chat runs when it runs on Cloud: its own new session machine
-    /// (minted by the edge, idempotent per chat) cloning the project's GitHub
-    /// repository — or, for a side chat whose parent runs on a session
-    /// machine, that same machine (they share files), unless an agent names
-    /// another device for it (a Cloud chat's agent starting a chat on the
-    /// person's computer). `None` = not Cloud; create normally. `reach`: what
-    /// a new session reaches (`None`: the account's default); a delegate
-    /// always reaches what its parent does (the edge decides).
-    async fn cloud_chat_host(
-        &self,
-        chat_id: &str,
-        space_id: Option<&str>,
-        device_id: Option<&str>,
-        parent_chat_id: Option<&str>,
-        child_kind: Option<vardoger_proto::ChildKind>,
-        branch: Option<&str>,
-        cloud: bool,
-        reach: Option<vardoger_proto::CloudReach>,
-        config: Option<&ChatConfig>,
-    ) -> Result<Option<CloudHost>, RpcError> {
-        let failed = |e: crate::EngineError| RpcError::Failed(e.to_string());
-        let on_cloud = |device_id: &str| device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX);
-        // An agent's chat on another of the person's devices runs there.
-        let elsewhere = |parent: &str| {
-            matches!(vardoger_rpc::caller(), vardoger_rpc::Caller::Agent { .. })
-                && device_id.is_some_and(|device| !device.is_empty() && device != parent)
-        };
-        // A side chat of a Cloud chat shares its machine (and files), unless
-        // it asks for a Cloud session of its own or an agent puts it elsewhere.
-        if !cloud
-            && let Some(parent) = parent_chat_id
-            && let Some(parent) = self.workspace.chat(parent).map_err(failed)?
-            && on_cloud(&parent.device_id)
-            && !elsewhere(&parent.device_id)
-        {
-            return Ok(Some(CloudHost {
-                device_id: parent.device_id,
-                cwd: parent.cwd,
-                row_written: false,
-            }));
-        }
-        if !cloud {
-            return Ok(None);
-        }
-        if let Some(existing) = self.workspace.chat(chat_id).map_err(failed)?
-            && on_cloud(&existing.device_id)
-        {
-            return Ok(Some(CloudHost {
-                device_id: existing.device_id,
-                cwd: existing.cwd,
-                // A Cloud machine may not write a delegate's row (the edge did).
-                row_written: crate::runner::session().is_some(),
-            }));
-        }
-        // On a Cloud machine: a delegate of the chat this machine runs, on a
-        // machine of its own (the edge clones the parent's repository and
-        // writes the delegate's row — a machine writes only rows it hosts).
-        if let Some(session) = crate::runner::session() {
-            let parent = parent_chat_id.ok_or_else(|| {
-                RpcError::Failed(
-                    "A Cloud machine starts Cloud chats only as children of its chat.".into(),
-                )
-            })?;
-            if parent != session.chat_id {
-                return Err(RpcError::Failed(
-                    "A Cloud machine starts Cloud chats only as children of the chat it runs."
-                        .into(),
-                ));
-            }
-            let started = self
-                .cloud()
-                .create_child_session(chat_id, parent, branch, config, child_kind)
-                .await
-                .map_err(|e| RpcError::Failed(format!("Couldn't start a Cloud session: {e}")))?;
-            self.await_chat_row(chat_id).await?;
-            return Ok(Some(CloudHost {
-                device_id: started.device_id,
-                cwd: started.path,
-                row_written: true,
-            }));
-        }
-        let space_id =
-            space_id.ok_or_else(|| RpcError::Failed("Cloud sessions run in a project.".into()))?;
-        let space = self
-            .workspace
-            .space(space_id)
-            .map_err(failed)?
-            .ok_or_else(|| RpcError::Failed("That project no longer exists.".into()))?;
-        let full_name = space.github_repo.ok_or_else(|| {
-            RpcError::Failed("This project has no GitHub repository for Cloud to clone.".into())
-        })?;
-        let cloud_client = self.cloud();
-        let repo = cloud_client
-            .github_repos(Some(&full_name))
-            .await
-            .map_err(failed)?
-            .into_iter()
-            .find(|repo| repo.full_name.eq_ignore_ascii_case(&full_name))
-            .ok_or_else(|| {
-                RpcError::Failed(format!(
-                    "Cloud can't reach {full_name} — install the Vardoger GitHub App on it in Settings → Cloud."
-                ))
-            })?;
-        let session = cloud_client
-            .create_session(chat_id, space_id, &repo, branch, reach)
-            .await
-            .map_err(|e| RpcError::Failed(format!("Couldn't start a Cloud session: {e}")))?;
-        Ok(Some(CloudHost {
-            device_id: session.device_id,
-            cwd: session.path,
-            row_written: false,
-        }))
-    }
-
-    /// Wait for a chat row written elsewhere (the edge, for a delegate) to
-    /// reach this engine's registry, so what follows — a first prompt, a
-    /// title — finds it.
-    async fn await_chat_row(&self, chat_id: &str) -> Result<(), RpcError> {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            if self.workspace.chat(chat_id).ok().flatten().is_some() {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(RpcError::Failed(
-                    "The Cloud session started, but its chat hasn't synced here yet; try again shortly.".into(),
-                ));
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
     }
 
     fn updater(&self) -> Result<&vardoger_update::Updater, RpcError> {
@@ -2180,8 +1803,6 @@ impl EngineRpc {
                 cwd,
                 parent_chat_id,
                 child_kind,
-                cloud: _,
-                cloud_reach: _,
             } => {
                 tracing::debug!(target: "first_word", chat = %chat_id, "create chat");
                 // A voice orchestrator is hidden, so the chats it creates are
@@ -2241,38 +1862,7 @@ impl EngineRpc {
                 }
             }
             MutateParams::DeleteSpace { space_id } => {
-                let chats = self.workspace.read_chats().unwrap_or_default();
-                let mut cloud_chats: Vec<String> = chats
-                    .iter()
-                    .filter(|chat| {
-                        chat.space_id.as_deref() == Some(space_id.as_str())
-                            && vardoger_proto::is_cloud_device(&chat.device_id, "")
-                    })
-                    .map(|chat| chat.id.clone())
-                    .collect();
-                // Their children on Cloud with no project of their own (side
-                // chats on a deleted machine, delegates) go with them.
-                let orphans: Vec<String> = chats
-                    .iter()
-                    .filter(|chat| {
-                        chat.space_id.is_none()
-                            && vardoger_proto::is_cloud_device(&chat.device_id, "")
-                            && chat
-                                .parent_chat_id
-                                .as_ref()
-                                .is_some_and(|parent| cloud_chats.contains(parent))
-                    })
-                    .map(|chat| chat.id.clone())
-                    .collect();
                 let deleted = self.workspace.delete_space(&space_id).map_err(failed)?;
-                for orphan in &orphans {
-                    if let Err(err) = self.workspace.delete_chat(orphan) {
-                        tracing::warn!(chat = %orphan, error = %err, "deleting a Cloud chat's child failed");
-                    }
-                    self.doc_host.purge_chat(orphan);
-                }
-                cloud_chats.extend(orphans);
-                self.delete_cloud_machines(cloud_chats);
                 // Best-effort teardown of live runs we host for the deleted chats
                 // (the doc rows are already tombstoned; a straggler run would only
                 // write into an orphaned session doc).
@@ -2361,31 +1951,11 @@ impl EngineRpc {
                     .map(drop)
             }
             MutateParams::DeleteChat { chat_id } => {
-                let on_cloud = self
-                    .workspace
-                    .chat(&chat_id)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|chat| vardoger_proto::is_cloud_device(&chat.device_id, ""));
-                // A Cloud chat's children on Cloud go with it: its delegates
-                // (each on a machine of its own, which would otherwise outlive
-                // the parent) and its side chats (on its machine, now gone).
-                // Its children on computers go too, and theirs in turn: the
-                // apps place a child under its parent, so one left behind
-                // can't be reached, yet keeps its doc and maybe a live run.
-                // (Their runs end with their rows: see
-                // `SessionsEngine::follow_chat_deletions`.)
-                let children = chat_descendants(
-                    &self.workspace.read_chats().unwrap_or_default(),
-                    &chat_id,
-                    on_cloud,
-                );
-                let cloud_children: Vec<String> = children
-                    .iter()
-                    .filter(|(_, cloud)| *cloud)
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                let children: Vec<String> = children.into_iter().map(|(id, _)| id).collect();
+                // Its children go too, and theirs in turn: the apps place a
+                // child under its parent, so one left behind can't be reached,
+                // yet keeps its doc and maybe a live run. (Their runs end with
+                // their rows: see `SessionsEngine::follow_chat_deletions`.)
+                let children = chat_descendants(&self.workspace.read_chats().unwrap_or_default(), &chat_id);
                 self.voice.retire_chat(&chat_id);
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
@@ -2395,9 +1965,6 @@ impl EngineRpc {
                         tracing::warn!(chat = %child, error = %err, "deleting a deleted chat's child failed");
                     }
                     self.doc_host.purge_chat(child);
-                }
-                if on_cloud {
-                    self.delete_cloud_machines(std::iter::once(chat_id).chain(cloud_children).collect());
                 }
                 Ok(())
             }
@@ -2461,29 +2028,19 @@ impl EngineRpc {
     }
 }
 
-/// The chats that go when `root` is deleted, each with whether it is on
-/// Cloud: its children on computers (subagents, side chats) and theirs in
-/// turn, plus — when the parent is itself on Cloud — its children on Cloud.
-/// (A computer's chat keeps its Cloud delegates, as before.)
-fn chat_descendants(
-    chats: &[vardoger_proto::Chat],
-    root: &str,
-    root_on_cloud: bool,
-) -> Vec<(String, bool)> {
-    let mut out: Vec<(String, bool)> = Vec::new();
+/// The chats that go when `root` is deleted: its children (subagents, side
+/// chats) and theirs in turn.
+fn chat_descendants(chats: &[vardoger_proto::Chat], root: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::from([root]);
-    let mut frontier: Vec<(&str, bool)> = vec![(root, root_on_cloud)];
-    while let Some((parent, parent_on_cloud)) = frontier.pop() {
+    let mut frontier: Vec<&str> = vec![root];
+    while let Some(parent) = frontier.pop() {
         for chat in chats {
-            if chat.parent_chat_id.as_deref() != Some(parent) {
+            if chat.parent_chat_id.as_deref() != Some(parent) || !seen.insert(chat.id.as_str()) {
                 continue;
             }
-            let on_cloud = vardoger_proto::is_cloud_device(&chat.device_id, "");
-            if (on_cloud && !parent_on_cloud) || !seen.insert(chat.id.as_str()) {
-                continue;
-            }
-            out.push((chat.id.clone(), on_cloud));
-            frontier.push((chat.id.as_str(), on_cloud));
+            out.push(chat.id.clone());
+            frontier.push(chat.id.as_str());
         }
     }
     out
@@ -2702,8 +2259,6 @@ fn forwardable(method: &str) -> bool {
             | methods::CANCEL_INSTALL
             | methods::GET_TITLE_SETTINGS
             | methods::SET_TITLE_SETTINGS
-            | methods::GET_COMMIT_CREDIT
-            | methods::SET_COMMIT_CREDIT
             | methods::GET_NATIVE_SUBAGENTS
             | methods::SET_NATIVE_SUBAGENTS
             | methods::GET_CODE_MODE
@@ -2732,7 +2287,6 @@ fn forwardable(method: &str) -> bool {
             | methods::ADD_REPO
             | methods::CLONE_REPO
             // Answered by the Cloud device, which holds the GitHub grant.
-            | methods::LIST_GITHUB_REPOS
             | methods::CREATE_REPO
             | methods::LIST_BRANCHES
             | methods::LIST_REFS
@@ -3452,30 +3006,6 @@ impl RpcService for EngineRpc {
                     "{method}: only that device's own window can do that. It's waiting for you there."
                 )));
             }
-            // Settings → Providers' Cloud, and a Cloud chat's composer (its
-            // session machine): Cloud's logins live in the vault, the same
-            // for every machine, so they're read there — never by dialing a
-            // machine, which may be asleep. (A Cloud machine itself has no
-            // user bearer for the vault: it forwards as before.)
-            if crate::cloud_accounts::handles(method)
-                && (crate::cloud_accounts::is_cloud_accounts_target(&target)
-                    || (target.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX)
-                        && !crate::runner::is_cloud_platform()))
-            {
-                return Box::pin(crate::cloud_accounts::dispatch(
-                    self.cloud(),
-                    self.agent_accounts.clone(),
-                    method,
-                    params,
-                ))
-                .await;
-            }
-            if (target.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX)
-                || crate::cloud_accounts::is_cloud_accounts_target(&target))
-                && let Some(reply) = self.answer_for_cloud(&target, method, &params).await
-            {
-                return reply;
-            }
             if matches!(
                 method,
                 methods::START_AGENT_LOGIN
@@ -3546,29 +3076,8 @@ impl RpcService for EngineRpc {
             ))
             .await;
         }
-        if crate::cloud_client::handles(method) {
-            // The person wakes a chat's machine (a size picked, a fresh one):
-            // what waited for it goes with its clock started now, however
-            // long it waited. First, so the machine finds it as it boots.
-            if matches!(
-                method,
-                methods::CLOUD_SESSION_WAKE | methods::CLOUD_SESSION_RETRY
-            ) && let Ok(p) = serde_json::from_value::<ChatParams>(params.clone())
-                && let Err(err) = self.doc_host.restart_waiting_clocks(&p.chat_id)
-            {
-                tracing::warn!(chat = %p.chat_id, %err, "waiting messages not restarted for a wake");
-            }
-            return Box::pin(crate::cloud_client::dispatch(
-                self.cloud(),
-                &self.agent_accounts,
-                method,
-                params,
-            ))
-            .await;
-        }
         match method {
             methods::ENGINE_INFO => RpcReply::value(&self.engine_info),
-            methods::LIST_CLOUD_BRANCHES => Box::pin(self.cloud_branches(params)).await,
             methods::ENGINE_READY => RpcReply::value(&serde_json::json!({ "ready": true })),
             methods::LIST_HARNESSES => {
                 RpcReply::value(&self.registry.descriptors_for(include_registry(&params)))
@@ -3588,26 +3097,6 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({}))
             }
             methods::GET_TITLE_SETTINGS => RpcReply::value(&self.registry.title_settings()),
-            methods::GET_COMMIT_CREDIT => match self.registry.commit_credit() {
-                Some(credit) => RpcReply::value(&credit.status()),
-                None => Err(RpcError::Failed(
-                    "Commit credit isn't available on this engine.".into(),
-                )),
-            },
-            methods::SET_COMMIT_CREDIT => {
-                #[derive(serde::Deserialize)]
-                struct Params {
-                    enabled: bool,
-                }
-                let p: Params = parse_params(params)?;
-                let credit = self.registry.commit_credit().ok_or_else(|| {
-                    RpcError::Failed("Commit credit isn't available on this engine.".into())
-                })?;
-                let status = credit
-                    .set(p.enabled)
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&status)
-            }
             methods::SET_TITLE_SETTINGS => {
                 let p: crate::registry::TitleSettings = parse_params(params)?;
                 self.registry
@@ -4621,61 +4110,6 @@ impl RpcService for EngineRpc {
             }
             methods::MUTATE => {
                 let p: MutateParams = parse_params(params)?;
-                if let MutateParams::CreateChat {
-                    chat_id,
-                    space_id,
-                    device_id,
-                    config,
-                    branch,
-                    cwd,
-                    parent_chat_id,
-                    child_kind,
-                    cloud,
-                    cloud_reach,
-                } = &p
-                    && let Some(host) = Box::pin(self.cloud_chat_host(
-                        chat_id,
-                        space_id.as_deref(),
-                        device_id.as_deref(),
-                        parent_chat_id.as_deref(),
-                        *child_kind,
-                        branch.as_deref().filter(|b| !b.is_empty()),
-                        *cloud,
-                        cloud_reach.filter(|_| vardoger_rpc::caller().is_local()),
-                        config.as_ref(),
-                    ))
-                    .await?
-                {
-                    if host.row_written {
-                        return RpcReply::value(&serde_json::json!({
-                            "ok": true, "deviceId": host.device_id, "cwd": host.cwd,
-                        }));
-                    }
-                    let failed = |e: crate::EngineError| RpcError::Failed(e.to_string());
-                    // The machine's checkout, not the project's folder on the
-                    // computer it lives on.
-                    let cwd = host.cwd.clone().or_else(|| cwd.clone());
-                    self.workspace
-                        .create_chat_hosted(
-                            chat_id,
-                            space_id.as_deref(),
-                            device_id.as_deref(),
-                            Some(&host.device_id),
-                            config.clone(),
-                            cwd.clone(),
-                            parent_chat_id.clone(),
-                            *child_kind,
-                        )
-                        .map_err(failed)?;
-                    if let Some(branch) = branch.as_deref().filter(|b| !b.is_empty()) {
-                        self.workspace
-                            .set_chat_branch(chat_id, branch)
-                            .map_err(failed)?;
-                    }
-                    return RpcReply::value(&serde_json::json!({
-                        "ok": true, "deviceId": host.device_id, "cwd": cwd,
-                    }));
-                }
                 let sidebar_pins = matches!(&p, MutateParams::ChangeSidebarPin { .. });
                 self.mutate(p)?;
                 if sidebar_pins {
@@ -5255,31 +4689,6 @@ impl RpcService for EngineRpc {
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&repo)
             }
-            methods::LIST_GITHUB_REPOS => {
-                #[derive(Deserialize, Default)]
-                #[serde(default)]
-                struct P {
-                    query: Option<String>,
-                }
-                let p: P = if params.is_null() {
-                    P::default()
-                } else {
-                    parse_params(params)?
-                };
-                // A session machine lists with its own grant; any other device
-                // asks the edge, whose vault calls GitHub without the token
-                // ever leaving it.
-                let repos = match &self.credentials {
-                    Some(broker) => broker
-                        .list_github_repos(p.query.as_deref())
-                        .await
-                        .map_err(RpcError::Failed)?,
-                    None => Box::pin(self.cloud().github_repos(p.query.as_deref()))
-                        .await
-                        .map_err(|e| RpcError::Failed(e.to_string()))?,
-                };
-                RpcReply::value(&serde_json::json!({ "repos": repos }))
-            }
             methods::CLONE_REPO => {
                 #[derive(Deserialize)]
                 struct P {
@@ -5289,12 +4698,6 @@ impl RpcService for EngineRpc {
                     parent: Option<String>,
                 }
                 let p: P = parse_params(params)?;
-                // Cloud: wire the GitHub grant into git's credential helper
-                // first, so private repositories clone.
-                let no_credentials = match &self.credentials {
-                    Some(broker) => broker.ensure_git_credentials().await.err(),
-                    None => None,
-                };
                 let cloned = match p
                     .parent
                     .as_deref()
@@ -5303,12 +4706,7 @@ impl RpcService for EngineRpc {
                     Some(parent) => self.repos.clone_repo_in(&p.url, parent).await,
                     None => self.repos.clone_repo(&p.url).await,
                 };
-                let repo = cloned.map_err(|e| {
-                    let github = no_credentials
-                        .map(|reason| format!(" (no GitHub access: {reason})"))
-                        .unwrap_or_default();
-                    RpcError::Failed(format!("{e}{github}"))
-                })?;
+                let repo = cloned.map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&repo)
             }
             methods::CREATE_REPO => {

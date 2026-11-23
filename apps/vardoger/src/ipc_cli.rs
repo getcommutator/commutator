@@ -1,32 +1,8 @@
-//! `vardoger sync` and `vardoger quiesce`: the running engine's sync state and the
-//! Cloud sleep handshake, over its local IPC.
+//! `vardoger sync`: the running engine's sync state, over its local IPC.
 
 /// `vardoger sync`: dial the running engine's IPC and print per-room sync state.
 /// The introspection surface every 2026-08 incident was missing — "is this
 /// device's workspace room actually receiving?" as a one-liner.
-/// `vardoger quiesce`'s exit status when the engine is busy (EX_TEMPFAIL); the
-/// edge's sleep workflow reads it (`QUIESCE_BUSY_EXIT`).
-const QUIESCE_BUSY_EXIT: i32 = 75;
-
-pub async fn quiesce_cli(ipc_port: u16, data_dir: &std::path::Path) -> anyhow::Result<()> {
-    let client = vardoger_rpc::connect_ipc(ipc_port, Some(data_dir))
-        .await
-        .map_err(|e| anyhow::anyhow!("no engine listening on 127.0.0.1:{ipc_port} ({e})"))?;
-    let reply = client
-        .call(vardoger_rpc::methods::QUIESCE_FOR_SLEEP, serde_json::json!({}))
-        .await
-        .map_err(|e| anyhow::anyhow!("QuiesceForSleep failed: {e}"))?;
-    if reply["quiesced"].as_bool() == Some(true) {
-        println!("quiesced");
-        return Ok(());
-    }
-    eprintln!(
-        "busy: {}",
-        reply["busy"].as_str().unwrap_or("the engine is busy")
-    );
-    std::process::exit(QUIESCE_BUSY_EXIT);
-}
-
 pub async fn sync_cli(ipc_port: u16, data_dir: &std::path::Path) -> anyhow::Result<()> {
     let client = vardoger_rpc::connect_ipc(ipc_port, Some(data_dir))
         .await

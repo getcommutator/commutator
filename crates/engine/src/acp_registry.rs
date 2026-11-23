@@ -113,9 +113,6 @@ static SERVICE: OnceLock<Arc<AcpRegistry>> = OnceLock::new();
 pub fn start(data_dir: &Path, registry: &HarnessRegistry) {
     reg::set_agents_root(data_dir.join("agents"));
     let _ = SERVICE.set(Arc::new(AcpRegistry::new(data_dir.join("acp-registry"))));
-    if crate::runner::is_cloud_platform() {
-        return;
-    }
     for record in reg::records() {
         registry.register_registry_agent(&record);
     }
@@ -253,9 +250,6 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Result<RpcReply, RpcError> {
-    if crate::runner::is_cloud_platform() {
-        return Err(RpcError::Failed("Cloud runs only the agents it's provisioned with".into()));
-    }
     let service = service()?;
     match method {
         methods::LIST_ACP_REGISTRY => {

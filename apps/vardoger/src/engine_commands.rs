@@ -33,11 +33,6 @@ pub fn run_engine_command(command: EngineCommand) -> anyhow::Result<()> {
             let config = engine_config_from_env();
             runtime.block_on(ipc_cli::sync_cli(config.ipc_port, &config.data_dir))
         }
-        EngineCommand::Quiesce => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            let config = engine_config_from_env();
-            runtime.block_on(ipc_cli::quiesce_cli(config.ipc_port, &config.data_dir))
-        }
         EngineCommand::Mcp => crate::run_mcp(),
         EngineCommand::Engine => crate::background::run(),
         EngineCommand::DiscoverModels(harness) => {

@@ -68,11 +68,6 @@ enum Command {
     /// Live sync introspection from the running engine: per-room connection
     /// state, last pushed-frame/ack ages, rejoin/probe/resync counters.
     Sync,
-    /// Cloud sleep handshake: ask the running engine to start no new work.
-    /// Exits 0 when quiesced, 75 when busy (a turn in flight, a message
-    /// waiting) — the edge then keeps the machine awake.
-    #[command(hide = true)]
-    Quiesce,
     #[cfg(target_os = "linux")]
     /// Trigger an Appshot in the running headed instance (desktop shortcut fallback).
     Appshot,
@@ -130,7 +125,6 @@ pub enum EngineCommand {
     Logout,
     Status,
     Sync,
-    Quiesce,
     Mcp,
     DiscoverModels(String),
 }
@@ -241,7 +235,6 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
         Some(Command::Logout) => engine(EngineCommand::Logout),
         Some(Command::Status) => engine(EngineCommand::Status),
         Some(Command::Sync) => engine(EngineCommand::Sync),
-        Some(Command::Quiesce) => engine(EngineCommand::Quiesce),
         Some(Command::Mcp) => engine(EngineCommand::Mcp),
         Some(Command::DiscoverModels { harness }) => engine(EngineCommand::DiscoverModels(harness)),
         #[cfg(target_os = "linux")]
@@ -277,7 +270,6 @@ impl Command {
             | Self::Logout
             | Self::Status
             | Self::Sync
-            | Self::Quiesce
             | Self::Mcp
             | Self::DiscoverModels { .. } => true,
             #[cfg(target_os = "linux")]
@@ -364,7 +356,6 @@ mod tests {
             &["logout"],
             &["status"],
             &["sync"],
-            &["quiesce"],
             &["mcp"],
             &["daemon", "install"],
             &["update"],
@@ -393,7 +384,6 @@ mod tests {
             &["logout"],
             &["status"],
             &["sync"],
-            &["quiesce"],
             &["mcp"],
         ] {
             assert!(parse(args).unwrap().runs_engine(), "{args:?}");

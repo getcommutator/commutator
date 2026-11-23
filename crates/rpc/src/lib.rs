@@ -77,10 +77,6 @@ pub mod methods {
     /// replies with the device's fresh `ListHarnesses` catalog.
     pub const GET_TITLE_SETTINGS: &str = "GetTitleSettings";
     pub const SET_TITLE_SETTINGS: &str = "SetTitleSettings";
-    /// Whether agents' commits on this device credit Vardoger
-    /// (`{enabled, cloud}`; set with `{enabled}`).
-    pub const GET_COMMIT_CREDIT: &str = "GetCommitCredit";
-    pub const SET_COMMIT_CREDIT: &str = "SetCommitCredit";
     /// Which providers on this device run without their own subagents
     /// (`{switchable, off}`; set with `{harness, enabled}`).
     pub const GET_NATIVE_SUBAGENTS: &str = "GetNativeSubagents";
@@ -209,10 +205,6 @@ pub mod methods {
     /// The app quits with the setting off: the engine stops once nothing is
     /// pending; `{ stopWork: true }` stops the chats still working first.
     pub const APP_QUITTING: &str = "AppQuitting";
-    /// Headless IPC only: stop starting work ahead of a Cloud sleep (the
-    /// edge runs `vardoger quiesce` before stopping the machine). Replies
-    /// `{"quiesced":true}` or `{"quiesced":false,"busy":"<why>"}`.
-    pub const QUIESCE_FOR_SLEEP: &str = "QuiesceForSleep";
     pub const AUTH_STATUS: &str = "AuthStatus";
     // AuthRpc mutations (feature-inventory §2 AuthRpc; IPC-only).
     pub const SIGN_IN: &str = "SignIn";
@@ -418,118 +410,6 @@ pub mod methods {
     pub const CANCEL_HARNESS_UPDATE: &str = "CancelHarnessUpdate";
     pub const DISMISS_HARNESS_UPDATE: &str = "DismissHarnessUpdate";
     pub const SET_HARNESS_UPDATE_POLICY: &str = "SetHarnessUpdatePolicy";
-    // Cloud (docs/design/cloud-device.md). IPC-only: the engine calls the
-    // edge's CloudAccount DO with the user's bearer; never routed by
-    // targetDeviceId.
-    /// The account: `{}` → `CloudStatus`.
-    pub const CLOUD_STATUS: &str = "CloudStatus";
-    /// Turn Cloud on (instant: mints the logical Cloud device; sandboxes are
-    /// per session). `{}` → `CloudStatus`.
-    pub const CLOUD_ENABLE: &str = "CloudEnable";
-    /// Turn Cloud off: deletes every session sandbox (final usage captured
-    /// first), revokes their vault enrollments, and removes the logical
-    /// device. `{}` → `CloudStatus` (`Deleting`, then `Off`).
-    pub const CLOUD_DELETE: &str = "CloudDelete";
-    /// `{}` → `CloudSessions`.
-    pub const CLOUD_SESSIONS: &str = "CloudSessions";
-    /// `{machine}` → `CloudStatus`. The size new sessions start on.
-    pub const CLOUD_SET_MACHINE: &str = "CloudSetMachine";
-    /// `{reach: "devices" | "isolated"}` → `CloudStatus`. The reach new
-    /// sessions start with. The person's alone ([`local_only`]).
-    pub const CLOUD_SET_REACH: &str = "CloudSetReach";
-    /// `{chatId, reach}` → `CloudSession`. Whether that session reaches the
-    /// person's other devices; isolating closes it out of what it reached.
-    /// The person's alone ([`local_only`]).
-    pub const CLOUD_SESSION_SET_REACH: &str = "CloudSessionSetReach";
-    /// `{chatId, machine?, wake?}` → `CloudSession`. Wake one session's sandbox
-    /// (on `machine`, when given; `wake: false` only records the size for its
-    /// next wake); sending to a sleeping session wakes it on its own (the host
-    /// nudge). A size its disk doesn't fit is refused.
-    pub const CLOUD_SESSION_WAKE: &str = "CloudSessionWake";
-    /// `{chatId}` → `CloudSession`.
-    pub const CLOUD_SESSION_SLEEP: &str = "CloudSessionSleep";
-    /// `{chatId, machine?}` → `CloudSession`. Retry a failed lifecycle; on a
-    /// session whose data expired, a fresh machine on the same repo and branch.
-    pub const CLOUD_SESSION_RETRY: &str = "CloudSessionRetry";
-    /// `{chatId}` → `CloudSession` (`Deleting`). Deletes the sandbox and
-    /// anything uncommitted in it; the transcript stays.
-    pub const CLOUD_SESSION_DELETE: &str = "CloudSessionDelete";
-    /// The signed-in user's Cloud credits — balance, and use per UTC day
-    /// (reconciled against the sandbox provider's own meter):
-    /// `{from?: "YYYY-MM-DD", to?: "YYYY-MM-DD"}` (default: the last 30 days)
-    /// → `CloudUsage`.
-    pub const CLOUD_USAGE: &str = "CloudUsage";
-    /// The signed-in user's plan and credits, and what can be bought:
-    /// `{}` → `BillingStatus`.
-    pub const BILLING_STATUS: &str = "BillingStatus";
-    /// A Stripe Checkout page: `{kind: "subscription", plan}` or
-    /// `{kind: "credits", packs}` → `BillingLink`.
-    pub const BILLING_CHECKOUT: &str = "BillingCheckout";
-    /// The Stripe Billing Portal (change plan, payment method, invoices,
-    /// cancel): `{}` → `BillingLink`.
-    pub const BILLING_PORTAL: &str = "BillingPortal";
-    // Credential vault (IPC-only; the edge forwards to the vault Worker).
-    /// `{}` → `VaultStatus`.
-    pub const VAULT_STATUS: &str = "VaultStatus";
-    /// Sign in to Codex on THIS device (`codex login` into a throwaway
-    /// CODEX_HOME, shredded afterwards) and upload the result to the vault;
-    /// the device's own Codex login and account slots are untouched.
-    ///
-    /// Returns as soon as the sign-in page is known, in the same shape as
-    /// `StartAgentLogin`: `{authorizedDevices}` →
-    /// `AgentLoginStart {loginId, url, mode: "browser", callbackPort?}`.
-    /// The caller opens `url` in the browser, then drives the flow with the
-    /// existing account-login methods on this same engine (NO
-    /// `targetDeviceId`): `PollAgentLogin {loginId}` → `AgentLoginPoll`
-    /// (`pending` — may carry a late `url`; `done` once the vault holds the
-    /// credential; `error` + `message`, e.g. the vault's refusal) and
-    /// `CancelAgentLogin {loginId}`. After `done`, refresh with `VaultStatus`.
-    /// The flow gives up after 15 minutes. Fails up front (no browser) when
-    /// the account can't use Cloud.
-    pub const VAULT_CONNECT_CODEX: &str = "VaultConnectCodex";
-    /// Sign in to Claude on THIS device through Claude's own OAuth flow
-    /// (PKCE, loopback callback) in capture-only mode — the `claudeAiOauth`
-    /// tokens go straight to the vault, never into this device's live Claude
-    /// login, Keychain or an account slot, so the vault stays the only
-    /// refresher: `{authorizedDevices}` → `AgentLoginStart`, driven exactly
-    /// like `VaultConnectCodex` (`PollAgentLogin` / `CancelAgentLogin`). When
-    /// no loopback port can be bound the start comes back with
-    /// `mode: "paste-code"`: finish it with `CompleteAgentLogin {loginId,
-    /// code}` (its reply is this device's unchanged `AgentAccountsSnapshot`;
-    /// the upload has happened once it returns), then `VaultStatus`.
-    pub const VAULT_CONNECT_CLAUDE: &str = "VaultConnectClaude";
-    /// `{provider: "anthropic-key"|"openai-key", key, authorizedDevices}` →
-    /// `VaultStatus`.
-    pub const VAULT_PUT_API_KEY: &str = "VaultPutApiKey";
-    /// `{provider, authorizedDevices}` → `VaultStatus`.
-    pub const VAULT_AUTHORIZE: &str = "VaultAuthorize";
-    /// `{provider}` → `VaultStatus`.
-    pub const VAULT_DISCONNECT: &str = "VaultDisconnect";
-    /// `{deviceId}` → `VaultStatus`.
-    pub const VAULT_REVOKE_DEVICE: &str = "VaultRevokeDevice";
-    /// `{authorizedDevices}` → `GithubDeviceFlow`.
-    pub const GITHUB_CONNECT_START: &str = "GithubConnectStart";
-    /// `{flowId}` → `GithubConnectProgress`.
-    pub const GITHUB_CONNECT_POLL: &str = "GithubConnectPoll";
-    /// The GitHub logins connected for Cloud: `{}` → `{accounts: VaultAccount[]}`.
-    pub const GITHUB_ACCOUNTS: &str = "GithubAccounts";
-    /// Disconnect one login, leaving the others: `{slot}` → `{accounts}`. Its
-    /// sessions stay on it, and say so, until it's connected again.
-    pub const GITHUB_ACCOUNT_FORGET: &str = "GithubAccountForget";
-    /// The login new sessions try first: `{slot}` → `{accounts}`.
-    pub const GITHUB_ACCOUNT_ACTIVATE: &str = "GithubAccountActivate";
-    /// Repositories the account's vault-held GitHub logins can see, merged,
-    /// newest push first: `{query?}` → `{repos: GithubRepo[]}`. Answered via
-    /// the edge (the vault calls GitHub; the tokens never leave it), so any
-    /// signed-in device can list them; a Cloud session device answers with
-    /// its own grant. Fails with a `github_not_connected:`-prefixed message
-    /// when GitHub isn't connected.
-    pub const LIST_GITHUB_REPOS: &str = "ListGithubRepos";
-    /// `{repo, defaultBranch?}` → `RepoRef[]`: the branches a Cloud session
-    /// of `repo` (`owner/name`) can start from, through the user's GitHub
-    /// connection (the vault calls GitHub), the default first.
-    pub const LIST_CLOUD_BRANCHES: &str = "ListCloudBranches";
-
     /// `{source, title, body, session?}` → `{outcome: "posted" | "off" |
     /// "held" | "paced" | "unavailable"}`: a banner asked for,
     /// shown as the engine's own are, under the same Settings, at most a few
@@ -554,10 +434,6 @@ pub fn local_only(method: &str) -> bool {
             | methods::ADD_AGENT_API_KEY
             | methods::DELETE_ACCOUNT
             | methods::POST_NOTIFICATION
-            // What a Cloud chat reaches: this device's app sets it, never
-            // another device (a Cloud machine among them) and never an agent.
-            | methods::CLOUD_SET_REACH
-            | methods::CLOUD_SESSION_SET_REACH
     )
 }
 
@@ -797,15 +673,6 @@ mod tests {
                 )),
                 other => Err(RpcError::UnknownMethod(other.into())),
             }
-        }
-    }
-
-    #[test]
-    fn what_a_cloud_chat_reaches_is_set_by_this_devices_app_alone() {
-        for method in [methods::CLOUD_SET_REACH, methods::CLOUD_SESSION_SET_REACH] {
-            assert!(local_only(method), "{method}");
-            assert!(peer_refused(method, &serde_json::Value::Null), "{method}");
-            assert!(!agent_allowed(method), "{method}");
         }
     }
 

@@ -177,14 +177,9 @@ fn new_projectless_cwd(
     }
 }
 
-/// This device's advertised capabilities: the binary's, plus
-/// `cloud-session` on a Cloud session machine (device lists hide those and
-/// show the account's one Cloud device instead).
+/// This device's advertised capabilities.
 fn device_capabilities() -> Vec<String> {
     let mut capabilities = vardoger_proto::capabilities::current();
-    if crate::runner::session().is_some() {
-        capabilities.push(vardoger_proto::CLOUD_SESSION_CAPABILITY.to_string());
-    }
     if crate::doc_host::relay_layer_enabled() {
         capabilities.push(vardoger_proto::relay_gen::CHAT_RELAY_CAPABILITY.to_string());
     }
