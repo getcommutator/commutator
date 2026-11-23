@@ -35,7 +35,6 @@ impl RpcService for Engine {
                 }
                 Ok(RpcReply::Value(json!({ "matched": params["taskIds"] })))
             }
-            methods::LIST_PLUGIN_TOOLS => Ok(RpcReply::Value(json!({ "device": { "id": "d" }, "tools": [] }))),
             other => Err(RpcError::UnknownMethod(other.into())),
         }
     }

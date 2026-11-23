@@ -10,14 +10,12 @@ members = [
     "crates/mcp",
     "crates/notify",
     "crates/orb",
-    "crates/plugin-guard",
     "crates/preview",
     "crates/preview-label",
     "crates/proto",
     "crates/rpc",
     "crates/sync",
     "crates/term-link",
-    "crates/theme",
     "crates/update",
     "crates/visual",
     "crates/voice-media",
@@ -47,10 +45,8 @@ zeron-update = { path = "crates/update" }
 zeron-cli = { path = "crates/cli" }
 zeron-launch = { path = "crates/launch" }
 zeron-notify = { path = "crates/notify" }
-zeron-theme = { path = "crates/theme" }
 zeron-mcp = { path = "crates/mcp" }
 zeron-visual = { path = "crates/visual" }
-zeron-plugin-guard = { path = "crates/plugin-guard" }
 
 # CRDT
 loro = "1.17"

@@ -414,6 +414,7 @@ impl Folded<'_> {
 impl HomeIndex {
     /// Walk `home` (canonical), for at most [`WALK_DEADLINE`]. `cancel`
     /// stops the walk early.
+    #[cfg(test)]
     pub fn build(home: &Path, cancel: &WalkCancel) -> Self {
         Self::build_within(home, cancel, WALK_DEADLINE, true)
     }

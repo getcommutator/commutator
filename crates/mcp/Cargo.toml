@@ -25,7 +25,6 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 
 [dev-dependencies]
-zeron-theme.workspace = true
 zeron-visual.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

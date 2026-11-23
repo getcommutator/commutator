@@ -61,7 +61,6 @@
 
 mod agent_gate;
 mod device_stats;
-mod remote_plugins;
 mod voice_chat;
 mod voice_remote;
 use async_trait::async_trait;
@@ -942,8 +941,6 @@ pub struct EngineRpc {
     credentials: Option<crate::credentials::CredentialBroker>,
     /// Viewports' window focus, for desktop banners.
     viewport_focus: crate::desktop_notify::ViewportFocus,
-    /// The plugins service (absent in bare test assemblies).
-    plugins: Option<crate::plugins::Plugins>,
     engine_info: EngineInfo,
 }
 
@@ -1005,15 +1002,8 @@ impl EngineRpc {
             local_import: None,
             credentials: None,
             viewport_focus: Default::default(),
-            plugins: None,
             engine_info,
         }
-    }
-
-    /// Attach the plugins service (the Plugin* methods).
-    pub fn with_plugins(mut self, plugins: crate::plugins::Plugins) -> Self {
-        self.plugins = Some(plugins);
-        self
     }
 
     pub fn with_previews(mut self, previews: zeron_preview::PreviewService) -> Self {
@@ -2837,24 +2827,6 @@ fn forwardable(method: &str) -> bool {
             | methods::CANCEL_HARNESS_UPDATE
             | methods::DISMISS_HARNESS_UPDATE
             | methods::SET_HARNESS_UPDATE_POLICY
-            // Plugins are per device (what it runs, what it allowed): Settings
-            // → Plugins' device switcher lists, reviews, allows, declines,
-            // turns off, installs (from a link, or a file it sends there)
-            // and removes them on another of your devices from this one.
-            // What the consent window sends goes only for this device's app
-            // (`zeron_rpc::app_forward_only`), and there it's held to a
-            // review minted for this device (plugins/reviews.rs).
-            | methods::LIST_PLUGINS
-            | methods::WATCH_PLUGINS
-            | methods::REVIEW_PLUGIN
-            | methods::DECIDE_PLUGIN
-            | methods::SET_PLUGIN_OFF
-            | methods::REMOVE_PLUGIN
-            | methods::INSTALL_PLUGIN
-            | methods::STAGE_PLUGIN_PACKAGE
-            | methods::CHECK_PLUGIN_UPDATES
-            | methods::UPDATE_PLUGIN
-            | methods::PLUGIN_STATUS
     )
 }
 
@@ -2875,7 +2847,6 @@ fn is_stream_method(method: &str) -> bool {
             | methods::WATCH_WORKSPACE_FILES
             | methods::UPDATE_STATUS
             | methods::WATCH_HARNESS_UPDATES
-            | methods::WATCH_PLUGINS
     )
 }
 
@@ -3474,29 +3445,12 @@ impl RpcService for EngineRpc {
             && target != self.doc_host.device_id()
         {
             let target = target.to_string();
-            // A file on this device can't be read there: another device
-            // installs from a link.
-            if method == methods::INSTALL_PLUGIN && params.get("path").is_some_and(|p| !p.is_null()) {
-                return Err(RpcError::BadParams(
-                    "Another device installs a plugin from a link (url), not a file on this one".into(),
-                ));
-            }
             // What only that device may answer for itself (credentials,
             // signing, templates' consent), refused there too.
             if zeron_rpc::peer_refused(method, &params) {
                 return Err(RpcError::Failed(format!(
                     "{method}: only that device's own window can do that. It's waiting for you there."
                 )));
-            }
-            // A review, an allow and a file sent there are Zeron's consent
-            // window's and Settings → Plugins': this device's app, never an
-            // agent's token (which can't call them here either).
-            if zeron_rpc::app_forward_only(method, &params) {
-                if !zeron_rpc::caller().is_local() {
-                    return Err(crate::plugins::reviews::needed("Allowing a plugin on another device"));
-                }
-                let reply = self.forward(&target, method, params).await;
-                return reply.map_err(|error| remote_plugins::older_engine(&target, method, error));
             }
             // Settings → Providers' Cloud, and a Cloud chat's composer (its
             // session machine): Cloud's logins live in the vault, the same
@@ -3575,14 +3529,6 @@ impl RpcService for EngineRpc {
         if voice_remote::handles(method) {
             return self.voice_remote(method, params).await;
         }
-        // Signing out retires this device's plugin signing key first, while
-        // the session can still revoke it on the edge.
-        if method == methods::SIGN_OUT
-            && self.auth().is_ok_and(|auth| !auth.is_runner())
-            && let Some(plugins) = self.plugins.clone()
-        {
-            Box::pin(plugins.retire_signing_key()).await;
-        }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
                 .handle(method, params)
@@ -3591,12 +3537,6 @@ impl RpcService for EngineRpc {
         // Cloud device + credential vault: IPC-only (never in `forwardable`),
         // acting for this runtime's signed-in user against the edge. Boxed so
         // its state stays out of this dispatcher's already-large frame.
-        if crate::plugins::handles(method) {
-            let Some(plugins) = self.plugins.clone() else {
-                return Err(RpcError::Failed("Plugins aren't available here".into()));
-            };
-            return Box::pin(async move { plugins.dispatch(method, params).await }).await;
-        }
         if crate::acp_registry::handles(method) {
             return Box::pin(crate::acp_registry::dispatch(
                 &self.registry,
@@ -3719,10 +3659,6 @@ impl RpcService for EngineRpc {
                 )
                 .await
                 .map_err(|e| RpcError::Failed(e.to_string()))?;
-                // A catalog that changed is told to plugins (models.updated).
-                if let Some(plugins) = &self.plugins {
-                    plugins.agents().observe_models(p.harness, &models);
-                }
                 RpcReply::value(&models)
             }
             methods::LIST_SKILLS => {

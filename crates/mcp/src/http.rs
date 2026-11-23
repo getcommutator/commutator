@@ -583,7 +583,7 @@ async fn handle(inner: Arc<Inner>, request: Request<hyper::body::Incoming>) -> R
                             "result": {
                                 "resultType": "complete",
                                 "supportedVersions": MODERN_VERSIONS,
-                                "capabilities": { "tools": { "listChanged": true } },
+                                "capabilities": { "tools": {} },
                                 "_meta": { META_SERVER_INFO: server_info() },
                                 "instructions": crate::jsonrpc::instructions(
                                     tools.waits_on_background(),
@@ -780,62 +780,31 @@ fn call(
     }
 }
 
-/// `subscriptions/listen` (2026): acknowledge what's honoured — tool-list
-/// changes only — and then send each one, tagged with the subscription, on
-/// this stream until the client closes it.
-fn listen(inner: &Arc<Inner>, grant: &Arc<GrantState>, id: Value, params: &Value) -> Response<Body> {
-    let wants_tools = params
-        .get("notifications")
-        .and_then(|filter| filter.get("toolsListChanged"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let tools = tools_for(inner, grant);
+/// `subscriptions/listen` (2026): the tool list never changes, so nothing
+/// is honoured; acknowledge that and keep the stream alive until the client
+/// closes it.
+fn listen(_inner: &Arc<Inner>, grant: &Arc<GrantState>, id: Value, _params: &Value) -> Response<Body> {
     let (out_tx, out_rx) = mpsc::channel::<Bytes>(16);
     // Registered before it runs, under the lock a dropping grant drains.
     let mut listens = lock(&grant.listens);
     let task = tokio::spawn(async move {
-        let honoured = if wants_tools {
-            json!({ "toolsListChanged": true })
-        } else {
-            json!({})
-        };
         let ack = json!({
             "jsonrpc": "2.0",
             "method": "notifications/subscriptions/acknowledged",
-            "params": { "_meta": { META_SUBSCRIPTION: id }, "notifications": honoured },
+            "params": { "_meta": { META_SUBSCRIPTION: id }, "notifications": {} },
         });
         if out_tx.send(sse_event(&ack)).await.is_err() {
             return;
         }
-        let (changed_tx, mut changed) = mpsc::channel::<()>(1);
-        let watch = async {
-            if wants_tools {
-                tools.watch_plugin_tools(changed_tx).await;
+        let mut keep_alive = tokio::time::interval_at(
+            tokio::time::Instant::now() + KEEP_ALIVE_EVERY,
+            KEEP_ALIVE_EVERY,
+        );
+        loop {
+            keep_alive.tick().await;
+            if out_tx.send(Bytes::from_static(b": keep-alive\n\n")).await.is_err() {
+                return;
             }
-            std::future::pending::<()>().await;
-        };
-        let forward = async {
-            let mut keep_alive = tokio::time::interval_at(
-                tokio::time::Instant::now() + KEEP_ALIVE_EVERY,
-                KEEP_ALIVE_EVERY,
-            );
-            loop {
-                let chunk = tokio::select! {
-                    Some(()) = changed.recv() => sse_event(&json!({
-                        "jsonrpc": "2.0",
-                        "method": "notifications/tools/list_changed",
-                        "params": { "_meta": { META_SUBSCRIPTION: id } },
-                    })),
-                    _ = keep_alive.tick() => Bytes::from_static(b": keep-alive\n\n"),
-                };
-                if out_tx.send(chunk).await.is_err() {
-                    return;
-                }
-            }
-        };
-        tokio::select! {
-            () = watch => {}
-            () = forward => {}
         }
     });
     let key = grant

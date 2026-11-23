@@ -345,8 +345,6 @@ struct Inner {
     /// dispatch or accepted steer) — the diff sync snapshots the checkout tree
     /// for the Changes pane's "Latest turn" scope. Absent in bare tests.
     turn_listener: OnceLock<TurnListener>,
-    /// Plugins whose native MCP servers local runs get (absent in bare tests).
-    plugins: OnceLock<crate::plugins::Plugins>,
     /// New chats' warm starts, by the id the chat will be created with
     /// ([`warm_start`]).
     warm: Mutex<HashMap<String, warm_start::WarmStart>>,
@@ -518,7 +516,6 @@ impl SessionsEngine {
                 generated_images: OnceLock::new(),
                 scratch_root: OnceLock::new(),
                 turn_listener: OnceLock::new(),
-                plugins: OnceLock::new(),
                 warm: Mutex::new(HashMap::new()),
                 warm_leases: Mutex::new(None),
             }),
@@ -621,11 +618,6 @@ impl SessionsEngine {
             viewers: self.inner.viewers.clone(),
             chat_id: chat_id.to_owned(),
         }
-    }
-
-    /// Wire the plugins service: local runs get its native MCP servers.
-    pub fn set_plugins(&self, plugins: crate::plugins::Plugins) {
-        let _ = self.inner.plugins.set(plugins);
     }
 
     /// Wire the doc host (called once at engine assembly; the two services are mutually
@@ -2883,20 +2875,6 @@ impl Inner {
         if matches!(event, AgentEvent::Done { .. }) {
             self.journal.clear_user_stop(chat_id);
         }
-        // A turn's error, for plugins' events: a usage limit hit, a login
-        // expired (`plugins::agents`; told only if it's one of those).
-        let problem = match event {
-            AgentEvent::Error { message } => Some(message.as_str()),
-            AgentEvent::Done { error: Some(error), .. } => Some(error.as_str()),
-            _ => None,
-        };
-        if let (Some(message), Some(plugins)) = (problem, self.plugins.get()) {
-            plugins.agents().observe_problem(chat_id, message);
-        }
-        // Its final reply, told with its `turn.finished` (`messages.read`).
-        if let (AgentEvent::Done { result: Some(reply), .. }, Some(plugins)) = (event, self.plugins.get()) {
-            plugins.agents().observe_reply(chat_id, reply);
-        }
         if let Some(hub) = lock(&self.hubs).get(chat_id) {
             let _ = hub.send(JournaledEvent {
                 seq,
@@ -4754,13 +4732,8 @@ async fn drive_run(
         request.mcp = Some(server);
         _mcp_grant = grant;
     }
-    // Plugins' native MCP servers come from this host's own allowed plugins,
-    // run from their verified snapshots — never from what a sender put here.
-    request.extra_mcp = inner
-        .plugins
-        .get()
-        .map(crate::plugins::Plugins::native_mcp_servers)
-        .unwrap_or_default();
+    // Extra MCP servers came from plugins; a sender's list is never trusted.
+    request.extra_mcp = Vec::new();
     request.code_mode = code_mode;
     // The MCP servers the agent starts from this run's config: the only
     // children it may hold when stopped idle (see the reaper).
