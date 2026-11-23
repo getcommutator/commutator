@@ -21,7 +21,7 @@ use crate::demo::DemoHost;
 use crate::error::{ClientError, Result};
 use crate::events::{ClientEvent, ClientListener, EventPump};
 use crate::live::LiveBackend;
-use crate::local::LocalHost;
+use crate::local::{EngineLink, LocalHost};
 use crate::rpc::{FolderListing, ProgressFn, QUEUED_ATTACHMENTS_MIN, RepoRef, capability};
 use crate::session::{HostCapabilities, OutgoingAttachment, RoomState, SessionCore, SessionHandle};
 use crate::workspace::{SearchHit, WorkspaceSnapshot, WorkspaceStore};
@@ -694,7 +694,13 @@ impl Client {
             Credentials::Local {
                 port,
                 engine_data_dir,
-            } => Backend::Local(LocalHost::new(&inner, *port, engine_data_dir.clone())),
+            } => Backend::Local(LocalHost::new(
+                &inner,
+                EngineLink::Ipc {
+                    port: *port,
+                    data_dir: engine_data_dir.clone(),
+                },
+            )),
             _ => Backend::Live(Box::new({
                 catalog::DiskCatalog::new(&inner.config.data_dir).warm_labels();
                 LiveBackend::new(

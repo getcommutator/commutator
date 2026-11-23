@@ -1,5 +1,7 @@
-//! Local mode: the client against an engine on this machine, over its IPC
-//! (`ws://127.0.0.1:{port}`, the bearer from `{data_dir}/ipc-token`) — no edge.
+//! The client against one engine, as its JSON-RPC client: on this machine
+//! over its IPC (`ws://127.0.0.1:{port}`, the bearer from
+//! `{data_dir}/ipc-token`), or on another of the account's machines through
+//! the Vardoger server's relay ([`EngineLink`]). Same logic either way.
 //!
 //! Shaped like the demo host: the registry is a local-only replica and every
 //! open chat a local [`SessionDoc`], so the same session pipeline (snapshot,
@@ -30,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use vardoger_doc::transcript_delta::{TranscriptUpdate, apply_transcript_frame};
 use vardoger_doc::{QueuedMessage, SessionCommandStatus, SessionDoc, SessionMessageEntry};
 use vardoger_proto::{Chat, Device, Session, Space};
-use vardoger_rpc::{RpcClient, methods};
+use vardoger_rpc::{LinkCache, RpcClient, RpcError, methods};
 
 use crate::client::ClientInner;
 use crate::error::{ClientError, Result};
@@ -50,10 +52,48 @@ struct Out {
     command: Option<(String, String)>,
 }
 
+/// How the client reaches its engine.
+pub(crate) enum EngineLink {
+    /// The engine on this machine: its IPC port and data dir (`ipc-token`).
+    Ipc { port: u16, data_dir: PathBuf },
+    /// An engine on another machine, through the server relay (`device_id`'s
+    /// device room).
+    Relay {
+        links: Arc<LinkCache>,
+        device_id: String,
+    },
+}
+
+impl EngineLink {
+    async fn dial(&self) -> std::result::Result<Arc<RpcClient>, RpcError> {
+        match self {
+            EngineLink::Ipc { port, data_dir } => vardoger_rpc::connect_ipc(*port, Some(data_dir))
+                .await
+                .map(Arc::new),
+            EngineLink::Relay { links, device_id } => links.client(device_id).await,
+        }
+    }
+
+    /// The connection `dial` gave closed: dial afresh next time.
+    fn closed(&self) {
+        if let EngineLink::Relay { links, device_id } = self {
+            links.invalidate(device_id);
+        }
+    }
+}
+
+impl std::fmt::Display for EngineLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineLink::Ipc { port, .. } => write!(f, "local engine on 127.0.0.1:{port}"),
+            EngineLink::Relay { device_id, .. } => write!(f, "engine {device_id} (relay)"),
+        }
+    }
+}
+
 pub(crate) struct LocalHost {
     client: Weak<ClientInner>,
-    port: u16,
-    data_dir: PathBuf,
+    link: EngineLink,
     rpc: watch::Sender<Option<Arc<RpcClient>>>,
     device_id: Mutex<Option<String>>,
     outbox: mpsc::UnboundedSender<Out>,
@@ -68,16 +108,15 @@ pub(crate) struct LocalHost {
 }
 
 fn rpc_err(method: &str, err: vardoger_rpc::RpcError) -> ClientError {
-    crate::live::relay::map_rpc("local engine", method, err)
+    crate::live::relay::map_rpc("engine", method, err)
 }
 
 impl LocalHost {
-    pub(crate) fn new(client: &Arc<ClientInner>, port: u16, data_dir: PathBuf) -> Arc<Self> {
+    pub(crate) fn new(client: &Arc<ClientInner>, link: EngineLink) -> Arc<Self> {
         let (outbox, outbox_rx) = mpsc::unbounded_channel();
         Arc::new(Self {
             client: Arc::downgrade(client),
-            port,
-            data_dir,
+            link,
             rpc: watch::Sender::new(None),
             device_id: Mutex::new(None),
             outbox,
@@ -126,10 +165,7 @@ impl LocalHost {
         let wait = rx.wait_for(Option::is_some);
         match tokio::time::timeout(RETRY_CAP * 2, wait).await {
             Ok(Ok(rpc)) => Ok(rpc.clone().expect("checked")),
-            _ => Err(ClientError::HostUnavailable(format!(
-                "no local engine on 127.0.0.1:{}",
-                self.port
-            ))),
+            _ => Err(ClientError::HostUnavailable(format!("no {}", self.link))),
         }
     }
 
@@ -160,15 +196,14 @@ impl LocalHost {
     async fn connect_loop(self: Arc<Self>) {
         let mut wait = RETRY_BASE;
         loop {
-            let dial = vardoger_rpc::connect_ipc(self.port, Some(&self.data_dir));
             let rpc = tokio::select! {
                 _ = self.cancel.cancelled() => return,
-                rpc = dial => rpc,
+                rpc = self.link.dial() => rpc,
             };
             let rpc = match rpc {
-                Ok(rpc) => Arc::new(rpc),
+                Ok(rpc) => rpc,
                 Err(err) => {
-                    tracing::debug!(port = self.port, error = %err, "local engine dial failed");
+                    tracing::debug!(engine = %self.link, error = %err, "engine dial failed");
                     tokio::select! {
                         _ = self.cancel.cancelled() => return,
                         _ = tokio::time::sleep(wait) => {}
@@ -192,7 +227,8 @@ impl LocalHost {
                     _ = beat.tick() => self.beat(),
                 }
             }
-            tracing::debug!(port = self.port, "local engine connection closed");
+            tracing::debug!(engine = %self.link, "engine connection closed");
+            self.link.closed();
             self.rpc.send_replace(None);
         }
     }
@@ -503,12 +539,42 @@ impl LocalHost {
         }
     }
 
-    /// Attachment bytes: the engine is on this machine, so its paths are ours.
+    /// Attachment bytes: off disk when the engine is on this machine, else
+    /// `ReadAttachmentChunk` until done.
     pub(crate) async fn read_attachment(&self, path: &str) -> Result<Arc<Vec<u8>>> {
-        tokio::fs::read(path)
-            .await
-            .map(Arc::new)
-            .map_err(|e| ClientError::NotFound(format!("{path}: {e}")))
+        if let EngineLink::Ipc { .. } = self.link {
+            return tokio::fs::read(path)
+                .await
+                .map(Arc::new)
+                .map_err(|e| ClientError::NotFound(format!("{path}: {e}")));
+        }
+        let mut out = Vec::new();
+        let mut offset: u64 = 0;
+        // ponytail: 1000 chunks cap, as the relay read always had.
+        for _ in 0..1000 {
+            let reply = self
+                .call(
+                    methods::READ_ATTACHMENT_CHUNK,
+                    json!({ "path": path, "offset": offset }),
+                )
+                .await?;
+            let data = reply["data"].as_str().unwrap_or_default();
+            out.extend(
+                crate::live::b64::decode(data)
+                    .ok_or_else(|| ClientError::HostError("bad attachment chunk".into()))?,
+            );
+            if reply["done"].as_bool().unwrap_or(true) {
+                return Ok(Arc::new(out));
+            }
+            let next = reply["nextOffset"].as_u64().unwrap_or(offset);
+            if next <= offset {
+                return Err(ClientError::HostError(
+                    "attachment read made no progress".into(),
+                ));
+            }
+            offset = next;
+        }
+        Err(ClientError::HostError("attachment too large".into()))
     }
 }
 
