@@ -42,7 +42,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -139,10 +138,7 @@ fn sha256_hex(value: &str) -> String {
         .collect()
 }
 
-/// PKCE S256: `base64url(sha256(verifier))`, unpadded.
-pub fn pkce_challenge(verifier: &str) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
+pub use vardoger_account::pkce_challenge;
 
 /// Where a one-time code may be sent: this machine's loopback (the CLI's
 /// callback server) or the apps' own scheme. Anything else would hand the

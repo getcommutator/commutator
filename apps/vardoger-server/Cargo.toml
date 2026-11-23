@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 # The device-room frame codec and token generator the engine speaks.
 vardoger-rpc.workspace = true
+vardoger-account.workspace = true
 tokio.workspace = true
 futures.workspace = true
 serde.workspace = true

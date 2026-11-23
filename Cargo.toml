@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/vardoger",
     "apps/vardoger-server",
+    "crates/account",
     "crates/cli",
     "crates/client",
     "crates/doc",
@@ -56,6 +57,7 @@ vardoger-client = { path = "crates/client" }
 vardoger-markdown = { path = "crates/markdown" }
 vardoger-syntax = { path = "crates/syntax" }
 vardoger-text = { path = "crates/text" }
+vardoger-account = { path = "crates/account" }
 
 # CRDT
 loro = "1.17"

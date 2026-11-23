@@ -1,0 +1,21 @@
+[package]
+name = "vardoger-account"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Signing a device in to a Vardoger server (apps/vardoger-server): the PKCE
+# sign-in URL and the code redeem, shared by the engine (`vardoger login`)
+# and the phone apps (through vardoger-client).
+[dependencies]
+vardoger-rpc.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+base64 = "0.22"
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

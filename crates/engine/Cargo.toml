@@ -16,6 +16,7 @@ vardoger-sync.workspace = true
 vardoger-harness.workspace = true
 semver = "1"
 vardoger-rpc.workspace = true
+vardoger-account.workspace = true
 vardoger-update.workspace = true
 vardoger-notify.workspace = true
 vardoger-visual.workspace = true

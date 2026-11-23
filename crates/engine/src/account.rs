@@ -12,9 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// How long a sign-in waits for the browser.
@@ -59,14 +57,8 @@ impl Account {
     /// Remove this device on the server, then forget it here. A server
     /// that can't be reached still leaves this machine signed out.
     pub async fn sign_out(&self, data_dir: &Path) -> std::io::Result<Result<(), String>> {
-        let removed = reqwest::Client::new()
-            .delete(format!("{}/devices/{}", self.server_url, self.device_id))
-            .bearer_auth(&self.token)
-            .timeout(Duration::from_secs(15))
-            .send()
+        let removed = vardoger_account::remove_device(&self.server_url, &self.token, &self.device_id)
             .await
-            .and_then(reqwest::Response::error_for_status)
-            .map(drop)
             .map_err(|err| err.to_string());
         Self::forget(data_dir)?;
         Ok(removed)
@@ -88,16 +80,12 @@ pub enum Callback {
 /// A started sign-in: open [`Self::url`], then [`Self::wait`] (loopback) or
 /// [`Self::redeem`] the pasted code.
 pub struct SignIn {
-    server_url: String,
+    inner: vardoger_account::SignIn,
     device_id: String,
-    verifier: String,
-    url: String,
     listener: Option<tokio::net::TcpListener>,
 }
 
-pub fn pkce_challenge(verifier: &str) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
+pub use vardoger_account::pkce_challenge;
 
 impl SignIn {
     pub async fn start(
@@ -106,35 +94,33 @@ impl SignIn {
         name: &str,
         callback: Callback,
     ) -> std::io::Result<Self> {
-        let server_url = server_url.trim_end_matches('/').to_owned();
-        let verifier = vardoger_rpc::ipc_auth::generate_token()?;
         let listener = match callback {
             Callback::Loopback => Some(tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?),
             Callback::Paste => None,
         };
-        let mut query = vec![
-            ("challenge", pkce_challenge(&verifier)),
-            ("name", name.to_owned()),
-            ("kind", "machine".to_owned()),
-        ];
-        if let Some(listener) = &listener {
-            let port = listener.local_addr()?.port();
-            query.push(("redirect", format!("http://127.0.0.1:{port}/callback")));
-        }
-        let url = reqwest::Url::parse_with_params(&format!("{server_url}/auth/google"), &query)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
-            .to_string();
-        Ok(Self {
+        let redirect = match &listener {
+            Some(listener) => Some(format!(
+                "http://127.0.0.1:{}/callback",
+                listener.local_addr()?.port()
+            )),
+            None => None,
+        };
+        let inner = vardoger_account::SignIn::start(
             server_url,
+            name,
+            vardoger_account::Kind::Machine,
+            redirect.as_deref(),
+        )
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        Ok(Self {
+            inner,
             device_id: device_id.to_owned(),
-            verifier,
-            url,
             listener,
         })
     }
 
     pub fn url(&self) -> &str {
-        &self.url
+        self.inner.url()
     }
 
     /// The code the browser brings to the loopback callback, redeemed.
@@ -158,7 +144,7 @@ impl SignIn {
         // whether it worked; the terminal says why not.
         let page = format!(
             "{}/signed-in{}",
-            self.server_url,
+            self.inner.server_url(),
             if account.is_ok() { "" } else { "?error=1" }
         );
         redirect(&mut stream, &page).await;
@@ -167,40 +153,13 @@ impl SignIn {
 
     /// Trade the one-time code for this machine's token.
     pub async fn redeem(&self, code: &str) -> anyhow::Result<Account> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Redeemed {
-            token: String,
-            device_id: String,
-            user: User,
-        }
-        #[derive(Deserialize)]
-        struct User {
-            email: String,
-            name: Option<String>,
-        }
-        let response = reqwest::Client::new()
-            .post(format!("{}/auth/redeem", self.server_url))
-            .json(&serde_json::json!({
-                "code": code.trim(),
-                "verifier": self.verifier,
-                "deviceId": self.device_id,
-            }))
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("the server refused the code ({status}): {}", body.trim());
-        }
-        let redeemed: Redeemed = response.json().await?;
+        let redeemed = self.inner.redeem(code, Some(&self.device_id)).await?;
         Ok(Account {
-            server_url: self.server_url.clone(),
+            server_url: self.inner.server_url().to_owned(),
             token: redeemed.token,
             device_id: redeemed.device_id,
-            email: redeemed.user.email,
-            name: redeemed.user.name,
+            email: redeemed.email,
+            name: redeemed.name,
         })
     }
 }
