@@ -39,6 +39,7 @@ pub fn build_id() -> &'static str {
 pub mod auth;
 mod change_request_store;
 pub mod change_requests;
+pub mod checkpoints;
 pub mod chat2_host;
 mod chat_persistence;
 pub mod commands;
@@ -172,6 +173,8 @@ pub struct EngineCore {
     pub previews: vardoger_preview::PreviewService,
     pub change_requests: CheckoutChangeRequests,
     pub diff_sync: CheckoutDiffSync,
+    /// Per-turn git checkpoints and rollback ([`checkpoints`]).
+    pub checkpoints: checkpoints::Checkpoints,
     pub spaces_sync: SpacesSync,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
@@ -374,10 +377,29 @@ impl EngineCore {
         ));
         let diff_sync = CheckoutDiffSync::start(repos.clone(), workspace.clone(), &device_id);
         // Turn starts snapshot the checkout tree — the "Latest turn" diff base.
+        // ...and are checkpointed, as are turn ends.
         let turn_diff = diff_sync.clone();
+        let checkpoints = checkpoints::Checkpoints::new(repos.clone());
+        let turn_checkpoints = checkpoints.clone();
         sessions.set_turn_listener(Arc::new(move |chat_id, cwd| {
             turn_diff.note_turn_start(chat_id, cwd);
+            turn_checkpoints.note_turn_start(chat_id, cwd);
         }));
+        let turn_checkpoints = checkpoints.clone();
+        sessions.set_turn_end_listener(Arc::new(move |chat_id| {
+            turn_checkpoints.note_turn_end(chat_id);
+        }));
+        let busy_sessions = sessions.clone();
+        checkpoints.set_busy_probe(Arc::new(move |chat_id| {
+            busy_sessions.session_status(chat_id).is_some_and(|session| {
+                matches!(
+                    session.status,
+                    vardoger_proto::SessionStatus::Working
+                        | vardoger_proto::SessionStatus::AwaitingInput
+                )
+            })
+        }));
+        checkpoints.follow_chat_deletions(workspace.watch_chats());
         let spaces_sync = SpacesSync::start(repos.clone(), workspace.clone(), &device_id);
         Ok(Self {
             sessions,
@@ -393,6 +415,7 @@ impl EngineCore {
             previews,
             change_requests,
             diff_sync,
+            checkpoints,
             spaces_sync,
             uploads,
             agent_accounts,
@@ -546,7 +569,8 @@ impl EngineCore {
         .with_remote_terminals(self.remote_terminals.clone())
         .with_commands(self.commands.clone())
         .with_harness_updates(self.harness_updates.clone())
-        .with_viewport_focus(self.viewport_focus.clone());
+        .with_viewport_focus(self.viewport_focus.clone())
+        .with_checkpoints(self.checkpoints.clone());
         if let Some(links) = self.links() {
             rpc = rpc.with_links(links);
         }

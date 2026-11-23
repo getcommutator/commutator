@@ -20,7 +20,7 @@ pub enum ClientError {
     HostError(String),
     #[error("network: {0}")]
     Network(String),
-    /// Credentials rejected.
+    /// Credentials rejected (the server no longer knows this device).
     #[error("auth: {0}")]
     Auth(String),
     #[error("storage: {0}")]

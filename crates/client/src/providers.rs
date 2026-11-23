@@ -48,14 +48,14 @@ impl Client {
         provider: Option<&str>,
         done_url: &str,
     ) -> Result<AgentLoginStart> {
-        let Backend::Live(live) = self.inner.backend() else {
+        if self.inner.is_demo() {
             return Err(ClientError::Unsupported(
                 "Signing a computer's agent in needs that computer.".into(),
             ));
-        };
-        let reply = live
-            .relay
-            .call(
+        }
+        let reply = self
+            .inner
+            .host_rpc(
                 device_id,
                 vardoger_rpc::methods::START_AGENT_LOGIN,
                 serde_json::json!({
@@ -87,12 +87,12 @@ impl Client {
         login_id: &str,
         done_url: &str,
     ) -> Result<AgentLoginPoll> {
-        let Backend::Live(live) = self.inner.backend() else {
+        if self.inner.is_demo() {
             return Err(ClientError::Unsupported("No computer in the demo.".into()));
-        };
-        let reply = live
-            .relay
-            .call(
+        }
+        let reply = self
+            .inner
+            .host_rpc(
                 device_id,
                 vardoger_rpc::methods::POLL_AGENT_LOGIN,
                 serde_json::json!({ "loginId": login_id }),
@@ -135,22 +135,20 @@ impl Client {
     /// Give up on a computer's sign-in (best effort on the computer).
     pub fn device_login_cancel(&self, device_id: &str, login_id: &str) {
         stop_relay(login_id);
-        if !matches!(self.inner.backend(), Backend::Live(_)) {
+        if self.inner.is_demo() {
             return;
         }
         let client = self.clone();
         let (device_id, login_id) = (device_id.to_owned(), login_id.to_owned());
         crate::runtime::shared().spawn(async move {
-            if let Backend::Live(live) = client.inner.backend() {
-                let _ = live
-                    .relay
-                    .call(
-                        &device_id,
-                        vardoger_rpc::methods::CANCEL_AGENT_LOGIN,
-                        serde_json::json!({ "loginId": login_id }),
-                    )
-                    .await;
-            }
+            let _ = client
+                .inner
+                .host_rpc(
+                    &device_id,
+                    vardoger_rpc::methods::CANCEL_AGENT_LOGIN,
+                    serde_json::json!({ "loginId": login_id }),
+                )
+                .await;
         });
     }
 
@@ -163,7 +161,11 @@ impl Client {
         port: u16,
         done_url: &str,
     ) -> Result<()> {
-        if !matches!(self.inner.backend(), Backend::Live(_)) {
+        // The engine on this machine catches its own callback.
+        if !matches!(
+            self.inner.credentials,
+            crate::Credentials::Remote { .. }
+        ) {
             return Ok(());
         }
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
@@ -199,12 +201,9 @@ impl Client {
                             .await;
                         continue;
                     }
-                    let Backend::Live(live) = client.inner.backend() else {
-                        return;
-                    };
-                    let relayed = live
-                        .relay
-                        .call(
+                    let relayed = client
+                        .inner
+                        .host_rpc(
                             &device_id,
                             vardoger_rpc::methods::RELAY_AGENT_LOGIN_CALLBACK,
                             serde_json::json!({
@@ -264,7 +263,7 @@ impl Client {
                 lock(&DEMO_DISABLED).insert(harness.to_owned(), !enabled);
                 demo.list_harnesses(device_id).await
             }
-            Backend::Live(_) | Backend::Local(_) => {
+            Backend::Local(_) => {
                 let reply = self
                     .inner
                     .host_rpc(
@@ -338,7 +337,7 @@ impl Client {
     ) -> Result<AgentAccountsSnapshot> {
         match self.inner.backend() {
             Backend::Demo(_) => Ok(demo_accounts()),
-            Backend::Live(_) | Backend::Local(_) => {
+            Backend::Local(_) => {
                 let reply = self.inner.host_rpc(device_id, method, params).await?;
                 serde_json::from_value(reply).map_err(|e| ClientError::HostError(e.to_string()))
             }

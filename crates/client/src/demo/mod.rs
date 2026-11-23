@@ -956,7 +956,7 @@ impl DemoHost {
             m::WRITE_TERMINAL => {
                 let data = params["data"].as_str().unwrap_or_default();
                 let bytes =
-                    crate::live::b64::decode(data).unwrap_or_else(|| data.as_bytes().to_vec());
+                    crate::b64::decode(data).unwrap_or_else(|| data.as_bytes().to_vec());
                 self.terminals.write(&terminal(), &bytes)?;
                 ok
             }

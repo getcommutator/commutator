@@ -1,13 +1,11 @@
-//! Construction inputs: where the edge is, who this device is, and how it
-//! authenticates.
+//! Construction inputs: who this device is and which engine it drives.
+//! Token *persistence* stays on the platform (Keychain / Keystore).
 
 use std::path::PathBuf;
 
 /// Static per-install configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientConfig {
-    /// Edge base URL, e.g. `https://edge.zeron.sh` (no trailing slash needed).
-    pub edge_url: String,
     /// Writable directory for registry/doc snapshots and caches. Scoped by the
     /// platform to the signed-in identity (sign-out wipes it).
     pub data_dir: PathBuf,
@@ -20,42 +18,38 @@ pub struct ClientConfig {
     pub platform: String,
     /// App version string (diagnostics only).
     pub app_version: String,
-    /// Run the relay layer (docs/design/relay-mobile.md): say so to the rooms, and
-    /// take relayed chats. Off, every byte on the wire is what a shipped phone sends,
-    /// and this device holds its account's chats on stored rows. The room's answer
-    /// decides the rest, so a release can turn this on before any edge flag is.
-    pub relay_layer: bool,
 }
 
 impl ClientConfig {
-    pub fn new(edge_url: impl Into<String>, data_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
-            edge_url: edge_url.into(),
             data_dir: data_dir.into(),
             device_id: format!("ios-{}", &crate::new_id()[..8]),
             device_name: "iPhone".into(),
             platform: "ios".into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
-            relay_layer: false,
         }
-    }
-
-    pub(crate) fn edge_base(&self) -> &str {
-        self.edge_url.trim_end_matches('/')
     }
 }
 
-/// How this client authenticates against the edge.
+/// Which engine this client drives, and how it gets there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credentials {
-    /// `AUTH_MODE=dev` edge: the bearer is `userId@orgId`.
-    Dev { user_id: String, org_id: String },
     /// Fully offline, deterministic dataset with a simulated host.
     Demo(DemoOptions),
-    /// The engine on this machine over its IPC (no edge, no sign-in):
+    /// The engine on this machine over its IPC (no sign-in):
     /// `port` it listens on (27754 by default) and its `data_dir`, where it
     /// writes the `ipc-token` a dial presents.
     Local { port: u16, engine_data_dir: PathBuf },
+    /// An engine on another of the account's machines, through the relay on
+    /// the account's Vardoger server: its URL, this device's bearer `token`
+    /// from its sign-in there, and the machine to drive (`host_device_id`,
+    /// a machine from [`crate::server::devices`]).
+    Remote {
+        server_url: String,
+        token: String,
+        host_device_id: String,
+    },
 }
 
 impl Credentials {
@@ -65,17 +59,17 @@ impl Credentials {
 
     pub fn org_id(&self) -> &str {
         match self {
-            Credentials::Dev { org_id, .. } => org_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
+            Credentials::Remote { .. } => "remote",
         }
     }
 
     pub fn user_id(&self) -> &str {
         match self {
-            Credentials::Dev { user_id, .. } => user_id,
             Credentials::Demo(_) => "demo",
             Credentials::Local { .. } => "local",
+            Credentials::Remote { .. } => "remote",
         }
     }
 }

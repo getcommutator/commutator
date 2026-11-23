@@ -5,20 +5,17 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# The engine-free thin client ("viewer device"): workspace registry, chat2
-# session docs, the durable command ledger and host RPC over the device-room
-# relay, plus a fully offline Demo mode. Pure Rust — the UniFFI facade lives
-# in crates/mobile (`client_ffi`), so this crate stays usable from any
-# frontend (iOS, Android, tests, CLIs).
+# The engine-free thin client ("viewer device"): one engine's registry and
+# chats mirrored over its JSON-RPC (local IPC, or the account server's relay),
+# plus a fully offline Demo mode. Pure Rust — a UniFFI facade goes on top, so
+# this crate stays usable from any frontend (iOS, Android, tests, CLIs).
 
 [dependencies]
 vardoger-proto.workspace = true
 vardoger-doc.workspace = true
 vardoger-sync.workspace = true
 vardoger-rpc.workspace = true
-vardoger-preview.workspace = true
 vardoger-term-link.workspace = true
-anyhow.workspace = true
 loro.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -30,8 +27,6 @@ uuid.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
-sha2.workspace = true
-base64 = "0.22"
 async-trait.workspace = true
 
 [dev-dependencies]
@@ -39,7 +34,10 @@ tempfile.workspace = true
 # A real engine in-process for the local-mode test (tests/local.rs).
 vardoger-engine.workspace = true
 vardoger-visual.workspace = true
-vardoger-sync = { workspace = true, features = ["mock-server"] }
-tokio-tungstenite.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+# The account server in-process for the remote-mode test (tests/remote.rs);
+# axum 0.7 is the server's own, already in the lockfile.
+vardoger-server = { path = "../../apps/vardoger-server" }
+axum = "0.7"
+

@@ -1,15 +1,11 @@
 //! Terminals on a chat's host: the engine's PTY sessions, carried by the hub
 //! every viewer runs (`vardoger_term_link::remote`, the desktop engine's too):
 //!
-//! - **Direct when it can be.** A terminal starts on a direct WebRTC link to
-//!   its host when one is up, else on the relay while pairing runs beside it,
-//!   then moves onto the direct link mid-stream — and back to the relay if
-//!   the link dies — resuming after the last output it showed: no gap, no
-//!   repeat. A network change or the app coming back to the foreground
-//!   re-pairs at once ([`Client::network_path_changed`], [`Client::on_foreground`]).
+//! - **Over the host's RPC connection** (IPC, or the server relay); no
+//!   direct WebRTC path, since the server has no signaling for one.
 //! - **No keystroke lost or doubled.** Input is numbered and held until the
-//!   host acknowledges it; whichever path takes over replays what's pending
-//!   and the host applies each number once. Writes never wait on the network.
+//!   host acknowledges it; a reconnect replays what's pending and the host
+//!   applies each number once. Writes never wait on the network.
 //! - **The stream outlives the network.** When every path drops, it resumes
 //!   from the last sequence seen (the host keeps a replay window and the
 //!   shell outlives its viewers).
@@ -23,11 +19,11 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use vardoger_proto::TerminalEvent;
 use vardoger_rpc::{RpcError, methods};
-use vardoger_term_link::remote::{Direct, Relay, TerminalPath, Write};
+use vardoger_term_link::remote::{Relay, TerminalPath, Write};
 
 use crate::client::{Client, ClientInner};
 use crate::error::{ClientError, Result};
-use crate::live::b64;
+use crate::b64;
 
 /// An open terminal and where it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,14 +110,9 @@ impl Relay for ClientRelay {
     }
 }
 
-/// The paths for a terminal on `inner`'s client.
-fn paths(inner: &Arc<ClientInner>) -> (Arc<dyn Relay>, Option<Arc<dyn Direct>>) {
-    let relay: Arc<dyn Relay> = Arc::new(ClientRelay(Arc::downgrade(inner)));
-    let direct = inner
-        .live()
-        .and_then(|live| live.direct())
-        .map(|peers| Arc::new(peers.clone()) as Arc<dyn Direct>);
-    (relay, direct)
+/// The path for a terminal on `inner`'s client.
+fn relay(inner: &Arc<ClientInner>) -> Arc<dyn Relay> {
+    Arc::new(ClientRelay(Arc::downgrade(inner)))
 }
 
 /// One attached terminal. Dropping it detaches (the shell keeps running on
@@ -236,13 +227,8 @@ impl Drop for TerminalLink {
 
 impl Client {
     /// Open a shell for `chat_id` on its host, in the chat's working folder.
-    /// Pairing with the host starts alongside, so the terminal's stream
-    /// usually begins on the direct link.
     pub async fn open_terminal(&self, chat_id: &str, cols: u16, rows: u16) -> Result<TerminalInfo> {
         let device_id = self.chat_host(chat_id)?;
-        if let Some(direct) = self.inner.live().and_then(|live| live.direct()) {
-            direct.warm(&device_id);
-        }
         let reply = self
             .inner
             .host_rpc(
@@ -271,14 +257,10 @@ impl Client {
         sink: Arc<dyn TerminalSink>,
     ) -> TerminalLink {
         let stream = CancellationToken::new();
-        let (relay, direct) = paths(&self.inner);
-        if let Some(direct) = self.inner.live().and_then(|live| live.direct()) {
-            direct.warm(&info.device_id);
-        }
+        let relay = relay(&self.inner);
         crate::runtime::shared().spawn(follow(
             Arc::downgrade(&self.inner),
             relay.clone(),
-            direct,
             info.clone(),
             after_seq,
             sink,
@@ -308,7 +290,6 @@ impl Client {
 async fn follow(
     weak: Weak<ClientInner>,
     relay: Arc<dyn Relay>,
-    direct: Option<Arc<dyn Direct>>,
     info: TerminalInfo,
     mut last_seq: u64,
     sink: Arc<dyn TerminalSink>,
@@ -326,7 +307,7 @@ async fn follow(
         drop(inner);
         let subscribe = hub.subscribe_tracked(
             relay.clone(),
-            direct.clone(),
+            None,
             &info.device_id,
             &info.id,
             last_seq,

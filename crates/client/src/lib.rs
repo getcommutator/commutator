@@ -1,14 +1,16 @@
 //! vardoger-client — the engine-free thin client ("viewer device").
 //!
-//! A phone (or any frontend without an engine) is a *peer* on the vardoger mesh:
-//! it mirrors the workspace registry, joins per-chat chat2 rooms, renders the
-//! session docs, and drives remote engines through the durable command ledger
-//! (`vardoger_doc::SessionDoc::queue_command`) plus host RPCs over the device
-//! relay. No agent ever runs here.
+//! A phone (or any frontend without an engine) drives one engine as its
+//! JSON-RPC client: the engine on this machine over IPC
+//! ([`Credentials::Local`]), or one on another of the account's machines
+//! through the relay on the account's Vardoger server
+//! ([`Credentials::Remote`], machines listed by [`server::devices`]). It
+//! mirrors that engine's registry and chats into local docs and renders them.
+//! No agent ever runs here.
 //!
 //! # Shape
 //!
-//! - [`Client`] — one signed-in account (or the offline Demo mode). Owns the
+//! - [`Client`] — one engine (or the offline Demo mode). Owns the
 //!   registry mirror, open sessions, and background tasks on the crate's
 //!   shared tokio runtime ([`runtime::shared`]). Every snapshot read is an
 //!   `Arc` clone — never a network wait, never a whole-doc decode.
@@ -25,7 +27,7 @@
 //! against an in-process simulated host, so it exercises the real pipeline.
 
 pub mod attachments;
-pub mod auth;
+mod b64;
 pub mod catalog;
 mod client;
 pub mod config;
@@ -34,17 +36,17 @@ mod demo;
 pub mod error;
 pub mod events;
 mod host_stream;
-mod live;
 mod local;
 pub mod providers;
 pub mod rpc;
 pub mod runtime;
+pub mod server;
 pub mod session;
 pub mod subagents;
 pub mod terminal;
 pub mod workspace;
 
-pub use client::{Client, NewSession, PRELOAD_CAP, PushPrefs, SessionTarget, WARM_SESSION_CAP};
+pub use client::{Client, NewSession, PRELOAD_CAP, SessionTarget, WARM_SESSION_CAP};
 pub use config::{
     ClientConfig, Credentials, DemoFixture, DemoOptions, StreamSpeed, TranscriptScale,
 };

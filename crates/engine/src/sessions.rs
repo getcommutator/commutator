@@ -314,6 +314,9 @@ struct Inner {
     /// dispatch or accepted steer) — the diff sync snapshots the checkout tree
     /// for the Changes pane's "Latest turn" scope. Absent in bare tests.
     turn_listener: OnceLock<TurnListener>,
+    /// Fired with the chat id when a top-level `Done` closes a turn — the
+    /// checkpoints capture the turn's end state. Absent in bare tests.
+    turn_end_listener: OnceLock<TurnEndListener>,
     /// New chats' warm starts, by the id the chat will be created with
     /// ([`warm_start`]).
     warm: Mutex<HashMap<String, warm_start::WarmStart>>,
@@ -429,6 +432,8 @@ pub const MCP_PROXY_SUBCOMMAND: &str = "mcp-proxy";
 
 /// Turn-start hook: called with `(chat_id, cwd)`.
 pub type TurnListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// Turn-end hook: called with the chat id.
+pub type TurnEndListener = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[path = "warm_start.rs"]
 mod warm_start;
@@ -484,6 +489,7 @@ impl SessionsEngine {
                 generated_images: OnceLock::new(),
                 scratch_root: OnceLock::new(),
                 turn_listener: OnceLock::new(),
+                turn_end_listener: OnceLock::new(),
                 warm: Mutex::new(HashMap::new()),
                 warm_leases: Mutex::new(None),
             }),
@@ -667,6 +673,11 @@ impl SessionsEngine {
     /// Wire the turn-start listener (called once at engine assembly).
     pub fn set_turn_listener(&self, listener: TurnListener) {
         let _ = self.inner.turn_listener.set(listener);
+    }
+
+    /// Wire the turn-end listener (called once at engine assembly).
+    pub fn set_turn_end_listener(&self, listener: TurnEndListener) {
+        let _ = self.inner.turn_end_listener.set(listener);
     }
 
     fn note_turn_start(&self, chat_id: &str, cwd: &str) {
@@ -2711,6 +2722,9 @@ impl Inner {
         // `SessionsEngine::note_user_stop`).
         if matches!(event, AgentEvent::Done { .. }) {
             self.journal.clear_user_stop(chat_id);
+            if let Some(listener) = self.turn_end_listener.get() {
+                listener(chat_id);
+            }
         }
         if let Some(hub) = lock(&self.hubs).get(chat_id) {
             let _ = hub.send(JournaledEvent {

@@ -22,7 +22,6 @@ use vardoger_doc::{
     SessionCommandEntry, SessionCommandPayload, SessionCommandStatus, SessionDoc,
     SessionMessageEntry,
 };
-use vardoger_sync::attachment_store::{HeldBody, HeldPayload, HeldSend, HeldUpload};
 use vardoger_proto::{
     ChatIndicator, ContextUsage, RunRequest, SandboxLevel, UserInputAnswer, WorktreeSpec,
 };
@@ -167,12 +166,6 @@ struct CoreState {
     tracker: Tracker,
     queue: Vec<QueuedMessage>,
     commands: Vec<SessionCommandEntry>,
-    /// Own sends waiting for their bytes to reach the edge's store. Not in
-    /// the doc yet, so they show from here.
-    held: Vec<HeldSend>,
-    /// Files kept for a retry, by the message they were sent with; let go
-    /// once that message is in the transcript.
-    kept: HashMap<String, Vec<String>>,
     context_usage: Option<ContextUsage>,
     /// Stable echo entries by message id.
     echoes: HashMap<String, Arc<Entry>>,
@@ -191,12 +184,6 @@ struct CoreState {
 pub(crate) struct SessionCore {
     pub(crate) chat_id: String,
     client: Weak<ClientInner>,
-    /// Live chat2 room (declared before `doc`: it drops — and flushes — first).
-    room: Mutex<Option<Arc<crate::live::room::Room>>>,
-    /// Verified cursor restored with the local snapshot (room join cursor).
-    initial_cursor: u64,
-    /// Newest relay journal row replayed with that snapshot.
-    journaled: std::sync::atomic::AtomicI64,
     /// When a view last attached (ms): the idle clock's and the load's starting point.
     attached_at_ms: std::sync::atomic::AtomicI64,
     refresh_wake: Arc<tokio::sync::Notify>,
@@ -221,7 +208,6 @@ impl SessionCore {
         chat_id: &str,
         client: &Arc<ClientInner>,
         doc: SessionDoc,
-        cursor: u64,
     ) -> Arc<Self> {
         let doc = Arc::new(doc);
         let dirty = Arc::new(Mutex::new(Dirty::all()));
@@ -239,9 +225,6 @@ impl SessionCore {
         let core = Arc::new(Self {
             chat_id: chat_id.to_owned(),
             client: Arc::downgrade(client),
-            room: Mutex::new(None),
-            initial_cursor: cursor,
-            journaled: std::sync::atomic::AtomicI64::new(0),
             attached_at_ms: std::sync::atomic::AtomicI64::new(0),
             refresh_wake: refresh_wake.clone(),
             tasks: tasks.clone(),
@@ -253,19 +236,6 @@ impl SessionCore {
                 tracker: Tracker::new(),
                 queue: Vec::new(),
                 commands: Vec::new(),
-                held: client
-                    .live()
-                    .and_then(|live| live.store.held_sends_for(chat_id).ok())
-                    .unwrap_or_default(),
-                kept: client
-                    .live()
-                    .map(|live| live.escorts.kept_for_chat(chat_id))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .fold(HashMap::new(), |mut kept, (message, upload)| {
-                        kept.entry(message).or_insert_with(Vec::new).push(upload);
-                        kept
-                    }),
                 context_usage: None,
                 echoes: HashMap::new(),
                 pending: Vec::new(),
@@ -307,130 +277,6 @@ impl SessionCore {
         self.refresh_wake.notify_one();
     }
 
-    pub(crate) fn room(&self) -> Option<Arc<crate::live::room::Room>> {
-        lock(&self.room).clone()
-    }
-
-    /// Drop the room (deleted chat): its tasks stop and it flushes once.
-    pub(crate) fn close_room(&self) {
-        let room = lock(&self.room).take();
-        drop(room);
-    }
-
-    /// Live: join the chat's chat2 room once its row says it's dialable
-    /// (roomGen ≥ 2). Idempotent.
-    pub(crate) fn ensure_room(self: &Arc<Self>, client: &Arc<ClientInner>) {
-        let Some(live) = client.live() else { return };
-        if lock(&self.room).is_some() {
-            return;
-        }
-        let Some(chat) = client.workspace.chat(&self.chat_id) else {
-            return;
-        };
-        if chat.room_gen.unwrap_or(1) < 2 {
-            // A retired legacy (s2) room: nothing to dial. Show what's local
-            // instead of an endless loader.
-            let newly = !std::mem::replace(&mut lock(&self.state).hydrated, true);
-            if newly {
-                self.schedule_refresh();
-            }
-            return;
-        }
-        let core = Arc::downgrade(self);
-        let on_applied: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            if let Some(core) = core.upgrade() {
-                if core
-                    .room()
-                    .is_some_and(|r| r.status.caught_up.load(Ordering::Acquire))
-                {
-                    let newly = {
-                        let mut st = lock(&core.state);
-                        !std::mem::replace(&mut st.hydrated, true)
-                    };
-                    if newly {
-                        tracing::debug!(chat = %core.chat_id, "session hydrated from the room");
-                    }
-                }
-                core.schedule_refresh();
-            }
-        });
-        let weak_client = Arc::downgrade(client);
-        let status_core = Arc::downgrade(self);
-        let on_status: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            if let Some(client) = weak_client.upgrade() {
-                client.recompute_connectivity();
-                if let Some(core) = status_core.upgrade() {
-                    core.recompute_composer(&client);
-                }
-            }
-        });
-        let room = crate::live::room::Room::start(
-            &self.doc,
-            &self.chat_id,
-            self.initial_cursor,
-            crate::live::room::RoomDeps {
-                bearer: crate::live::LiveBackend::bearer(client),
-                edge: live.edge.clone(),
-                device_id: client.config.device_id.clone(),
-                store: live.store.clone(),
-                on_applied,
-                on_status,
-                cancel: client.cancel.clone(),
-                relay_layer: client.config.relay_layer,
-                route: self.relay_route(client, &chat),
-                journaled: self.journaled.load(Ordering::Acquire),
-                path: client.path_gate(),
-            },
-        );
-        let mut slot = lock(&self.room);
-        if slot.is_none() {
-            *slot = Some(room);
-        }
-    }
-
-    /// Note the relay journal rows the local load replayed.
-    pub(crate) fn set_journaled(&self, ordinal: i64) {
-        self.journaled.store(ordinal, Ordering::Release);
-    }
-
-    /// Where this chat stands for the relay layer, right now.
-    fn relay_route(
-        &self,
-        client: &Arc<ClientInner>,
-        chat: &vardoger_proto::Chat,
-    ) -> crate::live::room::RelayRoute {
-        use vardoger_proto::relay_gen::CHAT_RELAY_CAPABILITY;
-        let workspace = client.workspace.snapshot();
-        let device = workspace.device(&chat.device_id);
-        let host_online = device.is_some_and(|d| d.online);
-        let on_screen = self.view_attached();
-        let generation = chat.room_gen.unwrap_or(1);
-        crate::live::room::RelayRoute {
-            generation,
-            host: chat.device_id.clone(),
-            host_reads_queue: device
-                .is_some_and(|d| d.capabilities.iter().any(|c| c == CHAT_RELAY_CAPABILITY)),
-            on_screen,
-            host_online,
-        }
-    }
-
-    /// The chat's row, this screen or the app's state may have changed.
-    pub(crate) fn refresh_relay(&self, client: &Arc<ClientInner>) {
-        let Some(room) = self.room() else { return };
-        let Some(chat) = client.workspace.chat(&self.chat_id) else {
-            return;
-        };
-        room.set_route(&self.relay_route(client, &chat));
-    }
-
-    /// Persist the doc now (backgrounding).
-    pub(crate) fn flush(&self) {
-        if let Some(room) = self.room() {
-            room.flush();
-        }
-    }
-
     pub(crate) fn doc(&self) -> &Arc<SessionDoc> {
         &self.doc
     }
@@ -455,20 +301,7 @@ impl SessionCore {
     ) -> Result<R> {
         let result = {
             let _gate = lock(&self.write_gate);
-            let client = self.client()?;
-            if let Some(live) = client.live() {
-                // A new chat's registry row must survive alongside its outbox:
-                // recovery needs its host and room generation before any UI opens it.
-                live.persist_registry(&client)?;
-            }
-            let result = f(&self.doc)?;
-            if let Some(live) = client.live() {
-                live.store
-                    .schedule_sync_job(&self.chat_id, crate::live::delivery::JOB)
-                    .map_err(|err| ClientError::Storage(err.to_string()))?;
-                live.delivery_wake.notify_one();
-            }
-            result
+            f(&self.doc)?
         };
         self.refresh();
         Ok(result)
@@ -493,7 +326,6 @@ impl SessionCore {
 
     pub(crate) fn has_pending_sends(&self) -> bool {
         !lock(&self.state).pending.is_empty()
-            || self.room().is_some_and(|room| room.has_pending_pushes())
     }
 
     /// Apply queued doc events + time-driven state; publish what changed.
@@ -515,7 +347,6 @@ impl SessionCore {
         let mut transcript_event = None;
         let send_before;
         let send_after;
-        let mut ran_uploads: Vec<String> = Vec::new();
         {
             let mut st = lock(&self.state);
             send_before = oldest_state(&st.pending);
@@ -531,17 +362,6 @@ impl SessionCore {
             }
             let echoes_changed =
                 derive_pending(&mut st, &client.config.device_id, degraded, now);
-            if !st.kept.is_empty() {
-                let ran: Vec<String> = st
-                    .kept
-                    .keys()
-                    .filter(|message| st.tracker.contains_id(message))
-                    .cloned()
-                    .collect();
-                for message in ran {
-                    ran_uploads.extend(st.kept.remove(&message).unwrap_or_default());
-                }
-            }
             send_after = oldest_state(&st.pending);
             let previous = self.snapshot();
             let streaming = st
@@ -575,12 +395,6 @@ impl SessionCore {
         if let Some(revision) = transcript_event {
             client.events.session(&self.chat_id, revision);
         }
-        // Files kept for a retry are let go once their message has run.
-        if let Some(live) = client.live() {
-            for upload_id in ran_uploads {
-                live.escorts.remove_stored(&upload_id);
-            }
-        }
         self.recompute_composer(&client);
         if send_before != send_after {
             client.recompute_workspace();
@@ -612,7 +426,7 @@ impl SessionCore {
             ChatIndicator::Working | ChatIndicator::AwaitingInput
         );
         let turn_running = host_indicator == ChatIndicator::Working || snapshot.streaming;
-        let transcript_load = self.transcript_load(client, &snapshot, row.as_deref(), device);
+        let transcript_load = self.transcript_load(client, &snapshot, device, st.hydrated);
         let mut next = ComposerState {
             chat_id: self.chat_id.clone(),
             revision: 0,
@@ -668,14 +482,13 @@ impl SessionCore {
         &self,
         client: &Arc<ClientInner>,
         snapshot: &SessionSnapshot,
-        row: Option<&crate::workspace::SessionRow>,
         device: Option<&crate::workspace::DeviceView>,
+        answered: bool,
     ) -> TranscriptLoad {
         if client.is_demo() || !snapshot.entries.is_empty() {
             return TranscriptLoad::Ready;
         }
         let attached_at = self.attached_at_ms.load(Ordering::Acquire);
-        let room = self.room();
         snapshot::transcript_load(snapshot::LoadInputs {
             has_content: false,
             has_messages: client
@@ -684,8 +497,7 @@ impl SessionCore {
                 .is_some_and(|chat| chat.last_message_at.is_some()),
             network: client.network_online()
                 && client.connectivity().state != ConnectivityState::Offline,
-            generation: row.map_or(1, |r| r.room_gen),
-            room_answered: room.is_some_and(|room| room.answered()),
+            answered,
             host_online: device.is_some_and(|d| d.online),
             waited_too_long: self.view_attached()
                 && attached_at > 0
@@ -746,45 +558,6 @@ impl SessionCore {
         let id = entry.id.clone();
         self.write(|doc| doc.queue_command(&entry))?;
         Ok(id)
-    }
-
-    /// A held send's bytes are safe: it enters the chat under the id it was
-    /// held with, its clocks starting now. Repeatable after a crash.
-    pub(crate) fn release_held(&self, send: &HeldSend, device_id: &str) -> Result<()> {
-        match &send.payload.body {
-            HeldBody::Command { payload } => {
-                let present = self
-                    .doc
-                    .read_commands()
-                    .is_ok_and(|commands| commands.iter().any(|c| c.id == send.id));
-                if !present {
-                    self.queue_command_as(send.id.clone(), device_id, payload.clone())?;
-                }
-            }
-            HeldBody::Row { item } => {
-                let present = self
-                    .doc
-                    .read_queue()
-                    .is_ok_and(|queue| queue.iter().any(|q| q.id == item.id));
-                if !present {
-                    let mut item = item.clone();
-                    item.issued_at = now_ms();
-                    self.write(|doc| doc.push_queued(&item))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The outbox changed: show it.
-    pub(crate) fn reload_held(&self) {
-        let Ok(client) = self.client() else { return };
-        let held = client
-            .live()
-            .and_then(|live| live.store.held_sends_for(&self.chat_id).ok())
-            .unwrap_or_default();
-        lock(&self.state).held = held;
-        self.refresh();
     }
 
     pub(crate) fn view_attached(&self) -> bool {
@@ -896,23 +669,6 @@ fn open_input(entries: &[Arc<Entry>]) -> Option<InputRequest> {
     None
 }
 
-/// The `pending://` upload ids a command names.
-fn command_uploads(payload: &SessionCommandPayload) -> Vec<String> {
-    let refs: Vec<String> = match payload {
-        SessionCommandPayload::Run { request, .. } => request.attachments.clone(),
-        SessionCommandPayload::Steer { prompt, .. } => attachments::parse_user_message(prompt)
-            .images
-            .into_iter()
-            .map(|image| image.path)
-            .collect(),
-        _ => Vec::new(),
-    };
-    refs.iter()
-        .filter_map(|r| attachments::parse_pending_ref(r))
-        .map(|(upload_id, _)| upload_id.to_owned())
-        .collect()
-}
-
 /// Own run/steer commands whose message hasn't landed = pending echoes.
 /// Returns whether the echo set/states changed.
 fn derive_pending(
@@ -970,7 +726,7 @@ fn derive_pending(
         attempt.live |= live;
         attempt.dead |= dead;
     }
-    let mut next = Vec::with_capacity(order.len() + st.held.len());
+    let mut next = Vec::with_capacity(order.len());
     for message_id in order {
         let attempt = &attempts[&message_id];
         // No path, or no host: this send is saved and goes when one's back, so that
@@ -994,37 +750,6 @@ fn derive_pending(
             images: parsed.images.into_iter().map(|i| i.path).collect(),
             kind: attempt.kind,
             sent_at_ms: attempt.first_issued,
-            removable: false,
-        });
-    }
-    // Held sends aren't on the delivery clock: they're still on their way to
-    // the store, for as long as that takes. Only a real failure reads as one.
-    for send in &st.held {
-        let message_id = send.payload.message_id().unwrap_or(&send.id);
-        if st.tracker.contains_id(message_id) || next.iter().any(|p| p.message_id == message_id) {
-            continue;
-        }
-        let parsed = attachments::parse_user_message(send.payload.prompt());
-        next.push(PendingSend {
-            state: if send.failure.is_some() {
-                SendState::Failed
-            } else if degraded {
-                SendState::Queued
-            } else {
-                SendState::Sending
-            },
-            message_id: message_id.to_owned(),
-            text: send.payload.prompt().to_owned(),
-            visible_text: parsed.text,
-            images: parsed.images.into_iter().map(|i| i.path).collect(),
-            kind: match &send.payload.body {
-                HeldBody::Command {
-                    payload: SessionCommandPayload::Steer { .. },
-                } => PendingKind::Steer,
-                _ => PendingKind::Run,
-            },
-            sent_at_ms: send.created_at,
-            removable: true,
         });
     }
     let live_ids: HashSet<&str> = next.iter().map(|p| p.message_id.as_str()).collect();
@@ -1201,27 +926,16 @@ impl SessionHandle {
     }
 
     /// Tell the client whether a transcript view is on screen (marks seen on
-    /// attach; prioritizes this room's sync in live mode).
+    /// attach).
     pub fn set_view_attached(&self, attached: bool) {
         let was = self.core.view_attached.swap(attached, Ordering::AcqRel);
         self.core.touch();
         if attached && !was {
             self.core.attached_at_ms.store(now_ms(), Ordering::Release);
         }
-        if attached
-            && !was
-            && let Some(room) = self.core.room()
-        {
-            // On screen: verify the room is live now rather than trusting a
-            // quiet socket (the 15-min quiet probe is far too slow for a
-            // chat someone is looking at).
-            room.kick();
-        }
         if attached != was
             && let Ok(client) = self.core.client()
         {
-            // On screen or not decides what the room may read while the host is away.
-            self.core.refresh_relay(&client);
             self.core.recompute_composer(&client);
         }
         if attached && !was {
@@ -1247,9 +961,11 @@ impl SessionHandle {
         if request.text.trim().is_empty() && request.attachments.is_empty() {
             return Err(ClientError::InvalidArgument("empty message".into()));
         }
-        if !request.attachments.is_empty() && client.local().is_some() {
+        if !request.attachments.is_empty() && !client.is_demo() {
+            // ponytail: `pending://` refs went to the host by an escort that
+            // left with the edge; upload first (`Client::upload_attachment`).
             return Err(ClientError::Unsupported(
-                "attachments to a local engine".into(),
+                "attachments in a send to an engine".into(),
             ));
         }
         let composer = self.composer();
@@ -1269,18 +985,7 @@ impl SessionHandle {
                 "the host is too old for image attachments — update Vardoger on it".into(),
             ));
         }
-        // A Cloud machine may be asleep: the bytes go to the edge's store, and
-        // the message waits until they're there.
-        let via_store = !request.attachments.is_empty()
-            && client.live().is_some()
-            && vardoger_proto::is_cloud_device(&chat.device_id, "")
-            && composer.host.capabilities.attachment_store;
-        let refs = client.stage_attachments(
-            &self.core.chat_id,
-            &chat.device_id,
-            &request.attachments,
-            via_store,
-        )?;
+        let refs = client.stage_attachments(&chat.device_id, &request.attachments)?;
         let prompt_text = request.text.trim_end().to_owned();
         let device_id = client.config.device_id.clone();
 
@@ -1317,15 +1022,12 @@ impl SessionHandle {
             let content = attachments::with_attachments(&prompt_text, &refs);
             let message_id = crate::new_id();
             if busy {
-                self.send_command(
-                    &client,
+                self.core.queue_command(
                     &device_id,
                     SessionCommandPayload::Steer {
                         prompt: content,
                         message_id: Some(message_id.clone()),
                     },
-                    &refs,
-                    via_store,
                 )?;
                 SendOutcome::Steered { message_id }
             } else {
@@ -1349,15 +1051,12 @@ impl SessionHandle {
                     env: Default::default(),
                     extra_mcp: Vec::new(),
                 };
-                self.send_command(
-                    &client,
+                self.core.queue_command(
                     &device_id,
                     SessionCommandPayload::Run {
                         request,
                         message_id: message_id.clone(),
                     },
-                    &refs,
-                    via_store,
                 )?;
                 SendOutcome::Started { message_id }
             }
@@ -1367,112 +1066,8 @@ impl SessionHandle {
             let id = message_id.clone();
             self.core.update_state(|st| st.last_submitted = Some(id));
         }
-        client.after_command(&self.core, !refs.is_empty());
+        client.after_command(&self.core);
         Ok(outcome)
-    }
-
-    /// Into the chat now, or into the outbox while its bytes go up (or while
-    /// an earlier send of this chat is still there: nothing overtakes it).
-    fn send_command(
-        &self,
-        client: &Arc<ClientInner>,
-        device_id: &str,
-        payload: SessionCommandPayload,
-        refs: &[String],
-        via_store: bool,
-    ) -> Result<()> {
-        if via_store || self.behind_held(client) {
-            let id = crate::new_id();
-            self.hold(client, &id, HeldBody::Command { payload }, refs)
-        } else {
-            self.core.queue_command(device_id, payload).map(|_| ())
-        }
-    }
-
-    fn behind_held(&self, client: &Arc<ClientInner>) -> bool {
-        client.live().is_some_and(|live| {
-            live.store
-                .has_active_held_send(&self.core.chat_id)
-                .unwrap_or(false)
-        })
-    }
-
-    fn hold(
-        &self,
-        client: &Arc<ClientInner>,
-        id: &str,
-        body: HeldBody,
-        refs: &[String],
-    ) -> Result<()> {
-        let Some(live) = client.live() else {
-            return Err(ClientError::Storage("signed out".into()));
-        };
-        let payload = HeldPayload {
-            body,
-            uploads: refs
-                .iter()
-                .filter_map(|r| attachments::parse_pending_ref(r))
-                .map(|(upload_id, file_name)| HeldUpload {
-                    upload_id: upload_id.to_owned(),
-                    file_name: file_name.to_owned(),
-                })
-                // Only what's stashed for the store (a later send's refs may
-                // be going over the peer link).
-                .filter(|upload| {
-                    live.escorts
-                        .load(&upload.upload_id)
-                        .is_some_and(|(meta, _)| meta.via_store)
-                })
-                .collect(),
-            also_peer: false,
-        };
-        // Kept here until the message has run: a retry after it expired
-        // uploads them again.
-        let message_id = match &payload.body {
-            HeldBody::Row { item } => Some(item.id.clone()),
-            HeldBody::Command { .. } => payload.message_id().map(str::to_owned),
-        };
-        if let Some(message_id) = message_id {
-            for upload in &payload.uploads {
-                live.escorts.keep_for(&upload.upload_id, &message_id);
-            }
-            if !payload.uploads.is_empty() {
-                lock(&self.core.state)
-                    .kept
-                    .entry(message_id)
-                    .or_default()
-                    .extend(payload.uploads.iter().map(|u| u.upload_id.clone()));
-            }
-        }
-        live.store
-            .hold_send(id, &self.core.chat_id, &payload, now_ms())
-            .map_err(|err| ClientError::Storage(err.to_string()))?;
-        self.core.reload_held();
-        live.held.spawn(client, &self.core.chat_id);
-        Ok(())
-    }
-
-    /// Remove a send still in this device's outbox, failed or uploading (a
-    /// pending send with `removable`): it never goes out. `false` when it
-    /// already went out, or isn't one of those.
-    pub fn remove_send(&self, message_id: &str) -> Result<bool> {
-        let client = self.core.client()?;
-        let Some(live) = client.live() else {
-            return Ok(false);
-        };
-        let held = live
-            .store
-            .held_sends_for(&self.core.chat_id)
-            .map_err(|err| ClientError::Storage(err.to_string()))?;
-        let Some(send) = held
-            .iter()
-            .find(|send| send.payload.message_id() == Some(message_id) || send.id == message_id)
-        else {
-            return Ok(false);
-        };
-        let removed = live.held.remove(&client, &send.id)?;
-        self.core.reload_held();
-        Ok(removed)
     }
 
     /// Stop the live turn.
@@ -1482,7 +1077,7 @@ impl SessionHandle {
             &client.config.device_id,
             SessionCommandPayload::Interrupt {},
         )?;
-        client.after_command(&self.core, false);
+        client.after_command(&self.core);
         Ok(())
     }
 
@@ -1496,7 +1091,7 @@ impl SessionHandle {
                 answers,
             },
         )?;
-        client.after_command(&self.core, false);
+        client.after_command(&self.core);
         Ok(())
     }
 
@@ -1512,23 +1107,7 @@ impl SessionHandle {
         item.hold_for_turn_end = hold_for_turn_end;
         item.issued_at = now_ms();
         let id = item.id.clone();
-        let client = self.core.client()?;
-        let stored = client.live().is_some_and(|live| {
-            item.attachments
-                .iter()
-                .filter_map(|r| attachments::parse_pending_ref(r))
-                .any(|(upload_id, _)| {
-                    live.escorts
-                        .load(upload_id)
-                        .is_some_and(|(meta, _)| meta.via_store)
-                })
-        });
-        if stored || self.behind_held(&client) {
-            let refs = item.attachments.clone();
-            self.hold(&client, &id, HeldBody::Row { item }, &refs)?;
-        } else {
-            self.core.write(|doc| doc.push_queued(&item))?;
-        }
+        self.core.write(|doc| doc.push_queued(&item))?;
         Ok(id)
     }
 
@@ -1549,7 +1128,7 @@ impl SessionHandle {
             attachments,
             hold_for_turn_end,
         )?;
-        client.after_command(&self.core, false);
+        client.after_command(&self.core);
         Ok(id)
     }
 
@@ -1567,7 +1146,7 @@ impl SessionHandle {
         }
         let moved = self.core.write(|doc| doc.move_queued(id, to))?;
         if moved && let Ok(client) = self.core.client() {
-            client.after_command(&self.core, false);
+            client.after_command(&self.core);
         }
         Ok(moved)
     }
@@ -1796,19 +1375,11 @@ impl SessionHandle {
 
     /// "Not delivered — tap to retry": restart grace clocks, re-issue dead
     /// attempts (fresh command id, same message id — the host dedupes the
-    /// user entry by message id), kick the room, nudge the host.
+    /// user entry by message id).
     pub fn retry_delivery(&self) -> Result<()> {
         let client = self.core.client()?;
         let now = now_ms();
         let device_id = client.config.device_id.clone();
-        if let Some(live) = client.live() {
-            live.store
-                .retry_held_sends(&self.core.chat_id, now)
-                .map_err(|err| ClientError::Storage(err.to_string()))?;
-            self.core.reload_held();
-            live.held.kick();
-            live.held.spawn(&client, &self.core.chat_id);
-        }
         let (commands, pending_ids) = {
             let mut st = lock(&self.core.state);
             let ids: Vec<String> = st.pending.iter().map(|p| p.message_id.clone()).collect();
@@ -1861,41 +1432,11 @@ impl SessionHandle {
                 continue;
             }
             tracing::info!(chat = %self.core.chat_id, old = %attempt.id, "retry re-issues a dead send attempt");
-            // Its files were kept here: they go up again first, since the
-            // edge's copy may be gone by now.
-            let uploads = command_uploads(&attempt.payload);
-            let kept = !uploads.is_empty()
-                && client
-                    .live()
-                    .is_some_and(|live| uploads.iter().all(|id| live.escorts.stored(id)));
-            if kept {
-                let refs: Vec<String> = match &attempt.payload {
-                    SessionCommandPayload::Run { request, .. } => request.attachments.clone(),
-                    SessionCommandPayload::Steer { prompt, .. } => {
-                        attachments::parse_user_message(prompt)
-                            .images
-                            .into_iter()
-                            .map(|image| image.path)
-                            .collect()
-                    }
-                    _ => Vec::new(),
-                };
-                self.hold(
-                    &client,
-                    &crate::new_id(),
-                    HeldBody::Command {
-                        payload: attempt.payload.clone(),
-                    },
-                    &refs,
-                )?;
-            } else {
-                self.core
-                    .queue_command(&device_id, attempt.payload.clone())?;
-            }
+            self.core
+                .queue_command(&device_id, attempt.payload.clone())?;
         }
         self.core.refresh();
-        client.after_command(&self.core, true);
-        client.kick_room(&self.core.chat_id);
+        client.after_command(&self.core);
         Ok(())
     }
 }

@@ -65,6 +65,7 @@ mod git_status;
 mod turn_snapshot;
 
 pub use turn_snapshot::{TreeSnapshot, snapshot_tree};
+pub(crate) use turn_snapshot::snapshot_tree_kept;
 
 /// Hard cap on the unified patch (plus untracked hunks) — "Partial snapshot".
 pub const MAX_PATCH_BYTES: usize = 3 * 1024 * 1024;
@@ -2033,8 +2034,18 @@ pub async fn capture_turn_diff(
     turn: &TreeSnapshot,
 ) -> Result<DiffSnapshot, EngineError> {
     let current = turn_snapshot::snapshot_tree_onto(repos, root, Some(turn)).await?;
-    let turn_tree = turn.tree();
-    let current_tree = current.tree();
+    capture_tree_diff(repos, root, turn.tree(), current.tree(), &current).await
+}
+
+/// Tree-to-tree diff of two snapshot trees that `objects`' store can read
+/// (it or the stores it layers on), capped like every capture.
+pub(crate) async fn capture_tree_diff(
+    repos: &Repos,
+    root: &Path,
+    turn_tree: &str,
+    current_tree: &str,
+    current: &TreeSnapshot,
+) -> Result<DiffSnapshot, EngineError> {
     let head = capture_git(root, &["rev-parse", "--verify", "HEAD"], 256)
         .await
         .map(|c| String::from_utf8_lossy(&c.stdout).trim().to_string())
@@ -2056,7 +2067,7 @@ pub async fn capture_turn_diff(
             "--",
         ],
         2 * 1024 * 1024,
-        Some(&current),
+        Some(current),
     )
     .await?;
     let nums = capture_git_in(
@@ -2071,7 +2082,7 @@ pub async fn capture_turn_diff(
             "--",
         ],
         2 * 1024 * 1024,
-        Some(&current),
+        Some(current),
     )
     .await?;
     let tracked = capture_git_in(
@@ -2087,7 +2098,7 @@ pub async fn capture_turn_diff(
             "--",
         ],
         MAX_PATCH_BYTES,
-        Some(&current),
+        Some(current),
     )
     .await?;
 

@@ -909,6 +909,7 @@ pub struct EngineRpc {
     change_requests: CheckoutChangeRequests,
     github: GitHubCli,
     diff_sync: CheckoutDiffSync,
+    checkpoints: Option<crate::checkpoints::Checkpoints>,
     uploads: Uploads,
     agent_accounts: AgentAccounts,
     auth: Option<Auth>,
@@ -969,6 +970,7 @@ impl EngineRpc {
             change_requests,
             github,
             diff_sync,
+            checkpoints: None,
             uploads,
             agent_accounts,
             auth: None,
@@ -1023,6 +1025,53 @@ impl EngineRpc {
     pub fn with_viewport_focus(mut self, focus: crate::desktop_notify::ViewportFocus) -> Self {
         self.viewport_focus = focus;
         self
+    }
+
+    pub fn with_checkpoints(mut self, checkpoints: crate::checkpoints::Checkpoints) -> Self {
+        self.checkpoints = Some(checkpoints);
+        self
+    }
+
+    fn checkpoints(&self) -> Result<&crate::checkpoints::Checkpoints, RpcError> {
+        self.checkpoints
+            .as_ref()
+            .ok_or_else(|| RpcError::Failed("checkpoints are not available".into()))
+    }
+
+    /// Whether any chat of this device working in checkout `checkout_id` has
+    /// a turn running (or waiting on the person).
+    async fn agent_active_in(&self, checkout_id: &str) -> bool {
+        let chats = self.workspace.watch_chats().borrow().clone();
+        for candidate in chats {
+            if candidate.device_id != self.doc_host.device_id() {
+                continue;
+            }
+            let same_checkout = if candidate.checkout_id.as_deref() == Some(checkout_id) {
+                true
+            } else if let Some(candidate_cwd) = candidate.cwd.as_deref() {
+                self.repos
+                    .checkout_identity(std::path::Path::new(candidate_cwd))
+                    .await
+                    .is_ok_and(|candidate_identity| candidate_identity.id == checkout_id)
+            } else {
+                false
+            };
+            if same_checkout
+                && self
+                    .sessions
+                    .session_status(&candidate.id)
+                    .is_some_and(|session| {
+                        matches!(
+                            session.status,
+                            vardoger_proto::SessionStatus::Working
+                                | vardoger_proto::SessionStatus::AwaitingInput
+                        )
+                    })
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn with_harness_updates(
@@ -2287,6 +2336,9 @@ fn forwardable(method: &str) -> bool {
             | methods::GET_CHECKOUT_DIFF
             | methods::DISCARD_WORKING_TREE
             | methods::GET_CHECKOUT_FILE_DIFF_TEXT
+            | methods::LIST_CHECKPOINTS
+            | methods::GET_CHECKPOINT_DIFF
+            | methods::ROLLBACK_TO_CHECKPOINT
             // Terminals live on the chat's host device.
             | methods::OPEN_TERMINAL
             | methods::SUBSCRIBE_TERMINAL
@@ -4277,40 +4329,10 @@ impl RpcService for EngineRpc {
                     // Refuse the mutation when any local chat on this exact
                     // checkout has a live run. We never interrupt an agent as a
                     // side effect of discarding files.
-                    let chats = self.workspace.watch_chats().borrow().clone();
-                    for candidate in chats {
-                        if candidate.device_id != self.doc_host.device_id() {
-                            continue;
-                        }
-                        let same_checkout =
-                            if candidate.checkout_id.as_deref() == Some(identity.id.as_str()) {
-                                true
-                            } else if let Some(candidate_cwd) = candidate.cwd.as_deref() {
-                                self.repos
-                                    .checkout_identity(std::path::Path::new(candidate_cwd))
-                                    .await
-                                    .is_ok_and(|candidate_identity| {
-                                        candidate_identity.id == identity.id
-                                    })
-                            } else {
-                                false
-                            };
-                        if same_checkout
-                            && self
-                                .sessions
-                                .session_status(&candidate.id)
-                                .is_some_and(|session| {
-                                    matches!(
-                                        session.status,
-                                        vardoger_proto::SessionStatus::Working
-                                            | vardoger_proto::SessionStatus::AwaitingInput
-                                    )
-                                })
-                        {
-                            return Err(RpcError::Failed(
-                                "an agent is active in this working tree".into(),
-                            ));
-                        }
+                    if self.agent_active_in(&identity.id).await {
+                        return Err(RpcError::Failed(
+                            "an agent is active in this working tree".into(),
+                        ));
                     }
 
                     let snapshot = self
@@ -4322,6 +4344,80 @@ impl RpcService for EngineRpc {
                         "ok": true,
                         "checksum": snapshot.checksum,
                     }))
+                })
+                .await
+            }
+            methods::LIST_CHECKPOINTS => {
+                let p: vardoger_proto::checkpoints::ListCheckpointsRequest = parse_params(params)?;
+                let checkpoints = self
+                    .checkpoints()?
+                    .list(&p.chat_id)
+                    .await
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&vardoger_proto::checkpoints::ListCheckpointsResponse {
+                    checkpoints,
+                })
+            }
+            methods::GET_CHECKPOINT_DIFF => {
+                Box::pin(async move {
+                    let p: vardoger_proto::checkpoints::GetCheckpointDiffRequest =
+                        parse_params(params)?;
+                    let (root, snapshot) = self
+                        .checkpoints()?
+                        .diff(&p.chat_id, p.from, p.to)
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                    let identity = self
+                        .repos
+                        .checkout_identity(&root)
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                    RpcReply::value(&vardoger_proto::CheckoutDiff {
+                        checkout_id: identity.id,
+                        device_id: self.doc_host.device_id().to_string(),
+                        cwd: root.to_string_lossy().to_string(),
+                        patch: snapshot.patch,
+                        files: snapshot.files,
+                        additions: snapshot.additions,
+                        deletions: snapshot.deletions,
+                        truncated: snapshot.truncated,
+                        checksum: snapshot.checksum,
+                        updated_at: chrono::Utc::now(),
+                    })
+                })
+                .await
+            }
+            methods::ROLLBACK_TO_CHECKPOINT => {
+                Box::pin(async move {
+                    let p: vardoger_proto::checkpoints::RollbackToCheckpointRequest =
+                        parse_params(params)?;
+                    let checkpoints = self.checkpoints()?;
+                    // Other chats on the same checkout count too: never roll
+                    // files back under a running agent.
+                    let listed = checkpoints
+                        .list(&p.chat_id)
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                    let target = listed
+                        .iter()
+                        .find(|c| c.id == p.checkpoint_id)
+                        .ok_or_else(|| RpcError::Failed("checkpoint not found".into()))?;
+                    let identity = self
+                        .repos
+                        .checkout_identity(std::path::Path::new(&target.cwd))
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                    if self.agent_active_in(&identity.id).await {
+                        return Err(RpcError::Failed(
+                            "an agent is active in this working tree".into(),
+                        ));
+                    }
+                    let outcome = checkpoints
+                        .rollback(&p.chat_id, p.checkpoint_id)
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                    self.diff_sync.sync_all();
+                    RpcReply::value(&outcome)
                 })
                 .await
             }
