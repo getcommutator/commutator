@@ -27,3 +27,6 @@ base64 = "0.22"
 tempfile.workspace = true
 async-trait.workspace = true
 tokio-tungstenite.workspace = true
+# The other end of preview signaling, for the WebRTC test (tests/signaling.rs).
+vardoger-preview.workspace = true
+tokio-util.workspace = true
