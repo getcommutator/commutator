@@ -15,36 +15,20 @@
 //! Everything else keeps the peer path: chats on a user's own computers, hosts
 //! too old to look in the store, edges too old to have one.
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use vardoger_doc::{
-    CLOUD_COMMAND_TTL_MS, CommandBasedOn, QueuedMessage, SessionCommandEntry,
+    CommandBasedOn, QueuedMessage, SessionCommandEntry,
     SessionCommandPayload, SessionCommandStatus,
 };
 use vardoger_proto::{HeldSendStatus, WaitingMessage};
 use vardoger_sync::attachment_store::{
-    self, Fetched, HeldBody, HeldPayload, HeldSend, HeldUpload, PutError,
+    self, HeldBody, HeldPayload, HeldSend, HeldUpload, PutError,
 };
 
 use super::{
-    ChatDocHandle, DocHost, EngineError, TRANSFER_BACKOFF_BASE, TRANSFER_BACKOFF_CAP,
-    TransferProgressGuard, lock, new_id, now_ms,
+    DocHost, EngineError, TRANSFER_BACKOFF_BASE, TRANSFER_BACKOFF_CAP,
+    lock, new_id, now_ms,
 };
 use crate::uploads::AttachmentTransfer;
-
-/// How recent a "nothing stored" answer must be for the wait cap to rely on it.
-/// Shorter than the drain's 30 s re-check, so each re-check asks afresh.
-const STORE_ANSWER_FRESH_MS: i64 = 20_000;
-
-/// Where a host's look in the store stands, per `pending://` ref.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum StoreLook {
-    /// Downloading, or asking.
-    Asking,
-    /// The edge said nothing's there (at this time).
-    Absent { at_ms: i64 },
-}
 
 /// How a chat's attachment bytes reach its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,33 +148,9 @@ impl DocHost {
     }
 
     fn attachment_route(&self, chat_id: &str) -> AttachmentRoute {
-        if self.inner.config.edge.is_none() {
-            return AttachmentRoute::Peer;
-        }
-        let Some(target) = self.remote_host_for(chat_id) else {
-            return AttachmentRoute::Peer;
-        };
-        if !vardoger_proto::is_cloud_device(&target, "") {
-            return AttachmentRoute::Peer;
-        }
-        let device = self
-            .workspace()
-            .and_then(|ws| ws.read_devices().ok())
-            .into_iter()
-            .flatten()
-            .find(|device| device.id == target);
-        match device {
-            // A machine that has reported in says what it can do.
-            Some(device) if device.version.is_some() => {
-                if device.supports(vardoger_proto::capabilities::ATTACHMENT_STORE_V1) {
-                    AttachmentRoute::Store { also_peer: false }
-                } else {
-                    AttachmentRoute::Peer
-                }
-            }
-            // A machine not yet booted has said nothing.
-            _ => AttachmentRoute::Store { also_peer: true },
-        }
+        // Bytes go to the host over the peer link, after the message.
+        let _ = chat_id;
+        AttachmentRoute::Peer
     }
 
     /// Hold this send when its bytes must reach the store first, or when an
@@ -326,53 +286,19 @@ impl DocHost {
     }
 
     /// Its person removed a send from the outbox, failed or still uploading:
-    /// it never goes out, and what it stored at the edge goes too. `false` when
-    /// it had already gone out (or been removed).
+    /// it never goes out. `false` when it had already gone out (or been removed).
     pub fn remove_held_send(&self, chat_id: &str, id: &str) -> Result<bool, EngineError> {
-        let send = {
+        {
             let _gate = lock(&self.inner.held_gate);
-            let Some(send) = self
-                .inner
-                .store
-                .held_send(id)?
-                .filter(|send| send.chat_id == chat_id)
-            else {
+            let held = self.inner.store.held_send(id)?;
+            if !held.is_some_and(|send| send.chat_id == chat_id) {
                 return Ok(false);
-            };
+            }
             self.inner.store.remove_held_send(id)?;
-            send
-        };
+        }
         tracing::info!(chat = %chat_id, send = %id, "held send removed by its person");
         self.publish_held_sends();
-        self.forget_stored(&send);
         Ok(true)
-    }
-
-    /// Best effort: the edge's copies of a send that won't go out. (The
-    /// lifecycle rule takes whatever this misses.)
-    fn forget_stored(&self, send: &HeldSend) {
-        let (Some(edge), Ok(runtime)) = (
-            self.inner.config.edge.clone(),
-            tokio::runtime::Handle::try_current(),
-        ) else {
-            return;
-        };
-        if send.payload.uploads.is_empty() {
-            return;
-        }
-        let http = self.inner.http.clone();
-        let send = send.clone();
-        self.spawn_worker_on(&runtime, async move {
-            let Ok(bearer) = edge.bearer().await else {
-                return;
-            };
-            for upload in &send.payload.uploads {
-                let url = attachment_store::blob_url(&edge.url, &send.chat_id, &upload.upload_id);
-                if let Err(err) = attachment_store::delete(&http, &url, &bearer).await {
-                    tracing::warn!(send = %send.id, %err, "removed send's file not deleted");
-                }
-            }
-        });
     }
 
     /// Message ids still waiting in this chat's outbox (a retry mustn't mint
@@ -562,55 +488,9 @@ impl DocHost {
     /// Put the send's files in the store, as far as its route asks. Answers
     /// whether the bytes must also travel the peer link.
     async fn store_uploads(&self, send: &HeldSend) -> Result<bool, PutError> {
-        let route = self.attachment_route(&send.chat_id);
-        let AttachmentRoute::Store { also_peer } = route else {
-            return Ok(true); // The chat moved off Cloud while this waited.
-        };
-        let Some(edge) = self.inner.config.edge.as_ref() else {
-            return Ok(true);
-        };
-        let Some(uploads) = self.inner.uploads.get() else {
-            return Ok(true);
-        };
-        for upload in &send.payload.uploads {
-            // From the staging jail only, by upload identity.
-            let source = uploads.pending_target(&upload.upload_id, &upload.file_name);
-            let bytes = tokio::fs::read(&source).await.map_err(|err| {
-                tracing::warn!(send = %send.id, %err, "staged attachment unreadable");
-                PutError::Permanent("the file is no longer on this device".to_string())
-            })?;
-            let bearer = edge
-                .bearer()
-                .await
-                .map_err(|err| PutError::Transient(format!("no token: {err}")))?;
-            let url = attachment_store::blob_url(&edge.url, &send.chat_id, &upload.upload_id);
-            let total = bytes.len() as u64;
-            self.transfer_progress_set(&upload.upload_id, &upload.file_name, 0, total);
-            let _progress = TransferProgressGuard {
-                host: self,
-                upload_id: &upload.upload_id,
-            };
-            let progress = {
-                let host = self.clone();
-                let upload = upload.clone();
-                move |done: u64| {
-                    host.transfer_progress_set(&upload.upload_id, &upload.file_name, done, total);
-                }
-            };
-            match attachment_store::put(&self.inner.http, &url, &bearer, bytes, progress).await {
-                Ok(()) => {
-                    tracing::info!(chat = %send.chat_id, upload = %upload.upload_id, bytes = total,
-                        "attachment stored for its Cloud machine");
-                }
-                Err(PutError::Unsupported) => {
-                    tracing::info!(chat = %send.chat_id,
-                        "this edge has no attachment store; using the peer link");
-                    return Ok(true);
-                }
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(also_peer || send.payload.also_peer)
+        // No store to put them in: the peer link carries them.
+        let _ = send;
+        Ok(true)
     }
 
     /// The bytes are safe: the message enters the chat, and that's what the
@@ -621,7 +501,6 @@ impl DocHost {
         if self.inner.store.held_send(&send.id)?.is_none() {
             // Removed while it uploaded: it never goes out.
             drop(gate);
-            self.forget_stored(send);
             return Ok(());
         }
         let handle = self.open(&send.chat_id)?;
@@ -674,7 +553,6 @@ impl DocHost {
         self.inner.store.remove_held_send(&send.id)?;
         drop(gate);
         self.publish_held_sends();
-        self.nudge_remote_host(&send.chat_id);
         if let Some(entry) = escort {
             self.spawn_command_delivery(&send.chat_id, entry, transfers);
         } else if matches!(send.payload.body, HeldBody::Row { .. }) {
@@ -685,212 +563,4 @@ impl DocHost {
 
     // ---- the host's side ----
 
-    fn fetches_from_store(&self) -> bool {
-        self.inner.config.edge.is_some()
-            && vardoger_proto::is_cloud_device(&self.inner.config.device_id, "")
-    }
-
-    /// A Cloud machine is missing these refs' bytes: look in the store, once
-    /// per ref at a time. A found file re-drains; so does a fresh "not there",
-    /// in case the wait cap was only waiting for that answer.
-    pub(super) fn fetch_from_store(&self, chat_id: &str, refs: &[String]) {
-        if !self.fetches_from_store() {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let now = now_ms();
-        for reference in refs {
-            {
-                let mut looks = lock(&self.inner.store_looks);
-                match looks.get(reference) {
-                    Some(StoreLook::Asking) => continue,
-                    Some(StoreLook::Absent { at_ms })
-                        if now.saturating_sub(*at_ms) < STORE_ANSWER_FRESH_MS =>
-                    {
-                        continue;
-                    }
-                    _ => {}
-                }
-                looks.insert(reference.clone(), StoreLook::Asking);
-            }
-            let host = self.clone();
-            let chat = chat_id.to_string();
-            let reference = reference.clone();
-            self.spawn_worker_on(&runtime, async move {
-                host.fetch_stored(&chat, &reference).await;
-            });
-        }
-    }
-
-    /// Whether a message missing these bytes should keep waiting past the cap.
-    /// The cap is for bytes that aren't coming: while the store has them (or
-    /// it can't be asked yet), they are.
-    pub(super) fn bytes_on_their_way(&self, refs: &[String]) -> bool {
-        if !self.fetches_from_store() {
-            return false;
-        }
-        let looks = lock(&self.inner.store_looks);
-        refs.iter()
-            .any(|r| !matches!(looks.get(r), Some(StoreLook::Absent { .. })))
-    }
-
-    /// The wait is over for these refs: forget what the store said.
-    pub(super) fn forget_store_looks(&self, refs: &[String]) {
-        let mut looks = lock(&self.inner.store_looks);
-        for reference in refs {
-            looks.remove(reference);
-        }
-    }
-
-    async fn fetch_stored(&self, chat: &str, reference: &str) {
-        let (Some(edge), Some(uploads), Some((upload_id, file_name))) = (
-            self.inner.config.edge.clone(),
-            self.inner.uploads.get().cloned(),
-            crate::uploads::parse_pending_ref(reference),
-        ) else {
-            self.note_store_absent(chat, reference);
-            return;
-        };
-        let url = attachment_store::blob_url(&edge.url, chat, upload_id);
-        let give_up =
-            tokio::time::Instant::now() + Duration::from_millis(CLOUD_COMMAND_TTL_MS as u64);
-        let mut wake = vardoger_sync::wake::subscribe();
-        let mut online = vardoger_sync::wake::subscribe_online();
-        let mut backoff = TRANSFER_BACKOFF_BASE;
-        loop {
-            let found = match edge.bearer().await {
-                Ok(bearer) => attachment_store::get(&self.inner.http, &url, &bearer)
-                    .await
-                    .map(|fetched| (fetched, bearer)),
-                Err(err) => Err(format!("no token: {err}")),
-            };
-            let failure = match found {
-                Ok((Fetched::Absent, _)) => {
-                    self.note_store_absent(chat, reference);
-                    return;
-                }
-                Ok((Fetched::Bytes(bytes), bearer)) => {
-                    let total = bytes.len();
-                    let committed = {
-                        let uploads = uploads.clone();
-                        let (upload_id, file_name) = (upload_id.to_string(), file_name.to_string());
-                        tokio::task::spawn_blocking(move || {
-                            uploads.commit_fetched(&upload_id, &file_name, &bytes)
-                        })
-                        .await
-                    };
-                    match committed {
-                        Ok(Ok(path)) => {
-                            tracing::info!(chat = %chat, upload = %upload_id, bytes = total, %path,
-                                "attachment fetched from the store");
-                            lock(&self.inner.store_looks).remove(reference);
-                            // Its copy is on disk: the store's has done its job.
-                            if let Err(err) =
-                                attachment_store::delete(&self.inner.http, &url, &bearer).await
-                            {
-                                tracing::warn!(chat = %chat, upload = %upload_id, %err,
-                                    "stored attachment not deleted; its lifecycle rule will");
-                            }
-                            self.kick_drains();
-                            return;
-                        }
-                        Ok(Err(err)) => format!("couldn't save it: {err}"),
-                        Err(err) => format!("couldn't save it: {err}"),
-                    }
-                }
-                Err(err) => err,
-            };
-            if tokio::time::Instant::now() >= give_up {
-                tracing::warn!(chat = %chat, upload = %upload_id, %failure,
-                    "gave up fetching a stored attachment");
-                self.note_store_absent(chat, reference);
-                return;
-            }
-            tracing::warn!(chat = %chat, upload = %upload_id, %failure,
-                backoff_ms = backoff.as_millis() as u64, "attachment fetch retrying");
-            while wake.try_recv().is_ok() {}
-            while online.try_recv().is_ok() {}
-            tokio::select! {
-                _ = tokio::time::sleep(backoff) => {}
-                _ = wake.recv() => {}
-                _ = online.recv() => {}
-            }
-            backoff = (backoff * 2).min(TRANSFER_BACKOFF_CAP);
-        }
-    }
-
-    fn note_store_absent(&self, chat: &str, reference: &str) {
-        lock(&self.inner.store_looks)
-            .insert(reference.to_string(), StoreLook::Absent { at_ms: now_ms() });
-        let handle = lock(&self.inner.handles).get(chat).cloned();
-        if let Some(handle) = handle {
-            let host = self.clone();
-            self.spawn_worker(async move {
-                host.drain_commands(&handle).await;
-                host.drain_queue(&handle).await;
-            });
-        }
-    }
-
-    /// A queued row's bytes aren't coming: a Cloud machine past the wait cap,
-    /// and the store says it has nothing (it expired, or was never sent).
-    pub(super) fn row_bytes_lost(&self, row: &QueuedMessage, missing: &[String]) -> bool {
-        self.fetches_from_store()
-            && now_ms().saturating_sub(row.issued_at) >= super::ATTACHMENT_WAIT_MAX_MS
-            && !self.bytes_on_their_way(missing)
-    }
-
-    /// Take the row out of the queue and leave its message as a failed send
-    /// of its sender's, which offers a retry: the retry uploads the files again
-    /// from the sender's own copy. `false` when it couldn't be written (the row
-    /// then stays queued).
-    pub(super) fn fail_queued_row(&self, handle: &Arc<ChatDocHandle>, row: &QueuedMessage) -> bool {
-        let prompt = super::queued_message_prompt(&row.text, &row.attachments);
-        let Some(mut request) = self.request_from_chat_row(&handle.chat_id, &prompt) else {
-            return false;
-        };
-        request.attachments = row.attachments.clone();
-        let now = now_ms();
-        let entry = SessionCommandEntry {
-            id: new_id(),
-            payload: SessionCommandPayload::Run {
-                request,
-                message_id: row.id.clone(),
-            },
-            issued_by: row.issued_by.clone(),
-            issued_at: row.issued_at,
-            based_on: None,
-            expires_at: Some(now + CLOUD_COMMAND_TTL_MS),
-            status: SessionCommandStatus::Rejected,
-            resolution: Some("attachments never arrived".into()),
-        };
-        // The command first: were the take to fail, the row is still queued
-        // and nothing is lost; the other way round, it could be.
-        // (The doc's command write keeps no resolution: it's set after.)
-        let recorded = handle.doc.queue_command(&entry).and_then(|()| {
-            handle.doc.set_command_status(
-                &entry.id,
-                SessionCommandStatus::Rejected,
-                Some("attachments never arrived"),
-            )
-        });
-        if let Err(err) = recorded {
-            tracing::warn!(chat = %handle.chat_id, row = %row.id, %err, "lost row not recorded");
-            return false;
-        }
-        match handle.doc.take_queued(&row.id) {
-            Ok(_) => {
-                handle.publish_queue();
-                tracing::warn!(chat = %handle.chat_id, row = %row.id,
-                    "queued row failed: attachments never arrived");
-                true
-            }
-            Err(err) => {
-                tracing::warn!(chat = %handle.chat_id, row = %row.id, %err, "lost row not taken");
-                false
-            }
-        }
-    }
 }

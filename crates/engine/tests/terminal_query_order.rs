@@ -104,7 +104,6 @@ async fn a_self_answering_viewer_s_answers_reach_the_program_in_order() {
         &data,
         Arc::new(vardoger_engine::HarnessRegistry::new()),
         vardoger_proto::HarnessId::Mock,
-        None,
     )
     .expect("engine assembles");
     let probe = tmp.path().join("probe.pl");

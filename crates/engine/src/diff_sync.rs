@@ -57,7 +57,6 @@ use tokio_util::sync::CancellationToken;
 use vardoger_proto::{Chat, CheckoutDiff, DiffFileSummary};
 
 use crate::EngineError;
-use crate::doc_host::EdgeConfig;
 use crate::fs_watch::{FsWatch, FsWatchHub};
 use crate::repos::{CheckoutIdentity, Repos};
 use crate::workspace_host::WorkspaceHost;
@@ -194,8 +193,6 @@ struct DiffSyncInner {
     repos: Repos,
     workspace: WorkspaceHost,
     device_id: String,
-    edge: Option<EdgeConfig>,
-    http: reqwest::Client,
     entries: Mutex<HashMap<String, Arc<CheckoutEntry>>>,
     /// Serializes [`reconcile`] passes. Concurrent passes (chat-watch task vs.
     /// `reconcile_now`) can both observe a checkout as missing and both
@@ -300,11 +297,10 @@ impl CheckoutDiffSync {
         repos: Repos,
         workspace: WorkspaceHost,
         device_id: &str,
-        edge: Option<EdgeConfig>,
     ) -> Self {
         // Grace = one repair interval: an entry must survive at least one full
         // fresh revalidation pass before reconcile may tear it down.
-        Self::start_with_orphan_grace(repos, workspace, device_id, edge, REPAIR_INTERVAL)
+        Self::start_with_orphan_grace(repos, workspace, device_id, REPAIR_INTERVAL)
     }
 
     /// [`CheckoutDiffSync::start`] with an explicit orphan grace — test hook so
@@ -314,14 +310,12 @@ impl CheckoutDiffSync {
         repos: Repos,
         workspace: WorkspaceHost,
         device_id: &str,
-        edge: Option<EdgeConfig>,
         orphan_grace: Duration,
     ) -> Self {
         Self::start_with_timings(
             repos,
             workspace,
             device_id,
-            edge,
             orphan_grace,
             INTEREST_LINGER,
         )
@@ -334,7 +328,6 @@ impl CheckoutDiffSync {
         repos: Repos,
         workspace: WorkspaceHost,
         device_id: &str,
-        edge: Option<EdgeConfig>,
         orphan_grace: Duration,
         interest_linger: Duration,
     ) -> Self {
@@ -347,8 +340,6 @@ impl CheckoutDiffSync {
                 repos,
                 workspace: workspace.clone(),
                 device_id: device_id.to_string(),
-                edge,
-                http: reqwest::Client::new(),
                 entries: Mutex::new(HashMap::new()),
                 reconcile_gate: tokio::sync::Mutex::new(()),
                 capture_gate: tokio::sync::Mutex::new(()),
@@ -995,49 +986,6 @@ async fn sync_entry(inner: &Arc<DiffSyncInner>, entry: &Arc<CheckoutEntry>) {
         }
     }
     publish_watch_with(inner, Some(diff));
-
-    // Latest-only sidecar to every syncing chat's session DO slot.
-    let chats = lock(&entry.chats).clone();
-    if let Some(edge) = inner.edge.as_ref() {
-        for chat in &chats {
-            let sidecar = DiffSidecar {
-                chat_id: chat.id.clone(),
-                device_id: inner.device_id.clone(),
-                checkout_path: entry.identity.root.to_string_lossy().to_string(),
-                branch: Some(snapshot.branch.clone()),
-                head_sha: snapshot.head_sha.clone(),
-                patch: snapshot.patch.clone(),
-                files: snapshot.files.clone(),
-                additions: snapshot.additions,
-                deletions: snapshot.deletions,
-                truncated: snapshot.truncated,
-                published_at: chrono::Utc::now().timestamp_millis(),
-            };
-            let url = format!("{}/diff/{}", edge.url.trim_end_matches('/'), chat.id);
-            // Fresh bearer per request — never the boot-time snapshot.
-            let Ok(bearer) = edge.bearer().await else {
-                tracing::debug!(chat = %chat.id, "diff-sync: sidecar skipped (token unavailable)");
-                continue;
-            };
-            let result = inner
-                .http
-                .post(&url)
-                .bearer_auth(&bearer)
-                .json(&sidecar)
-                .send()
-                .await;
-            match result {
-                Ok(response) if !response.status().is_success() => {
-                    tracing::debug!(chat = %chat.id, status = %response.status(),
-                        "diff-sync: sidecar publish rejected");
-                }
-                Err(err) => {
-                    tracing::debug!(chat = %chat.id, error = %err, "diff-sync: sidecar publish failed");
-                }
-                Ok(_) => {}
-            }
-        }
-    }
 }
 
 /// Re-emit the watch channel from the current entries' cached diffs, replacing (or

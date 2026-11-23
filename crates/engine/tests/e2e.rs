@@ -223,7 +223,7 @@ fn registry_with(harness: Arc<dyn Harness>) -> Arc<HarnessRegistry> {
 }
 
 fn assemble(dir: &std::path::Path, harness: Arc<dyn Harness>) -> EngineCore {
-    EngineCore::assemble(dir, registry_with(harness), HarnessId::Mock, None)
+    EngineCore::assemble(dir, registry_with(harness), HarnessId::Mock)
         .expect("engine core assembles")
 }
 
@@ -284,7 +284,7 @@ async fn update_deferred_steering_preserves_the_active_turn_and_queued_prompt() 
     });
     let registry = registry_with(harness.clone());
     let dir = tempfile::tempdir().unwrap();
-    let core = EngineCore::assemble(dir.path(), registry.clone(), HarnessId::Mock, None).unwrap();
+    let core = EngineCore::assemble(dir.path(), registry.clone(), HarnessId::Mock).unwrap();
     let handle = core.doc_host.open(CHAT).unwrap();
     core.sessions
         .dispatch(
@@ -416,7 +416,7 @@ async fn pending_update_does_not_block_dispatch_or_other_harnesses() {
         registry.register(Arc::new(RecordingHarness(id, started.clone())));
     }
     let core =
-        EngineCore::assemble(dir.path(), registry.clone(), HarnessId::ClaudeCode, None).unwrap();
+        EngineCore::assemble(dir.path(), registry.clone(), HarnessId::ClaudeCode).unwrap();
     let active_turn = registry.execution_lease(HarnessId::ClaudeCode).await;
     registry.begin_update(HarnessId::ClaudeCode);
     // These awaits model the shared queue watcher's serial dispatch calls.
@@ -2600,7 +2600,6 @@ async fn real_claude_sees_uploaded_image_inline() {
         &dir,
         Arc::new(vardoger_engine::default_registry()),
         HarnessId::ClaudeCode,
-        None,
     )
     .expect("engine core assembles");
     // Pre-title the chat so the auto-titler doesn't spend a second model call.
@@ -3315,7 +3314,6 @@ async fn generated_image_is_materialized_before_publication_and_survives_reopen(
         DocHostConfig {
             device_id: "host".into(),
             default_harness: HarnessId::Mock,
-            edge: None,
         },
     );
     sessions.set_doc_host(host.clone());
@@ -3411,7 +3409,6 @@ async fn real_image_generation_profile_smoke() {
         dir.path(),
         registry_with(Arc::new(vardoger_harness::CodexHarness::new())),
         HarnessId::Codex,
-        None,
     )
     .unwrap();
     core.sessions

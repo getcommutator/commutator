@@ -11,7 +11,7 @@ use vardoger_engine::run_journal::journal_paths;
 use vardoger_engine::{EngineCore, EngineProfile, HarnessId, default_registry};
 
 fn assemble(profile: EngineProfile) -> EngineCore {
-    EngineCore::assemble_with_profile(profile, Arc::new(default_registry()), HarnessId::Mock, None)
+    EngineCore::assemble_with_profile(profile, Arc::new(default_registry()), HarnessId::Mock)
         .expect("assemble profile")
 }
 

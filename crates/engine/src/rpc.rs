@@ -2853,10 +2853,8 @@ async fn opening_doc_messages_stream(
         .boxed())
 }
 
-/// Authentication-only RPC surface used while the headed app is waiting for a
-/// production WorkOS session. Keeping this independent from [`EngineRpc`] lets
-/// the UI show its sign-in and organization gates before identity-scoped Loro
-/// stores are opened.
+/// The sign-in surface, answered before the profile opens: `AuthStatus`
+/// (stream) and `SignOut`. Signing in is `vardoger login`.
 #[derive(Clone)]
 pub struct AuthRpc {
     auth: Auth,
@@ -2868,138 +2866,17 @@ impl AuthRpc {
     }
 
     pub fn handles(method: &str) -> bool {
-        matches!(
-            method,
-            methods::AUTH_STATUS
-                | methods::SIGN_IN
-                | methods::SIGN_IN_HEADLESS
-                | methods::COMPLETE_SIGN_IN
-                | methods::SIGN_OUT
-                | methods::ACCESS_TOKEN
-                | methods::STEP_UP
-                | methods::DELETE_ACCOUNT
-                | methods::LIST_ORGS
-                | methods::CREATE_ORG
-                | methods::SELECT_ORG
-        )
+        matches!(method, methods::AUTH_STATUS | methods::SIGN_OUT)
     }
 }
 
 #[async_trait]
 impl RpcService for AuthRpc {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
+    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<RpcReply, RpcError> {
         match method {
             methods::AUTH_STATUS => Ok(RpcReply::Stream(watch_stream(self.auth.watch_state()))),
-            methods::SIGN_IN => {
-                // `{screenHint?, fresh?}`; absent (the desktop app's `{}`),
-                // the hosted page opens as it always has.
-                let options: crate::auth::SignInOptions = if params.is_null() {
-                    Default::default()
-                } else {
-                    parse_params(params)?
-                };
-                let url = self
-                    .auth
-                    .start_sign_in_with(options)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::ACCESS_TOKEN => {
-                // Local IPC only: the relay refuses it (`vardoger_rpc::local_only`).
-                let (token, expires_at) = self
-                    .auth
-                    .access_token_with_expiry()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "token": token, "expiresAt": expires_at }))
-            }
-            // Local IPC, the app's token only (agents and the relay are
-            // refused before here): a fresh interactive sign-in whose ticket
-            // stays in the engine, then the deletion it allows (R16).
-            methods::STEP_UP => {
-                let url = self
-                    .auth
-                    .start_step_up()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::DELETE_ACCOUNT => {
-                #[derive(Deserialize)]
-                struct P {
-                    confirm: String,
-                }
-                let p: P = parse_params(params)?;
-                // Answered, not failed: `{ok: true}`, or `{ok: false, error:
-                // <code>, message, organization?}` with a stable code
-                // ([`crate::auth::DeleteAccountError::code`]).
-                match self.auth.delete_account(&p.confirm).await {
-                    Ok(()) => RpcReply::value(&serde_json::json!({ "ok": true })),
-                    Err(error) => {
-                        let mut reply = serde_json::json!({
-                            "ok": false,
-                            "error": error.code(),
-                            "message": error.to_string(),
-                        });
-                        if let crate::auth::DeleteAccountError::Refused { organization: Some(org), .. } = &error {
-                            reply["organization"] = serde_json::json!(org);
-                        }
-                        RpcReply::value(&reply)
-                    }
-                }
-            }
-            methods::SIGN_IN_HEADLESS => {
-                let url = self.auth.start_headless_sign_in();
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::COMPLETE_SIGN_IN => {
-                #[derive(Deserialize)]
-                struct P {
-                    code: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .complete_sign_in(&p.code)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
             methods::SIGN_OUT => {
                 self.auth.sign_out();
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::LIST_ORGS => {
-                let orgs = self
-                    .auth
-                    .list_orgs()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "orgs": orgs }))
-            }
-            methods::CREATE_ORG => {
-                #[derive(Deserialize)]
-                struct P {
-                    name: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .create_org(&p.name)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::SELECT_ORG => {
-                #[derive(Deserialize)]
-                #[serde(rename_all = "camelCase")]
-                struct P {
-                    organization_id: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .select_org(&p.organization_id)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
             }
             _ => Err(RpcError::UnknownMethod(method.to_string())),
@@ -3101,7 +2978,6 @@ impl RpcService for EngineRpc {
         if matches!(
             method,
             methods::SIGN_OUT
-                | methods::SELECT_ORG
                 | methods::COMPLETE_AGENT_LOGIN
                 | methods::ACTIVATE_AGENT_ACCOUNT
                 | methods::FORGET_AGENT_ACCOUNT
@@ -3829,16 +3705,8 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({ "sent": sent }))
             }
             methods::PROBE_SYNC => {
-                // Focus probes remain cheap. An explicit Retry may also allow
-                // one fresh, shared auth attempt before its cooldown expires.
-                if params.get("retry").and_then(serde_json::Value::as_bool) == Some(true)
-                    && let Some(auth) = &self.auth
-                {
-                    auth.retry_refresh();
-                }
                 self.workspace.probe();
                 self.doc_host.probe_open_chats();
-                self.doc_host.probe_edge_reachability();
                 RpcReply::value(&serde_json::json!({}))
             }
             methods::SYNC_STATUS => {
@@ -5894,7 +5762,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             std::sync::Arc::new(HarnessRegistry::new()),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         let first = core.rpc_service();
@@ -5918,7 +5785,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             std::sync::Arc::new(HarnessRegistry::new()),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         let rpc = core.rpc_service();
@@ -5948,7 +5814,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             std::sync::Arc::new(HarnessRegistry::new()),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         let rpc = core.rpc_service();
@@ -5985,7 +5850,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             std::sync::Arc::new(HarnessRegistry::new()),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         let rpc = core.rpc_service();
@@ -6076,7 +5940,6 @@ mod tests {
             &root.join("engine"),
             registry.clone(),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         let rpc = core.rpc_service();
@@ -6294,7 +6157,7 @@ mod tests {
         let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store,
-            DocHostConfig { device_id: "viewer".into(), default_harness: vardoger_proto::HarnessId::Mock, edge: None },
+            DocHostConfig { device_id: "viewer".into(), default_harness: vardoger_proto::HarnessId::Mock },
         );
         let handle = host.open("kept").unwrap();
         for i in 0..300 {
@@ -6346,7 +6209,6 @@ mod tests {
             DocHostConfig {
                 device_id: "viewer".into(),
                 default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
             },
         );
         let handle = host.open("whale").unwrap();
@@ -6783,418 +6645,6 @@ mod context_usage_tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn replay_cutoff_travels_with_coalesced_backfill_and_live_content() {
-        use crate::doc_host::{DocHost, DocHostConfig};
-        use vardoger_sync::chat_client::ChatDocSink;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
-        let host = DocHost::new(
-            store.clone(),
-            DocHostConfig {
-                device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
-            },
-        );
-        let handle = host.open("replay-chat").unwrap();
-        let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "replay-chat")
-            .with_handle(Arc::downgrade(&handle));
-        let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let first: vardoger_doc::TranscriptUpdate =
-            serde_json::from_value(stream.next().await.unwrap()).unwrap();
-        assert!(first.replay_baseline.unwrap().entries.is_empty());
-
-        let source = vardoger_doc::SessionDoc::init("replay-chat").unwrap();
-        let append = |id: &str| {
-            source
-                .push_message(&vardoger_doc::SessionMessageEntry {
-                    id: id.into(),
-                    role: vardoger_doc::MessageRole::Assistant,
-                    parts: vec![vardoger_doc::MessagePart::Text {
-                        id: "text".into(),
-                        text: id.into(),
-                    }],
-                    created_at: 0,
-                    device_id: "writer".into(),
-                    status: Some(vardoger_doc::MessageStatus::Streaming),
-                    continuation_of: None,
-                    duration_ms: None,
-                })
-                .unwrap()
-        };
-        append("cached");
-        sink.apply_checkpoint(&source.export_snapshot().unwrap(), 0)
-            .unwrap();
-        let checkpoint: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(
-            checkpoint
-                .replay_baseline
-                .unwrap()
-                .entries
-                .contains_key("cached")
-        );
-
-        let version = source.doc().oplog_vv();
-        append("away");
-        sink.apply_replay_row(
-            &source
-                .doc()
-                .export(loro::ExportMode::updates(&version))
-                .unwrap(),
-            1,
-        );
-        let version = source.doc().oplog_vv();
-        append("live");
-        sink.apply_row(
-            &source
-                .doc()
-                .export(loro::ExportMode::updates(&version))
-                .unwrap(),
-            2,
-        );
-        // Neither the doc worker nor the RPC consumer ran between these
-        // imports. They must not flatten their different presentation origins.
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        let cutoff = update.replay_baseline.unwrap();
-        assert!(cutoff.entries.contains_key("away"));
-        assert!(!cutoff.entries.contains_key("live"));
-        let mut entries = vec![];
-        vardoger_doc::apply_transcript_frame(&mut entries, checkpoint.frame).unwrap();
-        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
-        assert_eq!(entries.len(), 3);
-
-        let version = source.doc().oplog_vv();
-        append("next-live");
-        sink.apply_row(
-            &source
-                .doc()
-                .export(loro::ExportMode::updates(&version))
-                .unwrap(),
-            3,
-        );
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(
-            update.replay_baseline.is_none(),
-            "live updates must not resend the history watermark"
-        );
-        let mut reopened = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: vardoger_doc::TranscriptUpdate =
-            serde_json::from_value(reopened.next().await.unwrap()).unwrap();
-        assert_eq!(
-            opening.replay_baseline.unwrap().entries.len(),
-            4,
-            "reopening includes all existing content as history"
-        );
-        host.shutdown_workers().await;
-    }
-
-    #[tokio::test]
-    async fn replay_metadata_and_backfill_leave_interleaved_local_content_live() {
-        use crate::doc_host::{DocHost, DocHostConfig};
-        use vardoger_sync::chat_client::ChatDocSink;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
-        let host = DocHost::new(
-            store.clone(),
-            DocHostConfig {
-                device_id: "host".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
-            },
-        );
-        let handle = host.open("interleaved").unwrap();
-        let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "interleaved")
-            .with_handle(Arc::downgrade(&handle));
-        let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        stream.next().await.unwrap();
-        let source = vardoger_doc::SessionDoc::init("interleaved").unwrap();
-        sink.apply_checkpoint(&source.export_snapshot().unwrap(), 0)
-            .unwrap();
-        let entry = |id: &str| vardoger_doc::SessionMessageEntry {
-            id: id.into(),
-            role: vardoger_doc::MessageRole::Assistant,
-            parts: vec![vardoger_doc::MessagePart::Text {
-                id: "text".into(),
-                text: id.into(),
-            }],
-            created_at: 0,
-            device_id: "host".into(),
-            status: Some(vardoger_doc::MessageStatus::Streaming),
-            continuation_of: None,
-            duration_ms: None,
-        };
-        handle.doc().push_message(&entry("local-before")).unwrap();
-        source.update_context_usage(Some(10), Some(100)).unwrap();
-        sink.apply_replay_row(&source.export_snapshot().unwrap(), 1);
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(
-            update.replay_baseline.is_none(),
-            "metadata must not reset ongoing live animations"
-        );
-        let mut entries = vec![];
-        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
-        assert_eq!(entries[0].id, "local-before");
-        let version = source.doc().oplog_vv();
-        source.push_message(&entry("historical")).unwrap();
-        handle.doc().push_message(&entry("local-between")).unwrap();
-        sink.apply_replay_row(
-            &source
-                .doc()
-                .export(loro::ExportMode::updates(&version))
-                .unwrap(),
-            2,
-        );
-        handle.doc().push_message(&entry("local-after")).unwrap();
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        let baseline = update.replay_baseline.unwrap();
-        assert_eq!(baseline.entries.len(), 1);
-        assert!(baseline.entries.contains_key("historical"));
-        vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
-        assert_eq!(entries.len(), 4);
-        host.shutdown_workers().await;
-    }
-
-    #[tokio::test]
-    async fn replay_preserves_each_watchers_opening_cutoff_without_consuming_live_text() {
-        use crate::doc_host::{DocHost, DocHostConfig};
-        use vardoger_sync::chat_client::ChatDocSink;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
-        let host = DocHost::new(
-            store.clone(),
-            DocHostConfig {
-                device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
-            },
-        );
-        let handle = host.open("cached-replay").unwrap();
-        let sink =
-            crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "cached-replay")
-                .with_handle(Arc::downgrade(&handle));
-        let source = vardoger_doc::SessionDoc::init("cached-replay").unwrap();
-        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let text = |id: &str, value: &str| vardoger_doc::MessagePart::Text {
-            id: id.into(),
-            text: value.into(),
-        };
-        let cached = text("body", "café histórico");
-        writer.sync(&[cached.clone()]).unwrap();
-        sink.apply_checkpoint(&source.export_snapshot().unwrap(), 0)
-            .unwrap();
-        // Cached content exists before the first watcher and never enters
-        // the changed-parts tracker. It may not have been painted yet.
-        let mut first = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: vardoger_doc::TranscriptUpdate =
-            serde_json::from_value(first.next().await.unwrap()).unwrap();
-        assert_eq!(
-            opening.replay_baseline.unwrap().entries["reply"]["body"],
-            "café histórico".len()
-        );
-
-        let live = text("body", "café histórico y nuevo");
-        writer.sync(&[live.clone()]).unwrap();
-        sink.apply_row(&source.export_snapshot().unwrap(), 1);
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), first.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(update.replay_baseline.is_none());
-        // A later subscriber sees a longer historical prefix, but must not
-        // change the first subscriber's ongoing live animation.
-        let mut second = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        let opening: vardoger_doc::TranscriptUpdate =
-            serde_json::from_value(second.next().await.unwrap()).unwrap();
-        assert_eq!(
-            opening.replay_baseline.unwrap().entries["reply"]["body"],
-            "café histórico y nuevo".len()
-        );
-
-        let mut parts = vec![live];
-        for ix in 0..2 {
-            let id = format!("recovered-{ix}");
-            parts.push(text(&id, "otro bloque histórico"));
-            writer.sync(&parts).unwrap();
-            sink.apply_replay_row(&source.export_snapshot().unwrap(), 2 + ix);
-            for (stream, expected) in [
-                (&mut first, "café histórico".len()),
-                (&mut second, "café histórico y nuevo".len()),
-            ] {
-                let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-                    tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                )
-                .unwrap();
-                let baseline = update.replay_baseline.unwrap();
-                assert_eq!(
-                    baseline.entries["reply"].get("body"),
-                    Some(&expected),
-                    "replay must retain this watcher's opening cutoff, excluding later live bytes"
-                );
-                assert_eq!(
-                    baseline.entries["reply"][&id],
-                    "otro bloque histórico".len()
-                );
-                assert_eq!(baseline.entries["reply"].len(), 2 + ix as usize);
-            }
-        }
-        host.shutdown_workers().await;
-    }
-
-    #[tokio::test]
-    async fn reopening_rearms_history_for_previously_live_text() {
-        use crate::doc_host::{DocHost, DocHostConfig};
-        use vardoger_sync::chat_client::ChatDocSink;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
-        let host = DocHost::new(
-            store.clone(),
-            DocHostConfig {
-                device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
-            },
-        );
-        let handle = host.open("reopen").unwrap();
-        let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "reopen")
-            .with_handle(Arc::downgrade(&handle));
-        let source = vardoger_doc::SessionDoc::init("reopen").unwrap();
-        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let part = |text: &str| vardoger_doc::MessagePart::Text {
-            id: "body".into(),
-            text: text.into(),
-        };
-        let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        stream.next().await.unwrap();
-        writer.sync(&[part("live")]).unwrap();
-        sink.apply_row(&source.export_snapshot().unwrap(), 1);
-        let _: serde_json::Value =
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap();
-        drop(stream);
-        // No unwatched commit clears provenance before the new attach.
-        let mut stream = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        stream.next().await.unwrap();
-        writer.sync(&[part("live plus recovered")]).unwrap();
-        sink.apply_replay_row(&source.export_snapshot().unwrap(), 2);
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            update.replay_baseline.unwrap().entries["reply"]["body"],
-            "live plus recovered".len()
-        );
-        host.shutdown_workers().await;
-    }
-
-    /// A long reply's calls arriving and finishing: a watcher that asked for
-    /// part patches gets the changed calls alone; one that didn't, the reply
-    /// whole as ever. Both end with the same transcript.
-    #[tokio::test]
-    async fn part_patches_carry_a_reply_s_changed_calls_alone_when_asked_for() {
-        use crate::doc_host::{DocHost, DocHostConfig};
-        use vardoger_sync::chat_client::ChatDocSink;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
-        let host = DocHost::new(
-            store.clone(),
-            DocHostConfig {
-                device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
-            },
-        );
-        let handle = host.open("parts").unwrap();
-        let sink = crate::chat2_host::EngineChatSink::new(&handle.doc_arc(), store, "parts")
-            .with_handle(Arc::downgrade(&handle));
-        let source = vardoger_doc::SessionDoc::init("parts").unwrap();
-        let mut writer = vardoger_doc::SegmentWriter::begin(&source, "reply", "host", 0).unwrap();
-        let call = |i: usize, output: Option<&str>| -> vardoger_doc::MessagePart {
-            serde_json::from_value(serde_json::json!({
-                "kind": "tool", "id": format!("t{i}"),
-                "call": { "kind": "exec", "command": format!("echo {i}") },
-                "resolved": output.is_some(), "output": output,
-            }))
-            .unwrap()
-        };
-        let mut calls: Vec<_> = (0..40).map(|i| call(i, Some("ok"))).collect();
-        calls.push(call(40, None));
-        writer.sync(&calls).unwrap();
-        sink.apply_row(&source.export_snapshot().unwrap(), 1);
-        let options = vardoger_doc::DiffOptions { part_patches: true };
-        let mut patched = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), options);
-        let mut whole = doc_messages_stream(handle.watch_messages(), handle.doc_arc(), Default::default());
-        async fn next(stream: &mut BoxStream<'static, serde_json::Value>) -> serde_json::Value {
-            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-                .await
-                .unwrap()
-                .unwrap()
-        }
-        let read = |value: serde_json::Value| serde_json::from_value::<vardoger_doc::TranscriptUpdate>(value).unwrap();
-        let (mut a, mut b) = (vec![], vec![]);
-        vardoger_doc::apply_transcript_frame(&mut a, read(next(&mut patched).await).frame).unwrap();
-        vardoger_doc::apply_transcript_frame(&mut b, read(next(&mut whole).await).frame).unwrap();
-        // The call in flight finishes, and the next arrives.
-        calls[40] = call(40, Some("done"));
-        calls.push(call(41, None));
-        writer.sync(&calls).unwrap();
-        sink.apply_row(&source.export_snapshot().unwrap(), 2);
-        let value = next(&mut patched).await;
-        assert!(value.get("upsert").is_none_or(|u| u.as_array().is_some_and(Vec::is_empty)), "{value}");
-        let ids: Vec<_> = value["parts"].as_array().unwrap().iter().map(|p| p["part"]["id"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(ids, ["t40", "t41"]);
-        vardoger_doc::apply_transcript_frame(&mut a, read(value).frame).unwrap();
-        let value = next(&mut whole).await;
-        assert!(value.get("parts").is_none(), "{value}");
-        assert_eq!(value["upsert"].as_array().map(Vec::len), Some(1));
-        vardoger_doc::apply_transcript_frame(&mut b, read(value).frame).unwrap();
-        assert_eq!(a, b);
-        assert_eq!(a[0].parts.len(), 42);
-        host.shutdown_workers().await;
-    }
-
-    #[tokio::test]
     async fn context_only_commits_reach_remote_watch_and_reconnect() {
         let host = vardoger_doc::SessionDoc::init("context-chat").unwrap();
         host.update_context_usage(Some(42000), Some(200000))
@@ -7347,7 +6797,6 @@ mod cold_open_tests {
             DocHostConfig {
                 device_id: "viewer".into(),
                 default_harness: vardoger_proto::HarnessId::Mock,
-                edge: None,
             },
         )
     }

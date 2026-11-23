@@ -16,7 +16,6 @@ fn assemble(path: &std::path::Path) -> EngineCore {
         path,
         Arc::new(HarnessRegistry::new()),
         HarnessId::Mock,
-        None,
     )
     .unwrap()
 }

@@ -101,7 +101,7 @@ async fn registry_agents_are_listed_added_as_harnesses_and_removed() {
     ])
     .await;
 
-    let core = EngineCore::assemble(dir.path(), vardoger_engine::registry::default_registry().into(), HarnessId::Mock, None)
+    let core = EngineCore::assemble(dir.path(), vardoger_engine::registry::default_registry().into(), HarnessId::Mock)
         .expect("an isolated engine");
     vardoger_engine::acp_registry::start(dir.path(), &core.registry);
     let client = vardoger_rpc::memory_client(core.rpc_service());

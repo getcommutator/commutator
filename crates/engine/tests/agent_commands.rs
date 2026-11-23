@@ -17,7 +17,6 @@ async fn an_agent_runs_commands_as_its_own_shell_tool_would() {
         dir.path(),
         Arc::new(default_registry()),
         HarnessId::Mock,
-        None,
     )
     .unwrap();
     let tools = Tools::new(Arc::new(Vardoger::with_client(

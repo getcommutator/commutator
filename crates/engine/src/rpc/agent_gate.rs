@@ -235,7 +235,6 @@ mod tests {
             crate::EngineProfile::local(temp.path()).unwrap(),
             std::sync::Arc::new(HarnessRegistry::new()),
             HarnessId::Codex,
-            None,
         )
         .unwrap();
         (temp, core)

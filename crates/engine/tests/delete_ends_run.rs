@@ -151,7 +151,7 @@ fn rig() -> Rig {
         ledger: ledger.clone(),
     }));
     let dir = tempfile::tempdir().unwrap();
-    let core = EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock, None)
+    let core = EngineCore::assemble(dir.path(), Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
     create_chat(&core, CHAT, None);
     Rig {

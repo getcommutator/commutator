@@ -79,7 +79,7 @@ impl Harness for OneLinerHarness {
 fn assemble(dir: &std::path::Path) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(OneLinerHarness));
-    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
+    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles")
 }
 

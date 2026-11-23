@@ -141,7 +141,6 @@ fn engine(data: PathBuf, work: PathBuf) -> ! {
             &data,
             Arc::new(HarnessRegistry::new()),
             HarnessId::Mock,
-            None,
         )
         .unwrap();
         let script = work.join("claude");
@@ -271,7 +270,6 @@ fn agents_a_killed_engine_left_running_are_ended_by_the_next() {
         &data,
         Arc::new(HarnessRegistry::new()),
         HarnessId::Mock,
-        None,
     )
     .unwrap();
     wait_until(

@@ -56,7 +56,7 @@ fn prepare_isolated_gemini_home(tmp: &tempfile::TempDir) -> PathBuf {
 fn assemble(data_dir: &Path, bin: &Path) -> EngineCore {
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(AcpHarness::antigravity().with_executable(bin)));
-    EngineCore::assemble(data_dir, Arc::new(registry), HarnessId::Antigravity, None)
+    EngineCore::assemble(data_dir, Arc::new(registry), HarnessId::Antigravity)
         .expect("engine core assembles")
 }
 

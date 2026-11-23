@@ -13,8 +13,7 @@ pub mod ipc_cli;
 
 pub use engine_commands::run_engine_command;
 pub use vardoger_cli::{
-    DEFAULT_EDGE_URL, DEFAULT_WORKOS_CLIENT_ID, edge_url_from_env, init_logging,
-    long_running_setup, open_log_file, paths, workos_client_id_from_env,
+    DEFAULT_EDGE_URL, edge_url_from_env, init_logging, long_running_setup, open_log_file, paths,
 };
 
 /// mimalloc, macOS only: libmalloc never returns the streaming churn's
@@ -35,20 +34,11 @@ pub fn engine_config_from_env() -> vardoger_engine::EngineConfig {
     // (Every way an engine starts here resolves its configuration first.)
     #[cfg(target_os = "macos")]
     vardoger_engine::heap::set_trim(allocator::trim);
-    // Dev-mode bearer (no WorkOS): an explicit token enables sync.
-    let edge_token = std::env::var("VARDOGER_EDGE_TOKEN").ok();
     vardoger_engine::EngineConfig {
         data_dir: paths::data_dir(),
         edge_url: edge_url_from_env(),
         ipc_port: vardoger_cli::ipc_port_from_env(),
         default_harness: harness_from_env(),
-        // WorkOS mode: the signed-in session's org wins; VARDOGER_ORG_ID (dev
-        // default "dev-org") scopes the workspace room otherwise.
-        org_id: std::env::var("VARDOGER_ORG_ID").ok(),
-        // Real auth against production by default; see
-        // `workos_client_id_from_env` for the dev-mode escape hatches.
-        workos_client_id: workos_client_id_from_env(&edge_token),
-        edge_token,
     }
 }
 
