@@ -71,6 +71,10 @@ pub enum Credentials {
     Dev { user_id: String, org_id: String },
     /// Fully offline, deterministic dataset with a simulated host.
     Demo(DemoOptions),
+    /// The engine on this machine over its IPC (no edge, no sign-in):
+    /// `port` it listens on (27754 by default) and its `data_dir`, where it
+    /// writes the `ipc-token` a dial presents.
+    Local { port: u16, engine_data_dir: PathBuf },
 }
 
 impl Credentials {
@@ -82,6 +86,7 @@ impl Credentials {
         match self {
             Credentials::WorkOs { org_id, .. } | Credentials::Dev { org_id, .. } => org_id,
             Credentials::Demo(_) => "demo",
+            Credentials::Local { .. } => "local",
         }
     }
 
@@ -89,6 +94,7 @@ impl Credentials {
         match self {
             Credentials::WorkOs { user_id, .. } | Credentials::Dev { user_id, .. } => user_id,
             Credentials::Demo(_) => "demo",
+            Credentials::Local { .. } => "local",
         }
     }
 }

@@ -435,6 +435,11 @@ impl SessionCore {
         &self.doc
     }
 
+    /// Cancelled when this session is dropped (its background tasks stop).
+    pub(crate) fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
+        self.tasks.clone()
+    }
+
     fn client(&self) -> Result<Arc<ClientInner>> {
         self.client.upgrade().ok_or(ClientError::Closed)
     }
@@ -1241,6 +1246,11 @@ impl SessionHandle {
             .ok_or_else(|| ClientError::NotFound(self.core.chat_id.clone()))?;
         if request.text.trim().is_empty() && request.attachments.is_empty() {
             return Err(ClientError::InvalidArgument("empty message".into()));
+        }
+        if !request.attachments.is_empty() && client.local().is_some() {
+            return Err(ClientError::Unsupported(
+                "attachments to a local engine".into(),
+            ));
         }
         let composer = self.composer();
         // A turn is running, or a Run of ours is about to start one on a

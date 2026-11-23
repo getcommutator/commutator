@@ -21,6 +21,7 @@ use crate::demo::DemoHost;
 use crate::error::{ClientError, Result};
 use crate::events::{ClientEvent, ClientListener, EventPump};
 use crate::live::LiveBackend;
+use crate::local::LocalHost;
 use crate::rpc::{FolderListing, ProgressFn, QUEUED_ATTACHMENTS_MIN, RepoRef, capability};
 use crate::session::{HostCapabilities, OutgoingAttachment, RoomState, SessionCore, SessionHandle};
 use crate::workspace::{SearchHit, WorkspaceSnapshot, WorkspaceStore};
@@ -63,6 +64,8 @@ pub struct NewSession {
 pub(crate) enum Backend {
     Demo(Arc<DemoHost>),
     Live(Box<LiveBackend>),
+    /// The engine on this machine over IPC ([`crate::local`]).
+    Local(Arc<LocalHost>),
 }
 
 pub(crate) struct ClientInner {
@@ -109,7 +112,7 @@ impl ClientInner {
     pub(crate) fn demo(&self) -> Option<&Arc<DemoHost>> {
         match self.backend() {
             Backend::Demo(demo) => Some(demo),
-            Backend::Live(_) => None,
+            _ => None,
         }
     }
 
@@ -120,8 +123,20 @@ impl ClientInner {
     pub(crate) fn live(&self) -> Option<&LiveBackend> {
         match self.backend.get()? {
             Backend::Live(live) => Some(live),
-            Backend::Demo(_) => None,
+            _ => None,
         }
+    }
+
+    pub(crate) fn local(&self) -> Option<&Arc<LocalHost>> {
+        match self.backend.get()? {
+            Backend::Local(local) => Some(local),
+            _ => None,
+        }
+    }
+
+    /// Local mode: the engine listed its chats (the workspace is current).
+    pub(crate) fn set_synced(&self) {
+        self.synced.store(true, Ordering::Release);
     }
 
     pub(crate) fn session_core(&self, chat_id: &str) -> Option<Arc<SessionCore>> {
@@ -480,6 +495,7 @@ impl ClientInner {
     pub(crate) fn after_command(self: &Arc<Self>, core: &Arc<SessionCore>, has_attachments: bool) {
         match self.backend() {
             Backend::Demo(demo) => demo.on_command(&core.chat_id),
+            Backend::Local(local) => local.on_command(core),
             Backend::Live(live) => {
                 if has_attachments {
                     live.escorts.respawn_chat(self, &core.chat_id);
@@ -499,6 +515,7 @@ impl ClientInner {
         match self.backend() {
             Backend::Demo(demo) => demo.host_rpc(device_id, method, params).await,
             Backend::Live(live) => live.relay.call(device_id, method, params).await,
+            Backend::Local(local) => local.call(method, params).await,
         }
     }
 
@@ -512,6 +529,7 @@ impl ClientInner {
     ) -> Result<crate::host_stream::HostStream> {
         match self.backend() {
             Backend::Demo(demo) => demo.host_subscribe(device_id, method, params).await,
+            Backend::Local(local) => local.subscribe(method, params).await,
             Backend::Live(live) => live
                 .relay
                 .subscribe(device_id, method, params)
@@ -624,7 +642,9 @@ impl Client {
         let tokens = TokenProvider::new(&credentials, config.edge_base(), events.clone());
         // Live: restore the registry replica + open the docs store first, so
         // the very first snapshot renders the cached workspace (instant).
-        let (registry, store) = if credentials.is_demo() {
+        let (registry, store) = if credentials.is_demo()
+            || matches!(credentials, Credentials::Local { .. })
+        {
             // Demo has no edge: nothing would ever ack a queued write, so the
             // replica folds writes straight into its rows (as the engine does
             // for edge-less profiles).
@@ -671,6 +691,10 @@ impl Client {
                 inner.synced.store(true, Ordering::Release);
                 Backend::Demo(demo)
             }
+            Credentials::Local {
+                port,
+                engine_data_dir,
+            } => Backend::Local(LocalHost::new(&inner, *port, engine_data_dir.clone())),
             _ => Backend::Live(Box::new({
                 catalog::DiskCatalog::new(&inner.config.data_dir).warm_labels();
                 LiveBackend::new(
@@ -684,6 +708,7 @@ impl Client {
         inner.recompute_workspace();
         match inner.backend() {
             Backend::Demo(demo) => demo.start(&inner, inner.cancel.clone()),
+            Backend::Local(local) => local.start(),
             Backend::Live(live) => {
                 live.start(&inner);
                 inner.recompute_connectivity();
@@ -738,6 +763,7 @@ impl Client {
     pub fn shutdown(&self) {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.stop(),
+            Backend::Local(local) => local.stop(),
             Backend::Live(live) => {
                 live.flush_registry(&self.inner);
                 live.stop();
@@ -845,6 +871,9 @@ impl Client {
         };
         let id = chat.id.clone();
         self.inner.registry_write(|doc| doc.upsert_chat(&chat))?;
+        if let Some(local) = self.inner.local() {
+            local.chat_created(&chat);
+        }
         Ok(id)
     }
 
@@ -874,6 +903,9 @@ impl Client {
         chat.room_gen = Some(2);
         let id = chat.id.clone();
         self.inner.registry_write(|doc| doc.upsert_chat(&chat))?;
+        if let Some(local) = self.inner.local() {
+            local.chat_created(&chat);
+        }
         Ok(id)
     }
 
@@ -927,11 +959,26 @@ impl Client {
     }
 
     pub fn archive_session(&self, chat_id: &str) -> Result<()> {
-        self.chat_write(chat_id, |doc| doc.set_chat_archived(chat_id, true))
+        self.chat_write(chat_id, |doc| doc.set_chat_archived(chat_id, true))?;
+        self.local_mutate(
+            serde_json::json!({"op": "setChatArchived", "chatId": chat_id, "archived": true}),
+        );
+        Ok(())
     }
 
     pub fn unarchive_session(&self, chat_id: &str) -> Result<()> {
-        self.chat_write(chat_id, |doc| doc.set_chat_archived(chat_id, false))
+        self.chat_write(chat_id, |doc| doc.set_chat_archived(chat_id, false))?;
+        self.local_mutate(
+            serde_json::json!({"op": "setChatArchived", "chatId": chat_id, "archived": false}),
+        );
+        Ok(())
+    }
+
+    /// Local mode: the engine takes the workspace write the replica just did.
+    fn local_mutate(&self, params: serde_json::Value) {
+        if let Some(local) = self.inner.local() {
+            local.mutate(params);
+        }
     }
 
     /// Put a chat to sleep until `until_ms` (Unix ms; the Activity view's
@@ -971,7 +1018,11 @@ impl Client {
     }
 
     pub fn rename_session(&self, chat_id: &str, title: &str) -> Result<()> {
-        self.chat_write(chat_id, |doc| doc.rename_chat(chat_id, title.trim()))
+        self.chat_write(chat_id, |doc| doc.rename_chat(chat_id, title.trim()))?;
+        self.local_mutate(
+            serde_json::json!({"op": "renameChat", "chatId": chat_id, "title": title.trim()}),
+        );
+        Ok(())
     }
 
     pub fn mark_seen(&self, chat_id: &str) {
@@ -995,12 +1046,17 @@ impl Client {
                 "This chat's computer needs a newer Vardoger to switch provider.".into(),
             ));
         }
-        self.chat_write(chat_id, |doc| doc.set_chat_config(chat_id, config))
+        self.chat_write(chat_id, |doc| doc.set_chat_config(chat_id, config))?;
+        self.local_mutate(
+            serde_json::json!({"op": "setChatConfig", "chatId": chat_id, "config": config}),
+        );
+        Ok(())
     }
 
     /// Remove the chat row (the doc itself stays on the edge).
     pub fn delete_session(&self, chat_id: &str) -> Result<()> {
         self.chat_write(chat_id, |doc| doc.delete_chat(chat_id))?;
+        self.local_mutate(serde_json::json!({"op": "deleteChat", "chatId": chat_id}));
         self.forget_local_session(chat_id);
         Ok(())
     }
@@ -1276,6 +1332,7 @@ impl Client {
         let mut journaled = 0;
         let (doc, cursor, hydrated) = match self.inner.backend() {
             Backend::Demo(demo) => (demo.session_doc(chat_id)?, 0, true),
+            Backend::Local(local) => (local.session_doc(chat_id)?, 0, false),
             Backend::Live(live) => {
                 let local = crate::live::room::load_local(&live.store, chat_id);
                 journaled = local.journaled;
@@ -1312,6 +1369,9 @@ impl Client {
         if let Some(demo) = self.inner.demo() {
             demo.session_opened(&core);
         }
+        if let Some(local) = self.inner.local() {
+            local.session_opened(&core);
+        }
         self.inner.evict_sessions();
         Ok(SessionHandle { core })
     }
@@ -1342,11 +1402,11 @@ impl Client {
             Backend::Demo(demo) => {
                 crate::providers::with_demo_toggles(true, demo.list_harnesses(device_id).await)
             }
-            Backend::Live(live) => {
+            Backend::Live(_) | Backend::Local(_) => {
                 let cache = catalog::DiskCatalog::new(&self.inner.config.data_dir);
-                let reply = live
-                    .relay
-                    .call(
+                let reply = self
+                    .inner
+                    .host_rpc(
                         device_id,
                         vardoger_rpc::methods::LIST_HARNESSES,
                         serde_json::json!({}),
@@ -1385,11 +1445,11 @@ impl Client {
     pub async fn list_models(&self, device_id: &str, harness: &str) -> Vec<ModelInfo> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.list_models(harness).await,
-            Backend::Live(live) => {
+            Backend::Live(_) | Backend::Local(_) => {
                 let cache = catalog::DiskCatalog::new(&self.inner.config.data_dir);
-                let reply = live
-                    .relay
-                    .call(
+                let reply = self
+                    .inner
+                    .host_rpc(
                         device_id,
                         vardoger_rpc::methods::LIST_MODELS,
                         serde_json::json!({ "harness": harness }),
@@ -1489,10 +1549,10 @@ impl Client {
     pub async fn list_refs(&self, device_id: &str, repo_path: &str) -> Result<Vec<RepoRef>> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.list_refs(repo_path).await,
-            Backend::Live(live) => {
-                let value = live
-                    .relay
-                    .call(
+            Backend::Live(_) | Backend::Local(_) => {
+                let value = self
+                    .inner
+                    .host_rpc(
                         device_id,
                         vardoger_rpc::methods::LIST_REFS,
                         serde_json::json!({ "repoPath": repo_path }),
@@ -1536,10 +1596,10 @@ impl Client {
                     })
                     .collect())
             }
-            Backend::Live(live) => {
-                let value = live
-                    .relay
-                    .call(
+            Backend::Live(_) | Backend::Local(_) => {
+                let value = self
+                    .inner
+                    .host_rpc(
                         device_id,
                         vardoger_rpc::methods::SEARCH_FILES,
                         serde_json::json!({ "query": query, "chatId": chat_id, "spaceId": space_id }),
@@ -1558,14 +1618,14 @@ impl Client {
     ) -> Result<FolderListing> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.list_folders(device_id, path).await,
-            Backend::Live(live) => {
+            Backend::Live(_) | Backend::Local(_) => {
                 let params = match path.filter(|p| !p.is_empty()) {
                     Some(path) => serde_json::json!({ "path": path }),
                     None => serde_json::json!({}),
                 };
-                let value = live
-                    .relay
-                    .call(device_id, vardoger_rpc::methods::LIST_FOLDERS, params)
+                let value = self
+                    .inner
+                    .host_rpc(device_id, vardoger_rpc::methods::LIST_FOLDERS, params)
                     .await?;
                 serde_json::from_value(value).map_err(|e| ClientError::HostError(e.to_string()))
             }
@@ -1576,9 +1636,9 @@ impl Client {
     pub async fn switch_ref(&self, device_id: &str, repo_path: &str, ref_name: &str) -> Result<()> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.switch_ref(repo_path, ref_name).await,
-            Backend::Live(live) => live
-                .relay
-                .call(
+            Backend::Live(_) | Backend::Local(_) => self
+                .inner
+                .host_rpc(
                     device_id,
                     vardoger_rpc::methods::SWITCH_REF,
                     serde_json::json!({ "repoPath": repo_path, "refName": ref_name }),
@@ -1598,14 +1658,14 @@ impl Client {
     ) -> Result<String> {
         match self.inner.backend() {
             Backend::Demo(demo) => demo.create_worktree(repo_path, branch).await,
-            Backend::Live(live) => {
+            Backend::Live(_) | Backend::Local(_) => {
                 let mut params = serde_json::json!({ "repoPath": repo_path, "branch": branch });
                 if !space_id.is_empty() {
                     params["spaceId"] = serde_json::Value::String(space_id.to_owned());
                 }
-                let value = live
-                    .relay
-                    .call(device_id, vardoger_rpc::methods::CREATE_WORKTREE, params)
+                let value = self
+                    .inner
+                    .host_rpc(device_id, vardoger_rpc::methods::CREATE_WORKTREE, params)
                     .await?;
                 value
                     .get("path")
@@ -1634,6 +1694,9 @@ impl Client {
                 demo.upload(&self.inner, device_id, name, data, progress)
                     .await
             }
+            Backend::Local(_) => Err(ClientError::Unsupported(
+                "attachments to a local engine".into(),
+            )),
             Backend::Live(live) => {
                 let upload_id = crate::new_id();
                 let file_name = attachments::upload_file_name(name);
@@ -1658,6 +1721,7 @@ impl Client {
         let bytes = match self.inner.backend() {
             Backend::Demo(demo) => demo.read_attachment(path)?,
             Backend::Live(live) => Arc::new(live.relay.read_attachment(device_id, path).await?),
+            Backend::Local(local) => local.read_attachment(path).await?,
         };
         self.inner
             .attachment_cache

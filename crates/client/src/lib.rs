@@ -35,6 +35,7 @@ pub mod error;
 pub mod events;
 mod host_stream;
 mod live;
+mod local;
 pub mod providers;
 pub mod rpc;
 pub mod runtime;

@@ -264,10 +264,10 @@ impl Client {
                 lock(&DEMO_DISABLED).insert(harness.to_owned(), !enabled);
                 demo.list_harnesses(device_id).await
             }
-            Backend::Live(live) => {
-                let reply = live
-                    .relay
-                    .call(
+            Backend::Live(_) | Backend::Local(_) => {
+                let reply = self
+                    .inner
+                    .host_rpc(
                         device_id,
                         vardoger_rpc::methods::SET_HARNESS_ENABLED,
                         serde_json::json!({ "harness": harness, "enabled": enabled }),
@@ -338,8 +338,8 @@ impl Client {
     ) -> Result<AgentAccountsSnapshot> {
         match self.inner.backend() {
             Backend::Demo(_) => Ok(demo_accounts()),
-            Backend::Live(live) => {
-                let reply = live.relay.call(device_id, method, params).await?;
+            Backend::Live(_) | Backend::Local(_) => {
+                let reply = self.inner.host_rpc(device_id, method, params).await?;
                 serde_json::from_value(reply).map_err(|e| ClientError::HostError(e.to_string()))
             }
         }
