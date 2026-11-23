@@ -83,6 +83,8 @@ pub(crate) struct ClientInner {
     pub(crate) remote_terminals: vardoger_term_link::remote::RemoteTerminals,
     /// Wakes terminal streams waiting to reconnect (foreground, network back).
     pub(crate) terminals_wake: Arc<tokio::sync::Notify>,
+    /// Remote mode: WebRTC to the account's devices, once started ([`crate::direct`]).
+    pub(crate) direct: Mutex<Option<vardoger_preview::viewer::ViewerPeers>>,
 }
 
 impl Drop for ClientInner {
@@ -446,6 +448,7 @@ impl Client {
             harness_catalogs: Mutex::new(HashMap::new()),
             remote_terminals: Default::default(),
             terminals_wake: Arc::new(tokio::sync::Notify::new()),
+            direct: Mutex::new(None),
             credentials: credentials.clone(),
             config,
         });
@@ -1419,6 +1422,9 @@ impl Client {
     /// terminals waiting to reconnect try now.
     pub fn network_path_changed(&self) {
         self.inner.terminals_wake.notify_waiters();
+        if let Some(direct) = lock(&self.inner.direct).as_ref() {
+            direct.network_changed();
+        }
     }
 
     /// App returned to the foreground: resume ticking.
@@ -1428,6 +1434,11 @@ impl Client {
             vardoger_sync::wake::set_resting(false);
         }
         self.inner.terminals_wake.notify_waiters();
+        if let Some(direct) = lock(&self.inner.direct).as_ref() {
+            // ponytail: time away isn't tracked, so connections are kept (a dead one
+            // ends by silence); pass the real time once on_foreground takes it.
+            direct.foreground(Duration::ZERO);
+        }
         self.inner.tick();
     }
 

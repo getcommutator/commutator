@@ -17,6 +17,10 @@ vardoger-doc.workspace = true
 vardoger-sync.workspace = true
 vardoger-rpc.workspace = true
 vardoger-term-link.workspace = true
+# WebRTC to the account's machines in Remote mode: terminals go direct when
+# they can, previews open over it (src/direct.rs).
+vardoger-preview.workspace = true
+anyhow.workspace = true
 loro.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

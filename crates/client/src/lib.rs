@@ -33,6 +33,7 @@ mod client;
 pub mod config;
 pub mod connectivity;
 mod demo;
+pub mod direct;
 pub mod error;
 pub mod events;
 mod host_stream;
@@ -51,6 +52,8 @@ pub use config::{
     ClientConfig, Credentials, DemoFixture, DemoOptions, StreamSpeed, TranscriptScale,
 };
 pub use connectivity::{Connectivity, ConnectivityState, SendState};
+pub use direct::PreviewTunnel;
+pub use vardoger_proto::PreviewService;
 pub use error::ClientError;
 pub use events::{ClientEvent, ClientListener};
 pub use session::{

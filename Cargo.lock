@@ -6789,6 +6789,7 @@ dependencies = [
  "uuid",
  "vardoger-doc",
  "vardoger-engine",
+ "vardoger-preview",
  "vardoger-proto",
  "vardoger-rpc",
  "vardoger-server",

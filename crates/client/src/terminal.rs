@@ -1,8 +1,12 @@
 //! Terminals on a chat's host: the engine's PTY sessions, carried by the hub
 //! every viewer runs (`vardoger_term_link::remote`, the desktop engine's too):
 //!
-//! - **Over the host's RPC connection** (IPC, or the server relay); no
-//!   direct WebRTC path, since the server has no signaling for one.
+//! - **Direct when it can be** (Remote mode, [`crate::direct`]). A terminal
+//!   starts on a direct WebRTC link to its host when one is up, else on the
+//!   host's RPC connection (the server relay) while pairing runs beside it,
+//!   then moves onto the direct link mid-stream — and back to the relay if
+//!   the link dies — resuming after the last output it showed: no gap, no
+//!   repeat. A Local client stays on IPC.
 //! - **No keystroke lost or doubled.** Input is numbered and held until the
 //!   host acknowledges it; a reconnect replays what's pending and the host
 //!   applies each number once. Writes never wait on the network.
@@ -19,7 +23,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use vardoger_proto::TerminalEvent;
 use vardoger_rpc::{RpcError, methods};
-use vardoger_term_link::remote::{Relay, TerminalPath, Write};
+use vardoger_term_link::remote::{Direct, Relay, TerminalPath, Write};
 
 use crate::client::{Client, ClientInner};
 use crate::error::{ClientError, Result};
@@ -229,6 +233,15 @@ impl Client {
     /// Open a shell for `chat_id` on its host, in the chat's working folder.
     pub async fn open_terminal(&self, chat_id: &str, cols: u16, rows: u16) -> Result<TerminalInfo> {
         let device_id = self.chat_host(chat_id)?;
+        // Pair while the open crosses the relay, so the stream usually
+        // starts on the direct link.
+        let inner = self.inner.clone();
+        let host = device_id.clone();
+        crate::runtime::shared().spawn(async move {
+            if let Ok(Some(peers)) = crate::direct::peers(&inner).await {
+                peers.warm(&host);
+            }
+        });
         let reply = self
             .inner
             .host_rpc(
@@ -304,10 +317,15 @@ async fn follow(
         let Some(inner) = weak.upgrade() else { return };
         let hub = inner.remote_terminals.clone();
         let wake = inner.terminals_wake.clone();
+        let direct = crate::direct::peers(&inner)
+            .await
+            .ok()
+            .flatten()
+            .map(|peers| Arc::new(peers) as Arc<dyn Direct>);
         drop(inner);
         let subscribe = hub.subscribe_tracked(
             relay.clone(),
-            None,
+            direct,
             &info.device_id,
             &info.id,
             last_seq,
