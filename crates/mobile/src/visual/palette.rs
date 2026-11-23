@@ -1,12 +1,12 @@
 //! The colors visuals paint with: the app palette for one appearance
-//! (`apps/ios/Zeron/Design/Palette.swift`, the desktop's Zeron theme), and
+//! (`apps/ios/Vardoger/Design/Palette.swift`, the desktop's Vardoger theme), and
 //! the categorical chart series derived from its accent as the desktop does
 //! (`crates/ui/src/visuals.rs`, `chart_series`).
 //!
 //! Visuals resolve colors in Rust, unlike transcript rows: scenes and
 //! shaders bake them into GPU frames, so the painter only ever sees RGBA.
 
-use zeron_visual::{Color, Token};
+use vardoger_visual::{Color, Token};
 
 use super::Rgba;
 

@@ -1,14 +1,14 @@
 #!/bin/bash
 # Build the Rust mobile core (crates/mobile) for the active Xcode platform and
-# generate its Swift bindings. Run by the Zeron target's "Rust core" build
+# generate its Swift bindings. Run by the Vardoger target's "Rust core" build
 # phase; also runnable by hand (defaults to the simulator, dev profile).
 #
 #   scripts/ios/build-core.sh [iphonesimulator|iphoneos]
 #
 # Outputs (target/ios-core/<platform>/):
-#   libzeron_mobile.a            linked via LIBRARY_SEARCH_PATHS
-#   include/module.modulemap     `import zeron_coreFFI` (SWIFT_INCLUDE_PATHS)
-# and refreshes apps/ios/Zeron/Core/Generated/zeron_core.swift — committed so
+#   libvardoger_mobile.a            linked via LIBRARY_SEARCH_PATHS
+#   include/module.modulemap     `import vardoger_coreFFI` (SWIFT_INCLUDE_PATHS)
+# and refreshes apps/ios/Vardoger/Core/Generated/vardoger_core.swift — committed so
 # Xcode's synchronized folder always sees it — and apps/ios/CoreFFI/ (the C
 # header and module map, committed so CI's simulator tests need no bindings
 # build; outside the synchronized folders, so Xcode compiles nothing from it).
@@ -25,7 +25,7 @@ esac
 PROFILE=mobile
 if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then PROFILE=mobile-dist; fi
 # A published core (mobile-dist: TestFlight, the App Store) runs Luau
-# (zeron-visual's) without its asserts, a fifth of script time; a development
+# (vardoger-visual's) without its asserts, a fifth of script time; a development
 # one keeps them. The library's build alone: the bindings tool is the host's.
 LUAU_ENV=""
 if [[ "$PROFILE" == "mobile-dist" ]]; then LUAU_ENV="LUAU_CXXFLAGS=-DNDEBUG"; fi
@@ -34,8 +34,8 @@ OUT="$ROOT/target/ios-core/$PLATFORM"
 mkdir -p "$OUT/include"
 
 # Iterating on Swift while the core is mid-edit: reuse the last good build.
-if [[ "${ZERON_SKIP_CORE:-}" == "1" && -f "$OUT/libzeron_mobile.a" ]]; then
-  echo "note: ZERON_SKIP_CORE=1 — reusing $OUT/libzeron_mobile.a"
+if [[ "${VARDOGER_SKIP_CORE:-}" == "1" && -f "$OUT/libvardoger_mobile.a" ]]; then
+  echo "note: VARDOGER_SKIP_CORE=1 — reusing $OUT/libvardoger_mobile.a"
   exit 0
 fi
 
@@ -60,24 +60,24 @@ run_cargo() {
 }
 
 cd "$ROOT"
-CORE_ENV="$LUAU_ENV" run_cargo build --locked -p zeron-mobile --lib --profile "$PROFILE" --target "$TARGET"
-run_cargo build --locked -p zeron-mobile --bin uniffi-bindgen --features bindgen --profile mobile
+CORE_ENV="$LUAU_ENV" run_cargo build --locked -p vardoger-mobile --lib --profile "$PROFILE" --target "$TARGET"
+run_cargo build --locked -p vardoger-mobile --bin uniffi-bindgen --features bindgen --profile mobile
 
-LIB="$ROOT/target/$TARGET/$PROFILE/libzeron_mobile.a"
+LIB="$ROOT/target/$TARGET/$PROFILE/libvardoger_mobile.a"
 # With its asserts, each LUAU_ASSERT keeps its Luau source file's path
 # (Luau/Common.h's __FILE__), VM/src/l*.cpp; with NDEBUG, none.
 if [[ "$PROFILE" == "mobile-dist" ]] && LC_ALL=C grep -aqE 'VM[\\/]src[\\/]l[a-z]+\.cpp' "$LIB"; then
   echo "error: $LIB was built with Luau's asserts: build it with LUAU_CXXFLAGS=-DNDEBUG" >&2
   exit 1
 fi
-cp -p "$LIB" "$OUT/libzeron_mobile.a"
+cp -p "$LIB" "$OUT/libvardoger_mobile.a"
 
 GEN="$OUT/gen"
 "$ROOT/target/mobile/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
-cp "$GEN/zeron_coreFFI.h" "$OUT/include/zeron_coreFFI.h"
-cp "$GEN/zeron_coreFFI.modulemap" "$OUT/include/module.modulemap"
+cp "$GEN/vardoger_coreFFI.h" "$OUT/include/vardoger_coreFFI.h"
+cp "$GEN/vardoger_coreFFI.modulemap" "$OUT/include/module.modulemap"
 # Only touch the committed files when they changed so Xcode doesn't recompile them.
 refresh() { mkdir -p "$(dirname "$2")"; cmp -s "$1" "$2" || cp "$1" "$2"; }
-refresh "$GEN/zeron_core.swift" "$ROOT/apps/ios/Zeron/Core/Generated/zeron_core.swift"
-refresh "$GEN/zeron_coreFFI.h" "$ROOT/apps/ios/CoreFFI/zeron_coreFFI.h"
-refresh "$GEN/zeron_coreFFI.modulemap" "$ROOT/apps/ios/CoreFFI/module.modulemap"
+refresh "$GEN/vardoger_core.swift" "$ROOT/apps/ios/Vardoger/Core/Generated/vardoger_core.swift"
+refresh "$GEN/vardoger_coreFFI.h" "$ROOT/apps/ios/CoreFFI/vardoger_coreFFI.h"
+refresh "$GEN/vardoger_coreFFI.modulemap" "$ROOT/apps/ios/CoreFFI/module.modulemap"

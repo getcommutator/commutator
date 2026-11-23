@@ -1,12 +1,12 @@
-//! Zeron mobile core — the UniFFI surface shared by the iOS and Android apps.
+//! Vardoger mobile core — the UniFFI surface shared by the iOS and Android apps.
 //!
-//! - [`client_ffi`]: account, workspace and session state (wraps `zeron-client`).
+//! - [`client_ffi`]: account, workspace and session state (wraps `vardoger-client`).
 //! - [`layout`]: analytic transcript layout — markdown → measured display lists
-//!   (wraps `zeron-markdown` + `zeron-text`).
-//! - [`orb`]: the desktop's voice orb as paintable frames (wraps `zeron-orb`).
-//! - [`caption`]: the voice caption's streaming veil (wraps `zeron-veil`).
+//!   (wraps `vardoger-markdown` + `vardoger-text`).
+//! - [`orb`]: the desktop's voice orb as paintable frames (wraps `vardoger-orb`).
+//! - [`caption`]: the voice caption's streaming veil (wraps `vardoger-veil`).
 
-uniffi::setup_scaffolding!("zeron_core");
+uniffi::setup_scaffolding!("vardoger_core");
 
 mod client_ffi;
 pub mod layout;
