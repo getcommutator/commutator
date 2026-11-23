@@ -584,39 +584,6 @@ fn session_presence(session: &Session, now: DateTime<Utc>) -> (Indicator, u32) {
 // Org gate (pure)
 // ---------------------------------------------------------------------------
 
-/// One org membership row (tolerant local mirror of the engine's ListOrgs
-/// reply — `{orgs: [{id, organizationId, name}]}`).
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrgRow {
-    pub organization_id: String,
-    pub name: String,
-}
-
-/// Parse a ListOrgs reply tolerantly (accepts a bare array too).
-pub fn parse_orgs(value: &serde_json::Value) -> Vec<OrgRow> {
-    let list = value.get("orgs").unwrap_or(value);
-    serde_json::from_value(list.clone()).unwrap_or_default()
-}
-
-/// Workspace names must be non-empty (trimmed) and reasonably short.
-pub fn org_name_valid(name: &str) -> bool {
-    let trimmed = name.trim();
-    !trimmed.is_empty() && trimmed.chars().count() <= 64
-}
-
-/// Memberships sorted by name (case-insensitive), deduped by organization id.
-pub fn sort_memberships(mut orgs: Vec<OrgRow>) -> Vec<OrgRow> {
-    orgs.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
-            .then_with(|| a.name.cmp(&b.name))
-    });
-    orgs.dedup_by(|a, b| a.organization_id == b.organization_id);
-    orgs
-}
-
 // ---------------------------------------------------------------------------
 // AppState entity
 // ---------------------------------------------------------------------------
@@ -1522,7 +1489,7 @@ impl AppState {
     /// The signed-in user, if the engine reports one.
     pub fn auth_user(&self) -> Option<&vardoger_proto::UserProfile> {
         match self.auth.as_ref()? {
-            AuthState::SignedIn { user, .. } | AuthState::NeedsOrganization { user } => Some(user),
+            AuthState::SignedIn { user, .. } => Some(user),
             AuthState::SignedOut => None,
         }
     }
@@ -2376,7 +2343,7 @@ impl AppState {
     }
 
     pub fn gate(&self) -> GatePhase {
-        gate_phase(&self.connection, self.workspace_scope, self.auth.as_ref())
+        gate_phase(&self.connection)
     }
 
     pub fn engine(&self) -> Option<&EngineHandle> {
@@ -3783,14 +3750,6 @@ mod tests {
 
         assert_eq!(info.device_id, "legacy-device");
         assert_eq!(info.workspace_scope, WorkspaceScope::Synced);
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(info.workspace_scope),
-                Some(&AuthState::SignedOut),
-            ),
-            GatePhase::SignIn
-        );
     }
 
     #[tokio::test]
@@ -5559,8 +5518,9 @@ mod tests {
             email: "w@example.com".into(),
             name: None,
         };
-        assert!(state.apply_auth(AuthState::NeedsOrganization { user: user.clone() }));
-        assert!(!state.apply_auth(AuthState::NeedsOrganization { user }));
+        let signed_in = AuthState::SignedIn { user, org_id: None };
+        assert!(state.apply_auth(signed_in.clone()));
+        assert!(!state.apply_auth(signed_in));
         assert!(!state.apply_auth_value(serde_json::json!({ "bogus": true })));
 
         let status = |phase| HarnessUpdateStatus { wait_reason: Default::default(),
@@ -5849,55 +5809,12 @@ mod tests {
 
     #[test]
     fn gate_phases() {
-        let user = UserProfile {
-            id: "u".into(),
-            email: "w@example.com".into(),
-            name: None,
-        };
+        assert_eq!(gate_phase(&ConnectionStatus::Connecting), GatePhase::Loading);
         assert_eq!(
-            gate_phase(&ConnectionStatus::Connecting, None, None),
-            GatePhase::Loading
-        );
-        assert_eq!(
-            gate_phase(&ConnectionStatus::Failed("boom".into()), None, None),
+            gate_phase(&ConnectionStatus::Failed("boom".into())),
             GatePhase::Failed("boom".into())
         );
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Local),
-                Some(&AuthState::SignedOut),
-            ),
-            GatePhase::Ready
-        );
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::SignedOut),
-            ),
-            GatePhase::SignIn
-        );
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::SignedIn {
-                    user: user.clone(),
-                    org_id: None
-                })
-            ),
-            GatePhase::Ready
-        );
-        // No org yet → org gate.
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::NeedsOrganization { user })
-            ),
-            GatePhase::OrgGate
-        );
+        assert_eq!(gate_phase(&ConnectionStatus::Ready), GatePhase::Ready);
     }
 
     #[test]
@@ -5905,16 +5822,6 @@ mod tests {
         let mut state = AppState::new();
         state.workspace_scope = Some(WorkspaceScope::Local);
         state.watch_tasks.push(Task::ready(()));
-
-        state.apply_auth(AuthState::NeedsOrganization {
-            user: UserProfile {
-                id: "u".into(),
-                email: "w@example.com".into(),
-                name: None,
-            },
-        });
-        assert_eq!(state.workspace_scope, Some(WorkspaceScope::Local));
-        assert_eq!(state.watch_tasks.len(), 1);
 
         state.apply_auth(AuthState::SignedIn {
             user: UserProfile {
@@ -5944,14 +5851,6 @@ mod tests {
         };
         assert_eq!(user.email, "w@example.com");
         assert_eq!(org_id.as_deref(), Some("org-1"));
-        let needs = serde_json::json!({
-            "_tag": "NeedsOrganization",
-            "user": { "id": "u1", "email": "w@example.com", "name": "W" },
-        });
-        assert!(matches!(
-            parse_auth_state(&needs),
-            Some(AuthState::NeedsOrganization { .. })
-        ));
         // Garbage → None (frame dropped, not a crash).
         assert_eq!(
             parse_auth_state(&serde_json::json!({ "_tag": "Wat" })),
@@ -6044,36 +5943,6 @@ mod tests {
             c.cwd = Some(cwd.into());
             assert_eq!(chat_location(&c), None);
         }
-    }
-
-    #[test]
-    fn org_gate_reducers() {
-        assert!(org_name_valid("Acme"));
-        assert!(org_name_valid("  padded  "));
-        assert!(!org_name_valid(""));
-        assert!(!org_name_valid("   "));
-        assert!(!org_name_valid(&"x".repeat(65)));
-
-        let rows = parse_orgs(&serde_json::json!({ "orgs": [
-            { "id": "m2", "organizationId": "o2", "name": "beta" },
-            { "id": "m1", "organizationId": "o1", "name": "Alpha" },
-            { "id": "m3", "organizationId": "o1", "name": "Alpha" },
-        ]}));
-        assert_eq!(rows.len(), 3);
-        let sorted = sort_memberships(rows);
-        let names: Vec<&str> = sorted.iter().map(|o| o.name.as_str()).collect();
-        assert_eq!(
-            names,
-            ["Alpha", "beta"],
-            "case-insensitive sort + dedupe by org id"
-        );
-        // Bare-array replies parse too; garbage yields empty.
-        assert_eq!(
-            parse_orgs(&serde_json::json!([{ "id": "m", "organizationId": "o", "name": "n" }]))
-                .len(),
-            1
-        );
-        assert!(parse_orgs(&serde_json::json!("nope")).is_empty());
     }
 
     #[test]

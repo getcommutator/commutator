@@ -187,20 +187,6 @@ mod tests {
             workspace_locator(scope, Some(&AuthState::SignedOut), Some("device-a")),
             None
         );
-        assert_eq!(
-            workspace_locator(
-                scope,
-                Some(&AuthState::NeedsOrganization {
-                    user: vardoger_proto::UserProfile {
-                        id: "user-a".into(),
-                        email: "user@example.com".into(),
-                        name: None,
-                    },
-                }),
-                Some("device-a"),
-            ),
-            None
-        );
         assert!(
             workspace_locator(
                 scope,

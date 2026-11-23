@@ -12,7 +12,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::{AuthState, Chat, ChatIndicator, Session, SessionStatus, Space, WorkspaceScope};
+use crate::{AuthState, Chat, ChatIndicator, Session, SessionStatus, Space};
 
 // ---------------------------------------------------------------------------
 // Connection + status
@@ -336,33 +336,17 @@ pub enum GatePhase {
     Loading,
     /// Engine unreachable and embedding failed.
     Failed(String),
-    /// Engine up, but signed out — show the sign-in card.
-    SignIn,
-    /// Signed in but no organization selected — "Create your workspace".
-    OrgGate,
     /// Render the shell.
     Ready,
 }
 
-/// Missing scope is treated as synced. Current engines always publish
-/// [`WorkspaceScope`] before becoming ready, while old daemons are deliberately
-/// kept behind the account gate instead of being mistaken for local runtimes.
-pub fn gate_phase(
-    connection: &ConnectionStatus,
-    workspace_scope: Option<WorkspaceScope>,
-    auth: Option<&AuthState>,
-) -> GatePhase {
+/// The gate for a connection. Signed in or not, the workspace is this
+/// device's, so a ready engine always renders the shell.
+pub fn gate_phase(connection: &ConnectionStatus) -> GatePhase {
     match connection {
         ConnectionStatus::Connecting => GatePhase::Loading,
         ConnectionStatus::Failed(err) => GatePhase::Failed(err.clone()),
-        ConnectionStatus::Ready => match workspace_scope.unwrap_or(WorkspaceScope::Synced) {
-            WorkspaceScope::Local | WorkspaceScope::Development => GatePhase::Ready,
-            WorkspaceScope::Synced => match auth {
-                Some(AuthState::NeedsOrganization { .. }) => GatePhase::OrgGate,
-                Some(AuthState::SignedIn { .. }) => GatePhase::Ready,
-                Some(AuthState::SignedOut) | None => GatePhase::SignIn,
-            },
-        },
+        ConnectionStatus::Ready => GatePhase::Ready,
     }
 }
 
@@ -435,16 +419,6 @@ mod project_tests {
 #[cfg(test)]
 mod gate_tests {
     use super::*;
-    use crate::UserProfile;
-
-    fn user() -> UserProfile {
-        UserProfile {
-            id: "user-1".into(),
-            email: "user@example.com".into(),
-            name: None,
-        }
-    }
-
     fn running_session(running: u32, updated_at: DateTime<Utc>) -> Session {
         Session {
             last_completed_turn: None,
@@ -650,60 +624,6 @@ mod gate_tests {
         );
     }
 
-    #[test]
-    fn workspace_scope_controls_the_auth_gate() {
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Local),
-                Some(&AuthState::SignedOut),
-            ),
-            GatePhase::Ready
-        );
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::SignedOut),
-            ),
-            GatePhase::SignIn
-        );
-        assert_eq!(
-            gate_phase(
-                &ConnectionStatus::Ready,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::NeedsOrganization { user: user() }),
-            ),
-            GatePhase::OrgGate
-        );
-    }
-
-    #[test]
-    fn development_and_local_never_use_the_sign_in_gate() {
-        for scope in [WorkspaceScope::Local, WorkspaceScope::Development] {
-            for auth in [
-                AuthState::SignedOut,
-                AuthState::NeedsOrganization { user: user() },
-                AuthState::SignedIn {
-                    user: user(),
-                    org_id: Some("org-1".into()),
-                },
-            ] {
-                assert_eq!(
-                    gate_phase(&ConnectionStatus::Ready, Some(scope), Some(&auth)),
-                    GatePhase::Ready
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn missing_scope_falls_back_to_a_synced_gate() {
-        assert_eq!(
-            gate_phase(&ConnectionStatus::Ready, None, None),
-            GatePhase::SignIn
-        );
-    }
 }
 
 /// Parse an `AuthStatus` frame tolerantly. The engine currently serializes its
@@ -725,7 +645,6 @@ pub fn parse_auth_state(value: &serde_json::Value) -> Option<AuthState> {
     };
     match tag {
         "SignedOut" => Some(AuthState::SignedOut),
-        "NeedsOrganization" => Some(AuthState::NeedsOrganization { user: user()? }),
         "SignedIn" => Some(AuthState::SignedIn {
             user: user()?,
             org_id: value

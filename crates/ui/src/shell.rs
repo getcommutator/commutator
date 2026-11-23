@@ -56,8 +56,8 @@ use crate::settings::{
     platform_combo, sidebar_pin_profile_key,
 };
 use crate::state::{
-    AppState, ConnectionStatus, EngineBootConfig, EngineMode, GatePhase, Indicator, OrgRow,
-    format_time_ago, org_name_valid, parse_orgs, sort_memberships,
+    AppState, ConnectionStatus, EngineBootConfig, EngineMode, GatePhase, Indicator,
+    format_time_ago,
 };
 use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_height};
 use crate::theme::Theme;
@@ -1498,80 +1498,57 @@ struct ChatRename {
     _blur: Option<Subscription>,
 }
 
-/// Account lifecycle owned by this process. Sign-in on a local workspace
-/// flows through the in-place switch wizard (offer → switch → import → done);
-/// `RestartPending` survives only as the fallback when the in-place swap
-/// fails and a full quit is the safe way out.
+/// Wait until a stopped daemon can no longer win the next bootstrap probe and
+/// has released the data directory for the replacement runtime.
+async fn wait_for_remote_engine_shutdown(
+    ipc_port: u16,
+    data_dir: &std::path::Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let port_closed = !matches!(
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                tokio::net::TcpStream::connect(("127.0.0.1", ipc_port)),
+            )
+            .await,
+            Ok(Ok(_))
+        );
+        if port_closed && InstanceLock::holder(data_dir).is_none() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "the daemon did not finish stopping within {} seconds",
+                timeout.as_secs()
+            ));
+        }
+        tokio::time::sleep(RUNTIME_CHANGE_POLL_INTERVAL).await;
+    }
+}
+
+/// Account lifecycle owned by this process. The workspace stays on this
+/// device either way: a sign-in finished here asks for a restart (the relay
+/// starts at launch), and signing out only leaves the account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncFlow {
     Idle,
     Enabling,
     Canceling,
-    /// Signed in on a local runtime: the wizard's choice step (bring local
-    /// work / start fresh / later). `notice_open: false` = postponed, badge
-    /// in the account menu.
-    SwitchOffer {
-        notice_open: bool,
-    },
-    /// Stopping the local runtime and bootstrapping the synced one in-place.
-    Switching {
-        import: bool,
-    },
-    /// The one-time import stream is running on the new synced runtime.
-    Importing {
-        done: usize,
-        total: usize,
-    },
-    /// Import finished; the success step stays until dismissed.
-    ImportDone {
-        imported: usize,
-        skipped: usize,
-    },
-    /// The import stream reported errors or died early. Explicit retry step —
-    /// structural idempotence makes re-running safe (only missing rows copy).
-    /// Details ride `runtime_change_error`. `notice_open: false` = postponed:
-    /// the dialog is hidden but the failure stays pending, reachable through
-    /// the account menu — dismissal must never discard the only retry
-    /// entry point (under Synced scope the menu otherwise offers just
-    /// Sign out, and the local rows would be unreachable).
-    ImportFailed {
-        notice_open: bool,
-    },
     RestartPending {
         notice_open: bool,
     },
     SignOutConfirm,
     SigningOut,
-    SignedOutRestartRequired,
 }
 
 impl SyncFlow {
-    /// States the in-place switch driver owns end-to-end — auth/scope edges
-    /// must not reset them while the runtime is being replaced under the UI.
-    fn is_switch_lifecycle(self) -> bool {
-        matches!(
-            self,
-            SyncFlow::Switching { .. }
-                | SyncFlow::Importing { .. }
-                | SyncFlow::ImportDone { .. }
-                | SyncFlow::ImportFailed { .. }
-        )
-    }
-
     fn has_visible_overlay(self) -> bool {
         match self {
-            SyncFlow::Idle
-            | SyncFlow::SwitchOffer { notice_open: false }
-            | SyncFlow::ImportFailed { notice_open: false }
-            | SyncFlow::RestartPending { notice_open: false }
-            | SyncFlow::SignedOutRestartRequired => false,
+            SyncFlow::Idle | SyncFlow::RestartPending { notice_open: false } => false,
             SyncFlow::Enabling
             | SyncFlow::Canceling
-            | SyncFlow::SwitchOffer { notice_open: true }
-            | SyncFlow::Switching { .. }
-            | SyncFlow::Importing { .. }
-            | SyncFlow::ImportDone { .. }
-            | SyncFlow::ImportFailed { notice_open: true }
             | SyncFlow::RestartPending { notice_open: true }
             | SyncFlow::SignOutConfirm
             | SyncFlow::SigningOut => true,
@@ -1686,105 +1663,6 @@ enum DiscardWorkingTreeFlow {
 const RUNTIME_CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_CHANGE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Wait until a stopped daemon can no longer win the next bootstrap probe and
-/// has released the data directory for the replacement runtime.
-async fn wait_for_remote_engine_shutdown(
-    ipc_port: u16,
-    data_dir: &std::path::Path,
-    timeout: Duration,
-) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let port_closed = !matches!(
-            tokio::time::timeout(
-                Duration::from_millis(200),
-                tokio::net::TcpStream::connect(("127.0.0.1", ipc_port)),
-            )
-            .await,
-            Ok(Ok(_))
-        );
-        if port_closed && InstanceLock::holder(data_dir).is_none() {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(format!(
-                "the daemon did not finish stopping within {} seconds",
-                timeout.as_secs()
-            ));
-        }
-        tokio::time::sleep(RUNTIME_CHANGE_POLL_INTERVAL).await;
-    }
-}
-
-/// Stop the engine that owns the synced profile and wait until a local runtime
-/// can safely acquire both its IPC port and data-directory lock.
-async fn stop_synced_runtime(
-    engine: crate::state::EngineHandle,
-    ipc_port: u16,
-    data_dir: &std::path::Path,
-) -> Result<(), String> {
-    let stop_error = if matches!(engine.mode(), EngineMode::Remote { .. }) {
-        engine
-            .client()
-            .call(methods::STOP_ENGINE, serde_json::json!({}))
-            .await
-            .err()
-            .map(|error| error.to_string())
-    } else {
-        None
-    };
-    engine.shutdown().await;
-    match wait_for_remote_engine_shutdown(ipc_port, data_dir, RUNTIME_CHANGE_TIMEOUT).await {
-        Ok(()) => Ok(()),
-        Err(error) => match stop_error {
-            Some(stop_error) => Err(format!("{stop_error}; {error}")),
-            None => Err(error),
-        },
-    }
-}
-
-/// What an import-summary stream item means for the wizard: `Ok((imported,
-/// skipped))` only when the engine reported zero errors; otherwise the
-/// user-facing failure message. Pure so the partial-failure path is testable.
-fn import_summary_outcome(item: &serde_json::Value) -> Result<(usize, usize), String> {
-    let count = |key: &str| item.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let errors: Vec<&str> = item
-        .get("errors")
-        .and_then(|e| e.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    if errors.is_empty() {
-        return Ok((count("importedChats"), count("skippedChats")));
-    }
-    let first = errors.first().copied().unwrap_or("unknown error");
-    Err(if errors.len() == 1 {
-        format!("{} imported, 1 failure: {first}", count("importedChats"))
-    } else {
-        format!(
-            "{} imported, {} failures — first: {first}",
-            count("importedChats"),
-            errors.len()
-        )
-    })
-}
-
-/// The offer step's description of what a switch would bring along, or `None`
-/// when the local profile holds nothing importable. Spaces count as work:
-/// a projects-only profile must get the import choice too.
-fn local_work_phrase(chats: usize, spaces: usize) -> Option<String> {
-    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-    match (chats, spaces) {
-        (0, 0) => None,
-        (c, 0) => Some(format!("the {}", plural(c, "session"))),
-        (0, s) => Some(format!("the {}", plural(s, "project"))),
-        (c, s) => Some(format!(
-            "the {} and {}",
-            plural(c, "session"),
-            plural(s, "project")
-        )),
-    }
-}
-
 fn account_menu_action(
     scope: Option<WorkspaceScope>,
     flow: SyncFlow,
@@ -1795,26 +1673,10 @@ fn account_menu_action(
             SyncFlow::Idle if signed_in => Some(AccountMenuAction::SignOut),
             SyncFlow::Idle => Some(AccountMenuAction::EnableSync),
             SyncFlow::Enabling | SyncFlow::Canceling => Some(AccountMenuAction::SyncInProgress),
-            SyncFlow::SwitchOffer { .. } | SyncFlow::RestartPending { .. } => {
-                Some(AccountMenuAction::RestartPending)
-            }
-            SyncFlow::ImportFailed { .. } => Some(AccountMenuAction::RestartPending),
-            SyncFlow::Switching { .. }
-            | SyncFlow::Importing { .. }
-            | SyncFlow::ImportDone { .. } => Some(AccountMenuAction::SyncInProgress),
-            SyncFlow::SignOutConfirm
-            | SyncFlow::SigningOut
-            | SyncFlow::SignedOutRestartRequired => None,
+            SyncFlow::RestartPending { .. } => Some(AccountMenuAction::RestartPending),
+            SyncFlow::SignOutConfirm | SyncFlow::SigningOut => None,
         },
-        Some(WorkspaceScope::Synced) => match flow {
-            SyncFlow::SignedOutRestartRequired => None,
-            // A pending import failure must stay reachable: this is the only
-            // surface that can reopen the retry dialog on a synced runtime.
-            SyncFlow::ImportFailed { .. } => Some(AccountMenuAction::RestartPending),
-            _ if flow.is_switch_lifecycle() => Some(AccountMenuAction::SyncInProgress),
-            _ => Some(AccountMenuAction::SignOut),
-        },
-        Some(WorkspaceScope::Development) | None => None,
+        Some(WorkspaceScope::Synced | WorkspaceScope::Development) | None => None,
     }
 }
 
@@ -1875,33 +1737,9 @@ fn sync_flow_after_auth(
             ) => SyncFlow::Idle,
             _ => flow,
         },
-        Some(WorkspaceScope::Synced) => match auth {
-            // AuthStatus is shared by every viewport attached to the runtime.
-            // Once a synced store loses its credentials, every Shell must stop:
-            // letting another viewport sign in would authenticate a new account
-            // while the engine still serves the previous account's fixed store.
-            Some(AuthState::SignedOut) => SyncFlow::SignedOutRestartRequired,
-            _ => match flow {
-                SyncFlow::SignOutConfirm
-                | SyncFlow::SigningOut
-                | SyncFlow::SignedOutRestartRequired => flow,
-                flow if flow.is_switch_lifecycle() => flow,
-                _ => SyncFlow::Idle,
-            },
-        },
-        Some(WorkspaceScope::Development) => SyncFlow::Idle,
+        Some(WorkspaceScope::Synced | WorkspaceScope::Development) => SyncFlow::Idle,
         None => flow,
     }
-}
-
-/// The "Create your workspace" gate (feature-inventory §1.2 OrgGate).
-struct OrgGateUi {
-    name_input: Entity<ComposerInput>,
-    orgs: Loadable<Vec<OrgRow>>,
-    submitting: bool,
-    error: Option<SharedString>,
-    task: Option<Task<()>>,
-    _events: Subscription,
 }
 
 /// One right-pane subagent tab: the doc it shows, its strip title, and the
@@ -2184,7 +2022,6 @@ pub struct Shell {
     /// lifecycle ([`crate::app_update`]) moves. `None` when the app runs
     /// without a desktop checker (tests).
     _app_update_observation: Option<Subscription>,
-    org: Option<OrgGateUi>,
     sync_flow: SyncFlow,
     /// First-run setup in place of the Ready shell; built on first Ready
     /// render from `onboarding_pending` (a fresh install, or
@@ -2192,17 +2029,10 @@ pub struct Shell {
     onboarding: Option<Entity<crate::onboarding::Onboarding>>,
     onboarding_pending: Option<crate::onboarding::Step>,
     _onboarding_subscriptions: Vec<Subscription>,
-    /// The sign-in gate's Log in opened the browser: the gate waits for it
-    /// the way the sync opt-in does, with a way to open it again.
-    gate_sign_in_waiting: bool,
     mutate_task: Option<Task<()>>,
     auth_task: Option<Task<()>>,
     runtime_change_task: Option<Task<()>>,
     runtime_change_error: Option<SharedString>,
-    /// The one-time local→synced import stream (switch wizard progress step).
-    import_task: Option<Task<()>>,
-    /// Title of the chat the import stream is copying right now.
-    import_current: Option<SharedString>,
     /// Kept for the failed-gate "Retry" action.
     boot: EngineBootConfig,
     data_dir: PathBuf,
@@ -2487,8 +2317,6 @@ impl Shell {
                 (!settings.onboarding_completed).then_some(crate::onboarding::Step::Welcome)
             });
         let debug_gate = match std::env::var("VARDOGER_FORCE_GATE").ok().as_deref() {
-            Some("signin") => Some(GatePhase::SignIn),
-            Some("org") => Some(GatePhase::OrgGate),
             Some("failed") => Some(GatePhase::Failed(
                 "Could not reach the vardoger engine on port 27901".into(),
             )),
@@ -2644,18 +2472,14 @@ impl Shell {
             sidebar_notice: None,
             _app_update_observation: crate::app_update::AppUpdate::global(cx)
                 .map(|update| cx.observe(&update, |_, _, cx| cx.notify())),
-            org: None,
             sync_flow: SyncFlow::Idle,
             onboarding: None,
             onboarding_pending,
             _onboarding_subscriptions: Vec::new(),
-            gate_sign_in_waiting: false,
             mutate_task: None,
             auth_task: None,
             runtime_change_task: None,
             runtime_change_error: None,
-            import_task: None,
-            import_current: None,
             boot,
             data_dir,
             settings_base: settings::current(cx),
@@ -2802,43 +2626,7 @@ impl Shell {
             let state = state.read(cx);
             sync_flow_after_auth(self.sync_flow, state.workspace_scope, state.auth.as_ref())
         };
-        if next_sync_flow != self.sync_flow {
-            self.sync_flow = next_sync_flow;
-            if matches!(
-                self.sync_flow,
-                SyncFlow::RestartPending { .. } | SyncFlow::SwitchOffer { .. }
-            ) {
-                self.org = None;
-            }
-        }
-        // Logging in from setup means switching to the synced workspace;
-        // with no local work there's nothing to choose, so setup goes
-        // straight on instead of stopping at the offer.
-        if self.onboarding.is_some()
-            && self.sync_flow == (SyncFlow::SwitchOffer { notice_open: true })
-        {
-            let empty = {
-                let state = state.read(cx);
-                local_work_phrase(state.chats.len(), state.spaces.len()).is_none()
-            };
-            if empty {
-                self.start_synced_switch(false, cx);
-            }
-        }
-        // The in-place local→synced switch: once the replacement runtime is
-        // attached and Ready, kick the import (or finish) from here.
-        self.drive_sync_switch(cx);
-        let signed_out_synced = {
-            let state = state.read(cx);
-            state.workspace_scope == Some(WorkspaceScope::Synced)
-                && matches!(state.auth, Some(AuthState::SignedOut))
-        };
-        // AuthStatus is shared by every viewport. Whichever viewport owns the
-        // embedded runtime drains it; remote viewports request daemon shutdown
-        // and all of them independently reattach to the new local runtime.
-        if signed_out_synced && self.runtime_change_task.is_none() {
-            self.start_local_runtime_transition(false, cx);
-        }
+        self.sync_flow = next_sync_flow;
         // Capture knob: the add-space palette needs only the device registry.
         if self.debug_dialog.as_deref() == Some("add-space") && !state.read(cx).devices.is_empty() {
             self.debug_dialog = None;
@@ -6376,10 +6164,7 @@ impl Shell {
 
     fn request_sign_out(&mut self, cx: &mut Context<Self>) {
         self.close_user_menu(cx);
-        if !matches!(
-            self.state.read(cx).workspace_scope,
-            Some(WorkspaceScope::Synced | WorkspaceScope::Local)
-        ) {
+        if self.state.read(cx).workspace_scope != Some(WorkspaceScope::Local) {
             return;
         }
         self.sync_flow = SyncFlow::SignOutConfirm;
@@ -6387,11 +6172,7 @@ impl Shell {
     }
 
     fn confirm_sign_out(&mut self, cx: &mut Context<Self>) {
-        if self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local) {
-            self.sign_out_here(cx);
-        } else {
-            self.start_local_runtime_transition(true, cx);
-        }
+        self.sign_out_here(cx);
     }
 
     /// Sign out of the Vardoger server on a local runtime: the workspace
@@ -6424,85 +6205,19 @@ impl Shell {
         cx.notify();
     }
 
-    fn start_local_runtime_transition(&mut self, sign_out: bool, cx: &mut Context<Self>) {
-        if self.runtime_change_task.is_some() {
-            return;
-        }
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            self.runtime_change_error = Some("Engine not connected".into());
-            self.sync_flow = SyncFlow::SignedOutRestartRequired;
-            cx.notify();
-            return;
-        };
-        self.sync_flow = SyncFlow::SigningOut;
-        self.runtime_change_error = None;
-        self.state.update(cx, |state, _| state.expect_engine_exit());
-        let ipc_port = self.boot.ipc_port;
-        let data_dir = self.data_dir.clone();
-        let shutdown_dir = data_dir.clone();
-        let transition = Tokio::spawn(cx, async move {
-            if sign_out {
-                engine
-                    .client()
-                    .call(methods::SIGN_OUT, serde_json::json!({}))
-                    .await
-                    .map_err(|error| format!("Sign out failed: {error}"))?;
-            }
-            stop_synced_runtime(engine, ipc_port, &shutdown_dir).await
-        });
-        let state = self.state.clone();
-        let boot = self.boot.clone();
-        self.runtime_change_task = Some(cx.spawn(async move |this, cx| {
-            let result = match transition.await {
-                Ok(result) => result,
-                Err(error) => Err(error.to_string()),
-            };
-            this.update(cx, |shell, cx| {
-                shell.runtime_change_task = None;
-                match result {
-                    Ok(()) => {
-                        shell.sync_flow = SyncFlow::Idle;
-                        shell.runtime_change_error = None;
-                        shell.org = None;
-                        // An explicit sign-out returns to the workspace. The
-                        // boot-time fallback from a signed-out synced runtime
-                        // keeps an open Settings page (and `VARDOGER_OPEN_ROUTE`).
-                        if sign_out {
-                            shell.set_route(Route::Chat, cx);
-                        }
-                        shell.space_boot_applied = false;
-                        state.update(cx, |state, cx| state.prepare_runtime_replacement(cx));
-                        AppState::bootstrap(state.clone(), boot, cx);
-                    }
-                    Err(error) => {
-                        shell.sync_flow = SyncFlow::SignedOutRestartRequired;
-                        shell.runtime_change_error = Some(error.into());
-                        cx.notify();
-                    }
-                }
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
-
     fn cancel_auth_setup(&mut self, cx: &mut Context<Self>) {
         let local = self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local);
         let Some(engine) = self.state.read(cx).engine().cloned() else {
             return;
         };
         let pending_auth = self.auth_task.take();
-        let pending_org = self.org.as_mut().and_then(|org| org.task.take());
         if local {
             self.sync_flow = SyncFlow::Canceling;
         }
         self.auth_task = Some(cx.spawn(async move |this, cx| {
-            // Do not race SignOut against an exchange or organization write
-            // that can still persist a session after credentials were cleared.
+            // Do not race SignOut against a sign-in that can still save the
+            // account after credentials were cleared.
             if let Some(task) = pending_auth {
-                task.await;
-            }
-            if let Some(task) = pending_org {
                 task.await;
             }
             let result = engine
@@ -6512,7 +6227,6 @@ impl Shell {
             this.update(cx, |shell, cx| {
                 match result {
                     Ok(_) => {
-                        shell.org = None;
                         if local {
                             shell.sync_flow = SyncFlow::Idle;
                         }
@@ -6536,12 +6250,6 @@ impl Shell {
             SyncFlow::RestartPending { .. } => {
                 self.sync_flow = SyncFlow::RestartPending { notice_open: false };
             }
-            SyncFlow::SwitchOffer { .. } => {
-                self.sync_flow = SyncFlow::SwitchOffer { notice_open: false };
-            }
-            SyncFlow::ImportFailed { .. } => {
-                self.sync_flow = SyncFlow::ImportFailed { notice_open: false };
-            }
             _ => return,
         }
         cx.notify();
@@ -6552,216 +6260,6 @@ impl Shell {
         match self.sync_flow {
             SyncFlow::RestartPending { .. } => {
                 self.sync_flow = SyncFlow::RestartPending { notice_open: true };
-            }
-            SyncFlow::SwitchOffer { .. } => {
-                self.sync_flow = SyncFlow::SwitchOffer { notice_open: true };
-            }
-            SyncFlow::ImportFailed { .. } => {
-                self.sync_flow = SyncFlow::ImportFailed { notice_open: true };
-            }
-            _ => return,
-        }
-        cx.notify();
-    }
-
-    /// The wizard's choice step chose a path: stop the local runtime, boot the
-    /// synced one in-place (mirror of the sign-out transition), then let
-    /// [`Self::drive_sync_switch`] run the import once the runtime is ready.
-    /// Failure falls back to the quit-and-reopen dialog — the local profile is
-    /// untouched, so the old path is always a safe exit.
-    fn start_synced_switch(&mut self, import: bool, cx: &mut Context<Self>) {
-        if self.runtime_change_task.is_some() {
-            return;
-        }
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            self.runtime_change_error = Some("Engine not connected".into());
-            self.sync_flow = SyncFlow::RestartPending { notice_open: true };
-            cx.notify();
-            return;
-        };
-        self.sync_flow = SyncFlow::Switching { import };
-        self.runtime_change_error = None;
-        self.import_current = None;
-        self.state.update(cx, |state, _| state.expect_engine_exit());
-        let ipc_port = self.boot.ipc_port;
-        let data_dir = self.data_dir.clone();
-        let transition = Tokio::spawn(cx, async move {
-            stop_synced_runtime(engine, ipc_port, &data_dir).await
-        });
-        let state = self.state.clone();
-        let boot = self.boot.clone();
-        self.runtime_change_task = Some(cx.spawn(async move |this, cx| {
-            let result = match transition.await {
-                Ok(result) => result,
-                Err(error) => Err(error.to_string()),
-            };
-            this.update(cx, |shell, cx| {
-                shell.runtime_change_task = None;
-                match result {
-                    Ok(()) => {
-                        // Keep `Switching { import }`: the state observer sees
-                        // the replacement runtime reach Ready and advances the
-                        // wizard from there.
-                        shell.org = None;
-                        shell.set_route(Route::Chat, cx);
-                        shell.space_boot_applied = false;
-                        state.update(cx, |state, cx| state.prepare_runtime_replacement(cx));
-                        AppState::bootstrap(state.clone(), boot, cx);
-                    }
-                    Err(error) => {
-                        shell.sync_flow = SyncFlow::RestartPending { notice_open: true };
-                        shell.runtime_change_error = Some(error.into());
-                        cx.notify();
-                    }
-                }
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
-
-    /// Advance the in-place switch when the replacement runtime lands: Ready +
-    /// Synced starts the import stream (or finishes immediately when the user
-    /// chose a fresh start); a runtime that comes back non-synced fell out of
-    /// the swap — surface the quit fallback rather than pretend.
-    fn drive_sync_switch(&mut self, cx: &mut Context<Self>) {
-        let SyncFlow::Switching { import } = self.sync_flow else {
-            return;
-        };
-        if self.runtime_change_task.is_some() {
-            return; // still stopping the local runtime
-        }
-        let (ready, scope) = {
-            let state = self.state.read(cx);
-            (
-                matches!(state.connection, ConnectionStatus::Ready),
-                state.workspace_scope,
-            )
-        };
-        if !ready {
-            if let ConnectionStatus::Failed(error) = &self.state.read(cx).connection {
-                self.sync_flow = SyncFlow::RestartPending { notice_open: true };
-                self.runtime_change_error = Some(error.clone().into());
-                cx.notify();
-            }
-            return;
-        }
-        match scope {
-            Some(WorkspaceScope::Synced) => {
-                if import {
-                    self.spawn_local_import(cx);
-                } else {
-                    self.sync_flow = SyncFlow::Idle;
-                    cx.notify();
-                }
-            }
-            Some(_) => {
-                self.sync_flow = SyncFlow::RestartPending { notice_open: true };
-                self.runtime_change_error =
-                    Some("The synced workspace did not come up — restart to finish.".into());
-                cx.notify();
-            }
-            None => {}
-        }
-    }
-
-    /// Subscribe to the engine's one-time import stream and mirror its
-    /// progress into the wizard.
-    fn spawn_local_import(&mut self, cx: &mut Context<Self>) {
-        if self.import_task.is_some() {
-            return;
-        }
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            self.sync_flow = SyncFlow::RestartPending { notice_open: true };
-            self.runtime_change_error = Some("Engine not connected".into());
-            cx.notify();
-            return;
-        };
-        self.sync_flow = SyncFlow::Importing { done: 0, total: 0 };
-        self.runtime_change_error = None;
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
-        let stream = Tokio::spawn(cx, async move {
-            let mut items = engine
-                .client()
-                .subscribe(methods::IMPORT_LOCAL_WORKSPACE, serde_json::json!({}))
-                .await
-                .map_err(|error| error.to_string())?;
-            while let Some(item) = items.recv().await {
-                let _ = tx.send(item);
-            }
-            Ok::<(), String>(())
-        });
-        self.import_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                let item = rx.recv().await;
-                let ended = item.is_none();
-                this.update(cx, |shell, cx| {
-                    if let Some(item) = &item {
-                        shell.apply_import_event(item, cx);
-                    }
-                    if ended {
-                        shell.import_task = None;
-                        shell.import_current = None;
-                        // A stream that died before its summary is a failure —
-                        // offer the in-place retry (idempotent).
-                        if matches!(shell.sync_flow, SyncFlow::Importing { .. }) {
-                            shell.sync_flow = SyncFlow::ImportFailed { notice_open: true };
-                            shell.runtime_change_error =
-                                Some("The import stream ended before it finished.".into());
-                        }
-                        cx.notify();
-                    }
-                })
-                .ok();
-                if ended {
-                    break;
-                }
-            }
-            if let Ok(Err(error)) = stream.await {
-                this.update(cx, |shell, cx| {
-                    shell.import_task = None;
-                    if matches!(shell.sync_flow, SyncFlow::Importing { .. }) {
-                        shell.sync_flow = SyncFlow::ImportFailed { notice_open: true };
-                        shell.runtime_change_error = Some(error.into());
-                        cx.notify();
-                    }
-                })
-                .ok();
-            }
-        }));
-        cx.notify();
-    }
-
-    fn apply_import_event(&mut self, item: &serde_json::Value, cx: &mut Context<Self>) {
-        match item.get("kind").and_then(|k| k.as_str()) {
-            Some("start") => {
-                let total = item.get("chats").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                self.sync_flow = SyncFlow::Importing { done: 0, total };
-            }
-            Some("chat") => {
-                let index = item.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let total = item.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                self.import_current = item
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .map(|t| SharedString::from(t.to_string()));
-                self.sync_flow = SyncFlow::Importing { done: index, total };
-            }
-            Some("summary") => {
-                self.import_current = None;
-                // A summary with errors is a FAILED import, however normally
-                // the stream ended — never present a partial migration as
-                // complete (the engine keeps collecting per-item failures
-                // precisely so this can be surfaced).
-                match import_summary_outcome(item) {
-                    Ok((imported, skipped)) => {
-                        self.sync_flow = SyncFlow::ImportDone { imported, skipped };
-                    }
-                    Err(message) => {
-                        self.sync_flow = SyncFlow::ImportFailed { notice_open: true };
-                        self.runtime_change_error = Some(message.into());
-                    }
-                }
             }
             _ => return,
         }
@@ -6829,11 +6327,7 @@ impl Shell {
             return;
         }
         self.close_user_menu(cx);
-        if scope == Some(WorkspaceScope::Local) {
-            self.sync_flow = SyncFlow::Enabling;
-        } else {
-            self.gate_sign_in_waiting = true;
-        }
+        self.sync_flow = SyncFlow::Enabling;
         let Some(engine) = self.state.read(cx).engine().cloned() else {
             return;
         };
@@ -6850,11 +6344,9 @@ impl Shell {
                     cx.notify();
                 }
                 Err(err) => {
-                    if scope == Some(WorkspaceScope::Local) && shell.sync_flow == SyncFlow::Enabling
-                    {
+                    if shell.sync_flow == SyncFlow::Enabling {
                         shell.sync_flow = SyncFlow::Idle;
                     }
-                    shell.gate_sign_in_waiting = false;
                     shell.show_notice(crate::toast::ToastKind::Error, format!("Sign in failed: {err}"), cx);
                     cx.notify();
                 }
@@ -6864,15 +6356,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// Back out of a sign-in that's waiting on the browser: the sync opt-in
-    /// clears its partial session; the gate just stops waiting.
+    /// Back out of a sign-in that's waiting on the browser.
     fn cancel_sign_in_wait(&mut self, cx: &mut Context<Self>) {
-        if self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local) {
-            self.cancel_auth_setup(cx);
-        } else {
-            self.gate_sign_in_waiting = false;
-            cx.notify();
-        }
+        self.cancel_auth_setup(cx);
     }
 
     // ---- first-run setup ----
@@ -6933,22 +6419,13 @@ impl Shell {
     // ---- sign-in pages ----
 
     /// The sign-in flow's current step as a page slot — waiting on the
-    /// browser, creating a workspace, then moving to (and filling) the
-    /// synced workspace — or `None` when it has nothing to show. Signing
-    /// out stays a dialog.
+    /// browser, then the restart that connects this machine — or `None`
+    /// when it has nothing to show. Signing out stays a dialog.
     fn sign_in_slot(&mut self, cx: &mut Context<Self>) -> Option<crate::onboarding::SignInSlot> {
         use crate::onboarding::{SignInSlot, footer_row, ghost, heading, primary, status_block};
         let theme = Theme::of(cx).for_settings_surface();
-        let needs_org = matches!(
-            self.state.read(cx).auth.as_ref(),
-            Some(AuthState::NeedsOrganization { .. })
-        );
         if self.sync_flow == SyncFlow::Enabling {
-            return Some(if needs_org {
-                self.org_slot(cx)
-            } else {
-                self.waiting_slot(&theme, cx)
-            });
+            return Some(self.waiting_slot(&theme, cx));
         }
         let remote_engine = self
             .state
@@ -6962,25 +6439,8 @@ impl Shell {
         } else {
             "Quit Vardoger"
         };
-        let signed_in_email: Option<SharedString> = match self.state.read(cx).auth.as_ref() {
-            Some(AuthState::SignedIn { user, .. }) => Some(SharedString::from(user.email.clone())),
-            _ => None,
-        };
-        // Spaces count as local work too: a projects-only profile must get
-        // the import choice, not a bare "Switch now".
-        let (local_chats, local_spaces) = {
-            let state = self.state.read(cx);
-            (state.chats.len(), state.spaces.len())
-        };
-        let work_phrase = local_work_phrase(local_chats, local_spaces);
         let spinner = |key: &'static str, _: &mut Context<Self>| {
             crate::loaders::ring_spinner(key, 12.0, theme.text_muted).into_any_element()
-        };
-        let check = || {
-            icon(icons::CHECK)
-                .size(px(14.0))
-                .text_color(theme.accent)
-                .into_any_element()
         };
         let error_line = |error: Option<SharedString>| {
             error.map(|error| {
@@ -7007,197 +6467,6 @@ impl Shell {
                     .child(status_block(&theme, spinner("sign-in-canceling-spinner", cx), "Canceling…", false))
                     .into_any_element(),
                 footer: footer_row(None, Vec::new()),
-            },
-            // ── in-place switch wizard ────────────────────────────────────
-            SyncFlow::SwitchOffer { notice_open: true } => {
-                let subtitle: SharedString = match &work_phrase {
-                    Some(phrase) => format!(
-                        "Bring {phrase} from this device into your synced workspace, or start it fresh."
-                    )
-                    .into(),
-                    None => "Vardoger can switch to your synced workspace now.".into(),
-                };
-                let mut forward = Vec::new();
-                if work_phrase.is_some() {
-                    forward.push(
-                        ghost(&theme, "sync-switch-fresh", "Start fresh")
-                            .on_click(cx.listener(|this, _, _, cx| this.start_synced_switch(false, cx)))
-                            .into_any_element(),
-                    );
-                    forward.push(
-                        primary(&theme, "sync-switch-import", "Bring my work", true)
-                            .on_click(cx.listener(|this, _, _, cx| this.start_synced_switch(true, cx)))
-                            .into_any_element(),
-                    );
-                } else {
-                    forward.push(
-                        primary(&theme, "sync-switch-now", "Switch now", true)
-                            .on_click(cx.listener(|this, _, _, cx| this.start_synced_switch(false, cx)))
-                            .into_any_element(),
-                    );
-                }
-                SignInSlot {
-                    key: "sign-in-offer".into(),
-                    body: div()
-                        .flex()
-                        .flex_col()
-                        .child(heading(&theme, "Sync is ready", subtitle))
-                        .child(status_block(
-                            &theme,
-                            check(),
-                            match &signed_in_email {
-                                Some(email) => format!("Signed in as {email}"),
-                                None => "You're signed in".into(),
-                            },
-                            true,
-                        ))
-                        .into_any_element(),
-                    footer: footer_row(
-                        Some(
-                            ghost(&theme, "sync-switch-later", "Later")
-                                .on_click(cx.listener(|this, _, _, cx| this.postpone_sync_restart(cx))),
-                        ),
-                        forward,
-                    ),
-                }
-            }
-            SyncFlow::Switching { import } => SignInSlot {
-                key: "sign-in-switching".into(),
-                body: div()
-                    .flex()
-                    .flex_col()
-                    .child(heading(
-                        &theme,
-                        "Setting up sync",
-                        if import {
-                            "Handing the engine over to your account. Your local sessions come along next."
-                        } else {
-                            "Handing the engine over to your account."
-                        },
-                    ))
-                    .child(status_block(
-                        &theme,
-                        spinner("sign-in-switching-spinner", cx),
-                        "Switching to your synced workspace…",
-                        false,
-                    ))
-                    .into_any_element(),
-                footer: footer_row(None, Vec::new()),
-            },
-            SyncFlow::Importing { done, total } => {
-                let fraction = if total == 0 {
-                    0.0
-                } else {
-                    (done as f32 / total as f32).clamp(0.0, 1.0)
-                };
-                let label: SharedString = if total == 0 {
-                    "Looking for local sessions…".into()
-                } else {
-                    format!("Importing session {} of {total}", (done + 1).min(total)).into()
-                };
-                let current = self.import_current.clone();
-                SignInSlot {
-                    key: "sign-in-importing".into(),
-                    body: div()
-                        .flex()
-                        .flex_col()
-                        .child(heading(&theme, "Bringing your work over", label))
-                        .child(
-                            settings::widgets::section_card(&theme).mt(px(28.0)).child(
-                                settings::widgets::card_row(&theme, true)
-                                    .min_h(px(44.0))
-                                    .py(px(12.0))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(10.0))
-                                            .when_some(current, |el, current| {
-                                                el.child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_size(crate::typography::ui_rems(12.5))
-                                                        .text_color(theme.text_muted)
-                                                        .child(current),
-                                                )
-                                            })
-                                            .child(
-                                                // Determinate progress: a hairline track with an accent fill.
-                                                div()
-                                                    .h(px(4.0))
-                                                    .w_full()
-                                                    .rounded(px(2.0))
-                                                    .bg(theme.wash(0.12))
-                                                    .child(
-                                                        div()
-                                                            .h_full()
-                                                            .rounded(px(2.0))
-                                                            .bg(theme.accent_strong)
-                                                            .w(gpui::relative(fraction.max(0.04))),
-                                                    ),
-                                            ),
-                                    ),
-                            ),
-                        )
-                        .into_any_element(),
-                    footer: footer_row(None, Vec::new()),
-                }
-            }
-            SyncFlow::ImportDone { imported, skipped } => {
-                let subtitle: SharedString = match (imported, skipped) {
-                    (0, 0) => "Your synced workspace is ready.".into(),
-                    (n, 0) => format!(
-                        "{n} session{} moved into your synced workspace.",
-                        if n == 1 { "" } else { "s" },
-                    )
-                    .into(),
-                    (n, s) => format!(
-                        "{n} session{} imported, {s} already present.",
-                        if n == 1 { "" } else { "s" },
-                    )
-                    .into(),
-                };
-                SignInSlot {
-                    key: "sign-in-imported".into(),
-                    body: heading(&theme, "Your work is synced", subtitle).into_any_element(),
-                    footer: footer_row(
-                        None,
-                        vec![
-                            primary(&theme, "sync-switch-done", "Continue", true)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sync_flow = SyncFlow::Idle;
-                                    cx.notify();
-                                }))
-                                .into_any_element(),
-                        ],
-                    ),
-                }
-            }
-            SyncFlow::ImportFailed { notice_open: true } => SignInSlot {
-                key: "sign-in-import-failed".into(),
-                body: div()
-                    .flex()
-                    .flex_col()
-                    .child(heading(
-                        &theme,
-                        "Import didn't finish",
-                        "Anything already imported is kept; retrying only copies what's missing.",
-                    ))
-                    .children(error_line(self.runtime_change_error.clone()))
-                    .into_any_element(),
-                footer: footer_row(
-                    Some(
-                        ghost(&theme, "import-failed-dismiss", "Later")
-                            .on_click(cx.listener(|this, _, _, cx| this.postpone_sync_restart(cx))),
-                    ),
-                    vec![
-                        primary(&theme, "import-failed-retry", "Retry import", true)
-                            .on_click(cx.listener(|this, _, _, cx| this.spawn_local_import(cx)))
-                            .into_any_element(),
-                    ],
-                ),
             },
             SyncFlow::RestartPending { notice_open: true } => SignInSlot {
                 key: "sign-in-restart".into(),
@@ -7271,120 +6540,6 @@ impl Shell {
     }
 
     // ---- org gate ----
-
-    fn ensure_org_ui(&mut self, cx: &mut Context<Self>) {
-        if self.org.is_some() {
-            return;
-        }
-        let name_input = cx.new(|cx| {
-            ComposerInput::new("Workspace name", cx).with_accessibility_role(gpui::Role::TextInput)
-        });
-        let events = cx.subscribe(&name_input, |this: &mut Shell, _, event, cx| {
-            if matches!(event, ComposerInputEvent::Submitted) {
-                this.create_org(cx);
-            }
-        });
-        self.org = Some(OrgGateUi {
-            name_input,
-            orgs: Loadable::Idle,
-            submitting: false,
-            error: None,
-            task: None,
-            _events: events,
-        });
-        self.load_orgs(cx);
-    }
-
-    fn load_orgs(&mut self, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        let Some(org) = self.org.as_mut() else { return };
-        org.orgs = Loadable::Loading;
-        org.task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(methods::LIST_ORGS, serde_json::json!({}))
-                .await;
-            this.update(cx, |shell, cx| {
-                if let Some(org) = shell.org.as_mut() {
-                    org.orgs = match result {
-                        Ok(value) => Loadable::Ready(sort_memberships(parse_orgs(&value))),
-                        Err(err) => Loadable::Error(err.to_string()),
-                    };
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
-
-    fn create_org(&mut self, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        let Some(org) = self.org.as_mut() else { return };
-        if org.submitting {
-            return;
-        }
-        let name = org.name_input.read(cx).text().trim().to_string();
-        if !org_name_valid(&name) {
-            org.error = Some("Enter a workspace name".into());
-            cx.notify();
-            return;
-        }
-        org.submitting = true;
-        org.error = None;
-        org.task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(methods::CREATE_ORG, serde_json::json!({ "name": name }))
-                .await;
-            this.update(cx, |shell, cx| {
-                if let Some(org) = shell.org.as_mut() {
-                    org.submitting = false;
-                    if let Err(err) = result {
-                        org.error = Some(format!("{err}").into());
-                    }
-                    // Success: the AuthStatus stream flips to SignedIn and the
-                    // gate falls away on its own.
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
-
-    fn select_org(&mut self, organization_id: String, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        let Some(org) = self.org.as_mut() else { return };
-        org.submitting = true;
-        org.error = None;
-        org.task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(
-                    methods::SELECT_ORG,
-                    serde_json::json!({ "organizationId": organization_id }),
-                )
-                .await;
-            this.update(cx, |shell, cx| {
-                if let Some(org) = shell.org.as_mut() {
-                    org.submitting = false;
-                    if let Err(err) = result {
-                        org.error = Some(format!("{err}").into());
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
 
     // ---- render pieces ----
 
@@ -12220,89 +11375,6 @@ impl Shell {
             .into_any_element()
     }
 
-    fn render_signed_out_restart(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let runtime_change_label = if self.runtime_change_task.is_some() {
-            "Stopping engine…"
-        } else {
-            "Retry local mode"
-        };
-        let card = div()
-            .w(px(380.0))
-            .px(px(32.0))
-            .py(px(40.0))
-            .rounded(px(12.0))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface_card)
-            .shadow_lg()
-            .flex()
-            .flex_col()
-            .items_center()
-            .text_center()
-            .child(
-                icon(icons::VARDOGER_LOGO)
-                    .w(px(31.4))
-                    .h(px(36.0))
-                    .text_color(theme.text),
-            )
-            .child(
-                div()
-                    .mt(px(24.0))
-                    .text_size(crate::typography::ui_rems(18.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.text)
-                    .child(SharedString::from("Signed out")),
-            )
-            .child(
-                div()
-                    .mt(px(6.0))
-                    .mb(px(24.0))
-                    .text_size(crate::typography::ui_rems(13.0))
-                    .line_height(px(19.0))
-                    .text_color(theme.text_muted)
-                    .child(SharedString::from(
-                        "Vardoger removed your credentials but could not finish closing the previous synced workspace. Retry before continuing in local mode.",
-                    )),
-            )
-            .when_some(self.runtime_change_error.clone(), |card, error| {
-                card.child(
-                    div()
-                        .mb(px(16.0))
-                        .text_size(crate::typography::ui_rems(12.0))
-                        .line_height(px(17.0))
-                        .text_color(theme.danger)
-                        .child(error),
-                )
-            })
-            .child(
-                popover::btn_primary(&theme, runtime_change_label)
-                    .id("signed-out-quit")
-                    .when(self.runtime_change_task.is_some(), |button| {
-                        button.opacity(0.6)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.start_local_runtime_transition(false, cx)
-                    })),
-            );
-
-        div()
-            .absolute()
-            .inset_0()
-            .occlude()
-            .bg(theme.bg)
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(motion::fade_in("signed-out-restart", card)),
-            )
-            .into_any_element()
-    }
-
     fn close_right_plus(&mut self, cx: &mut Context<Self>) {
         if self.right_plus.begin_close() {
             popover::reap_popup(cx, |shell: &mut Self| &mut shell.right_plus);
@@ -12789,10 +11861,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).for_settings_surface();
-        if *phase == GatePhase::SignIn && self.gate_sign_in_waiting {
-            let slot = self.waiting_slot(&theme, cx);
-            return crate::onboarding::render_page(slot.into_page(), window);
-        }
         let (key, body): (&'static str, AnyElement) = match phase {
             // Backend unreachable: quiet centered copy (vardoger Gate `Failed`),
             // plus a Retry affordance (the native engine doesn't self-redial).
@@ -12816,49 +11884,7 @@ impl Shell {
                     )
                     .into_any_element(),
             ),
-            // Log in: the logo, "Log in to Vardoger", the copy and a wide Log in
-            // button, centered on the window like the setup welcome.
-            _ => (
-                "gate-signin",
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .text_center()
-                    .child(
-                        icon(icons::VARDOGER_LOGO)
-                            .w(px(31.4))
-                            .h(px(36.0))
-                            .text_color(theme.text),
-                    )
-                    .child(
-                        div()
-                            .mt(px(24.0))
-                            .text_size(crate::typography::ui_rems(22.0))
-                            .line_height(px(28.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme.text)
-                            .child(SharedString::from("Log in to Vardoger")),
-                    )
-                    .child(
-                        div()
-                            .mt(px(8.0))
-                            .max_w(px(340.0))
-                            .text_size(crate::typography::ui_rems(13.0))
-                            .line_height(px(19.0))
-                            .text_color(theme.text_muted)
-                            .child(SharedString::from(
-                                "This opens your browser to finish logging in — you'll come right back.",
-                            )),
-                    )
-                    .child(
-                        div().mt(px(28.0)).w(px(320.0)).child(
-                            crate::onboarding::wide_button(&theme, "sign-in", "Log in")
-                                .on_click(cx.listener(|this, _, _, cx| this.start_sign_in(cx))),
-                        ),
-                    )
-                    .into_any_element(),
-            ),
+            GatePhase::Loading | GatePhase::Ready => return Empty.into_any_element(),
         };
         crate::onboarding::render_page(
             crate::onboarding::PageParts {
@@ -12874,175 +11900,6 @@ impl Shell {
         )
     }
 
-    /// Organization onboarding used by the synced gate as a page of its own.
-    /// A local runtime shows it as a step of the sync opt-in instead
-    /// ([`Self::sign_in_slot`]).
-    fn render_org_gate(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let slot = self.org_slot(cx);
-        crate::onboarding::render_page(slot.into_page(), window)
-    }
-
-    /// The workspace step: name a new workspace, or continue in one you
-    /// belong to, with the account escape hatch on the left.
-    fn org_slot(&mut self, cx: &mut Context<Self>) -> crate::onboarding::SignInSlot {
-        use crate::onboarding::{SignInSlot, footer_row, ghost, heading, primary};
-        self.ensure_org_ui(cx);
-        let theme = Theme::of(cx).for_settings_surface();
-        let local_setup = self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local);
-        let Some(org) = self.org.as_ref() else {
-            return SignInSlot {
-                key: "org-gate".into(),
-                body: Empty.into_any_element(),
-                footer: footer_row(None, Vec::new()),
-            };
-        };
-        let submitting = org.submitting;
-        let error = org.error.clone();
-        let name_input = org.name_input.clone();
-        let orgs = org.orgs.clone();
-
-        let email: Option<SharedString> = self
-            .state
-            .read(cx)
-            .auth_user()
-            .map(|u| u.email.clone().into());
-
-        let memberships: AnyElement = match &orgs {
-            Loadable::Idle | Loadable::Loading => div()
-                .mt(px(24.0))
-                .child(popover::skeleton_rows(
-                    "org-skeleton",
-                    &theme,
-                    2,
-                    cx.entity_id(),
-                    cx,
-                ))
-                .into_any_element(),
-            Loadable::Error(message) => div()
-                .mt(px(24.0))
-                .child(
-                    popover::error_row(&theme, message).child(
-                        div()
-                            .id("orgs-retry")
-                            .px(px(Theme::SPACE_SM))
-                            .py(px(3.0))
-                            .rounded(px(Theme::CONTROL_RADIUS))
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_color(theme.text)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.glass_hover()))
-                            .on_click(cx.listener(|this, _, _, cx| this.load_orgs(cx)))
-                            .child(SharedString::from("Retry")),
-                    ),
-                )
-                .into_any_element(),
-            Loadable::Ready(rows) if rows.is_empty() => Empty.into_any_element(),
-            Loadable::Ready(rows) => settings::widgets::section(
-                &theme,
-                "Or continue in a workspace you belong to",
-                settings::widgets::section_card(&theme).mt_0().children(
-                    rows.iter().enumerate().map(|(ix, row)| {
-                        let org_id = row.organization_id.clone();
-                        div()
-                            .id(("org-row", ix))
-                            .when(submitting, |el| el.opacity(0.5))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.wash(0.04)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_org(org_id.clone(), cx);
-                            }))
-                            .child(
-                                settings::widgets::card_row(&theme, ix == 0)
-                                    .min_h(px(44.0))
-                                    .py(px(10.0))
-                                    .flex_nowrap()
-                                    .child(div().flex_1().min_w_0().child(
-                                        settings::widgets::row_title(&theme, row.name.clone()),
-                                    ))
-                                    .child(
-                                        icon(icons::ALT_ARROW_RIGHT)
-                                            .size(px(14.0))
-                                            .text_color(theme.text_muted),
-                                    ),
-                            )
-                    }),
-                ),
-            )
-            .into_any_element(),
-        };
-
-        let blurb: SharedString = match email {
-            Some(email) => format!(
-                "Vardoger is organized around workspaces — create one for yourself or your team. Signed in as {email}."
-            )
-            .into(),
-            None => {
-                "Vardoger is organized around workspaces — create one for yourself or your team."
-                    .into()
-            }
-        };
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(heading(&theme, "Create your workspace", blurb))
-            .child(
-                div()
-                    .mt(px(24.0))
-                    .h(px(36.0))
-                    .flex()
-                    .items_center()
-                    .px(px(12.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.input_bg)
-                    .text_size(crate::typography::ui_rems(13.0))
-                    .child(name_input),
-            )
-            .child(memberships)
-            .when_some(error, |el, message| {
-                el.child(
-                    div()
-                        .mt(px(12.0))
-                        .px(px(8.0))
-                        .text_size(crate::typography::ui_rems(12.0))
-                        .line_height(px(17.0))
-                        .text_color(theme.danger_muted.opacity(0.9)) // red-300
-                        .child(message),
-                )
-            })
-            .into_any_element();
-        let footer = footer_row(
-            Some(
-                ghost(
-                    &theme,
-                    "org-signout",
-                    if local_setup {
-                        "Cancel sync setup"
-                    } else {
-                        "Use a different account"
-                    },
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.cancel_auth_setup(cx))),
-            ),
-            vec![
-                primary(
-                    &theme,
-                    "create-org",
-                    if submitting { "Creating…" } else { "Create" },
-                    !submitting,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.create_org(cx)))
-                .into_any_element(),
-            ],
-        );
-        SignInSlot {
-            key: "org-gate".into(),
-            body,
-            footer,
-        }
-    }
 }
 
 /// A size-6 icon button for the titlebar strip (vardoger window-controls.tsx:
@@ -13393,7 +12250,6 @@ impl Render for Shell {
             (state.workspace_scope, state.auth.clone())
         };
         self.sync_flow = sync_flow_after_auth(self.sync_flow, workspace_scope, auth.as_ref());
-        let restart_required = self.sync_flow == SyncFlow::SignedOutRestartRequired;
         let gate = self
             .debug_gate
             .clone()
@@ -13406,7 +12262,6 @@ impl Render for Shell {
         self.track_horizontal_fit(cx);
         // The sidebar's render reconciles the card against its rows.
         if !matches!(gate, GatePhase::Ready)
-            || restart_required
             || matches!(self.route, Route::Settings(_))
             || self.sidebar_target() <= 0.0
         {
@@ -13415,7 +12270,6 @@ impl Render for Shell {
         self.suspend_hidden_right_images(cx);
         // After the fit tracking, which starts a fit exit this frame.
         let browser_active = matches!(gate, GatePhase::Ready)
-            && !restart_required
             && matches!(self.route, Route::Chat)
             // A pane the fit evicts keeps painting while it slides out.
             && (self.horizontal_fit().right || self.fit_exit_width(1).is_some())
@@ -13790,16 +12644,7 @@ impl Render for Shell {
                 }
             }));
 
-        let render_gate = if restart_required {
-            GatePhase::Loading
-        } else {
-            gate.clone()
-        };
-        // The gate's wait for the browser ends with the gate.
-        if render_gate != GatePhase::SignIn {
-            self.gate_sign_in_waiting = false;
-        }
-        let root = match &render_gate {
+        let root = match &gate {
             GatePhase::Ready => 'ready: {
                 // Focus is a sync signal: on the rising edge of window
                 // activation, nudge every open room to verify liveness — a
@@ -14120,20 +12965,10 @@ impl Render for Shell {
                     .child(motion::fade_in("phase-app", page))
             }
             GatePhase::Loading => root, // splash overlay covers boot
-            GatePhase::OrgGate => {
-                let card = self.render_org_gate(window, cx);
-                root.child(card)
-            }
-            phase @ (GatePhase::Failed(_) | GatePhase::SignIn) => {
+            phase @ GatePhase::Failed(_) => {
                 let card = self.render_gate_card(phase, window, cx);
                 root.child(card)
             }
-        };
-        let root = if restart_required {
-            let restart = self.render_signed_out_restart(cx);
-            root.child(restart)
-        } else {
-            root
         };
         // Toasts float over every phase and route.
         let root = root.children(crate::toast::render_toaster(window, cx));
@@ -14166,7 +13001,7 @@ impl Render for Shell {
         // the native `Drag` control area, on Linux the explicit
         // `start_window_move` strip (the control-area hit-test is inert
         // there); macOS drags gate windows natively.
-        let root = if (!restart_required && matches!(gate, GatePhase::Ready))
+        let root = if matches!(gate, GatePhase::Ready)
             || cfg!(target_os = "macos")
         {
             root
@@ -14734,9 +13569,8 @@ mod tests {
     #[test]
     fn only_visible_sync_steps_block_escape() {
         assert!(!SyncFlow::Idle.has_visible_overlay());
-        assert!(!SyncFlow::SwitchOffer { notice_open: false }.has_visible_overlay());
-        assert!(SyncFlow::SwitchOffer { notice_open: true }.has_visible_overlay());
-        assert!(SyncFlow::Importing { done: 1, total: 3 }.has_visible_overlay());
+        assert!(!SyncFlow::RestartPending { notice_open: false }.has_visible_overlay());
+        assert!(SyncFlow::RestartPending { notice_open: true }.has_visible_overlay());
         assert!(SyncFlow::SignOutConfirm.has_visible_overlay());
     }
 
@@ -14899,10 +13733,6 @@ mod tests {
             Some(AccountMenuAction::SignOut)
         );
         assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle, true),
-            Some(AccountMenuAction::SignOut)
-        );
-        assert_eq!(
             account_menu_action(Some(WorkspaceScope::Development), SyncFlow::Idle, false),
             None
         );
@@ -14970,171 +13800,6 @@ mod tests {
         assert_eq!(
             account_menu_action(local, SyncFlow::RestartPending { notice_open: false }, true),
             Some(AccountMenuAction::RestartPending)
-        );
-    }
-
-    #[test]
-    fn import_summary_errors_are_a_failure_not_a_success() {
-        // Clean summary → done with counts.
-        let clean = serde_json::json!({
-            "kind": "summary", "importedChats": 2, "skippedChats": 1, "errors": []
-        });
-        assert_eq!(import_summary_outcome(&clean), Ok((2, 1)));
-
-        // Any error means the wizard must NOT say "all set" — partial
-        // migrations surface as an explicit failure with the first cause.
-        let partial = serde_json::json!({
-            "kind": "summary", "importedChats": 1, "skippedChats": 0,
-            "errors": ["chat c2: journal copy failed"]
-        });
-        let message = import_summary_outcome(&partial).expect_err("errors must fail");
-        assert!(message.contains("journal copy failed"), "{message}");
-        assert!(message.contains("1 imported"), "{message}");
-
-        let many = serde_json::json!({
-            "kind": "summary", "importedChats": 0, "skippedChats": 0,
-            "errors": ["a", "b", "c"]
-        });
-        let message = import_summary_outcome(&many).expect_err("errors must fail");
-        assert!(message.contains("3 failures"), "{message}");
-
-        // A summary missing the errors field entirely (older engine) is
-        // treated as clean rather than failing every import.
-        let legacy = serde_json::json!({ "kind": "summary", "importedChats": 4 });
-        assert_eq!(import_summary_outcome(&legacy), Ok((4, 0)));
-    }
-
-    #[test]
-    fn spaces_only_local_work_still_gets_the_import_offer() {
-        assert_eq!(local_work_phrase(0, 0), None, "nothing to bring");
-        assert_eq!(local_work_phrase(2, 0).as_deref(), Some("the 2 sessions"));
-        assert_eq!(
-            local_work_phrase(0, 1).as_deref(),
-            Some("the 1 project"),
-            "a projects-only profile must be offered the import, not a bare switch"
-        );
-        assert_eq!(
-            local_work_phrase(1, 2).as_deref(),
-            Some("the 1 session and 2 projects")
-        );
-    }
-
-    #[test]
-    fn dismissed_import_failure_stays_reachable_on_a_synced_runtime() {
-        let signed_in = AuthState::SignedIn {
-            user: vardoger_proto::UserProfile {
-                id: "user-1".into(),
-                email: "user@example.com".into(),
-                name: None,
-            },
-            org_id: Some("org-1".into()),
-        };
-
-        // "Later" postpones the failure notice; it must not evaporate.
-        let dismissed = SyncFlow::ImportFailed { notice_open: false };
-        assert_eq!(
-            sync_flow_after_auth(dismissed, Some(WorkspaceScope::Synced), Some(&signed_in)),
-            dismissed,
-            "a postponed import failure survives auth/scope updates"
-        );
-
-        // …and the account menu on the SYNCED runtime still exposes the
-        // re-entry point. This is the whole point: after the switch there is
-        // no local runtime left to re-derive an offer from, so this menu row
-        // is the only path back to the retry dialog.
-        assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), dismissed, true),
-            Some(AccountMenuAction::RestartPending),
-            "retry must remain reachable after dismissal"
-        );
-        assert_eq!(
-            account_menu_action(
-                Some(WorkspaceScope::Synced),
-                SyncFlow::ImportFailed { notice_open: true },
-                true,
-            ),
-            Some(AccountMenuAction::RestartPending)
-        );
-
-        // Resolving the failure restores the normal synced menu.
-        assert_eq!(
-            account_menu_action(Some(WorkspaceScope::Synced), SyncFlow::Idle, true),
-            Some(AccountMenuAction::SignOut)
-        );
-    }
-
-    #[test]
-    fn switch_lifecycle_survives_the_runtime_replacement_window() {
-        let signed_in = AuthState::SignedIn {
-            user: vardoger_proto::UserProfile {
-                id: "user-1".into(),
-                email: "user@example.com".into(),
-                name: None,
-            },
-            org_id: Some("org-1".into()),
-        };
-        for flow in [
-            SyncFlow::Switching { import: true },
-            SyncFlow::Importing { done: 1, total: 3 },
-            SyncFlow::ImportDone {
-                imported: 3,
-                skipped: 0,
-            },
-            SyncFlow::ImportFailed { notice_open: true },
-            SyncFlow::ImportFailed { notice_open: false },
-        ] {
-            // Local (before the stop), detached (mid-replacement), and synced
-            // (replacement runtime up): the driver owns these states — auth
-            // and scope edges must never reset them.
-            assert_eq!(
-                sync_flow_after_auth(flow, Some(WorkspaceScope::Local), Some(&signed_in)),
-                flow
-            );
-            assert_eq!(sync_flow_after_auth(flow, None, None), flow);
-            assert_eq!(
-                sync_flow_after_auth(flow, Some(WorkspaceScope::Synced), Some(&signed_in)),
-                flow
-            );
-        }
-    }
-
-    #[test]
-    fn synced_sign_out_blocks_every_viewport_and_cannot_switch_accounts() {
-        let signed_in_as_another_user = AuthState::SignedIn {
-            user: vardoger_proto::UserProfile {
-                id: "user-2".into(),
-                email: "other@example.com".into(),
-                name: None,
-            },
-            org_id: Some("org-2".into()),
-        };
-
-        assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::SigningOut,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::SignedOut),
-            ),
-            SyncFlow::SignedOutRestartRequired,
-            "the viewport that requested sign-out is blocked by AuthStatus"
-        );
-        assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::Idle,
-                Some(WorkspaceScope::Synced),
-                Some(&AuthState::SignedOut),
-            ),
-            SyncFlow::SignedOutRestartRequired,
-            "another viewport observing the same runtime is also blocked"
-        );
-        assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::SignedOutRestartRequired,
-                Some(WorkspaceScope::Synced),
-                Some(&signed_in_as_another_user),
-            ),
-            SyncFlow::SignedOutRestartRequired,
-            "new credentials cannot reopen the previous account's store"
         );
     }
 
