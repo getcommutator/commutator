@@ -1,0 +1,152 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/zeron",
+    "crates/cli",
+    "crates/doc",
+    "crates/engine",
+    "crates/harness",
+    "crates/launch",
+    "crates/mcp",
+    "crates/notify",
+    "crates/orb",
+    "crates/plugin-guard",
+    "crates/preview",
+    "crates/preview-label",
+    "crates/proto",
+    "crates/rpc",
+    "crates/sync",
+    "crates/term-link",
+    "crates/theme",
+    "crates/update",
+    "crates/visual",
+    "crates/voice-media",
+    "crates/voice-session",
+]
+
+[workspace.package]
+version = "0.3.16"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+zeron-voice-session = { path = "crates/voice-session" }
+zeron-orb = { path = "crates/orb" }
+zeron-term-link = { path = "crates/term-link" }
+zeron-voice-media = { path = "crates/voice-media" }
+zeron-proto = { path = "crates/proto" }
+zeron-preview = { path = "crates/preview" }
+zeron-preview-label = { path = "crates/preview-label" }
+zeron-doc = { path = "crates/doc" }
+zeron-sync = { path = "crates/sync" }
+zeron-harness = { path = "crates/harness" }
+zeron-engine = { path = "crates/engine" }
+zeron-rpc = { path = "crates/rpc" }
+zeron-update = { path = "crates/update" }
+zeron-cli = { path = "crates/cli" }
+zeron-launch = { path = "crates/launch" }
+zeron-notify = { path = "crates/notify" }
+zeron-theme = { path = "crates/theme" }
+zeron-mcp = { path = "crates/mcp" }
+zeron-visual = { path = "crates/visual" }
+zeron-plugin-guard = { path = "crates/plugin-guard" }
+
+# CRDT
+loro = "1.17"
+# Wire protocol for the SessionRoom DO rooms — official Rust twin of the npm
+# `loro-protocol` package the TS edge speaks (same monorepo, byte-identical
+# frames, cross-checked by its js_snapshots tests).
+loro-protocol = "0.3"
+
+# diffs
+similar = "2"
+
+# async / net
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+libc = "0.2"
+gethostname = "1"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+json5 = "0.4"
+# antigravity writes `settings.json` but reads it back with `hjson.load`, so a
+# user's comments and unquoted keys have to survive our read of the same file.
+deser-hjson = "2.2"
+plist = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# misc
+# Global allocator on macOS only: libmalloc retains the churn high-water mark
+# as permanent RSS - measured as the top residency cause in
+# docs/memory-plan.md. Pinned to mimalloc v2: the crate's default (v3.3.2)
+# has the same watermark pathology itself - transient streaming/render churn
+# became permanent RSS (~6x glibc growth, daemon at 908MB for 7.3MB of docs,
+# no idle recovery). Linux stays on glibc, which measured flat on the same
+# workloads.
+mimalloc = { version = "0.1", features = ["v2"] }
+anyhow = "1"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+notify = "7"
+portable-pty = "0.8"
+alacritty_terminal = "0.26"
+pulldown-cmark = "0.12"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+fontdb = "0.23"
+ttf-parser = "0.25.1"
+# Packaged GUI apps do not inherit shell proxy variables; honor the macOS and
+# Windows system proxy for provider usage probes and other HTTP clients.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "system-proxy"] }
+ignore = "0.4"
+# Workspace file/content search index (@ mentions, file tree, cmd+K).
+# Pinned exactly: crates.io also carries `0.11.1-nightly.*` prereleases.
+fff-search = "=0.11.0"
+
+[profile.release]
+# Distribution profile (scripts/package-linux.sh): thin LTO buys most of fat
+# LTO's size/speed win at a fraction of the link time; strip debug symbols.
+# scripts/package-linux.sh builds the Linux release with fat LTO in one codegen
+# unit instead (16% smaller, which Cloud wakes copy back in).
+lto = "thin"
+strip = "symbols"
+
+[profile.dev]
+# Our own crates unoptimized for quick rebuilds; dependencies optimized below.
+opt-level = 0
+# Full DWARF was ~90% of every rlib (25 GB of target/debug/deps). Line tables
+# keep file:line in panics and backtraces; for locals in lldb, build with
+# `--profile dev-debug`.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# `cargo build --profile dev-debug`: dev with full debug info, for lldb.
+# Builds into target/dev-debug.
+[profile.dev-debug]
+inherits = "dev"
+debug = true
+
+[profile.dev-debug.package."*"]
+debug = true
+
+# Scenes rasterize in software every frame the camera moves.
+[profile.dev.package.zeron-visual]
+opt-level = 3
