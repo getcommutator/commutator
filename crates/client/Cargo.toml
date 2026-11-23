@@ -37,4 +37,8 @@ vardoger-engine.workspace = true
 vardoger-visual.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+# The account server in-process for the remote-mode test (tests/remote.rs);
+# axum 0.7 is the server's own, already in the lockfile.
+vardoger-server = { path = "../../apps/vardoger-server" }
+axum = "0.7"
 
