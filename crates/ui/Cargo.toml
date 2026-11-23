@@ -63,11 +63,7 @@ name = "compact-picker-fixture"
 required-features = ["compact-picker-fixture"]
 
 [dependencies]
-vardoger-voice-media.workspace = true
-vardoger-voice-session.workspace = true
-vardoger-orb.workspace = true
 vardoger-veil.workspace = true
-vardoger-voice = { path = "../voice" }
 url = "2"
 vardoger-proto.workspace = true
 similar.workspace = true

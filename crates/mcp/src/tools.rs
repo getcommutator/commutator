@@ -1170,8 +1170,6 @@ impl Tools {
                 Some(key) => Some(self.vardoger.resolve_chat(key).await?.id),
                 None => self.vardoger.origin().chat_id.clone(),
             }
-            // A hidden voice orchestrator creates top-level sessions.
-            .filter(|parent| !vardoger_proto::voice::is_orchestrator_chat(parent))
         };
         anyhow::ensure!(
             !matches!(args.kind, Some(ChatKind::Side | ChatKind::Subagent)) || parent_chat_id.is_some(),
@@ -1193,9 +1191,7 @@ impl Tools {
         // asks nothing (the engine caps it again: rpc/agent_gate.rs).
         let mut ceiling = AccessMode::FullAccess;
         let mut sandbox_ceiling = SandboxLevel::DangerFullAccess;
-        if let Some(origin) = self.vardoger.origin().chat_id.as_deref()
-            && !vardoger_proto::voice::is_orchestrator_chat(origin)
-        {
+        if let Some(origin) = self.vardoger.origin().chat_id.as_deref() {
             let origin = self.vardoger.resolve_chat(origin).await?;
             anyhow::ensure!(
                 origin.parent_chat_id.is_none(),
@@ -2467,81 +2463,6 @@ mod tests {
         assert_eq!(params["command"]["request"]["cwd"], "/repo/comet");
         assert_eq!(params["command"]["request"]["harness"], "claude-code");
         assert_eq!(params["command"]["request"]["model"], "opus");
-    }
-
-    #[tokio::test]
-    async fn replies_use_the_full_id_with_multiple_voice_orchestrators() {
-        let first = "voice-orchestrator-11111111-1111-4111-8111-111111111111";
-        let second = "voice-orchestrator-22222222-2222-4222-8222-222222222222";
-        let world = Arc::new(World {
-            extra_chats: [first, second]
-                .into_iter()
-                .map(|id| {
-                    json!({
-                        "id": id, "deviceId": "dev-local", "title": "Voice session",
-                        "archived": false, "createdAt": "2026-10-01T00:00:00Z"
-                    })
-                })
-                .collect(),
-            ..Default::default()
-        });
-        let orchestrator = tools(
-            world.clone(),
-            Origin {
-                chat_id: Some(second.into()),
-                device_id: None,
-                ..Default::default()
-            },
-        );
-        let error = orchestrator
-            .vardoger
-            .resolve_chat("voice-or")
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("2 chats start with"), "{error}");
-        orchestrator
-            .call(
-                "send_message",
-                json!({
-                    "chat": "alpha", "text": "please review"
-                }),
-            )
-            .await
-            .unwrap();
-        let reply_id = {
-            let writes = world.writes.lock().unwrap();
-            let prompt = writes.last().unwrap().1["command"]["request"]["prompt"]
-                .as_str()
-                .unwrap();
-            prompt
-                .split_once("tool, chat ")
-                .unwrap()
-                .1
-                .split_once(".]\n\n")
-                .unwrap()
-                .0
-                .to_owned()
-        };
-        assert_eq!(reply_id, second);
-        let worker = tools(
-            world.clone(),
-            Origin {
-                chat_id: Some("chat-alpha-1".into()),
-                device_id: None,
-                ..Default::default()
-            },
-        );
-        worker
-            .call(
-                "send_message",
-                json!({
-                    "chat": reply_id, "text": "review complete"
-                }),
-            )
-            .await
-            .unwrap();
-        let writes = world.writes.lock().unwrap();
-        assert_eq!(writes.last().unwrap().1["chatId"], second);
     }
 
     #[tokio::test]

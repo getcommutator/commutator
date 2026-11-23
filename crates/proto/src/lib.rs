@@ -25,7 +25,6 @@ pub mod providers;
 pub mod run_errors;
 pub mod sidebar_pins;
 pub mod view;
-pub mod voice;
 pub mod workspace;
 
 pub use agent::*;

@@ -75,7 +75,6 @@ pub mod tool_output;
 mod transcript_history;
 mod update_trial;
 pub mod uploads;
-pub mod voice;
 pub mod workspace_files;
 pub mod workspace_host;
 pub mod workspace_search;

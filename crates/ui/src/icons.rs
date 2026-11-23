@@ -183,9 +183,6 @@ icon_assets![
     // plus/return ports) — the embedded set has neither.
     (BELL, "bell"),
     (VOLUME_LOUD, "volume-loud"),
-    // Hand-drawn microphone pair in the Solar Linear style — voice controls.
-    (MICROPHONE, "microphone"),
-    (MICROPHONE_OFF, "microphone-off"),
     (PHONE_HANG_UP, "phone-hang-up"),
     // Hand-drawn vardoger glyphs (terminal-panel.tsx / composer-actions.tsx /
     // menu-check.tsx / logo.tsx).

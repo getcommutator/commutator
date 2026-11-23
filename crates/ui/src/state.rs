@@ -34,7 +34,7 @@ use vardoger_proto::{
     AuthState, ChangeRequestSummary, Chat, ChatIndicator, CheckoutChangeRequestStatus, Device,
     EngineInfo, HarnessId, Session, SidebarPreferencesState, Space, WorkspaceScope,
 };
-use vardoger_rpc::{RpcClient, RpcError, RpcService, memory_client, methods};
+use vardoger_rpc::{RpcClient, RpcError, memory_client, methods};
 
 use crate::change_requests::{
     ChangeRequestClientState, ChangeRequestWatchKey, desired_watch_targets, watch_params,
@@ -117,9 +117,6 @@ pub enum EngineMode {
 trait EngineBackend: Send + Sync {
     fn client(&self) -> &RpcClient;
     fn mode(&self) -> EngineMode;
-    async fn media_client(&self) -> Result<RpcClient, RpcError> {
-        Err(RpcError::Failed("voice media unavailable".into()))
-    }
     /// Graceful teardown (drains runs / flushes docs for the in-process engine).
     async fn shutdown(&self);
     /// Resolves when the connection to the engine is lost (a separate
@@ -131,7 +128,6 @@ trait EngineBackend: Send + Sync {
 
 /// Embedded engine: owns the [`EngineCore`] and an in-memory RPC loop.
 struct InProcessEngine {
-    service: Arc<dyn RpcService>,
     runtime: Arc<tokio::sync::Mutex<Option<EngineRuntime>>>,
     boot_task: tokio::task::JoinHandle<()>,
     /// Serves this engine to other viewports over the IPC port. `None` when the
@@ -142,9 +138,6 @@ struct InProcessEngine {
 
 #[async_trait]
 impl EngineBackend for InProcessEngine {
-    async fn media_client(&self) -> Result<RpcClient, RpcError> {
-        Ok(memory_client(self.service.clone()))
-    }
     fn client(&self) -> &RpcClient {
         &self.client
     }
@@ -213,18 +206,11 @@ fn record_engine_loss(
 struct RemoteEngine {
     client: Arc<RpcClient>,
     url: String,
-    /// The daemon's IPC port and data dir: a second connection presents the
-    /// same bearer the first did.
-    ipc_port: u16,
-    data_dir: std::path::PathBuf,
     lifecycle_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[async_trait]
 impl EngineBackend for RemoteEngine {
-    async fn media_client(&self) -> Result<RpcClient, RpcError> {
-        vardoger_rpc::connect_ipc(self.ipc_port, Some(&self.data_dir)).await
-    }
     fn client(&self) -> &RpcClient {
         &self.client
     }
@@ -347,7 +333,6 @@ impl EngineHandle {
         let mut state_rx = deferred.state();
         let handle = EngineHandle {
             inner: Arc::new(InProcessEngine {
-                service,
                 runtime: deferred.runtime.clone(),
                 boot_task,
                 ipc_task: tokio::sync::Mutex::new(ipc_task),
@@ -469,8 +454,6 @@ impl EngineHandle {
                         inner: Arc::new(RemoteEngine {
                             client,
                             url,
-                            ipc_port,
-                            data_dir: data_dir.to_path_buf(),
                             lifecycle_task: tokio::sync::Mutex::new(Some(lifecycle_task)),
                         }),
                         engine_info,
@@ -502,8 +485,6 @@ impl EngineHandle {
             inner: Arc::new(RemoteEngine {
                 client: Arc::new(client),
                 url: "memory://test".into(),
-                ipc_port: 0,
-                data_dir: std::path::PathBuf::new(),
                 lifecycle_task: tokio::sync::Mutex::new(None),
             }),
             engine_info: EngineInfo { build: Default::default(),
@@ -526,10 +507,6 @@ impl EngineHandle {
 
     pub fn mode(&self) -> EngineMode {
         self.inner.mode()
-    }
-
-    pub async fn media_client(&self) -> Result<RpcClient, RpcError> {
-        self.inner.media_client().await
     }
 
     pub fn engine_info(&self) -> &EngineInfo {
@@ -2133,7 +2110,6 @@ impl AppState {
     /// another chat (`parent_chat_id`, the Vardoger MCP's orchestration link)
     /// are the parent's workers, not sessions the user started: they stay
     /// reachable by id/deep link but never take a sidebar row or jump slot.
-    /// Voice orchestrator chats are hidden the same way.
     pub fn visible_chats(&self) -> impl Iterator<Item = &Chat> {
         self.chats
             .iter()
@@ -4599,6 +4575,7 @@ fn spawn_subagent_watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vardoger_rpc::RpcService;
     use chrono::TimeDelta;
     use gpui::AppContext;
     use vardoger_engine::{EngineCore, default_registry};

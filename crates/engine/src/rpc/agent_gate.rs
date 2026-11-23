@@ -37,9 +37,8 @@ use super::EngineRpc;
 pub(super) struct Calling {
     pub id: String,
     pub label: String,
-    /// Its sandbox and access: what a chat it makes may have at most. `None`
-    /// for Vardoger's voice orchestrator (the person speaking).
-    pub ceiling: Option<(SandboxLevel, AccessMode)>,
+    /// Its sandbox and access: what a chat it makes may have at most.
+    pub ceiling: (SandboxLevel, AccessMode),
 }
 
 /// The `Title (short-id)` label a header names a chat by.
@@ -58,15 +57,11 @@ fn refused(message: impl Into<String>) -> RpcError {
 impl EngineRpc {
     fn calling(&self, chat_id: &str, chats: &[Chat]) -> Calling {
         let chat = chats.iter().find(|c| c.id == chat_id);
-        let ceiling = if vardoger_proto::voice::is_orchestrator_chat(chat_id) {
-            None
-        } else {
-            // Unknown here, or with no config: the least, never the most.
-            Some(match chat.and_then(|c| c.config.as_ref()) {
-                Some(config) => (config.sandbox, config.access),
-                None if chat.is_some() => (SandboxLevel::WorkspaceWrite, AccessMode::FullAccess),
-                None => (SandboxLevel::ReadOnly, AccessMode::Supervised),
-            })
+        // Unknown here, or with no config: the least, never the most.
+        let ceiling = match chat.and_then(|c| c.config.as_ref()) {
+            Some(config) => (config.sandbox, config.access),
+            None if chat.is_some() => (SandboxLevel::WorkspaceWrite, AccessMode::FullAccess),
+            None => (SandboxLevel::ReadOnly, AccessMode::Supervised),
         };
         Calling {
             id: chat_id.to_owned(),
@@ -107,7 +102,7 @@ impl EngineRpc {
         };
         if command {
             let full = calling.as_ref().is_none_or(|c| {
-                c.ceiling.is_none_or(|(_, access)| access == AccessMode::FullAccess)
+                c.ceiling.1 == AccessMode::FullAccess
             });
             if !full {
                 return Err(refused(
@@ -129,7 +124,7 @@ impl EngineRpc {
                     let Some(config) = params.get_mut("config").filter(|c| c.is_object()) else {
                         return Err(refused("An agent's new chat names its config (harness, sandbox, access)"));
                     };
-                    if let Some((max_sandbox, max_access)) = calling.as_ref().and_then(|c| c.ceiling) {
+                    if let Some((max_sandbox, max_access)) = calling.as_ref().map(|c| c.ceiling) {
                         let sandbox = serde_json::from_value(config["sandbox"].clone())
                             .unwrap_or(SandboxLevel::DangerFullAccess);
                         let access = serde_json::from_value(config["access"].clone()).unwrap_or_default();
@@ -179,7 +174,7 @@ impl EngineRpc {
                             None => {
                                 let ceiling = calling
                                     .as_ref()
-                                    .and_then(|c| c.ceiling)
+                                    .map(|c| c.ceiling)
                                     .unwrap_or((SandboxLevel::DangerFullAccess, AccessMode::FullAccess));
                                 let sandbox = serde_json::from_value(request["sandbox"].clone())
                                     .unwrap_or(SandboxLevel::DangerFullAccess);
@@ -206,7 +201,7 @@ impl EngineRpc {
                                 .any(|l| l.as_str().is_some_and(|l| l.trim().eq_ignore_ascii_case("yes")))
                         });
                         let full = calling.as_ref().is_none_or(|c| {
-                            c.ceiling.is_none_or(|(_, access)| access == AccessMode::FullAccess)
+                            c.ceiling.1 == AccessMode::FullAccess
                         });
                         if approves && !full {
                             return Err(refused(

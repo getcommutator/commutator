@@ -487,7 +487,6 @@ impl SettingsStore {
 
 pub fn init(settings: UiSettings, data_dir: impl Into<PathBuf>, cx: &mut App) {
     let data_dir = data_dir.into();
-    crate::dictation::init(data_dir.clone(), cx);
     cx.set_global(SettingsStore {
         current: settings,
         data_dir: data_dir.into(),
@@ -987,11 +986,6 @@ pub const SKILL_COMPLETION_HARNESSES: [(vardoger_proto::HarnessId, &str); 9] = [
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiSettings {
-    pub dictation_enabled: bool,
-    /// Dictation microphone as a `vardoger_voice::InputDevice` id; `None`
-    /// follows the system default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dictation_input: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_geometry: Option<WindowGeometry>,
     /// Submit using Enter or the platform modifier plus Enter.
@@ -1193,12 +1187,6 @@ pub struct UiSettings {
     pub reduce_motion: crate::motion::ReduceMotion,
     /// Also snap animations while the main window is not focused.
     pub pause_animations_in_background: bool,
-    /// Stable native Codex voice id only; devices and microphone state are never persisted.
-    #[serde(default)]
-    pub codex_voice: Option<String>,
-    /// Local preference: never transfers an active call or credentials.
-    #[serde(default)]
-    pub codex_voice_device: Option<String>,
     /// Pre-theme settings used `accentColor`. Read it once, migrate to
     /// [`Self::accent`], and never write it again.
     #[serde(default, rename = "accentColor", skip_serializing)]
@@ -1208,8 +1196,6 @@ pub struct UiSettings {
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
-            dictation_enabled: false,
-            dictation_input: None,
             window_geometry: None,
             sidebar_width: SIDEBAR_DEFAULT,
             sidebar_collapsed: false,
@@ -1298,8 +1284,6 @@ impl Default for UiSettings {
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
-            codex_voice: None,
-            codex_voice_device: None,
             legacy_accent_color: None,
         }
     }
@@ -1334,7 +1318,6 @@ const JUMP_LABELS: [&str; JUMP_SLOTS] = [
 /// rather than panicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShortcutId {
-    ToggleDictation,
     CaptureAppshot,
     RandomWallpaper,
     SaveFile,
@@ -1353,8 +1336,7 @@ pub enum ShortcutId {
 }
 
 impl ShortcutId {
-    pub const ALL: [ShortcutId; 15 + JUMP_SLOTS] = [
-        ShortcutId::ToggleDictation,
+    pub const ALL: [ShortcutId; 14 + JUMP_SLOTS] = [
         ShortcutId::CaptureAppshot,
         ShortcutId::RandomWallpaper,
         ShortcutId::SaveFile,
@@ -1387,7 +1369,6 @@ impl ShortcutId {
     /// Row label (vardoger lib/shortcuts.ts `SHORTCUT_DEFINITIONS`, verbatim).
     pub fn label(self) -> &'static str {
         match self {
-            ShortcutId::ToggleDictation => "Hold to dictate",
             ShortcutId::RandomWallpaper => "Random wallpaper",
             ShortcutId::CaptureAppshot => "Capture Appshot",
             ShortcutId::SaveFile => "Save file",
@@ -1415,7 +1396,6 @@ impl ShortcutId {
     /// this guards against only exists off macOS).
     pub fn default_combo_on(self, mac: bool) -> &'static str {
         match self {
-            ShortcutId::ToggleDictation => "mod-d",
             ShortcutId::RandomWallpaper => "mod-u",
             ShortcutId::CaptureAppshot if mac => "ctrl-alt-space",
             ShortcutId::CaptureAppshot => "mod-alt-space",
@@ -1464,7 +1444,6 @@ impl ShortcutId {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct KeymapConfig {
-    pub toggle_dictation: String,
     #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), serde(skip))]
     pub capture_appshot: String,
     pub random_wallpaper: String,
@@ -1531,7 +1510,6 @@ pub fn sidebar_pin_profile_key(
 impl Default for KeymapConfig {
     fn default() -> Self {
         Self {
-            toggle_dictation: ShortcutId::ToggleDictation.default_combo().into(),
             capture_appshot: ShortcutId::CaptureAppshot.default_combo().into(),
             random_wallpaper: ShortcutId::RandomWallpaper.default_combo().into(),
             save_file: ShortcutId::SaveFile.default_combo().into(),
@@ -1554,7 +1532,6 @@ impl Default for KeymapConfig {
 impl KeymapConfig {
     pub fn get(&self, id: ShortcutId) -> &str {
         match id {
-            ShortcutId::ToggleDictation => &self.toggle_dictation,
             ShortcutId::CaptureAppshot => &self.capture_appshot,
             ShortcutId::RandomWallpaper => &self.random_wallpaper,
             ShortcutId::SaveFile => &self.save_file,
@@ -1579,7 +1556,6 @@ impl KeymapConfig {
 
     pub fn set(&mut self, id: ShortcutId, combo: String) {
         match id {
-            ShortcutId::ToggleDictation => self.toggle_dictation = combo,
             ShortcutId::CaptureAppshot => self.capture_appshot = combo,
             ShortcutId::RandomWallpaper => self.random_wallpaper = combo,
             ShortcutId::SaveFile => self.save_file = combo,
@@ -1861,8 +1837,6 @@ impl UiSettings {
             }};
         }
         merge!(
-            dictation_enabled,
-            dictation_input,
             window_geometry,
             composer_send_behavior,
             skills_in_slash_menu,
@@ -1947,8 +1921,6 @@ impl UiSettings {
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
-            codex_voice,
-            codex_voice_device,
             legacy_accent_color,
             pull_request_destination,
             last_pull_request_repository,
@@ -2302,7 +2274,6 @@ mod tests {
             height: 800.0,
         };
         let settings = UiSettings {
-            dictation_enabled: false,
             window_geometry: Some(geometry),
             ..Default::default()
         };
@@ -2928,11 +2899,7 @@ mod tests {
     fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let settings = UiSettings {
-            dictation_enabled: false,
-            dictation_input: Some("coreaudio:usb-mic".into()),
             window_geometry: None,
-            codex_voice: Some("ember".into()),
-            codex_voice_device: Some("fedora".into()),
             sidebar_width: 300.0,
             sidebar_collapsed: true,
             sidebar_grouped: true,

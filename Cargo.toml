@@ -12,7 +12,6 @@ members = [
     "crates/markdown",
     "crates/mcp",
     "crates/notify",
-    "crates/orb",
     "crates/preview",
     "crates/preview-label",
     "crates/proto",
@@ -28,9 +27,6 @@ members = [
     "crates/veil",
     "crates/visual",
     "crates/visual-gpu",
-    "crates/voice",
-    "crates/voice-media",
-    "crates/voice-session",
     "crates/zatex",
 ]
 
@@ -41,10 +37,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-vardoger-voice-session = { path = "crates/voice-session" }
-vardoger-orb = { path = "crates/orb" }
 vardoger-term-link = { path = "crates/term-link" }
-vardoger-voice-media = { path = "crates/voice-media" }
 vardoger-proto = { path = "crates/proto" }
 vardoger-preview = { path = "crates/preview" }
 vardoger-preview-label = { path = "crates/preview-label" }
@@ -68,7 +61,6 @@ vardoger-theme = { path = "crates/theme" }
 vardoger-veil = { path = "crates/veil" }
 vardoger-ui = { path = "crates/ui" }
 vardoger-visual-gpu = { path = "crates/visual-gpu" }
-vardoger-voice = { path = "crates/voice" }
 zatex = { path = "crates/zatex" }
 
 # gpui: zeronsh/zui, patched below to the freethinkel/zui fork (the same rev

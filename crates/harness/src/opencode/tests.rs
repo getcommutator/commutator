@@ -329,7 +329,6 @@ impl TurnWire {
             server: Server::attached(base),
             event_tx,
             controls: RunControls {
-                realtime: None,
                 execution_lease: None,
                 request_input: Box::new(move |questions| {
                     let answer = answer.expect("fixture must not ask for input");
@@ -3665,7 +3664,6 @@ http.createServer((req, res) => {
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
     let (steer_tx, steering) = mpsc::channel(1);
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(|_| tokio::sync::oneshot::channel().1),
         steering,
@@ -3826,7 +3824,6 @@ async fn scripted_run(
     let (steer_tx, steering) = mpsc::channel(1);
     let turn = crate::TurnControl::default();
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(|_| tokio::sync::oneshot::channel().1),
         steering,
@@ -4011,7 +4008,6 @@ async fn wedged_run(base: String, timeouts: BusTimeouts) -> (Option<String>, Don
         server: Server::attached(base),
         event_tx,
         controls: RunControls {
-            realtime: None,
             execution_lease: None,
             request_input: Box::new(|_| tokio::sync::oneshot::channel().1),
             steering,
@@ -4111,7 +4107,6 @@ async fn a_stopped_server_process_fails_the_turn_and_is_torn_down() {
     );
     let (steer_tx, steering) = mpsc::channel(1);
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(|_| tokio::sync::oneshot::channel().1),
         steering,

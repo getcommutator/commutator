@@ -1660,7 +1660,6 @@ async fn run_session(session: Session) {
         mut _mcp_config,
     } = session;
     let RunControls {
-        realtime: _,
         execution_lease: _execution_lease,
         request_input,
         mut steering,

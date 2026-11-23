@@ -92,7 +92,6 @@ async fn an_approved_device_login_runs_real_turns_and_signs_out() {
     };
     let (steer, steering) = tokio::sync::mpsc::channel(8);
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         steering,
         interrupt: CancellationToken::new(),
@@ -179,7 +178,6 @@ async fn a_real_turn_reports_the_subscriptions_usage() {
     let work = tempfile::tempdir().unwrap();
     let (_steer, steering) = tokio::sync::mpsc::channel(1);
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         steering,
         interrupt: CancellationToken::new(),

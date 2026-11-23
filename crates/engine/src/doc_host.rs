@@ -633,20 +633,6 @@ impl ChatDocHandle {
         &self.chat_id
     }
 
-    pub(crate) fn commit_voice(
-        &self,
-        transcript: &vardoger_proto::voice::VoiceTranscript,
-    ) -> Result<Option<String>, EngineError> {
-        let _owner = lock(&self.transcript_import);
-        vardoger_doc::voice::commit_voice_transcript(
-            &self.doc,
-            transcript,
-            &self.device_id,
-            chrono::Utc::now().timestamp_millis(),
-        )
-        .map_err(EngineError::from)
-    }
-
     pub fn doc(&self) -> &SessionDoc {
         &self.doc
     }
