@@ -1,4 +1,4 @@
-//! Shared fixture: the app's Geist faces (read from crates/ui) plus a deterministic fallback.
+//! Shared fixture: the app's Geist faces (read from assets/fonts) plus a deterministic fallback.
 
 #![allow(dead_code)]
 
