@@ -56,6 +56,18 @@ pub fn devices_subtitle(scope: Option<WorkspaceScope>) -> &'static str {
     }
 }
 
+/// What reloading the engine costs, said under the banner. Pure.
+pub fn reload_note(working: usize) -> String {
+    match working {
+        0 => "Reload to start it. It takes a few seconds.".to_string(),
+        1 => "1 chat is working, so it didn't restart. Reloading stops it; it picks up again after."
+            .to_string(),
+        n => format!(
+            "{n} chats are working, so it didn't restart. Reloading stops them; they pick up again after."
+        ),
+    }
+}
+
 struct RenameDialog {
     device_id: String,
     input: Entity<ComposerInput>,
@@ -71,6 +83,10 @@ pub struct DevicesPage {
     error: Option<SharedString>,
     task: Option<Task<()>>,
     copy_task: Option<Task<()>>,
+    /// This device's engine runs an older binary than the one installed (an
+    /// update or a rebuild it couldn't restart into): the chats working in it.
+    engine_reload: Option<usize>,
+    reload_task: Option<Task<()>>,
     /// One CloudStatus read per visit (kept alive, never polled).
     _observe: Subscription,
 }
@@ -78,7 +94,7 @@ pub struct DevicesPage {
 impl DevicesPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
         let observe = cx.observe(&state, |_, _, cx| cx.notify());
-        Self {
+        let mut page = Self {
             state,
             scroll: widgets::PageScroll::default(),
             rename: None,
@@ -86,8 +102,59 @@ impl DevicesPage {
             error: None,
             task: None,
             copy_task: None,
+            engine_reload: None,
+            reload_task: None,
             _observe: observe,
-        }
+        };
+        page.check_engine(cx);
+        page
+    }
+
+    /// One read per visit. Engines that don't answer it (older, headless)
+    /// offer no reload.
+    fn check_engine(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
+            let Ok(reply) = engine
+                .client()
+                .call(methods::ENGINE_RESTART_CHECK, serde_json::json!({}))
+                .await
+            else {
+                return;
+            };
+            let stale = reply["stale"].as_bool() == Some(true);
+            let working = reply["working"].as_u64().unwrap_or(0) as usize;
+            this.update(cx, |page, cx| {
+                page.engine_reload = stale.then_some(working);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Stop the engine: the app reconnects and starts the installed one (see
+    /// `AppState::engine_connection_lost`); chats it stops pick up again there.
+    fn reload_engine(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.engine_reload = None;
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
+            if let Err(err) = engine
+                .client()
+                .call(methods::STOP_ENGINE, serde_json::json!({}))
+                .await
+            {
+                this.update(cx, |page, cx| {
+                    page.error = Some(format!("Couldn't reload the engine: {err}").into());
+                    cx.notify();
+                })
+                .ok();
+            }
+        }));
+        cx.notify();
     }
 
     pub(crate) fn open_rename(
@@ -280,6 +347,34 @@ impl Render for DevicesPage {
         };
         let copied = self.copied.clone();
         let dialog = self.render_rename_dialog(window.viewport_size(), cx);
+        let reload_banner = self.engine_reload.map(|working| {
+            widgets::section_card(&theme).mt(px(8.0)).child(
+                widgets::card_row(&theme, true)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(160.0))
+                            .child(widgets::row_title(&theme, "A newer engine is installed"))
+                            .child(widgets::meta_line(
+                                &theme,
+                                vec![
+                                    div()
+                                        .child(SharedString::from(reload_note(working)))
+                                        .into_any_element(),
+                                ],
+                            )),
+                    )
+                    .child(
+                        widgets::text_action(&theme, widgets::ActionTone::Filled, "Reload engine")
+                            .id("engine-reload")
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .aria_label("Reload engine")
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_engine(cx))),
+                    ),
+            )
+        });
         // Split into this device and the rest; each renders as rows in one
         // block, like every other settings page.
         let (local, others): (Vec<_>, Vec<_>) = devices
@@ -399,6 +494,7 @@ impl Render for DevicesPage {
             .flex_col()
             .when_some(local_block, |el, block| {
                 el.child(widgets::section_label(&theme, "This device").mt(px(28.0)))
+                    .children(reload_banner)
                     .child(block)
             })
             // A local-only workspace never has other devices to list.
@@ -476,6 +572,13 @@ mod tests {
             format_last_seen(Some(now - TimeDelta::days(2)), now),
             "2d ago"
         );
+    }
+
+    #[test]
+    fn reload_note_says_what_stops() {
+        assert!(!reload_note(0).contains("stops"));
+        assert!(reload_note(1).starts_with("1 chat is working"));
+        assert!(reload_note(3).starts_with("3 chats are working"));
     }
 
     #[test]
