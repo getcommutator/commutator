@@ -424,6 +424,12 @@ private fun Home(
             }
         }
     }
+    // A checkout opened from Projects (`tree id` to `checkout id`): its chats over the list.
+    var checkout by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    checkout?.let { (tree, id) ->
+        val actions = remember(model, open, selected) { RowActions(model, open, { model.archive(it.id) }, emptyList(), {}, selected) }
+        return ProjectChatsScreen(model, tree, id, actions, onBack = { checkout = null }, onNew = onNew)
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Box(Modifier.fillMaxSize().nestedScroll(fabScroll)) {
             SessionsScreen(
@@ -434,6 +440,8 @@ private fun Home(
                 selected = selected,
                 onSearch = onSearch,
                 onSettings = onSettings,
+                onNew = onNew,
+                onOpenCheckout = { tree, c -> checkout = listOf(tree.id, c.id) },
             )
         }
         ExtendedFloatingActionButton(

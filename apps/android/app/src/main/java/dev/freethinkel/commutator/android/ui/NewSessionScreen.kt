@@ -81,6 +81,8 @@ fun NewSessionScreen(
     // What was set up when the page was last closed unsent comes back.
     val composer = remember { ComposerModel(model.newSessionText).apply { images.addAll(model.newSessionImages) } }
     var created by remember { mutableStateOf(false) }
+    // A worktree picked in Projects is for this page only: it doesn't stick to the next new chat.
+    val worktreeTarget = remember { model.newChatIn }
     fun rememberDraft() {
         if (created) return
         model.lastDraft = draft
@@ -97,6 +99,7 @@ fun NewSessionScreen(
         onDispose {
             lifecycle.removeObserver(observer)
             rememberDraft()
+            if (model.newChatIn === worktreeTarget) model.newChatIn = null
         }
     }
     var newProject by remember { mutableStateOf(false) }

@@ -47,7 +47,13 @@ import uniffi.commutator_core.SessionRow
 @Composable
 fun ArchivedScreen(model: AppModel, onBack: () -> Unit, onOpen: (String) -> Unit) {
     val workspace by model.workspace.collectAsState()
-    val rows = workspace?.archived.orEmpty()
+    val trees by model.projects.collectAsState()
+    val filter by model.activityProject.collectAsState()
+    // Chats' project filter holds here too; archived chats sit in no checkout's list: by their project.
+    val tree = trees.firstOrNull { it.id == filter }
+    val rows = workspace?.archived.orEmpty().filter { row ->
+        tree == null || row.project?.let { it.id in tree.projectIds.values || it.name == tree.name } == true
+    }
     val list = rememberLazyListState()
     Box(Modifier.fillMaxSize()) {
         LazyColumn(state = list, contentPadding = PaddingValues(bottom = 32.dp), modifier = Modifier.fillMaxSize()) {
