@@ -76,6 +76,36 @@ final class RowModel: @unchecked Sendable {
         self.fadedRun = faded
     }
 
+    // MARK: Selection geometry (run `i`, its layer's coordinates)
+
+    /// Run indices in text order.
+    private(set) lazy var textOrder: [Int] = display.runs.indices
+        .filter { lines[$0] != nil && display.runs[$0].len > 0 }
+        .sorted { display.runs[$0].start < display.runs[$1].start }
+
+    func runBox(_ i: Int) -> CGRect {
+        let r = display.runs[i]
+        var ascent: CGFloat = 0, descent: CGFloat = 0
+        if let line = lines[i] { CTLineGetTypographicBounds(line, &ascent, &descent, nil) }
+        return CGRect(x: CGFloat(r.x), y: CGFloat(r.baseline) - ascent, width: CGFloat(r.width), height: ascent + descent)
+    }
+
+    /// x of text offset `offset` (clamped into the run).
+    func runX(_ i: Int, _ offset: Int) -> CGFloat {
+        let r = display.runs[i]
+        guard let line = lines[i] else { return CGFloat(r.x) }
+        let local = max(0, min(Int(r.len), offset - Int(r.start)))
+        return CGFloat(r.x) + CTLineGetOffsetForStringIndex(line, local, nil)
+    }
+
+    /// Text offset nearest to `x`.
+    func runOffset(_ i: Int, x: CGFloat) -> Int {
+        let r = display.runs[i]
+        guard let line = lines[i] else { return Int(r.start) }
+        let local = CTLineGetStringIndexForPosition(line, CGPoint(x: x - CGFloat(r.x), y: 0))
+        return Int(r.start) + max(0, min(Int(r.len), local))
+    }
+
     /// Alpha ramp used to erase text across a fade (clear → opaque).
     private static let ramp = CGGradient(colorSpace: CGColorSpaceCreateDeviceGray(), colorComponents: [0, 0, 0, 1], locations: [0, 1], count: 2)!
     private static let rampBottom = CGGradient(colorSpace: CGColorSpaceCreateDeviceGray(), colorComponents: [0, 0, 0, 0.92], locations: [0, 1], count: 2)!
@@ -251,6 +281,60 @@ final class RowModel: @unchecked Sendable {
             }
             if case .fresh = pass {} else { drawFades(layer: layer, in: ctx, hairline: hairline) }
         }
+    }
+}
+
+extension RowDisplay {
+    /// The painted text in `[from, to)`. Paragraphs sit back to back in
+    /// `text`, so a line change with no whitespace between becomes a newline.
+    func selectedText(from: Int, to: Int) -> String {
+        let ns = text as NSString
+        let to = min(to, ns.length)
+        guard from < to else { return "" }
+        var out = ""
+        var prev: (end: Int, baseline: Float, scroller: UInt32?)?
+        for r in runs.sorted(by: { $0.start < $1.start }) where r.len > 0 {
+            var s = max(from, Int(r.start))
+            let e = min(to, Int(r.start + r.len))
+            if let p = prev {
+                s = max(s, p.end)
+                guard s < e else { continue }
+                if s > p.end {
+                    out += ns.substring(with: NSRange(location: p.end, length: s - p.end))
+                } else if p.baseline != r.baseline || p.scroller != r.scroller, out.last?.isWhitespace == false {
+                    out += "\n"
+                }
+            } else if s >= e {
+                continue
+            }
+            out += ns.substring(with: NSRange(location: s, length: e - s))
+            prev = (e, r.baseline, r.scroller)
+        }
+        return out
+    }
+
+    /// The word around `offset` (a single character between words), within
+    /// its run: paragraphs sit back to back in `text`, so their edge words
+    /// would otherwise merge.
+    func wordRange(at offset: Int) -> Range<Int> {
+        let ns = text as NSString
+        guard ns.length > 0 else { return 0..<0 }
+        let o = max(0, min(ns.length - 1, offset))
+        let run = runs.first { o >= Int($0.start) && o < Int($0.start + $0.len) }
+        let lo = run.map { Int($0.start) } ?? 0
+        let hi = run.map { min(ns.length, Int($0.start + $0.len)) } ?? ns.length
+        var found: Range<Int>?
+        ns.enumerateSubstrings(in: NSRange(location: lo, length: hi - lo), options: [.byWords, .substringNotRequired]) { _, r, _, stop in
+            if r.location <= o, o < NSMaxRange(r) {
+                found = r.location..<NSMaxRange(r)
+                stop.pointee = true
+            } else if r.location > o {
+                stop.pointee = true
+            }
+        }
+        if let found { return found }
+        let c = ns.rangeOfComposedCharacterSequence(at: o)
+        return c.location..<NSMaxRange(c)
     }
 }
 

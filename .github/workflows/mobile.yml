@@ -1,0 +1,69 @@
+# The phone apps, on every pull request and push to main that touches them or the core they link: iOS builds for the
+# simulator, Android compiles and runs its unit tests. A cold core build is most of a run, so each job keeps a Rust
+# cache of its own target (one shared key had each job push out the other's).
+name: mobile
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - apps/ios/**
+      - apps/android/**
+      - crates/**
+      - scripts/ios/**
+      - scripts/android/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/mobile.yml
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  # a newer push to a PR replaces its run; main's runs queue
+  group: mobile-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ios:
+    # IPHONEOS_DEPLOYMENT_TARGET is 26.0: Xcode 26's SDK
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-sim
+      # the core is built for arm64 only (aarch64-apple-ios-sim), so the app is too (ARCHS below)
+      # the core once, outside Xcode: its build phase then reuses it (COMMUTATOR_SKIP_CORE)
+      - run: scripts/ios/build-core.sh iphonesimulator
+      # the Swift bindings and FFI header are committed: a core change must commit them too
+      - run: git diff --exit-code -- apps/ios/Commutator/Core/Generated apps/ios/CoreFFI
+      - name: Build
+        working-directory: apps/ios
+        run: |
+          xcodebuild -project Commutator.xcodeproj -scheme Commutator \
+            -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO COMMUTATOR_SKIP_CORE=1 build | tail -n 200
+          exit "${PIPESTATUS[0]}"
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+      # no NDK here: build-core.sh makes only the Kotlin bindings, from a host build of the core
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-host
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile and test
+        working-directory: apps/android
+        run: ./gradlew :app:testDebugUnitTest --console=plain

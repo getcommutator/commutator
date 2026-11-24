@@ -275,7 +275,12 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
         tap.cancelsTouchesInView = false
         addGestureRecognizer(tap)
-        addInteraction(UIContextMenuInteraction(delegate: self))
+        addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:))))
+        addInteraction(editMenu)
+        for handle in [startHandle, endHandle] {
+            handle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(draggedHandle(_:))))
+            addSubview(handle)
+        }
         panGestureRecognizer.addTarget(self, action: #selector(panned(_:)))
         delegate = self
         // Display models are a pure cache (rebuilt from the frame on demand).
@@ -357,13 +362,17 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         switch pan.state {
         case .began:
             setFollowing(false)
+            editMenu.dismissMenu()
         case .ended, .cancelled:
             // Finger moving up (negative y) scrolls toward the tail.
             if distanceFromBottom < 70, pan.velocity(in: self).y <= 50 { setFollowing(true) }
+            if !isDecelerating { showSelectionMenu() }
         default:
             break
         }
     }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { showSelectionMenu() }
 
     /// Status-bar tap: the user is going to the top, not the tail.
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
@@ -516,6 +525,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         }
         for (key, view) in visible where !seen.contains(key) {
             visible[key] = nil
+            view.setSelection(nil)
             view.isHidden = true
             view.layer.removeAllAnimations()
             view.alpha = 1
@@ -529,6 +539,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         } else {
             for (view, rect) in moves { view.frame = rect }
         }
+        if selAnchor != nil { updateSelection() }
         prefetch(frame: frame, around: y0...y1)
     }
 
@@ -575,6 +586,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
                    let i = current.indexOf(key: p.key), current.placement(index: i)?.version == p.version {
                     view.configure(model, kind: p.kind)
                     view.uploadProgress = self.uploadProgress
+                    if self.selAnchor != nil { self.updateSelection() }
                 }
             }
         }
@@ -669,6 +681,10 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
         let point = tap.location(in: self)
+        if selAnchor != nil {
+            if !startHandle.hitFrame.contains(point), !endHandle.hitFrame.contains(point) { clearSelection() }
+            return
+        }
         guard let row = visible.values.first(where: { !$0.isHidden && $0.frame.contains(point) }),
               let url = row.link(at: tap.location(in: row))
         else { return }
@@ -740,51 +756,246 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         return live
     }
 
-    fileprivate func row(at point: CGPoint) -> RowView? {
-        visible.values.first { !$0.isHidden && $0.frame.contains(point) }
-    }
-}
+    // MARK: Text selection
+    //
+    // The transcript is painted, so selection is ours: a long press selects
+    // the word under the finger and keeps extending while the finger moves;
+    // handles adjust either end, across rows; a tap clears.
 
-extension TranscriptListView: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard let row = row(at: location), let model = row.model, let frame = current,
-              let index = frame.indexOf(key: model.display.key)
-        else { return nil }
-        let block = model.display.copyText
-        return UIContextMenuConfiguration(identifier: NSNumber(value: model.display.key), previewProvider: nil) { _ in
-            var actions: [UIMenuElement] = []
-            if !block.isEmpty {
-                actions.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.string = block
-                })
+    private struct TextPoint {
+        var key: UInt64
+        var offset: Int
+    }
+    private var selAnchor: TextPoint?
+    private var selFocus: TextPoint?
+    /// The long-pressed word, while that press extends the selection.
+    private var pressWord: (key: UInt64, range: Range<Int>)?
+    /// Finger → caret offset of the handle being dragged.
+    private var grab: CGPoint = .zero
+    private let startHandle = SelectionHandle(start: true)
+    private let endHandle = SelectionHandle(start: false)
+    private lazy var editMenu = UIEditMenuInteraction(delegate: self)
+
+    private func index(_ p: TextPoint) -> UInt32? { current?.indexOf(key: p.key) }
+
+    /// a < b in reading order (nil when either row is gone).
+    private func precedes(_ a: TextPoint, _ b: TextPoint) -> Bool? {
+        guard let ia = index(a), let ib = index(b) else { return nil }
+        return (ia, a.offset) < (ib, b.offset)
+    }
+
+    /// The selection's ends in reading order, with their row indices.
+    private func ordered() -> (lo: TextPoint, loIndex: UInt32, hi: TextPoint, hiIndex: UInt32)? {
+        guard let a = selAnchor, let f = selFocus, let ia = index(a), let iff = index(f) else { return nil }
+        return (ia, a.offset) <= (iff, f.offset) ? (a, ia, f, iff) : (f, iff, a, ia)
+    }
+
+    private func clearSelection() {
+        selAnchor = nil
+        selFocus = nil
+        pressWord = nil
+        editMenu.dismissMenu()
+        startHandle.isHidden = true
+        endHandle.isHidden = true
+        visible.values.forEach { $0.setSelection(nil) }
+    }
+
+    private func updateSelection() {
+        guard let o = ordered() else { return clearSelection() }
+        for view in visible.values where !view.isHidden {
+            guard let i = current?.indexOf(key: view.key), i >= o.loIndex, i <= o.hiIndex else {
+                view.setSelection(nil)
+                continue
             }
-            if let message = frame.messageText(index: index), !message.isEmpty, message != block {
-                actions.append(UIAction(title: "Copy Message", image: UIImage(systemName: "doc.on.clipboard")) { _ in
-                    UIPasteboard.general.string = message
-                })
+            view.setSelection((i == o.loIndex ? o.lo.offset : 0)..<(i == o.hiIndex ? o.hi.offset : Int.max))
+        }
+        for (handle, point, end) in [(startHandle, o.lo, false), (endHandle, o.hi, true)] {
+            if let row = visible[point.key], !row.isHidden, let caret = row.caret(at: point.offset, end: end) {
+                handle.place(caret: row.convert(caret, to: self))
+                handle.isHidden = false
+                bringSubviewToFront(handle)
+            } else {
+                handle.isHidden = true
             }
-            let selectable = frame.messageText(index: index) ?? block
-            if !selectable.isEmpty {
-                actions.append(UIAction(title: "Select Text", image: UIImage(systemName: "character.cursor.ibeam")) { [weak self] _ in
-                    self?.presentSelection(selectable)
-                })
-            }
-            return actions.isEmpty ? nil : UIMenu(children: actions)
         }
     }
 
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        guard let key = (configuration.identifier as? NSNumber)?.uint64Value, let row = visible[key] else { return nil }
-        let params = UIPreviewParameters()
-        params.backgroundColor = Palette.background
-        params.visiblePath = UIBezierPath(roundedRect: row.bounds.insetBy(dx: 8, dy: 0), cornerRadius: 16)
-        return UITargetedPreview(view: row, parameters: params)
+    /// The text position nearest `point` (list coordinates) within `limit`.
+    private func hitText(_ point: CGPoint, within limit: CGFloat = .infinity) -> TextPoint? {
+        var best: (point: TextPoint, distance: CGFloat)?
+        for view in visible.values where !view.isHidden {
+            let rowDistance = max(0, view.frame.minY - point.y, point.y - view.frame.maxY)
+            if let b = best, rowDistance >= b.distance { continue }
+            guard let hit = view.textOffset(at: convert(point, to: view)) else { continue }
+            if best == nil || hit.distance < best!.distance {
+                best = (TextPoint(key: view.key, offset: hit.offset), hit.distance)
+            }
+        }
+        return best.flatMap { $0.distance <= limit ? $0.point : nil }
     }
 
-    private func presentSelection(_ text: String) {
-        guard let vc = findViewController() else { return }
-        let sheet = SelectTextViewController(text: text)
-        vc.present(UINavigationController(rootViewController: sheet), animated: true)
+    private func selectedText() -> String {
+        guard let o = ordered(), let frame = current else { return "" }
+        var parts: [String] = []
+        for i in o.loIndex...o.hiIndex {
+            let display: RowDisplay?
+            if let p = frame.placement(index: i), let v = visible[p.key], let m = v.model { display = m.display } else { display = frame.display(index: i) }
+            guard let display else { continue }
+            let text = display.selectedText(from: i == o.loIndex ? o.lo.offset : 0, to: i == o.hiIndex ? o.hi.offset : Int.max)
+            if !text.isEmpty { parts.append(text) }
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    @objc private func longPressed(_ g: UILongPressGestureRecognizer) {
+        let point = g.location(in: self)
+        switch g.state {
+        case .began:
+            guard let hit = hitText(point, within: 24), let display = visible[hit.key]?.model?.display else { return }
+            let word = display.wordRange(at: hit.offset)
+            pressWord = (hit.key, word)
+            selAnchor = TextPoint(key: hit.key, offset: word.lowerBound)
+            selFocus = TextPoint(key: hit.key, offset: word.upperBound)
+            editMenu.dismissMenu()
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            updateSelection()
+        case .changed:
+            guard let word = pressWord, let hit = hitText(point) else { return }
+            let start = TextPoint(key: word.key, offset: word.range.lowerBound)
+            let end = TextPoint(key: word.key, offset: word.range.upperBound)
+            // Before the word: grow back from its end; else forward from its start.
+            if precedes(hit, start) == true {
+                selAnchor = end
+                selFocus = hit
+            } else {
+                selAnchor = start
+                selFocus = precedes(hit, end) == true ? end : hit
+            }
+            updateSelection()
+        case .ended, .cancelled:
+            guard pressWord != nil else { return }
+            pressWord = nil
+            showSelectionMenu()
+        default:
+            break
+        }
+    }
+
+    @objc private func draggedHandle(_ g: UIPanGestureRecognizer) {
+        guard let handle = g.view as? SelectionHandle, let o = ordered() else { return }
+        let start = handle === startHandle
+        switch g.state {
+        case .began:
+            editMenu.dismissMenu()
+            selAnchor = start ? o.hi : o.lo
+            selFocus = start ? o.lo : o.hi
+            let touch = g.location(in: self)
+            grab = CGPoint(x: handle.caret.midX - touch.x, y: handle.caret.midY - touch.y)
+        case .changed:
+            let touch = g.location(in: self)
+            guard let anchor = selAnchor,
+                  let hit = hitText(CGPoint(x: touch.x + grab.x, y: touch.y + grab.y)),
+                  // The ends don't cross (the handles would swap under the finger).
+                  (start ? precedes(hit, anchor) : precedes(anchor, hit)) == true
+            else { return }
+            if hit.key != selFocus?.key || hit.offset != selFocus?.offset {
+                selFocus = hit
+                UISelectionFeedbackGenerator().selectionChanged()
+                updateSelection()
+            }
+        case .ended, .cancelled:
+            showSelectionMenu()
+        default:
+            break
+        }
+    }
+
+    /// No scrolling while a press extends the selection or a handle moves.
+    override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        if g === panGestureRecognizer {
+            if pressWord != nil { return false }
+            let p = g.location(in: self)
+            if startHandle.hitFrame.insetBy(dx: -12, dy: -12).contains(p) || endHandle.hitFrame.insetBy(dx: -12, dy: -12).contains(p) { return false }
+        }
+        return super.gestureRecognizerShouldBegin(g)
+    }
+
+    private var selectionRect: CGRect? {
+        let rects = [startHandle, endHandle].filter { !$0.isHidden }.map(\.caret)
+        guard let first = rects.first else { return nil }
+        return rects.dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    private func showSelectionMenu() {
+        guard selAnchor != nil, pressWord == nil, let rect = selectionRect else { return }
+        editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: CGPoint(x: rect.midX, y: rect.minY)))
+    }
+}
+
+extension TranscriptListView: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let o = ordered(), let frame = current else { return nil }
+        var actions: [UIMenuElement] = [UIAction(title: "Copy") { [weak self] _ in
+            guard let self else { return }
+            UIPasteboard.general.string = self.selectedText()
+            self.clearSelection()
+        }]
+        if let message = frame.messageText(index: o.loIndex), !message.isEmpty {
+            actions.append(UIAction(title: "Copy Message") { [weak self] _ in
+                UIPasteboard.general.string = message
+                self?.clearSelection()
+            })
+        }
+        return UIMenu(children: actions)
+    }
+
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
+        selectionRect ?? .null
+    }
+}
+
+/// One end of a transcript selection: a caret bar with a knob above (start)
+/// or below (end); the view is wider than it draws, to be easy to grab.
+final class SelectionHandle: UIView {
+    private let start: Bool
+    /// The caret it marks, in the superview's coordinates.
+    private(set) var caret: CGRect = .zero
+    private static let knob: CGFloat = 10
+    private static let width: CGFloat = 36
+
+    init(start: Bool) {
+        self.start = start
+        super.init(frame: .zero)
+        isOpaque = false
+        backgroundColor = .clear
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Generous touch target around the drawn handle.
+    var hitFrame: CGRect { isHidden ? .null : frame.insetBy(dx: 0, dy: -8) }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -8).contains(point)
+    }
+
+    func place(caret: CGRect) {
+        guard caret != self.caret || frame.isEmpty else { return }
+        self.caret = caret
+        let extra = Self.knob + 2
+        frame = CGRect(x: caret.midX - Self.width / 2, y: caret.minY - (start ? extra : 0), width: Self.width, height: caret.height + extra)
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        ctx.setFillColor(Palette.accent.cgColor)
+        let extra = Self.knob + 2
+        let barTop = start ? extra : 0
+        ctx.fill(CGRect(x: bounds.midX - 1, y: barTop, width: 2, height: caret.height))
+        let knobY = start ? 0 : caret.height + 2
+        ctx.fillEllipse(in: CGRect(x: bounds.midX - Self.knob / 2, y: knobY, width: Self.knob, height: Self.knob))
     }
 }
 
