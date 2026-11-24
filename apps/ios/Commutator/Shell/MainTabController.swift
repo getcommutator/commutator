@@ -49,7 +49,7 @@ final class MainTabController: UIViewController, AppRouter, UINavigationControll
 
     private func makeTabs() -> UITabBarController {
         let nav = self.nav
-        let prs = Self.nav(PullRequestsViewController(), tab: true)
+        let prs = Self.nav(PullRequestsViewController(app: app), tab: true)
         let settings = Self.nav(MoreViewController(app: app), tab: true)
         let tabs = UITabBarController(tabs: [
             UITab(title: "Chats", image: UIImage(systemName: "bubble.left.and.bubble.right"), identifier: "chats") { _ in nav },
@@ -110,6 +110,12 @@ final class MainTabController: UIViewController, AppRouter, UINavigationControll
         if presentedViewController != nil { dismiss(animated: false) }
         stack.popToRootViewController(animated: false)
         tabs.selectedTab = tabs.tabs.first { $0.identifier == "settings" }
+    }
+
+    func showPullRequests() {
+        if presentedViewController != nil { dismiss(animated: false) }
+        stack.popToRootViewController(animated: false)
+        tabs.selectedTab = tabs.tabs.first { $0.identifier == "pulls" }
     }
 
     func showSearch() {
@@ -214,21 +220,6 @@ final class TabNavigationController: UINavigationController {
             return outer.pushViewController(viewController, animated: animated)
         }
         super.pushViewController(viewController, animated: animated)
-    }
-}
-
-/// The Pull requests tab. ponytail: empty until the server serves PRs.
-final class PullRequestsViewController: UIViewController {
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        title = "Pull requests"
-        view.backgroundColor = Palette.background
-        navigationItem.largeTitleDisplayMode = .always
-        var empty = UIContentUnavailableConfiguration.empty()
-        empty.image = UIImage(systemName: "arrow.triangle.pull")
-        empty.text = "No pull requests"
-        empty.secondaryText = "Pull requests from your sessions will show up here."
-        contentUnavailableConfiguration = empty
     }
 }
 

@@ -176,6 +176,7 @@ fun SessionsScreen(
     model: AppModel,
     onOpen: (String) -> Unit,
     onArchived: () -> Unit,
+    onPullRequests: () -> Unit = {},
     selected: String? = null,
     onSearch: () -> Unit = {},
     onSettings: () -> Unit = {},
@@ -363,6 +364,7 @@ fun SessionsScreen(
             onSearch = onSearch,
             onSettings = onSettings,
             account = model.accountName,
+            actions = { IconButton(onClick = onPullRequests) { ZIcon(ZIcons.PullRequest, "Pull requests", Modifier.size(24.dp)) } },
             menu = { open, dismiss ->
                 ActionMenu(
                     open,

@@ -106,6 +106,7 @@ object Routes {
     const val SEARCH = "search"
     const val SETTINGS = "settings"
     const val ARCHIVED = "archived"
+    const val PULL_REQUESTS = "pull-requests"
     const val TERMINAL = "terminal/{chat}?id={id}"
     const val SUBAGENT = "subagent/{parent}/{doc}?title={title}&running={running}"
     fun chat(id: String) = "chat/$id"
@@ -208,6 +209,7 @@ private fun MainNav(model: AppModel) {
                     onSearch = { nav.navigate(Routes.SEARCH) },
                     onNew = { nav.navigate(Routes.NEW) },
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
+                    onPullRequests = { nav.navigate(Routes.PULL_REQUESTS) },
                 )
             } else {
                 TabletShell(
@@ -231,6 +233,7 @@ private fun MainNav(model: AppModel) {
                                 onSearch = { shell.searching = true },
                                 onNew = { shell.newSession() },
                                 onArchived = { shell.settings = Routes.ARCHIVED },
+                                onPullRequests = { shell.settings = Routes.PULL_REQUESTS },
                             )
                         }
                     },
@@ -320,7 +323,7 @@ private fun MainNav(model: AppModel) {
 private val TERMINAL_DEMO = listOf("git log --oneline -5", "cargo test -p commutator-veil")
 
 /**
- * Settings and the pages it leads to (Archived): on the phone's stack, or in the large-screen
+ * Settings and the pages it leads to (Archived, Pull requests): on the phone's stack, or in the large-screen
  * Settings dialog's own. `onClose` ends the dialog from its first page.
  */
 private fun androidx.navigation.NavGraphBuilder.settingsGraph(
@@ -343,6 +346,9 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
     }
     composable(Routes.ARCHIVED) {
         ArchivedScreen(model, onBack = ::back, onOpen = openChat)
+    }
+    composable(Routes.PULL_REQUESTS) {
+        PullRequestsScreen(model, onBack = ::back)
     }
 }
 
@@ -406,6 +412,7 @@ private fun Home(
     onSearch: () -> Unit,
     onNew: () -> Unit,
     onArchived: () -> Unit,
+    onPullRequests: () -> Unit,
 ) {
     // The FAB shows its label at rest and tucks to its icon while the list scrolls down (Gmail's Compose).
     var fabExpanded by rememberSaveable { mutableStateOf(true) }
@@ -423,6 +430,7 @@ private fun Home(
                 model,
                 onOpen = open,
                 onArchived = onArchived,
+                onPullRequests = onPullRequests,
                 selected = selected,
                 onSearch = onSearch,
                 onSettings = onSettings,

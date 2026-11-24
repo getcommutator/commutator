@@ -4008,7 +4008,12 @@ impl RpcService for EngineRpc {
             methods::LIST_CHANGE_REQUEST_PAGE => {
                 #[derive(Deserialize)]
                 struct P {
+                    /// GitHub `owner/repo`; or, for a checkout on another
+                    /// host (GitLab), `cwd`: a chat or project checkout here.
+                    #[serde(default)]
                     repository: String,
+                    #[serde(default)]
+                    cwd: Option<String>,
                     #[serde(default)]
                     filter: commutator_proto::ChangeRequestFilter,
                     #[serde(default)]
@@ -4019,7 +4024,35 @@ impl RpcService for EngineRpc {
                     #[serde(default)]
                     cached: bool,
                 }
-                let p: P = parse_params(params)?;
+                let mut p: P = parse_params(params)?;
+                if let Some(cwd) = p.cwd.take() {
+                    let root = self.change_request_root(&cwd).await?;
+                    let remote = crate::source_control::ChangeRequestResolver::new()
+                        .inspect_checkout(&root)
+                        .await
+                        .ok()
+                        .and_then(|source| source.branch.remote_url);
+                    let project = remote.as_deref().and_then(crate::source_control::gitlab::parse_remote);
+                    match project {
+                        Some(project) if self.github.is_gitlab(&project).await => {
+                            let page = self
+                                .github
+                                .list_gitlab_page(&project, p.filter)
+                                .await
+                                .map_err(change_request_rpc_error)?;
+                            return RpcReply::value(&page);
+                        }
+                        // GitHub remotes resolve as before; anything else has no list.
+                        _ => {
+                            p.repository = crate::source_control::ChangeRequestResolver::new()
+                                .repository_for_checkout(&root)
+                                .await
+                                .ok_or(RpcError::Capability(
+                                    capability_errors::PULL_REQUESTS_UNSUPPORTED.into(),
+                                ))?;
+                        }
+                    }
+                }
                 if !crate::source_control::valid_pr_repository(&p.repository) {
                     return Err(RpcError::BadParams("repository must be owner/repo".into()));
                 }
