@@ -23,6 +23,7 @@ commutator-visual.workspace = true
 commutator-visual-gpu.workspace = true
 commutator-doc.workspace = true
 commutator-proto.workspace = true
+commutator-rpc.workspace = true
 commutator-client.workspace = true
 commutator-account.workspace = true
 serde.workspace = true

@@ -7,6 +7,7 @@ protocol AppRouter: AnyObject {
     func presentNewSession(prompt: String?)
     func showSettings()
     func showSearch()
+    func showPullRequests()
 }
 
 /// The app's shell: Commutator mobile with a sidebar. The sidebar is the phone's
@@ -228,6 +229,16 @@ final class SplitRootController: UISplitViewController, UISplitViewControllerDel
         let nav = MainTabController.nav(MoreViewController(app: app))
         nav.modalPresentationStyle = .formSheet
         nav.topViewController?.navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak nav] _ in
+            nav?.dismiss(animated: true)
+        })
+        present(nav, animated: true)
+    }
+
+    func showPullRequests() {
+        guard !isCollapsed else { return tabs.showPullRequests() }
+        let nav = MainTabController.nav(PullRequestsViewController(app: app))
+        nav.modalPresentationStyle = .formSheet
+        nav.topViewController?.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak nav] _ in
             nav?.dismiss(animated: true)
         })
         present(nav, animated: true)
@@ -484,7 +495,12 @@ final class SidebarViewController: UIViewController, UISearchResultsUpdating {
         probe.hidesSharedBackground = true
         probe.sharesBackground = false
         probe.isAccessibilityElement = false
-        list.toolbarItems = [settings, options, .flexibleSpace(), probe, compose]
+        let pullRequests = UIBarButtonItem(image: PRIcon.image(side: 22), primaryAction: UIAction { [weak self] _ in
+            self?.router?.showPullRequests()
+        })
+        pullRequests.accessibilityLabel = "Pull Requests"
+        pullRequests.accessibilityIdentifier = "sidebar-pull-requests"
+        list.toolbarItems = [settings, options, pullRequests, .flexibleSpace(), probe, compose]
         nav.isToolbarHidden = false
 
         // A hairline between the sidebar and the main column.

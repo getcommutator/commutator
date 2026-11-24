@@ -39,6 +39,7 @@ pub mod events;
 mod host_stream;
 mod local;
 pub mod providers;
+pub mod pull_requests;
 pub mod rpc;
 pub mod runtime;
 pub mod server;

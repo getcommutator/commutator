@@ -14,6 +14,7 @@
 mod account;
 pub(crate) mod companions;
 mod providers;
+mod pull_requests;
 mod session;
 mod types;
 

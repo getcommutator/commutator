@@ -46,6 +46,13 @@ final class MainTabController: UIViewController, AppRouter {
         return item
     }()
 
+    private lazy var pullRequestsItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(image: PRIcon.image(side: 22), primaryAction: UIAction { [weak self] _ in self?.showPullRequests() })
+        item.accessibilityLabel = "Pull Requests"
+        item.accessibilityIdentifier = "bottom-pull-requests"
+        return item
+    }()
+
     private lazy var composeItem: UIBarButtonItem = {
         let item = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil"), primaryAction: UIAction { [weak self] _ in self?.presentNewSession() })
         item.style = .prominent
@@ -55,10 +62,10 @@ final class MainTabController: UIViewController, AppRouter {
         return item
     }()
 
-    /// The bar: Settings · Search · New session.
+    /// The bar: Settings · Pull requests · Search · New session.
     private func updateBottomBar() {
         // Fixed spaces split the glass: each control its own shape.
-        var items: [UIBarButtonItem] = [settingsItem, .fixedSpace(0), sessionsList.navigationItem.searchBarPlacementBarButtonItem, .fixedSpace(0)]
+        var items: [UIBarButtonItem] = [settingsItem, pullRequestsItem, .fixedSpace(0), sessionsList.navigationItem.searchBarPlacementBarButtonItem, .fixedSpace(0)]
         items.append(composeItem)
         // `viewIfLoaded`: loading the list outside its nav controller lays it
         // out without the large title, and it opens collapsed.
@@ -105,6 +112,15 @@ final class MainTabController: UIViewController, AppRouter {
         let more = MoreViewController(app: app)
         more.hidesBottomBarWhenPushed = true
         nav.pushViewController(more, animated: true)
+    }
+
+    func showPullRequests() {
+        if presentedViewController != nil { dismiss(animated: false) }
+        if nav.topViewController is PullRequestsViewController { return }
+        nav.popToRootViewController(animated: false)
+        let list = PullRequestsViewController(app: app)
+        list.hidesBottomBarWhenPushed = true
+        nav.pushViewController(list, animated: true)
     }
 
     func showSearch() {

@@ -1928,6 +1928,7 @@ dependencies = [
  "commutator-doc",
  "commutator-markdown",
  "commutator-proto",
+ "commutator-rpc",
  "commutator-syntax",
  "commutator-term",
  "commutator-text",
