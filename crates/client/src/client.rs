@@ -1246,6 +1246,23 @@ impl Client {
         }
     }
 
+    /// Remove a linked worktree of `repo_path` on its host (`git worktree remove`).
+    pub async fn delete_worktree(&self, device_id: &str, repo_path: &str, worktree_path: &str) -> Result<()> {
+        match self.inner.backend() {
+            Backend::Demo(_) => Ok(()),
+            Backend::Local(_) => {
+                self.inner
+                    .host_rpc(
+                        device_id,
+                        commutator_rpc::methods::DELETE_WORKTREE,
+                        serde_json::json!({ "repoPath": repo_path, "worktreePath": worktree_path }),
+                    )
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
     /// Workspace file search for composer `@` mentions (host `SearchFiles`,
     /// gitignore-aware; an empty query returns the chat's featured files).
     pub async fn search_files(
