@@ -636,6 +636,49 @@ impl Render for ShortcutsPage {
                         cx.notify();
                     })),
             );
+        let queue_follow_ups = crate::settings::queue_follow_ups(cx);
+        let follow_up_row = widgets::card_row(&theme, false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(widgets::row_title(&theme, "Queue messages while the agent works"))
+                    .child(widgets::meta_line(
+                        &theme,
+                        vec![
+                            div()
+                                .child(if queue_follow_ups {
+                                    format!("Sent after the turn ends. {modifier_label} steers it instead.")
+                                } else {
+                                    format!("Off: a message steers the running turn. {modifier_label} queues it.")
+                                })
+                                .into_any_element(),
+                        ],
+                    )),
+            )
+            .child(
+                widgets::toggle_switch(&theme, queue_follow_ups, "queue-follow-ups")
+                    .id("queue-follow-ups-toggle")
+                    .tab_index(0)
+                    .role(gpui::Role::Switch)
+                    .aria_label("Queue messages while the agent works")
+                    .aria_toggled(if queue_follow_ups {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        crate::settings::update(
+                            crate::settings::SavePolicy::Debounced,
+                            cx,
+                            |settings| settings.queue_follow_ups = !queue_follow_ups,
+                        );
+                        cx.refresh_windows();
+                        cx.notify();
+                    })),
+            );
         let compact_model_picker = crate::settings::compact_model_picker(cx);
         let compact_model_picker_row = widgets::card_row(&theme, false)
             .child(
@@ -775,6 +818,7 @@ impl Render for ShortcutsPage {
                                     .child(
                                         widgets::section_card(&theme)
                                             .child(send_behavior_row)
+                                            .child(follow_up_row)
                                             .child(compact_mode_row)
                                             .child(compact_model_picker_row)
                                             .child(escape_behavior_row),

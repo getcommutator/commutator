@@ -596,11 +596,17 @@ pub fn send_button_mode(run_live: bool, has_text: bool) -> SendButtonMode {
     }
 }
 
-/// A send during a live turn steers it, as t3code does, unless it's Cmd/Ctrl+Enter,
-/// the host or harness can't steer, or files are staged: those queue for the turn's end.
+/// A send during a live turn steers it, as t3code does, unless it's queued on
+/// purpose (Cmd/Ctrl+Enter, or plain Enter with "Queue follow-ups" on), the host
+/// or harness can't steer, or files are staged: those queue for the turn's end.
 /// With messages already queued it queues behind them, so it never overtakes them.
-fn busy_send_steers(alternate: bool, can_steer: bool, has_files: bool, queue_empty: bool) -> bool {
-    !alternate && can_steer && !has_files && queue_empty
+fn busy_send_steers(
+    queue_on_purpose: bool,
+    can_steer: bool,
+    has_files: bool,
+    queue_empty: bool,
+) -> bool {
+    !queue_on_purpose && can_steer && !has_files && queue_empty
 }
 
 /// Queue rows are represented by the queue panel until the host promotes them
@@ -5746,6 +5752,12 @@ pub struct Composer {
     pub(crate) todo_cache: crate::todo_panel::TodoCache,
     pub(crate) todo_panels: HashMap<String, crate::todo_panel::TodoPanelState>,
     pub(crate) todo_scroll: gpui::ScrollHandle,
+    /// The background-process tray: per-chat open state, the 1s tick that
+    /// runs only while it is expanded, and its scroll positions.
+    pub(crate) background_trays: HashMap<String, crate::background_tray::BackgroundTrayState>,
+    pub(crate) background_tick: Option<gpui::Task<()>>,
+    pub(crate) background_scroll: gpui::ScrollHandle,
+    pub(crate) background_output_scroll: gpui::ScrollHandle,
     /// Whether the modifier overlay should currently reveal the queue hint.
     /// The shell owns modifier tracking and clears this on window deactivation.
     queue_shortcut_revealed: bool,
@@ -6009,6 +6021,10 @@ impl Composer {
             todo_cache: Default::default(),
             todo_panels: HashMap::new(),
             todo_scroll: gpui::ScrollHandle::new(),
+            background_trays: HashMap::new(),
+            background_tick: None,
+            background_scroll: gpui::ScrollHandle::new(),
+            background_output_scroll: gpui::ScrollHandle::new(),
             queue_shortcut_revealed: false,
             expanded_mode: false,
             flip_epoch: 0,
@@ -8360,7 +8376,9 @@ impl Composer {
                 state.chat_host_supports(chat_id, capabilities::MESSAGE_QUEUE_ACTIONS_V1)
             });
         let has_files = !self.staged().is_empty() || !self.staged_appshots().is_empty();
-        busy_send_steers(alternate, can_steer, has_files, state.queue.is_empty())
+        // With queueing as the default, the alternate send is the steer.
+        let queue_on_purpose = alternate != crate::settings::queue_follow_ups(cx);
+        busy_send_steers(queue_on_purpose, can_steer, has_files, state.queue.is_empty())
     }
 
     /// `alternate` is Cmd/Ctrl+Enter: during a live turn it queues instead of steering.
@@ -9742,6 +9760,8 @@ impl Composer {
                     .tooltip(crate::settings::widgets::text_tooltip(
                         if mode == SendButtonMode::Queue && self.busy_send_steers(false, cx) {
                             "Steer message (⌘↩ to queue)"
+                        } else if mode == SendButtonMode::Queue && self.busy_send_steers(true, cx) {
+                            "Queue message (⌘↩ to steer)"
                         } else if mode == SendButtonMode::Queue {
                             "Queue message"
                         } else {
@@ -10058,12 +10078,18 @@ impl Render for Composer {
                 self.staged_comments(cx).len(),
             );
         // The checklist tray stacks above the queue (or directly above the
-        // composer), one step narrower than what follows it.
+        // composer), one step narrower than what follows it; the background
+        // processes' tray tops the stack, a step narrower again.
         let has_queue = !self.state.read(cx).queue.is_empty();
+        let todo = self.render_todo_panel(has_queue, window, cx);
+        let trays_below = usize::from(has_queue) + usize::from(todo.is_some());
         let container = container.when_some(
-            self.render_todo_panel(has_queue, window, cx),
-            |el, panel| el.child(motion::fade_quick("composer-todo", div().child(panel))),
+            self.render_background_tray(trays_below, window, cx),
+            |el, tray| el.child(motion::fade_quick("composer-background", div().child(tray))),
         );
+        let container = container.when_some(todo, |el, panel| {
+            el.child(motion::fade_quick("composer-todo", div().child(panel)))
+        });
         let container = container.when_some(
             self.render_queue_panel(show_queue_latest_shortcut, window, cx),
             |el, panel| {

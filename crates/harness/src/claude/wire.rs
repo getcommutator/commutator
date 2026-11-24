@@ -149,6 +149,10 @@ pub(crate) struct StreamEventBody {
     pub kind: String,
     #[serde(default)]
     pub delta: Delta,
+    /// A `content_block_start`'s block: its `type` (`tool_use`) says a tool
+    /// call has begun streaming its input, long before its `assistant` frame.
+    #[serde(default)]
+    pub content_block: Delta,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -507,9 +511,10 @@ pub(crate) fn user_message_line(text: &str) -> String {
 /// A steer line. `immediate` → `priority: "now"`: streaming text/thinking
 /// stops at once and the steer is answered next (verified against CLI
 /// 2.1.280). But `now` also aborts an in-flight MCP tool call ("The tool call
-/// was interrupted before a result was received"), so while any tool is open
-/// the steer goes as `next`: the tool finishes and the steer lands right after
-/// its result, in the same turn. An interrupted turn still emits a `result`.
+/// was interrupted before a result was received"), and a tool call whose
+/// input is still streaming, so while any tool is open or streaming the steer
+/// goes as `next`: the tool finishes and the steer lands right after its
+/// result, in the same turn. An interrupted turn still emits a `result`.
 #[cfg(test)]
 pub(crate) fn steer_message_line(text: &str, id: &str, immediate: bool) -> String {
     steer_message_line_with_images(text, id, immediate, &[])
