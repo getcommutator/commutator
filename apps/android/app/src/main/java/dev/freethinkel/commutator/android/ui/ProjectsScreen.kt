@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -23,7 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +42,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -138,13 +137,13 @@ fun chatMenu(row: SessionRow, actions: RowActions, rename: () -> Unit, delete: (
 )
 
 /**
- * One row of the Projects card: compact, as the desktop sidebar's (15 sp,
- * a 26 dp icon, 7 dp above and below), a quiet divider between rows.
+ * One row of the Projects list, drawn as the Chats rows below it: its own
+ * segmented card, 44 dp, a 26 dp icon and 15 sp text, a gap between rows.
  */
 @Composable
 private fun CardRow(
-    shape: Shape,
-    divider: Boolean,
+    index: Int,
+    count: Int,
     text: String,
     icon: @Composable () -> Unit,
     onClick: () -> Unit,
@@ -154,25 +153,25 @@ private fun CardRow(
     trailing: @Composable () -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
-    Surface(shape = shape, color = cardColor(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Column {
-            if (divider) HorizontalDivider(Modifier.padding(start = 52.dp + indent), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = onClick,
-                        onLongClick = onLongClick?.let { long -> { haptics.performHapticFeedback(HapticFeedbackType.LongPress); long() } },
-                    )
-                    .heightIn(min = 40.dp)
-                    .padding(start = 16.dp + indent, end = 12.dp, top = 7.dp, bottom = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { icon() }
-                Spacer(Modifier.width(10.dp))
-                Text(text, fontSize = 15.sp, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                trailing()
-            }
+    Surface(
+        shape = segmentedShapes(index, count).shape,
+        color = cardColor(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = ListItemDefaults.SegmentedGap).height(44.dp),
+    ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick?.let { long -> { haptics.performHapticFeedback(HapticFeedbackType.LongPress); long() } },
+                )
+                .padding(start = 16.dp + indent, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { icon() }
+            Spacer(Modifier.width(10.dp))
+            Text(text, fontSize = 15.sp, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            trailing()
         }
     }
 }
@@ -202,14 +201,13 @@ fun LazyListScope.projectsContent(
     val rows = trees.flatMap { t -> listOf(t to null) + (if (FOLD + t.id in folded) emptyList() else t.worktrees.map { t to it }) }
     val count = rows.size + 1
     rows.forEachIndexed { i, (tree, worktree) ->
-        val shape = segmentShape(i, count, inner = 0.dp)
         if (worktree == null) {
             item("p/${tree.id}") {
                 var menu by remember { mutableStateOf(false) }
                 var removing by remember { mutableStateOf(false) }
                 Box(Modifier.animateItem()) {
                     CardRow(
-                        shape, i > 0, tree.name,
+                        i, count, tree.name,
                         icon = { ProjectIcon(tree, 26.dp) },
                         onClick = { open(tree, tree.main) },
                         onLongClick = { menu = true },
@@ -245,7 +243,7 @@ fun LazyListScope.projectsContent(
                 val alpha = if (worktree.chats.isEmpty()) 0.45f else 1f
                 Box(Modifier.animateItem()) {
                     CardRow(
-                        shape, true, worktree.name,
+                        i, count, worktree.name,
                         indent = 26.dp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                         icon = { ZIcon(ZIcons.Branch, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)) },
@@ -278,7 +276,7 @@ fun LazyListScope.projectsContent(
     item("new-project") {
         val accent = MaterialTheme.colorScheme.primary
         CardRow(
-            segmentShape(count - 1, count, inner = 0.dp), count > 1, "New project",
+            count - 1, count, "New project",
             color = accent,
             icon = { ZIcon(ZIcons.Plus, null, Modifier.size(20.dp), tint = accent) },
             onClick = onNewProject,
