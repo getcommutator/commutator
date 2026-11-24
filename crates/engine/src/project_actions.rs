@@ -301,16 +301,20 @@ pub fn launch_project_action(
     cols: u16,
     rows: u16,
 ) -> Result<ProjectActionRun, EngineError> {
-    launch_project_action_with_environment(terminals, action, project_root, cwd, cols, rows, false)
+    launch_project_action_with_environment(terminals, action, project_root, cwd, cols, rows, None)
 }
 
 /// Launch the setup Action for a newly created worktree. Setup always exposes
-/// both reserved paths, even if a future repository backend returns aliases.
+/// both reserved paths, even if a future repository backend returns aliases,
+/// and the worktree's branch as `COMMUTATOR_WORKTREE_BRANCH`. It runs in its
+/// own terminal, so a slow or failing script never holds up or undoes the
+/// worktree: its output and exit status stay in that terminal.
 pub fn launch_project_setup_action(
     terminals: &Terminals,
     action: &ProjectAction,
     project_root: &Path,
     worktree: &Path,
+    branch: &str,
     cols: u16,
     rows: u16,
 ) -> Result<ProjectActionRun, EngineError> {
@@ -321,7 +325,7 @@ pub fn launch_project_setup_action(
         worktree,
         cols,
         rows,
-        true,
+        Some(branch),
     )
 }
 
@@ -332,12 +336,15 @@ fn launch_project_action_with_environment(
     cwd: &Path,
     cols: u16,
     rows: u16,
-    always_include_worktree: bool,
+    setup_branch: Option<&str>,
 ) -> Result<ProjectActionRun, EngineError> {
     let mut environment =
         HashMap::from([("COMMUTATOR_PROJECT_ROOT".to_string(), root_string(project_root))]);
-    if always_include_worktree || cwd != project_root {
+    if setup_branch.is_some() || cwd != project_root {
         environment.insert("COMMUTATOR_WORKTREE_PATH".to_string(), root_string(cwd));
+    }
+    if let Some(branch) = setup_branch {
+        environment.insert("COMMUTATOR_WORKTREE_BRANCH".to_string(), branch.to_string());
     }
     let session = terminals.open_with_command(
         &root_string(cwd),

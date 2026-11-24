@@ -4766,6 +4766,7 @@ impl DocHost {
                     &action,
                     &project_root,
                     std::path::Path::new(&worktree.path),
+                    &worktree.branch,
                     120,
                     32,
                 )

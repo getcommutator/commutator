@@ -4907,6 +4907,7 @@ impl RpcService for EngineRpc {
                                 &action,
                                 &project_root,
                                 &worktree_root,
+                                &outcome.worktree.branch,
                                 80,
                                 24,
                             ) {

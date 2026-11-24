@@ -9,6 +9,12 @@ use crate::project_actions::{
     draft_from_action,
 };
 
+/// Shown under the setup toggle: what the script gets, and a starting point
+/// (an APFS copy-on-write clone of the main checkout's build cache).
+const SETUP_ACTION_HINT: &str = "Runs in the new worktree, in its own terminal. \
+    Env: COMMUTATOR_PROJECT_ROOT, COMMUTATOR_WORKTREE_PATH, COMMUTATOR_WORKTREE_BRANCH. \
+    Example: cp -c -R \"$COMMUTATOR_PROJECT_ROOT/target\" . ; cp \"$COMMUTATOR_PROJECT_ROOT/.env\" .";
+
 #[derive(Clone)]
 struct ProjectActionContext {
     key: ProjectActionsKey,
@@ -653,6 +659,15 @@ impl Shell {
                     )
                     .child(SharedString::from("Run automatically on worktree creation")),
             )
+            .when(setup, |card| {
+                card.child(
+                    div()
+                        .mt(px(8.0))
+                        .text_size(px(12.0))
+                        .text_color(theme.text_muted)
+                        .child(SharedString::from(SETUP_ACTION_HINT)),
+                )
+            })
             .when_some(error, |card, error| {
                 card.child(
                     div()
