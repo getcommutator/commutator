@@ -232,7 +232,7 @@ async fn check_worktree_setup_and_reuse(use_project_symlink: bool, test_setup: b
                 "spaceId": "space-worktree-run",
                 "action": ProjectActionDraft {
                     name: "Setup".into(),
-                    command: "printf '%s' \"$COMMUTATOR_PROJECT_ROOT\" > setup-project-root; printf '%s' \"$COMMUTATOR_WORKTREE_PATH\" > setup-worktree-path; printf setup > setup-marker".into(),
+                    command: "printf '%s' \"$COMMUTATOR_PROJECT_ROOT\" > setup-project-root; printf '%s' \"$COMMUTATOR_WORKTREE_PATH\" > setup-worktree-path; printf '%s' \"$COMMUTATOR_WORKTREE_BRANCH\" > setup-branch; printf setup > setup-marker".into(),
                     icon: ProjectActionIcon::Configure,
                     run_on_worktree_create: true,
                 }
@@ -302,6 +302,19 @@ async fn check_worktree_setup_and_reuse(use_project_symlink: bool, test_setup: b
         assert_eq!(
             std::fs::read_to_string(first.join("setup-worktree-path")).unwrap(),
             first_cwd
+        );
+        let checked_out = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&first)
+            .output()
+            .expect("read worktree branch");
+        let checked_out = String::from_utf8_lossy(&checked_out.stdout)
+            .trim()
+            .to_string();
+        assert!(checked_out.starts_with("commutator/"), "{checked_out}");
+        assert_eq!(
+            std::fs::read_to_string(first.join("setup-branch")).unwrap(),
+            checked_out
         );
         // Reusing this checkout must not execute setup a second time.
         std::fs::remove_file(first.join("setup-marker")).unwrap();

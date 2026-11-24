@@ -37,7 +37,15 @@ async fn manual_and_setup_actions_preserve_long_multiline_commands() {
         let action = snapshot.actions.last().unwrap();
         assert_eq!(action.command.len(), MAX_PROJECT_ACTION_COMMAND_BYTES);
         let run = if setup {
-            launch_project_setup_action(&terminals, action, root.path(), &checkout, 80, 24)
+            launch_project_setup_action(
+                &terminals,
+                action,
+                root.path(),
+                &checkout,
+                "commutator/test",
+                80,
+                24,
+            )
         } else {
             launch_project_action(&terminals, action, root.path(), &checkout, 80, 24)
         }
