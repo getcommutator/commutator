@@ -5,6 +5,8 @@
 
 #[path = "source_control_review_threads.rs"]
 mod review_threads;
+#[path = "source_control_gitlab.rs"]
+pub mod gitlab;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -2273,7 +2275,7 @@ struct SystemProcessRunner;
 impl ProcessRunner for SystemProcessRunner {
     async fn run(&self, request: ProcessRequest) -> Result<ProcessOutput, ProcessRunError> {
         let mut command = tokio::process::Command::new(&request.program);
-        if request.program == "gh" {
+        if matches!(request.program.as_str(), "gh" | "glab") {
             commutator_harness::compose_login_shell_path(&mut command);
         }
         #[cfg(windows)]

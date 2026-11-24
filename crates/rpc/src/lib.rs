@@ -478,6 +478,8 @@ pub mod capability_errors {
     pub const PULL_REQUESTS_TIMEOUT: &str = "pull_requests.timeout";
     pub const PULL_REQUESTS_DECODE: &str = "pull_requests.decode";
     pub const PULL_REQUESTS_COMMAND_FAILED: &str = "pull_requests.command_failed";
+    /// The checkout's remote is neither GitHub nor GitLab.
+    pub const PULL_REQUESTS_UNSUPPORTED: &str = "pull_requests.unsupported";
     /// `ReadToolOutput`: the host's journal doesn't hold that command (an
     /// old chat, or one whose journal is gone).
     pub const TOOL_OUTPUT_UNAVAILABLE: &str = "tool_output.unavailable";
