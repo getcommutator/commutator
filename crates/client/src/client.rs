@@ -307,6 +307,29 @@ impl ClientInner {
             .collect()
     }
 
+    /// The staged bytes behind `pending://` refs (other refs are skipped), as
+    /// `(upload_id, file_name, bytes)`. Fails if the cache evicted any.
+    pub(crate) fn staged_bytes(
+        &self,
+        device_id: &str,
+        refs: &[String],
+    ) -> Result<Vec<(String, String, Arc<Vec<u8>>)>> {
+        refs.iter()
+            .filter_map(|r| attachments::parse_pending_ref(r).map(|(id, name)| (r, id, name)))
+            .map(|(reference, id, name)| {
+                let bytes = self
+                    .attachment_cache
+                    .get(device_id, reference)
+                    .ok_or_else(|| {
+                        ClientError::InvalidArgument(format!(
+                            "{name} is no longer available — attach it again"
+                        ))
+                    })?;
+                Ok((id.to_owned(), name.to_owned(), bytes))
+            })
+            .collect()
+    }
+
     /// A command/queue row was written: hand it to the host.
     pub(crate) fn after_command(self: &Arc<Self>, core: &Arc<SessionCore>) {
         match self.backend() {

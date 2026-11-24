@@ -554,6 +554,60 @@ impl SessionCore {
         Ok(id)
     }
 
+    /// Upload staged `pending://` bytes to the engine under their upload ids;
+    /// it holds the command (or queue row) until they land. A failed upload
+    /// rejects the command with the reason, so the send turns Failed (and
+    /// `retry_delivery` ships it again) instead of waiting forever.
+    pub(crate) fn ship_attachments(
+        self: &Arc<Self>,
+        client: &ClientInner,
+        command_id: Option<String>,
+        files: Vec<(String, String, Arc<Vec<u8>>)>,
+    ) {
+        let crate::client::Backend::Local(local) = client.backend() else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        let local = local.clone();
+        let core = self.clone();
+        crate::runtime::shared().spawn(async move {
+            let upload = async |upload_id: &str, name: &str, data: &[u8]| {
+                if !local.connected() {
+                    return Err(ClientError::HostUnavailable("no engine connection".into()));
+                }
+                local.upload(upload_id, name, data, None).await
+            };
+            let mut failure = None;
+            for (upload_id, name, data) in &files {
+                // ponytail: 5 tries over ~8s, then Failed; the user retries.
+                let mut wait = std::time::Duration::from_millis(500);
+                let mut result = upload(upload_id, name, data).await;
+                for _ in 0..4 {
+                    if result.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(wait).await;
+                    wait *= 2;
+                    result = upload(upload_id, name, data).await;
+                }
+                if let Err(err) = result {
+                    failure = Some(format!("Couldn't upload {name}: {err}"));
+                    break;
+                }
+            }
+            let Some(reason) = failure else { return };
+            tracing::warn!(chat = %core.chat_id, %reason, "attachment upload failed");
+            if let Some(id) = &command_id {
+                let _ = core.write(|doc| {
+                    doc.set_command_status(id, SessionCommandStatus::Rejected, Some(&reason))
+                });
+            }
+            core.update_state(|st| st.queue_error = Some(reason));
+        });
+    }
+
     pub(crate) fn view_attached(&self) -> bool {
         self.view_attached.load(Ordering::Acquire)
     }
@@ -945,7 +999,8 @@ impl SessionHandle {
 
     /// Send a message: a new turn when idle; while the agent works, park it
     /// on the shared queue (or steer, per `busy`). Attachments ride
-    /// `pending://` refs; their bytes are escorted to the host.
+    /// `pending://` refs; their bytes upload behind the send
+    /// (`ship_attachments`).
     pub fn send(&self, request: SendRequest) -> Result<SendOutcome> {
         let client = self.core.client()?;
         let chat = client
@@ -954,13 +1009,6 @@ impl SessionHandle {
             .ok_or_else(|| ClientError::NotFound(self.core.chat_id.clone()))?;
         if request.text.trim().is_empty() && request.attachments.is_empty() {
             return Err(ClientError::InvalidArgument("empty message".into()));
-        }
-        if !request.attachments.is_empty() && !client.is_demo() {
-            // ponytail: `pending://` refs went to the host by an escort that
-            // left with the edge; upload first (`Client::upload_attachment`).
-            return Err(ClientError::Unsupported(
-                "attachments in a send to an engine".into(),
-            ));
         }
         let composer = self.composer();
         // A turn is running, or a Run of ours is about to start one on a
@@ -980,6 +1028,7 @@ impl SessionHandle {
             ));
         }
         let refs = client.stage_attachments(&chat.device_id, &request.attachments)?;
+        let files = client.staged_bytes(&chat.device_id, &refs)?;
         let prompt_text = request.text.trim_end().to_owned();
         let device_id = client.config.device_id.clone();
 
@@ -1011,6 +1060,7 @@ impl SessionHandle {
                 refs.clone(),
                 request.busy == BusyPolicy::Queue,
             )?;
+            self.core.ship_attachments(&client, None, files);
             SendOutcome::Queued { queue_id: id }
         } else {
             let content = attachments::with_attachments(&prompt_text, &refs);
@@ -1045,13 +1095,14 @@ impl SessionHandle {
                     env: Default::default(),
                     extra_mcp: Vec::new(),
                 };
-                self.core.queue_command(
+                let command_id = self.core.queue_command(
                     &device_id,
                     SessionCommandPayload::Run {
                         request,
                         message_id: message_id.clone(),
                     },
                 )?;
+                self.core.ship_attachments(&client, Some(command_id), files);
                 SendOutcome::Started { message_id }
             }
         };
@@ -1421,16 +1472,37 @@ impl SessionHandle {
                 _ => {}
             }
         }
+        let host = client
+            .workspace
+            .chat(&self.core.chat_id)
+            .map(|chat| chat.device_id)
+            .unwrap_or_default();
+        let mut gone = None;
         for (message_id, attempt) in latest_dead {
             if live.contains(&message_id) {
                 continue;
             }
+            // Its `pending://` bytes go up again; evicted ones can't.
+            let refs = match &attempt.payload {
+                SessionCommandPayload::Run { request, .. } => request.attachments.clone(),
+                _ => Vec::new(),
+            };
+            let files = match client.staged_bytes(&host, &refs) {
+                Ok(files) => files,
+                Err(err) => {
+                    gone = Some(err);
+                    continue;
+                }
+            };
             tracing::info!(chat = %self.core.chat_id, old = %attempt.id, "retry re-issues a dead send attempt");
-            self.core
+            let command_id = self
+                .core
                 .queue_command(&device_id, attempt.payload.clone())?;
+            self.core.ship_attachments(&client, Some(command_id), files);
         }
+        self.core.update_state(|st| st.queue_error = None);
         self.core.refresh();
         client.after_command(&self.core);
-        Ok(())
+        gone.map_or(Ok(()), Err)
     }
 }
