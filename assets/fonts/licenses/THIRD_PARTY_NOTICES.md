@@ -1,6 +1,6 @@
 # Bundled font notices
 
-Vardoger uses the following font software (the text crate's test fixtures):
+Commutator uses the following font software (the text crate's test fixtures):
 
 - Geist and Geist Mono, copyright The Geist Project Authors, sourced from
   `vercel/geist-font` release `v1.7.2`.

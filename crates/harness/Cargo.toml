@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-harness"
+name = "commutator-harness"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -22,7 +22,7 @@ path = "tests/fixtures/pi_rpc.rs"
 required-features = ["native-fixture"]
 
 [dependencies]
-vardoger-proto.workspace = true
+commutator-proto.workspace = true
 base64 = "0.22"
 reqwest.workspace = true
 tokio.workspace = true
@@ -56,5 +56,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globali
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-vardoger-doc.workspace = true
+commutator-doc.workspace = true
 tempfile.workspace = true

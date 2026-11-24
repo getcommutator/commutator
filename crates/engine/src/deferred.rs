@@ -11,8 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::{Mutex, OnceCell, watch};
 use tokio::task::JoinHandle;
-use vardoger_proto::{EngineInfo, WorkspaceScope};
-use vardoger_rpc::{RpcError, RpcReply, RpcService, methods};
+use commutator_proto::{EngineInfo, WorkspaceScope};
+use commutator_rpc::{RpcError, RpcReply, RpcService, methods};
 
 use crate::rpc::AuthRpc;
 use crate::{Auth, Engine, EngineConfig, EngineProfile, EngineRuntime, InstanceLock};
@@ -156,7 +156,7 @@ impl DeferredEngine {
         let runtime_slot = self.runtime.clone();
         let assembled = self.assembled.clone();
         // Agents' MCP servers get the scoped token, never the app's.
-        let ipc_token_file = vardoger_rpc::ipc_auth::agent_token_path(&config.data_dir);
+        let ipc_token_file = commutator_rpc::ipc_auth::agent_token_path(&config.data_dir);
         // The instance lock rides into the boot task and is consumed by
         // assembly — held through sign-in onboarding too, because this
         // process owns the data dir from the moment it decided to host it.
@@ -170,9 +170,9 @@ impl DeferredEngine {
                         // (Its bearer first: a run revived on boot waits
                         // on the port, then reads both.)
                         runtime.core().sessions.set_ipc_token_file(ipc_token_file);
-                        // Agents' Vardoger tools come from this engine itself.
+                        // Agents' Commutator tools come from this engine itself.
                         if let Err(err) = runtime.core().sessions.serve_mcp_endpoint(service.clone()).await {
-                            tracing::warn!(error = %err, "agent MCP endpoint not served; agents get `vardoger mcp`");
+                            tracing::warn!(error = %err, "agent MCP endpoint not served; agents get `commutator mcp`");
                         }
                         runtime.core().sessions.set_ipc_port(port);
                     } else {

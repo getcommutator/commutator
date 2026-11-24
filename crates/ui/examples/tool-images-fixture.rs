@@ -5,8 +5,8 @@ use gpui::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 use image::{ImageEncoder, Rgba, RgbaImage};
 use serde_json::json;
 use std::{path::Path, sync::Arc};
-use vardoger_proto::ToolCall;
-use vardoger_ui::*;
+use commutator_proto::ToolCall;
+use commutator_ui::*;
 
 fn port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -74,7 +74,7 @@ fn seed_workspace(root: &Path) -> anyhow::Result<()> {
     }
     std::fs::write(
         root.join("assets/logo.svg"),
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="420" height="160"><rect width="420" height="160" rx="24" fill="#1d1f27"/><circle cx="80" cy="80" r="48" fill="#7aa2ff"/><text x="150" y="98" font-size="44" fill="#e6e6e6" font-family="Geist">vardoger</text></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="420" height="160"><rect width="420" height="160" rx="24" fill="#1d1f27"/><circle cx="80" cy="80" r="48" fill="#7aa2ff"/><text x="150" y="98" font-size="44" fill="#e6e6e6" font-family="Geist">commutator</text></svg>"##,
     )?;
     std::fs::write(root.join("assets/notes.txt"), "not an image")?;
     // Decode-bound check: 15 MP source, previewed as a ≤1280×640 thumbnail.
@@ -234,7 +234,7 @@ async fn self_check(
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter("warn,vardoger_ui::tool_images=debug")
+        .with_env_filter("warn,commutator_ui::tool_images=debug")
         .init();
     let temp = tempfile::tempdir()?;
     let workspace = temp.path().join("workspace");
@@ -248,10 +248,10 @@ fn main() -> anyhow::Result<()> {
     };
     let runtime = tokio::runtime::Runtime::new()?;
     let core = runtime.block_on(async {
-        vardoger_engine::EngineCore::assemble(
+        commutator_engine::EngineCore::assemble(
             &temp.path().join("engine"),
-            Arc::new(vardoger_engine::default_registry()),
-            vardoger_proto::HarnessId::ClaudeCode,
+            Arc::new(commutator_engine::default_registry()),
+            commutator_proto::HarnessId::ClaudeCode,
             None,
         )
     })?;
@@ -265,14 +265,14 @@ fn main() -> anyhow::Result<()> {
     core.workspace
         .rename_chat("tool-images", "Tool image previews")?;
     let ipc_port = port();
-    let _ipc = runtime.block_on(vardoger_engine::serve_ipc(ipc_port, core.rpc_service()))?;
+    let _ipc = runtime.block_on(commutator_engine::serve_ipc(ipc_port, core.rpc_service()))?;
     let data = temp.path().join("ui");
     std::fs::create_dir(&data)?;
     let boot = EngineBootConfig {
         data_dir: data.clone(),
         ipc_port,
         edge_url: String::new(),
-        default_harness: vardoger_proto::HarnessId::ClaudeCode,
+        default_harness: commutator_proto::HarnessId::ClaudeCode,
     };
     let handle = runtime.block_on(state::EngineHandle::bootstrap(boot.clone()))?;
     let chats = core.workspace.read_chats()?;
@@ -357,8 +357,8 @@ fn main() -> anyhow::Result<()> {
             let state = cx.new(|_| {
                 let mut s = state::AppState::new();
                 s.fixture_attachment_engine(handle);
-                s.connection = vardoger_proto::view::ConnectionStatus::Ready;
-                s.workspace_scope = Some(vardoger_proto::WorkspaceScope::Development);
+                s.connection = commutator_proto::view::ConnectionStatus::Ready;
+                s.workspace_scope = Some(commutator_proto::WorkspaceScope::Development);
                 s.local_device_id = Some(device.clone());
                 s.devices = vec![
                     serde_json::from_value(json!({"id": device, "name": "This device",
@@ -395,7 +395,7 @@ fn main() -> anyhow::Result<()> {
                     .await;
                 state.update(cx, |s, cx| {
                     s.receive_transcript_frame(
-                        vardoger_doc::TranscriptFrame::Reset {
+                        commutator_doc::TranscriptFrame::Reset {
                             reset: serde_json::from_value(entries).unwrap(),
                         },
                         cx,

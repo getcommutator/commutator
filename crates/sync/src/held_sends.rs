@@ -171,7 +171,7 @@ impl DocsStore {
 
 #[cfg(test)]
 mod tests {
-    use vardoger_doc::{QueuedMessage, SessionCommandPayload};
+    use commutator_doc::{QueuedMessage, SessionCommandPayload};
 
     use crate::attachment_store::{HeldBody, HeldUpload};
 

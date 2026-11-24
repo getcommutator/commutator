@@ -9,18 +9,18 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
 use tokio::sync::mpsc;
-use vardoger_doc::{MessagePart, MessageRole};
-use vardoger_engine::doc_host::{
+use commutator_doc::{MessagePart, MessageRole};
+use commutator_engine::doc_host::{
     BeginQueueEditOutcome, FinishQueueEditAction, FinishQueueEditOutcome,
 };
-use vardoger_engine::{EngineCore, HarnessRegistry, SteerOutcome};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::invocation::Invocation;
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry, SteerOutcome};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::invocation::Invocation;
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
-use vardoger_rpc::RpcService;
+use commutator_rpc::RpcService;
 
 const CHAT: &str = "rich-delivery";
 const HARNESSES: [HarnessId; 9] = [
@@ -81,9 +81,9 @@ impl Harness for RecordingHarness {
     async fn commands_for(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Vec<vardoger_proto::SlashCommand>, HarnessError> {
+    ) -> Result<Vec<commutator_proto::SlashCommand>, HarnessError> {
         self.discovery(cwd).await;
-        Ok(vec![vardoger_proto::SlashCommand {
+        Ok(vec![commutator_proto::SlashCommand {
             name: "probe".into(),
             description: cwd.to_string_lossy().into_owned(),
             input_hint: None,
@@ -92,9 +92,9 @@ impl Harness for RecordingHarness {
     async fn skills(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Option<Vec<vardoger_proto::invocation::Skill>>, HarnessError> {
+    ) -> Result<Option<Vec<commutator_proto::invocation::Skill>>, HarnessError> {
         self.discovery(cwd).await;
-        Ok(Some(vec![vardoger_proto::invocation::Skill {
+        Ok(Some(vec![commutator_proto::invocation::Skill {
             name: "probe".into(),
             path: cwd.join("SKILL.md").to_string_lossy().into_owned(),
             description: cwd.to_string_lossy().into_owned(),
@@ -173,7 +173,7 @@ fn rich_text(label: &str) -> (String, String) {
         command: None,
     }
     .link();
-    let file = vardoger_proto::file_mentions::local_file_link("src/é file.rs", false);
+    let file = commutator_proto::file_mentions::local_file_link("src/é file.rs", false);
     let raw = format!(
         "{label}: {skill} on {file}\n\n- **keep this markdown**\n- `literal @file $review /compact`"
     );
@@ -185,7 +185,7 @@ fn rich_text(label: &str) -> (String, String) {
 fn expected(raw: &str, readable: &str, id: HarnessId) -> String {
     if id == HarnessId::Codex {
         raw.replace(
-            &vardoger_proto::file_mentions::local_file_link("src/é file.rs", false),
+            &commutator_proto::file_mentions::local_file_link("src/é file.rs", false),
             "[é file.rs](src/%C3%A9%20file.rs)",
         )
     } else if id == HarnessId::Opencode {
@@ -240,10 +240,10 @@ async fn setup(
     registry.register(harness.clone());
     let core =
         EngineCore::assemble(&tmp.path().join("data"), Arc::new(registry), id).unwrap();
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     client
         .call(
-            vardoger_rpc::methods::MUTATE,
+            commutator_rpc::methods::MUTATE,
             serde_json::json!({"op":"createChat", "chatId":CHAT, "deviceId":core.device_id}),
         )
         .await
@@ -440,10 +440,10 @@ async fn queue_edits_preserve_reselected_skills_until_delivery_for_every_harness
 #[tokio::test]
 async fn projectless_catalogs_use_the_session_directory_and_reject_unknown_targets() {
     let (tmp, core, _harness, _rx) = setup(HarnessId::Codex).await;
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     for method in [
-        vardoger_rpc::methods::LIST_COMMANDS,
-        vardoger_rpc::methods::LIST_SKILLS,
+        commutator_rpc::methods::LIST_COMMANDS,
+        commutator_rpc::methods::LIST_SKILLS,
     ] {
         let new_chat = client
             .call(method, serde_json::json!({"harness":"codex"}))
@@ -496,8 +496,8 @@ async fn projectless_catalogs_use_the_session_directory_and_reject_unknown_targe
         .set_chat_cwd(CHAT, cwd.to_str().unwrap())
         .unwrap();
     for method in [
-        vardoger_rpc::methods::LIST_COMMANDS,
-        vardoger_rpc::methods::LIST_SKILLS,
+        commutator_rpc::methods::LIST_COMMANDS,
+        commutator_rpc::methods::LIST_SKILLS,
     ] {
         let result = client
             .call(
@@ -513,8 +513,8 @@ async fn projectless_catalogs_use_the_session_directory_and_reject_unknown_targe
 #[tokio::test]
 async fn project_catalog_rpcs_hold_update_leases_through_cancelled_discovery_cleanup() {
     for method in [
-        vardoger_rpc::methods::LIST_COMMANDS,
-        vardoger_rpc::methods::LIST_SKILLS,
+        commutator_rpc::methods::LIST_COMMANDS,
+        commutator_rpc::methods::LIST_SKILLS,
     ] {
         let (tmp, core, harness, _rx) = setup(HarnessId::Codex).await;
         let root = tmp.path().join("project-catalog");

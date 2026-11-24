@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use tokio_util::sync::CancellationToken;
-use vardoger_engine::Terminals;
-use vardoger_engine::terminals::link::{self, Outgoing};
-use vardoger_preview::peer::Peers;
-use vardoger_proto::TerminalEvent;
+use commutator_engine::Terminals;
+use commutator_engine::terminals::link::{self, Outgoing};
+use commutator_preview::peer::Peers;
+use commutator_proto::TerminalEvent;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn keystroke_echo_over_a_webrtc_link_is_transport_bound() {

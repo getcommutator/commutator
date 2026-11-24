@@ -1,8 +1,8 @@
 // Opt-in live-test preload. Advance only this test process's clock and record
 // token exchange timing, never credentials or response bodies.
 import fs from 'node:fs';
-const control = process.env.VARDOGER_CURSOR_AUTH_CLOCK;
-if (!control) throw new Error('Set an isolated VARDOGER_CURSOR_AUTH_CLOCK file');
+const control = process.env.COMMUTATOR_CURSOR_AUTH_CLOCK;
+if (!control) throw new Error('Set an isolated COMMUTATOR_CURSOR_AUTH_CLOCK file');
 const now = Date.now.bind(Date);
 Date.now = () => {
   try { return now() + JSON.parse(fs.readFileSync(control, 'utf8')).offsetMs; }

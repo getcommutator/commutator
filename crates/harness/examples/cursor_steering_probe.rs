@@ -1,10 +1,10 @@
 //! Real-model conversational steering check (no tools or additive jobs).
-//! cargo run -p vardoger-harness --example cursor_steering_probe -- gemini-3-flash
+//! cargo run -p commutator-harness --example cursor_steering_probe -- gemini-3-flash
 use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use vardoger_harness::{CancellationToken, CursorHarness, Harness, RunControls, SteerMessage};
-use vardoger_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
+use commutator_harness::{CancellationToken, CursorHarness, Harness, RunControls, SteerMessage};
+use commutator_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

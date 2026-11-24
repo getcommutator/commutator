@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Vardoger"
+rootProject.name = "Commutator"
 include(":app")

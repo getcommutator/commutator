@@ -30,9 +30,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use vardoger_harness::acp::{NEEDS_TERMINAL, SignInOptions, SignInProgress};
-use vardoger_harness::{AcpHarness, acp_registry as reg};
-use vardoger_proto::RegistryAgent;
+use commutator_harness::acp::{NEEDS_TERMINAL, SignInOptions, SignInProgress};
+use commutator_harness::{AcpHarness, acp_registry as reg};
+use commutator_proto::RegistryAgent;
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-registry-signin.py")
@@ -56,7 +56,7 @@ fn agents() -> &'static Path {
             std::fs::write(dir.join("agent.json"), record.to_string()).unwrap();
         }
         // SAFETY: set once, before any test reads it.
-        unsafe { std::env::set_var("VARDOGER_AGENTS_DIR", root.path()) };
+        unsafe { std::env::set_var("COMMUTATOR_AGENTS_DIR", root.path()) };
         root
     })
     .path()
@@ -87,7 +87,7 @@ async fn sign_in(mode: &str, on_page: impl FnOnce(String, PathBuf) + Send + 'sta
         browser: Some(browser),
         method: None,
         env: vec![
-            ("VARDOGER_LOGIN_URL_FILE".into(), url_file.clone().into()),
+            ("COMMUTATOR_LOGIN_URL_FILE".into(), url_file.clone().into()),
             ("HOME".into(), scratch.clone().into()),
         ],
         url_filter: None,

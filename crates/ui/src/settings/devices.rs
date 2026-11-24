@@ -10,8 +10,8 @@ use gpui::{
 };
 use std::time::Duration;
 
-use vardoger_proto::WorkspaceScope;
-use vardoger_rpc::methods;
+use commutator_proto::WorkspaceScope;
+use commutator_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::popover;
@@ -240,7 +240,7 @@ impl popover::ScrollRailHost for DevicesPage {
     }
 }
 
-/// Human platform label (vardoger settings.devices.tsx `platformLabel`).
+/// Human platform label (commutator settings.devices.tsx `platformLabel`).
 pub fn platform_label(platform: &str) -> &str {
     match platform {
         "macos" | "darwin" => "macOS",
@@ -287,7 +287,7 @@ impl Render for DevicesPage {
             .enumerate()
             .partition(|(_, (device, _))| local_id.as_deref() == Some(device.id.as_str()));
         let device_row = |ix: usize,
-                          (device, online): (vardoger_proto::Device, bool),
+                          (device, online): (commutator_proto::Device, bool),
                           first: bool| {
             let is_local = local_id.as_deref() == Some(device.id.as_str());
             let id_copied = copied.as_deref() == Some(device.id.as_str());

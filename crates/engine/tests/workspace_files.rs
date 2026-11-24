@@ -5,11 +5,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_proto::{
     WorkspaceDirectoryPage, WorkspaceFileChanges, WorkspaceFileText, WriteWorkspaceFileOutcome,
 };
-use vardoger_rpc::methods;
+use commutator_rpc::methods;
 
 async fn git(cwd: &Path, args: &[&str]) {
     let output = tokio::process::Command::new("git")
@@ -45,7 +45,7 @@ fn assemble(data_dir: &Path, device_id: &str) -> EngineCore {
     EngineCore::assemble(
         data_dir,
         Arc::new(HarnessRegistry::new()),
-        vardoger_proto::HarnessId::Mock,
+        commutator_proto::HarnessId::Mock,
     )
     .expect("engine assembles")
 }
@@ -68,7 +68,7 @@ async fn workspace_file_rpcs_list_search_read_write_and_watch() {
     core.workspace
         .create_chat("chat-files", Some("space-files"), None, None, None)
         .expect("chat");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
 
     let root = client
         .call(
@@ -300,7 +300,7 @@ async fn workspace_file_rpcs_preserve_plain_folder_search_support() {
             false,
         )
         .expect("plain space");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
 
     let legacy = client
         .call(
@@ -350,7 +350,7 @@ async fn projectless_files_use_the_chat_directory_without_a_space() {
             Some(folder.to_string_lossy().into_owned()),
         )
         .expect("foreign chat");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
 
     let root: WorkspaceDirectoryPage = serde_json::from_value(
         client
@@ -458,7 +458,7 @@ async fn projectless_files_stay_inside_a_chat_directory_within_a_git_repo() {
             Some(repo.join("src").to_string_lossy().into_owned()),
         )
         .expect("projectless chat in a repo");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
 
     let root: WorkspaceDirectoryPage = serde_json::from_value(
         client
@@ -486,7 +486,7 @@ async fn projectless_files_stay_inside_a_chat_directory_within_a_git_repo() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn projectless_home_is_required_for_files_catalogs_and_terminal() {
-    const CHILD: &str = "VARDOGER_MISSING_HOME_FIXTURE";
+    const CHILD: &str = "COMMUTATOR_MISSING_HOME_FIXTURE";
     if std::env::var_os(CHILD).is_none() {
         let output = tokio::process::Command::new(std::env::current_exe().unwrap())
             .args([
@@ -533,7 +533,7 @@ async fn projectless_home_is_required_for_files_catalogs_and_terminal() {
             Some(explicit.to_string_lossy().into_owned()),
         )
         .unwrap();
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     for (method, params) in [
         (
             methods::LIST_WORKSPACE_DIRECTORY,
@@ -598,7 +598,7 @@ async fn write_rejects_changed_checkout_even_when_contents_match() {
     core.workspace
         .create_chat("chat-files", Some("space-files"), None, None, None)
         .unwrap();
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     let read = client
         .call(
             methods::READ_WORKSPACE_FILE,
@@ -689,7 +689,7 @@ async fn workspace_mutations_validate_revision_and_publish_semantic_events() {
     core.workspace
         .create_chat("chat", Some("space"), None, None, None)
         .unwrap();
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     let page: WorkspaceDirectoryPage = serde_json::from_value(
         client
             .call(
@@ -809,7 +809,7 @@ async fn absolute_paths_read_inside_normally_and_outside_read_only() {
     core.workspace
         .create_chat("chat-absolute", Some("space-absolute"), None, None, None)
         .expect("chat");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
 
     // An absolute path inside the chat root reads like its relative
     // equivalent — checkout-bound and editable.
@@ -867,7 +867,7 @@ async fn absolute_paths_read_inside_normally_and_outside_read_only() {
     assert_eq!(read.text.as_deref(), Some("outside\n"));
     assert_eq!(
         read.read_only_reason,
-        Some(vardoger_proto::WorkspaceReadOnlyReason::OutsideWorkspace)
+        Some(commutator_proto::WorkspaceReadOnlyReason::OutsideWorkspace)
     );
     assert!(read.checkout_id.is_empty());
 
@@ -897,7 +897,7 @@ async fn absolute_paths_read_inside_normally_and_outside_read_only() {
     .expect("typed directory read");
     assert_eq!(
         directory.read_only_reason,
-        Some(vardoger_proto::WorkspaceReadOnlyReason::NotRegularFile)
+        Some(commutator_proto::WorkspaceReadOnlyReason::NotRegularFile)
     );
     let png_abs = std::fs::canonicalize(outside.join("pixel.png"))
         .unwrap()

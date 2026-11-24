@@ -17,7 +17,7 @@
 
 use loro::ToJson;
 use serde::{Deserialize, Serialize};
-use vardoger_proto::ChatConfig;
+use commutator_proto::ChatConfig;
 
 use crate::schema::{DocError, SessionDoc};
 
@@ -746,12 +746,12 @@ mod tests {
     fn queued_config_round_trips_through_moves_and_edits() {
         let d = doc();
         let cfg = ChatConfig {
-            harness: vardoger_proto::HarnessId::Antigravity,
+            harness: commutator_proto::HarnessId::Antigravity,
             model: Some("gemini-4-neon".into()),
-            reasoning: Some(vardoger_proto::ReasoningLevel::High),
+            reasoning: Some(commutator_proto::ReasoningLevel::High),
             model_options: serde_json::Map::new(),
-            sandbox: vardoger_proto::SandboxLevel::WorkspaceWrite,
-            access: vardoger_proto::AccessMode::FullAccess,
+            sandbox: commutator_proto::SandboxLevel::WorkspaceWrite,
+            access: commutator_proto::AccessMode::FullAccess,
             plan: false,
         };
         let mut switched = item("q-switch", "try neon");

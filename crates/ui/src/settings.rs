@@ -1,5 +1,5 @@
 //! UI settings persisted to a small JSON file in the data dir — pane widths and
-//! collapse flags (vardoger persisted the same set in localStorage).
+//! collapse flags (commutator persisted the same set in localStorage).
 //!
 //! Loaded once at boot and then owned by [`SettingsStore`], the only production
 //! writer. Frequent geometry changes are debounced; durable choices flush
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui::{App, Global, Task};
 use serde::{Deserialize, Serialize};
-use vardoger_proto::{AuthState, WorkspaceScope};
+use commutator_proto::{AuthState, WorkspaceScope};
 
 pub mod accounts;
 pub mod appearance;
@@ -75,7 +75,7 @@ const NEW_THREAD_BACKGROUND_DIR: &str = "new-thread-backgrounds";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewThreadComposerBackground {
-    /// Managed copy inside Vardoger's device-local data directory.
+    /// Managed copy inside Commutator's device-local data directory.
     pub path: String,
     /// Original file name shown in Appearance settings.
     pub name: String,
@@ -509,7 +509,7 @@ pub fn compact_model_picker(cx: &App) -> bool {
         .is_some_and(|store| store.current.compact_model_picker)
 }
 
-/// Copy a selected image into Vardoger's device-local data directory and make it
+/// Copy a selected image into Commutator's device-local data directory and make it
 /// the new-thread canvas background. A unique file name avoids stale image
 /// caches when the background is replaced.
 pub fn install_new_thread_composer_background(source: &Path, cx: &mut App) -> Result<(), String> {
@@ -527,13 +527,13 @@ pub fn install_new_thread_composer_background(source: &Path, cx: &mut App) -> Re
 fn install_staged_background(
     source: &Path,
     staged: crate::attachments::StagedAttachment,
-    color: Option<vardoger_theme::Color>,
+    color: Option<commutator_theme::Color>,
     cx: &mut App,
 ) -> Result<(), String> {
     let data_dir = cx
         .try_global::<SettingsStore>()
         .map(|store| store.data_dir.clone())
-        .ok_or_else(|| "Unable to save the image. Restart Vardoger and try again.".to_string())?;
+        .ok_or_else(|| "Unable to save the image. Restart Commutator and try again.".to_string())?;
     let prepared = prepare_background_file(staged, &data_dir)?;
     commit_background(source, prepared, color, cx)
 }
@@ -596,13 +596,13 @@ fn prepare_background_file(
 fn commit_background(
     source: &Path,
     mut prepared: PreparedBackgroundFile,
-    color: Option<vardoger_theme::Color>,
+    color: Option<commutator_theme::Color>,
     cx: &mut App,
 ) -> Result<(), String> {
     let data_dir = cx
         .try_global::<SettingsStore>()
         .map(|store| store.data_dir.clone())
-        .ok_or_else(|| "Unable to save the image. Restart Vardoger and try again.".to_string())?;
+        .ok_or_else(|| "Unable to save the image. Restart Commutator and try again.".to_string())?;
     let backgrounds_dir = data_dir.join(NEW_THREAD_BACKGROUND_DIR);
     let replacement = prepared.0.as_ref().unwrap().clone();
     let mut next = current(cx);
@@ -637,7 +637,7 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
     let data_dir = cx
         .try_global::<SettingsStore>()
         .map(|store| store.data_dir.clone())
-        .ok_or_else(|| "Unable to remove the image. Restart Vardoger and try again.".to_string())?;
+        .ok_or_else(|| "Unable to remove the image. Restart Commutator and try again.".to_string())?;
     let mut next = current(cx);
     let previous = next.new_thread_composer_background.take();
     next.wallpaper_source = None;
@@ -961,7 +961,7 @@ pub struct SkillCompletionSettings {
 impl SkillCompletionSettings {
     /// Every harness defaults to `$` skills kept out of the `/` menu; an
     /// explicit per-harness choice (or the legacy slash-menu flag) wins.
-    pub fn for_harness(_harness: vardoger_proto::HarnessId) -> Self {
+    pub fn for_harness(_harness: commutator_proto::HarnessId) -> Self {
         Self {
             dollar: true,
             separate_from_slash: true,
@@ -969,16 +969,16 @@ impl SkillCompletionSettings {
     }
 }
 
-pub const SKILL_COMPLETION_HARNESSES: [(vardoger_proto::HarnessId, &str); 9] = [
-    (vardoger_proto::HarnessId::Antigravity, "Antigravity"),
-    (vardoger_proto::HarnessId::ClaudeCode, "Claude Code"),
-    (vardoger_proto::HarnessId::Codex, "Codex"),
-    (vardoger_proto::HarnessId::Cursor, "Cursor"),
-    (vardoger_proto::HarnessId::Devin, "Devin"),
-    (vardoger_proto::HarnessId::Grok, "Grok"),
-    (vardoger_proto::HarnessId::Hermes, "Hermes"),
-    (vardoger_proto::HarnessId::Pi, "Pi"),
-    (vardoger_proto::HarnessId::Opencode, "OpenCode"),
+pub const SKILL_COMPLETION_HARNESSES: [(commutator_proto::HarnessId, &str); 9] = [
+    (commutator_proto::HarnessId::Antigravity, "Antigravity"),
+    (commutator_proto::HarnessId::ClaudeCode, "Claude Code"),
+    (commutator_proto::HarnessId::Codex, "Codex"),
+    (commutator_proto::HarnessId::Cursor, "Cursor"),
+    (commutator_proto::HarnessId::Devin, "Devin"),
+    (commutator_proto::HarnessId::Grok, "Grok"),
+    (commutator_proto::HarnessId::Hermes, "Hermes"),
+    (commutator_proto::HarnessId::Pi, "Pi"),
+    (commutator_proto::HarnessId::Opencode, "OpenCode"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -991,7 +991,7 @@ pub struct UiSettings {
     /// Legacy global opt-in; per-harness preferences take precedence.
     pub skills_in_slash_menu: bool,
     pub skill_completion_by_harness:
-        std::collections::HashMap<vardoger_proto::HarnessId, SkillCompletionSettings>,
+        std::collections::HashMap<commutator_proto::HarnessId, SkillCompletionSettings>,
     /// Open model selection with an effort slider and a separate model list.
     pub compact_model_picker: bool,
     pub sidebar_width: f32,
@@ -1049,7 +1049,7 @@ pub struct UiSettings {
     /// list. Kept for file compatibility; no longer read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub space_order: Vec<String>,
-    /// Master switch for session notification chimes. `VARDOGER_DISABLE_SOUND`
+    /// Master switch for session notification chimes. `COMMUTATOR_DISABLE_SOUND`
     /// overrides every per-event preference below.
     pub sound_enabled: bool,
     /// Chime when an agent run completes successfully.
@@ -1059,9 +1059,9 @@ pub struct UiSettings {
     /// Chime when a run fails or the durable connection state degrades.
     pub sound_attention_enabled: bool,
     /// Desktop banner notifications on the same transitions.
-    /// `VARDOGER_DISABLE_NOTIFICATIONS` overrides.
+    /// `COMMUTATOR_DISABLE_NOTIFICATIONS` overrides.
     pub notifications_enabled: bool,
-    /// Suppress the banner while a Vardoger window is focused (the chime covers
+    /// Suppress the banner while a Commutator window is focused (the chime covers
     /// the foreground case).
     pub notifications_background_only: bool,
     pub files_panel_width: f32,
@@ -1072,7 +1072,7 @@ pub struct UiSettings {
     /// Width of the pull request pane beside the board.
     pub pull_request_pane_width: f32,
     /// Legacy: panel *open* flags are session-scoped in-memory state now
-    /// (`shell::SessionPanels`, vardoger `sessionPanels` parity). Kept for file
+    /// (`shell::SessionPanels`, commutator `sessionPanels` parity). Kept for file
     /// compatibility; no longer read or written by the shell.
     pub right_pane_open: bool,
     pub terminal_height: f32,
@@ -1121,7 +1121,7 @@ pub struct UiSettings {
     pub code_font_family: crate::typography::UiFontFamily,
     pub code_font_size: f32,
     /// Independently selected light and dark theme variants.
-    pub theme_selection: vardoger_theme::ThemeSelection,
+    pub theme_selection: commutator_theme::ThemeSelection,
     /// Changes pane: side-by-side diffs instead of the unified stack.
     pub diff_split: bool,
     /// Changes pane: wrap long source lines instead of scrolling horizontally.
@@ -1142,7 +1142,7 @@ pub struct UiSettings {
     pub transcript_width: f32,
     /// Open a normal web-link activation in the session Browser. Explicit
     /// context-menu actions remain available regardless of this preference.
-    pub open_web_links_in_vardoger: bool,
+    pub open_web_links_in_commutator: bool,
     /// Compact transcript: a turn's working steps (thinking, tool calls, and
     /// the narration between them) fold into one collapsed accordion, so only
     /// the reply text stays visible.
@@ -1166,9 +1166,9 @@ pub struct UiSettings {
     /// that otherwise shows beside a transcript with room for it.
     pub session_info_hidden: bool,
     /// Interactive identity overlay; imported themes default to their own accent.
-    pub accent: vardoger_theme::AccentSelection,
+    pub accent: commutator_theme::AccentSelection,
     /// Glass policy, independent from the selected appearance, theme, and accent.
-    pub surface: vardoger_theme::SurfacePreference,
+    pub surface: commutator_theme::SurfacePreference,
     /// Optional device-local artwork behind the blank new-thread composer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_thread_composer_background: Option<NewThreadComposerBackground>,
@@ -1178,7 +1178,7 @@ pub struct UiSettings {
     /// Most recently displayed sources first; bounded by the shuffle cooldown.
     pub wallpaper_history: Vec<PathBuf>,
     pub wallpaper_theme_colors: bool,
-    pub wallpaper_color: Option<vardoger_theme::Color>,
+    pub wallpaper_color: Option<commutator_theme::Color>,
     /// Non-destructive treatment composited inside the artwork's fade mask.
     pub new_thread_background_effect: NewThreadBackgroundEffect,
     /// Snap animations to rest. Defaults to following the OS.
@@ -1252,7 +1252,7 @@ impl Default for UiSettings {
             terminal_font_size: crate::typography::TERMINAL_FONT_SIZE_DEFAULT,
             code_font_family: crate::typography::UiFontFamily::GeistMono,
             code_font_size: crate::typography::CODE_FONT_SIZE_DEFAULT,
-            theme_selection: vardoger_theme::ThemeSelection::default(),
+            theme_selection: commutator_theme::ThemeSelection::default(),
             diff_split: false,
             diff_wrap: false,
             code_fences_fit_content: false,
@@ -1260,7 +1260,7 @@ impl Default for UiSettings {
             math_font: MathFont::Fira,
             math_size: MATH_SIZE_DEFAULT,
             transcript_width: TRANSCRIPT_WIDTH_DEFAULT,
-            open_web_links_in_vardoger: true,
+            open_web_links_in_commutator: true,
             transcript_compact_mode: false,
             pull_request_destination: PullRequestDestination::Native,
             last_pull_request_repository: None,
@@ -1271,8 +1271,8 @@ impl Default for UiSettings {
             files_word_wrap: false,
             files_show_all: false,
             session_info_hidden: false,
-            accent: vardoger_theme::AccentSelection::default(),
-            surface: vardoger_theme::SurfacePreference::default(),
+            accent: commutator_theme::AccentSelection::default(),
+            surface: commutator_theme::SurfacePreference::default(),
             new_thread_composer_background: None,
             wallpaper_folder: None,
             wallpaper_source: None,
@@ -1364,7 +1364,7 @@ impl ShortcutId {
         self != Self::CaptureAppshot || crate::appshots::is_desktop()
     }
 
-    /// Row label (vardoger lib/shortcuts.ts `SHORTCUT_DEFINITIONS`, verbatim).
+    /// Row label (commutator lib/shortcuts.ts `SHORTCUT_DEFINITIONS`, verbatim).
     pub fn label(self) -> &'static str {
         match self {
             ShortcutId::RandomWallpaper => "Random wallpaper",
@@ -1499,7 +1499,7 @@ pub fn sidebar_pin_profile_key(
             }
             let org_id = token_org_id
                 .or(development_org_id.filter(|org_id| !org_id.is_empty()))
-                .unwrap_or(vardoger_engine::DEFAULT_ORG_ID);
+                .unwrap_or(commutator_engine::DEFAULT_ORG_ID);
             Some(format!("development:{org_id}:{user_id}"))
         }
     }
@@ -1796,7 +1796,7 @@ impl UiSettings {
             .or_default()
     }
 
-    pub fn skill_completion(&self, harness: vardoger_proto::HarnessId) -> SkillCompletionSettings {
+    pub fn skill_completion(&self, harness: commutator_proto::HarnessId) -> SkillCompletionSettings {
         self.skill_completion_by_harness
             .get(&harness)
             .copied()
@@ -1901,7 +1901,7 @@ impl UiSettings {
             math_font,
             math_size,
             transcript_width,
-            open_web_links_in_vardoger,
+            open_web_links_in_commutator,
             transcript_compact_mode,
             files_autosave_enabled,
             files_autosave_delay_ms,
@@ -2092,7 +2092,7 @@ impl UiSettings {
             // on frosted glass whatever the theme recommends.
             Err(error) if error.kind() == io::ErrorKind::NotFound => Self {
                 onboarding_completed: false,
-                surface: vardoger_theme::SurfacePreference::Frosted,
+                surface: commutator_theme::SurfacePreference::Frosted,
                 ..Self::default()
             },
             Err(_) => Self::default(),
@@ -2111,10 +2111,10 @@ impl UiSettings {
     }
 
     fn migrated(mut self) -> Self {
-        if self.accent == vardoger_theme::AccentSelection::ThemeDefault
+        if self.accent == commutator_theme::AccentSelection::ThemeDefault
             && let Some(accent) = self.legacy_accent_color.take()
         {
-            self.accent = vardoger_theme::AccentSelection::Preset(accent.into());
+            self.accent = commutator_theme::AccentSelection::Preset(accent.into());
         }
         self.legacy_accent_color = None;
         self
@@ -2141,7 +2141,7 @@ fn min_or(value: f32, min: f32, default: f32) -> f32 {
     }
 }
 
-pub use vardoger_proto::SidebarSection;
+pub use commutator_proto::SidebarSection;
 
 #[cfg(test)]
 mod tests {
@@ -2149,7 +2149,7 @@ mod tests {
 
     #[test]
     fn skill_completion_defaults_overrides_and_persistence_are_per_harness() {
-        use vardoger_proto::HarnessId;
+        use commutator_proto::HarnessId;
         let dir = tempfile::tempdir().unwrap();
         let mut settings = UiSettings::default();
         for (harness, _) in SKILL_COMPLETION_HARNESSES {
@@ -2242,7 +2242,7 @@ mod tests {
 
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.composer_send_behavior, ComposerSendBehavior::Enter);
-        assert!(loaded.open_web_links_in_vardoger);
+        assert!(loaded.open_web_links_in_commutator);
         assert!(loaded.new_thread_composer_background.is_none());
         assert_eq!(
             loaded.new_thread_background_effect,
@@ -2882,7 +2882,7 @@ mod tests {
         let fresh = tempfile::tempdir().unwrap();
         let fresh = UiSettings::load(fresh.path());
         assert!(!fresh.onboarding_completed);
-        assert_eq!(fresh.surface, vardoger_theme::SurfacePreference::Frosted);
+        assert_eq!(fresh.surface, commutator_theme::SurfacePreference::Frosted);
         // A settings file from before setup existed: that user is past it.
         let existing = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -2987,7 +2987,7 @@ mod tests {
             git_history_author_display: GitHistoryAuthorDisplay::Name,
             ui_font_family: crate::typography::UiFontFamily::Installed("Arial".into()),
             ui_font_size: crate::typography::UiFontSize::ALL[5],
-            theme_selection: vardoger_theme::ThemeSelection {
+            theme_selection: commutator_theme::ThemeSelection {
                 light: "catppuccin-latte".into(),
                 dark: "catppuccin-mocha".into(),
             },
@@ -2998,12 +2998,12 @@ mod tests {
             math_font: MathFont::StixTwo,
             math_size: 135,
             transcript_width: 960.0,
-            open_web_links_in_vardoger: false,
+            open_web_links_in_commutator: false,
             transcript_compact_mode: true,
             pull_request_destination: PullRequestDestination::External,
-            last_pull_request_repository: Some("acme/vardoger".into()),
+            last_pull_request_repository: Some("acme/commutator".into()),
             last_pull_request_device: Some("remote-device".into()),
-            pull_request_stars: vec!["https://github.com/acme/vardoger/pull/123".into()],
+            pull_request_stars: vec!["https://github.com/acme/commutator/pull/123".into()],
             files_autosave_enabled: true,
             files_autosave_delay_ms: 1_500,
             files_word_wrap: true,
@@ -3013,10 +3013,10 @@ mod tests {
             code_font_size: 11.0,
             files_show_all: true,
             session_info_hidden: true,
-            accent: vardoger_theme::AccentSelection::Preset(vardoger_theme::AccentPreset::Cyan),
-            surface: vardoger_theme::SurfacePreference::Frosted,
+            accent: commutator_theme::AccentSelection::Preset(commutator_theme::AccentPreset::Cyan),
+            surface: commutator_theme::SurfacePreference::Frosted,
             new_thread_composer_background: Some(NewThreadComposerBackground {
-                path: "/tmp/vardoger/new-thread-background.png".into(),
+                path: "/tmp/commutator/new-thread-background.png".into(),
                 name: "background.png".into(),
                 adjustment: NewThreadBackgroundAdjustment {
                     focal_x: 0.25,
@@ -3043,7 +3043,7 @@ mod tests {
         assert!(json.contains(r#""renderMath": false"#));
         assert!(json.contains(r#""mathFont": "stixTwo""#));
         assert!(json.contains(r#""mathSize": 135"#));
-        assert!(json.contains(r#""openWebLinksInVardoger": false"#));
+        assert!(json.contains(r#""openWebLinksInCommutator": false"#));
         assert!(json.contains(r#""newThreadBackgroundEffect": "ascii""#));
         assert!(json.contains(r#""focalX": 0.25"#));
         assert!(json.contains(r#""focalY": 0.75"#));
@@ -3347,8 +3347,8 @@ mod tests {
         .unwrap();
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.appearance, crate::appearance::AppearanceMode::System);
-        assert_eq!(loaded.accent, vardoger_theme::AccentSelection::ThemeDefault);
-        assert_eq!(loaded.surface, vardoger_theme::SurfacePreference::ThemeDefault);
+        assert_eq!(loaded.accent, commutator_theme::AccentSelection::ThemeDefault);
+        assert_eq!(loaded.surface, commutator_theme::SurfacePreference::ThemeDefault);
         assert_eq!(loaded.sidebar_width, 300.0);
         assert!(loaded.sidebar_pinned_session_ids_by_profile.is_empty());
         assert!(!loaded.sound_enabled, "other keys still parse");
@@ -3435,7 +3435,7 @@ mod tests {
         let loaded = UiSettings::load(dir.path());
         assert_eq!(
             loaded.accent,
-            vardoger_theme::AccentSelection::Preset(vardoger_theme::AccentPreset::Cyan)
+            commutator_theme::AccentSelection::Preset(commutator_theme::AccentPreset::Cyan)
         );
         loaded.save(dir.path()).unwrap();
         let saved = std::fs::read_to_string(UiSettings::path(dir.path())).unwrap();
@@ -3502,7 +3502,7 @@ mod tests {
             UiSettings::load(dir.path()),
             UiSettings {
                 onboarding_completed: false,
-                surface: vardoger_theme::SurfacePreference::Frosted,
+                surface: commutator_theme::SurfacePreference::Frosted,
                 ..UiSettings::default()
             }
         );
@@ -3512,7 +3512,7 @@ mod tests {
 
     fn signed_in(user_id: &str, org_id: Option<&str>) -> AuthState {
         AuthState::SignedIn {
-            user: vardoger_proto::UserProfile {
+            user: commutator_proto::UserProfile {
                 id: user_id.to_string(),
                 email: format!("{user_id}@example.com"),
                 name: None,
@@ -3759,7 +3759,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_vardoger() {
+    fn defaults_match_commutator() {
         let d = UiSettings::default();
         assert_eq!(d.sidebar_width, 256.0);
         assert_eq!(d.right_pane_width, 520.0);

@@ -23,15 +23,15 @@ use tokio_tungstenite::tungstenite::handshake::server::{
 };
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_mcp::{Origin, Tools, Vardoger};
-use vardoger_proto::{
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_mcp::{Origin, Tools, Commutator};
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, Session, SessionStatus,
     SteeringMode,
 };
-use vardoger_rpc::{
+use commutator_rpc::{
     DeviceFrameHeader, LinkCache, LinkCacheConfig, StaticToken, decode_device_frame,
     encode_device_frame,
 };
@@ -207,7 +207,7 @@ const MESSAGE_BYTES: usize = 2 * 1024;
 
 /// A chat with its harness set, like any chat that has run: sending to it
 /// needs nothing from its host.
-fn config() -> vardoger_proto::ChatConfig {
+fn config() -> commutator_proto::ChatConfig {
     serde_json::from_value(
         json!({"harness": "mock", "model": null, "reasoning": null, "sandbox": "workspace-write"}),
     )
@@ -253,7 +253,7 @@ async fn agents_reach_a_huge_chat_on_another_device() {
         .unwrap();
     host.workspace.rename_chat(CHAT, "Whale").unwrap();
     seed(&host);
-    let _relay_host = host.start_host_relay(&relay, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
+    let _relay_host = host.start_host_relay(&relay, std::sync::Arc::new(commutator_rpc::StaticToken("test-user".into())));
 
     // The reader knows the chat from the registry, not the doc: it holds none
     // of the transcript.
@@ -267,11 +267,11 @@ async fn agents_reach_a_huge_chat_on_another_device() {
     links.probe_timeout = Duration::from_secs(20);
     reader.set_links(LinkCache::new(links));
 
-    let vardoger = Arc::new(Vardoger::with_client(
-        vardoger_rpc::memory_client(reader.rpc_service()),
+    let commutator = Arc::new(Commutator::with_client(
+        commutator_rpc::memory_client(reader.rpc_service()),
         Origin::default(),
     ));
-    let tools = Tools::new(vardoger.clone());
+    let tools = Tools::new(commutator.clone());
 
     // read_chat limit 1 asks for one message, however long the chat. The
     // first read opens the doc and builds the host's mirror; the second is
@@ -386,7 +386,7 @@ async fn agents_reach_a_huge_chat_on_another_device() {
     let hosts_before = counters.host_sockets.load(Ordering::SeqCst);
     let clients_before = counters.client_sockets.load(Ordering::SeqCst);
     let started = Instant::now();
-    let everything = vardoger
+    let everything = commutator
         .transcript_on(CHAT, Some("device-b"))
         .await
         .expect("a full read");

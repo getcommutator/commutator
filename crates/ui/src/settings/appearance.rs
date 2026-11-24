@@ -12,8 +12,8 @@ use gpui::{
     KeyDownEvent, ObjectFit, Pixels, Point, Render, ScrollDelta, SharedString, StyledImage as _,
     Subscription, Window, div, img, point, prelude::*, px,
 };
-use vardoger_theme::vscode::{ImportReport, SourceCompilation};
-use vardoger_theme::{
+use commutator_theme::vscode::{ImportReport, SourceCompilation};
+use commutator_theme::{
     AccentPreset, AccentSelection, CustomThemeEntry, CustomThemeStatus, InstallMode,
     SurfacePreference, SurfaceTreatment, ThemeRegistry, ThemeSelection,
 };
@@ -1655,10 +1655,10 @@ pub(crate) fn preview(
     }
 }
 
-fn model_appearance(appearance: Appearance) -> vardoger_theme::Appearance {
+fn model_appearance(appearance: Appearance) -> commutator_theme::Appearance {
     match appearance {
-        Appearance::Dark => vardoger_theme::Appearance::Dark,
-        Appearance::Light => vardoger_theme::Appearance::Light,
+        Appearance::Dark => commutator_theme::Appearance::Dark,
+        Appearance::Light => commutator_theme::Appearance::Light,
     }
 }
 
@@ -1685,7 +1685,7 @@ fn compact_action(
     widgets::text_action(theme, widgets::ActionTone::Filled, label).id(id.into())
 }
 
-fn import_scene_preview(variant: &vardoger_theme::ThemeVariant) -> AnyElement {
+fn import_scene_preview(variant: &commutator_theme::ThemeVariant) -> AnyElement {
     let theme = Theme::from_variant(
         variant,
         AccentSelection::ThemeDefault,
@@ -1817,7 +1817,7 @@ fn report_panel(theme: &Theme, report: &ImportReport) -> impl IntoElement {
             .children(report.adjustments.iter().map(|adjustment| {
                 div().mt(px(4.0)).child(SharedString::from(format!(
                     "Adjusted · {} {} → {} · {}",
-                    adjustment.vardoger_role,
+                    adjustment.commutator_role,
                     adjustment.original,
                     adjustment.resolved,
                     adjustment.reason
@@ -1847,7 +1847,7 @@ fn report_panel(theme: &Theme, report: &ImportReport) -> impl IntoElement {
             .children(report.mappings.iter().map(|mapping| {
                 div().mt(px(4.0)).child(SharedString::from(format!(
                     "{} ← {}",
-                    mapping.vardoger_role, mapping.vscode_key
+                    mapping.commutator_role, mapping.vscode_key
                 )))
             })),
     )
@@ -2537,7 +2537,7 @@ impl AppearancePage {
                             .mt(px(1.0))
                             .flex_none(),
                     )
-                    .child("Vardoger finds light and dark variants automatically."),
+                    .child("Commutator finds light and dark variants automatically."),
             );
         }
 
@@ -3969,7 +3969,7 @@ impl Render for AppearancePage {
                             vec![
                                 div()
                                     .child(
-                                        "Hold animations still while Vardoger isn't the focused window.",
+                                        "Hold animations still while Commutator isn't the focused window.",
                                     )
                                     .into_any_element(),
                             ],
@@ -4417,12 +4417,12 @@ mod tests {
         let registry = ThemeRegistry::builtin();
         assert_eq!(
             registry
-                .variants_for(vardoger_theme::Appearance::Light)
+                .variants_for(commutator_theme::Appearance::Light)
                 .count(),
             10
         );
         assert_eq!(
-            registry.variants_for(vardoger_theme::Appearance::Dark).count(),
+            registry.variants_for(commutator_theme::Appearance::Dark).count(),
             20
         );
     }

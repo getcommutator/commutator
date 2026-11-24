@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
-use vardoger_proto::{AgentEvent, DoneStatus, ToolCall};
+use commutator_proto::{AgentEvent, DoneStatus, ToolCall};
 
 use crate::HarnessError;
 use crate::jsonl_tail::TailReader;
@@ -642,7 +642,7 @@ mod tests {
         let result = json!({
             "type": "tool_result",
             "tool_call_id": "call-1-0",
-            "content": "1→# vardoger — Architecture",
+            "content": "1→# commutator — Architecture",
         });
         assert!(matches!(
             entry_events(&result).as_slice(),

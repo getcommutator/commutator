@@ -1,5 +1,5 @@
 //! Shell commands for agents, on this device or another of the person's
-//! (Vardoger MCP's `run_command` & co., forwarded by `targetDeviceId`): what an
+//! (Commutator MCP's `run_command` & co., forwarded by `targetDeviceId`): what an
 //! agent's own shell tool does on its machine, on any of them. Owned by the
 //! engine ([`crate::EngineCore`]) like its terminals, and shut down with it.
 //!
@@ -14,11 +14,11 @@
 //!
 //! No PTY and no session. The user's shell runs the command (`-c`;
 //! PowerShell or cmd on Windows) with the PATH and variables their login
-//! shell sets, captured once per process ([`vardoger_harness::compose_user_path`]),
+//! shell sets, captured once per process ([`commutator_harness::compose_user_path`]),
 //! and empty stdin, so a prompt for input ends instead of hanging. Each runs
-//! as an owned process ([`vardoger_harness::process::owned`]): a process group
+//! as an owned process ([`commutator_harness::process::owned`]): a process group
 //! (Job Object on Windows) of its own, without the markers of a Claude
-//! session Vardoger may itself run in. What it costs is bounded:
+//! session Commutator may itself run in. What it costs is bounded:
 //!
 //! - **Memory**: a run keeps at most [`HEAD`] + [`TAIL`] bytes of output (its
 //!   start and end); a background command its newest [`RING`] bytes. What's
@@ -44,7 +44,7 @@ use futures::stream::BoxStream;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{Notify, Semaphore, watch};
-use vardoger_harness::process::{Command, Stdio, owned};
+use commutator_harness::process::{Command, Stdio, owned};
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(600);
@@ -150,7 +150,7 @@ pub struct CommandTask {
     /// Its id there (`cmd-…`).
     pub id: String,
     /// As shown: `cmd-…@device` for one elsewhere, the id its agent was given.
-    pub task: vardoger_proto::BackgroundTask,
+    pub task: commutator_proto::BackgroundTask,
 }
 
 impl CommandTask {
@@ -404,7 +404,7 @@ impl Commands {
 
     fn get(&self, id: &str) -> Result<Arc<Background>, String> {
         lock(&self.inner.background).get(id).cloned().ok_or_else(|| {
-            format!("No command {id} on this device (it may have ended over an hour ago, or Vardoger restarted there)")
+            format!("No command {id} on this device (it may have ended over an hour ago, or Commutator restarted there)")
         })
     }
 
@@ -415,12 +415,12 @@ impl Commands {
 
     /// The newest output a background command printed, for a person
     /// looking: what its agent reads next stays as it was.
-    pub fn tail(&self, id: &str) -> Result<vardoger_proto::BackgroundTaskOutput, String> {
+    pub fn tail(&self, id: &str) -> Result<commutator_proto::BackgroundTaskOutput, String> {
         let command = self.get(id)?;
         let ring = lock(&command.output);
         let start = ring.bytes.len().saturating_sub(MAX_READ);
         let newest: Vec<u8> = ring.bytes.range(start..).copied().collect();
-        Ok(vardoger_proto::BackgroundTaskOutput {
+        Ok(commutator_proto::BackgroundTaskOutput {
             text: String::from_utf8_lossy(&newest).into_owned(),
             truncated: ring.written > newest.len() as u64,
         })
@@ -517,7 +517,7 @@ impl Commands {
     /// is caught too). A chat counts as deleted only once these chats have
     /// shown it, so one not synced here yet isn't taken as gone. Ends with
     /// the engine.
-    pub fn follow_chats(&self, mut chats: watch::Receiver<Vec<vardoger_proto::Chat>>) {
+    pub fn follow_chats(&self, mut chats: watch::Receiver<Vec<commutator_proto::Chat>>) {
         let inner: Weak<Inner> = Arc::downgrade(&self.inner);
         let mut started = self.inner.changes.subscribe();
         tokio::spawn(async move {
@@ -632,7 +632,7 @@ impl ShellKind {
     fn script(self, command: &str, says_folder: bool) -> String {
         match (self, says_folder) {
             (Self::Posix, true) => format!(
-                "trap '__vardoger_status=$?; pwd -P >| \"${FOLDER_FILE_ENV}\" 2>/dev/null; exit $__vardoger_status' EXIT\n{command}\n"
+                "trap '__commutator_status=$?; pwd -P >| \"${FOLDER_FILE_ENV}\" 2>/dev/null; exit $__commutator_status' EXIT\n{command}\n"
             ),
             (Self::PowerShell, says_folder) => {
                 let say_folder = if says_folder {
@@ -649,10 +649,10 @@ impl ShellKind {
                      try {{ [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 }} catch {{}}\n\
                      $OutputEncoding = [System.Text.Encoding]::UTF8\n\
                      {command}\n\
-                     $__vardogerOk = $?\n\
-                     $__vardogerCode = $global:LASTEXITCODE\n\
+                     $__commutatorOk = $?\n\
+                     $__commutatorCode = $global:LASTEXITCODE\n\
                      {say_folder}\
-                     if (-not $__vardogerOk) {{ if ($__vardogerCode) {{ exit $__vardogerCode }}; exit 1 }}\n\
+                     if (-not $__commutatorOk) {{ if ($__commutatorCode) {{ exit $__commutatorCode }}; exit 1 }}\n\
                      exit 0\n"
                 )
             }
@@ -692,9 +692,9 @@ impl ShellKind {
 
 /// The variable naming the file a command writes the folder it ended in to
 /// ([`ShellKind::script`]).
-const FOLDER_FILE_ENV: &str = "VARDOGER_COMMAND_FOLDER_FILE";
+const FOLDER_FILE_ENV: &str = "COMMUTATOR_COMMAND_FOLDER_FILE";
 
-/// Start the shell on `script` in `cwd` as an owned process. Vardoger's own
+/// Start the shell on `script` in `cwd` as an owned process. Commutator's own
 /// variables (its edge token, a Cloud machine's enrollment code, its ports)
 /// stay out of the command's environment, as for an agent installer
 /// (crates/harness/src/install.rs): a command that prints its environment
@@ -712,7 +712,7 @@ fn spawn(
     let mut cmd = Command::new(shell);
     cmd.args(kind.args(script)?);
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("VARDOGER_") {
+        if key.to_string_lossy().starts_with("COMMUTATOR_") {
             cmd.env_remove(key);
         }
     }
@@ -727,7 +727,7 @@ fn spawn(
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat")
         .env("GIT_TERMINAL_PROMPT", "0");
-    vardoger_harness::compose_user_path(&mut cmd);
+    commutator_harness::compose_user_path(&mut cmd);
     owned::configure(&mut cmd);
     let child = cmd
         .spawn()
@@ -1090,7 +1090,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_background_command_stops_when_its_chat_goes() {
-        let chat = |id: &str, archived: bool| -> vardoger_proto::Chat {
+        let chat = |id: &str, archived: bool| -> commutator_proto::Chat {
             serde_json::from_value(serde_json::json!({
                 "id": id, "deviceId": "d", "title": null, "archived": archived, "cwd": null, "branch": null,
                 "checkoutId": null, "config": null, "lastMessagePreview": null, "lastMessageAt": null,
@@ -1133,7 +1133,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_for_a_chat_already_gone_is_stopped_as_it_starts() {
-        let chat = |id: &str, archived: bool| -> vardoger_proto::Chat {
+        let chat = |id: &str, archived: bool| -> commutator_proto::Chat {
             serde_json::from_value(serde_json::json!({
                 "id": id, "deviceId": "d", "title": null, "archived": archived, "cwd": null, "branch": null,
                 "checkoutId": null, "config": null, "lastMessagePreview": null, "lastMessageAt": null,
@@ -1173,10 +1173,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vardogers_own_variables_stay_out_of_a_command() {
+    async fn commutators_own_variables_stay_out_of_a_command() {
         // SAFETY: a name no other test reads or writes.
-        unsafe { std::env::set_var("VARDOGER_TEST_SECRET_9F3A", "leaked") };
-        let ran = run("echo \"[${VARDOGER_TEST_SECRET_9F3A:-}]\"", DEFAULT_TIMEOUT).await;
+        unsafe { std::env::set_var("COMMUTATOR_TEST_SECRET_9F3A", "leaked") };
+        let ran = run("echo \"[${COMMUTATOR_TEST_SECRET_9F3A:-}]\"", DEFAULT_TIMEOUT).await;
         assert_eq!(ran.output, "[]\n");
     }
 
@@ -1270,15 +1270,15 @@ mod tests {
         // Its script passes a failure's code on, and says where it ended to
         // the file the environment names: no path in it to quote.
         let script = ShellKind::PowerShell.script("git status", true);
-        assert!(script.contains("\ngit status\n$__vardogerOk = $?"), "{script}");
+        assert!(script.contains("\ngit status\n$__commutatorOk = $?"), "{script}");
         assert!(
-            script.contains("WriteAllText($env:VARDOGER_COMMAND_FOLDER_FILE,"),
+            script.contains("WriteAllText($env:COMMUTATOR_COMMAND_FOLDER_FILE,"),
             "{script}"
         );
-        assert!(script.contains("exit $__vardogerCode"), "{script}");
+        assert!(script.contains("exit $__commutatorCode"), "{script}");
         let posix = ShellKind::Posix.script("ls", true);
         assert!(
-            posix.contains("pwd -P >| \"$VARDOGER_COMMAND_FOLDER_FILE\""),
+            posix.contains("pwd -P >| \"$COMMUTATOR_COMMAND_FOLDER_FILE\""),
             "{posix}"
         );
         assert_eq!(ShellKind::Posix.script("ls", false), "ls");

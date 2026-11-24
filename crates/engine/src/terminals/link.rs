@@ -1,8 +1,8 @@
 //! Direct terminal links: the protocol and both ends live in
-//! `vardoger-term-link` (the phone speaks it too); this is the host's
+//! `commutator-term-link` (the phone speaks it too); this is the host's
 //! `terminal/{id}` stream service over this engine's PTYs.
 
-pub use vardoger_term_link::link::*;
+pub use commutator_term_link::link::*;
 
 use super::Terminals;
 
@@ -11,7 +11,7 @@ impl HostTerminals for Terminals {
         &self,
         terminal_id: &str,
         after_seq: u64,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<vardoger_proto::TerminalEvent>, String> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<commutator_proto::TerminalEvent>, String> {
         Terminals::subscribe(self, terminal_id, Some(after_seq)).map_err(|e| e.to_string())
     }
     fn write_sequenced(
@@ -49,15 +49,15 @@ fn peer_allowed(peer: Option<&str>) -> bool {
 }
 
 #[async_trait::async_trait]
-impl vardoger_preview::mux::Connector for Service {
-    async fn connect(&self, service: &str) -> anyhow::Result<vardoger_preview::mux::BoxIo> {
+impl commutator_preview::mux::Connector for Service {
+    async fn connect(&self, service: &str) -> anyhow::Result<commutator_preview::mux::BoxIo> {
         self.connect_from(None, service).await
     }
     async fn connect_from(
         &self,
         peer: Option<&str>,
         service: &str,
-    ) -> anyhow::Result<vardoger_preview::mux::BoxIo> {
+    ) -> anyhow::Result<commutator_preview::mux::BoxIo> {
         anyhow::ensure!(
             peer_allowed(peer),
             "terminals here are only reachable from the owner's devices"
@@ -79,7 +79,7 @@ mod tests {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use std::time::Duration;
-    use vardoger_proto::TerminalEvent;
+    use commutator_proto::TerminalEvent;
 
     fn text(events: &[TerminalEvent]) -> String {
         let mut out = Vec::new();

@@ -1,22 +1,22 @@
 //! Ad-hoc RPC probe: call or subscribe against a running engine's IPC socket.
 //!
 //! Usage:
-//!   cargo run -p vardoger-rpc --example rpc_probe -- ws://127.0.0.1:27801 LocalDevice '{}'
-//!   cargo run -p vardoger-rpc --example rpc_probe -- ws://127.0.0.1:27801 WatchSessions '{}' --stream 3
+//!   cargo run -p commutator-rpc --example rpc_probe -- ws://127.0.0.1:27801 LocalDevice '{}'
+//!   cargo run -p commutator-rpc --example rpc_probe -- ws://127.0.0.1:27801 WatchSessions '{}' --stream 3
 //!
 //! A stream gives up after 30 s without an item (`RPC_PROBE_TIMEOUT_SECS`
 //! overrides — a watcher meant to keep a chat viewed needs longer).
 //!
-//! The engine's IPC bearer comes from `$VARDOGER_IPC_TOKEN`, `$VARDOGER_IPC_TOKEN_FILE`,
-//! or `$VARDOGER_DATA_DIR/ipc-token` (default `~/.vardoger/ipc-token`) — point
-//! `VARDOGER_DATA_DIR` at the probed engine's data dir.
+//! The engine's IPC bearer comes from `$COMMUTATOR_IPC_TOKEN`, `$COMMUTATOR_IPC_TOKEN_FILE`,
+//! or `$COMMUTATOR_DATA_DIR/ipc-token` (default `~/.commutator/ipc-token`) — point
+//! `COMMUTATOR_DATA_DIR` at the probed engine's data dir.
 
-use vardoger_rpc::{connect_ws, ipc_auth};
+use commutator_rpc::{connect_ws, ipc_auth};
 
 fn data_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("VARDOGER_DATA_DIR")
+    std::env::var_os("COMMUTATOR_DATA_DIR")
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".vardoger")))
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".commutator")))
 }
 
 #[tokio::main]

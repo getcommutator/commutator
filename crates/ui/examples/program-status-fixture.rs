@@ -9,10 +9,10 @@ fn main() -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     use gpui::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
     use std::{path::PathBuf, sync::Arc, time::Duration};
-    use vardoger_proto::{ChatIndicator, Session};
-    use vardoger_ui::*;
+    use commutator_proto::{ChatIndicator, Session};
+    use commutator_ui::*;
 
-    fn summary(core: &vardoger_engine::EngineCore) -> (Vec<Session>, String) {
+    fn summary(core: &commutator_engine::EngineCore) -> (Vec<Session>, String) {
         let sessions = core.sessions.watch_sessions().borrow().clone();
         let mut text = String::from(
             "# Agent status\n\nThese sessions report their state through OSC 7501. The sidebar and MCP use the same status derivation.\n\n| Session | Sidebar / MCP status | Program report |\n| --- | --- | --- |\n",
@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         for id in ["working", "blocked", "done"] {
             let chat = core.workspace.chat(id).unwrap().unwrap();
             let session = sessions.iter().find(|s| s.chat_id == id);
-            let status = vardoger_proto::view::display_status(&chat, session, chrono::Utc::now());
+            let status = commutator_proto::view::display_status(&chat, session, chrono::Utc::now());
             let report = session
                 .and_then(|s| s.terminal_activity.as_ref())
                 .map(|a| serde_json::to_value(a.report.state).unwrap())
@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
 
     fn show_report(
         state: &gpui::Entity<state::AppState>,
-        core: &vardoger_engine::EngineCore,
+        core: &commutator_engine::EngineCore,
         cx: &mut gpui::AsyncApp,
     ) {
         let (sessions, text) = summary(core);
@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
             state.apply_sessions(sessions);
             state
                 .receive_transcript_frame(
-                    vardoger_doc::TranscriptFrame::Reset {
+                    commutator_doc::TranscriptFrame::Reset {
                         reset: serde_json::from_value(serde_json::json!([{
                             "id":"status-report", "role":"assistant", "deviceId":core.device_id,
                             "createdAt":chrono::Utc::now().timestamp_millis(), "status":"complete",
@@ -161,9 +161,9 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let _guard = runtime.enter();
     let core = Arc::new(runtime.block_on(async {
-        vardoger_engine::EngineCore::assemble(
+        commutator_engine::EngineCore::assemble(
             &temp.path().join("engine"),
-            Arc::new(vardoger_engine::HarnessRegistry::new()),
+            Arc::new(commutator_engine::HarnessRegistry::new()),
             HarnessId::Mock,
             None,
         )
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                     let chat = core.workspace.chat(id).unwrap().unwrap();
                     let sessions = rows.borrow();
                     let session = sessions.iter().find(|row| row.chat_id == *id);
-                    vardoger_proto::view::display_status(&chat, session, chrono::Utc::now())
+                    commutator_proto::view::display_status(&chat, session, chrono::Utc::now())
                         == *expected
                 });
                 if ready {
@@ -247,7 +247,7 @@ fn main() -> anyhow::Result<()> {
         let mut settings = settings::UiSettings::default();
         settings.sidebar_width = 310.;
         settings.sidebar_organization = settings::SidebarOrganization::InOneList;
-        settings.surface = vardoger_theme::SurfacePreference::Opaque;
+        settings.surface = commutator_theme::SurfacePreference::Opaque;
         settings::init(settings.clone(), data.clone(), cx);
         let fonts = typography::register_fonts(cx);
         typography::init(settings.ui_font_family.clone(), settings.ui_font_size,
@@ -262,8 +262,8 @@ fn main() -> anyhow::Result<()> {
         terminal::panel::init(cx); app_menus::init(cx);
         let state = cx.new(|_| {
             let mut state = state::AppState::new();
-            state.connection = vardoger_proto::view::ConnectionStatus::Ready;
-            state.workspace_scope = Some(vardoger_proto::WorkspaceScope::Local);
+            state.connection = commutator_proto::view::ConnectionStatus::Ready;
+            state.workspace_scope = Some(commutator_proto::WorkspaceScope::Local);
             state.local_device_id = Some(render_core.device_id.clone());
             state.devices = serde_json::from_value(serde_json::json!([{
                 "id":render_core.device_id,"name":"This device","platform":std::env::consts::OS,"lastSeenAt":null

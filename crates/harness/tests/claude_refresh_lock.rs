@@ -4,9 +4,9 @@
 //! Its own test binary — it points the process at a temp config dir.
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
-use vardoger_harness::claude::refresh_lock;
-use vardoger_harness::{CancellationToken, ClaudeHarness, Harness, RunControls};
-use vardoger_proto::{RunRequest, SandboxLevel};
+use commutator_harness::claude::refresh_lock;
+use commutator_harness::{CancellationToken, ClaudeHarness, Harness, RunControls};
+use commutator_proto::{RunRequest, SandboxLevel};
 
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir="$(dirname "$0")"
@@ -17,7 +17,7 @@ esac
 trap 'echo term >> "$dir/events"; exit 0' TERM
 : > "$dir/ready"
 read line
-echo '{"type":"control_response","response":{"subtype":"success","request_id":"vardoger-command-probe","response":{"commands":[{"name":"review","description":"Review"}]}}}'
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"commutator-command-probe","response":{"commands":[{"name":"review","description":"Review"}]}}}'
 while read line; do :; done
 echo eof >> "$dir/events"
 "#;

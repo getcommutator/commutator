@@ -17,7 +17,7 @@ use std::sync::{LazyLock, Mutex};
 
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
-use vardoger_proto::{
+use commutator_proto::{
     AgentAccount, AgentAccountsSnapshot, AgentAuthKind, AgentLoginMode, AgentLoginPoll,
     AgentLoginStart, AgentLoginStatus, HarnessId,
 };
@@ -57,7 +57,7 @@ impl Client {
             .inner
             .host_rpc(
                 device_id,
-                vardoger_rpc::methods::START_AGENT_LOGIN,
+                commutator_rpc::methods::START_AGENT_LOGIN,
                 serde_json::json!({
                     "harness": harness,
                     "provider": provider,
@@ -94,7 +94,7 @@ impl Client {
             .inner
             .host_rpc(
                 device_id,
-                vardoger_rpc::methods::POLL_AGENT_LOGIN,
+                commutator_rpc::methods::POLL_AGENT_LOGIN,
                 serde_json::json!({ "loginId": login_id }),
             )
             .await?;
@@ -124,7 +124,7 @@ impl Client {
         let snapshot = self
             .accounts_call(
                 device_id,
-                vardoger_rpc::methods::COMPLETE_AGENT_LOGIN,
+                commutator_rpc::methods::COMPLETE_AGENT_LOGIN,
                 serde_json::json!({ "loginId": login_id, "code": code.trim() }),
             )
             .await;
@@ -145,7 +145,7 @@ impl Client {
                 .inner
                 .host_rpc(
                     &device_id,
-                    vardoger_rpc::methods::CANCEL_AGENT_LOGIN,
+                    commutator_rpc::methods::CANCEL_AGENT_LOGIN,
                     serde_json::json!({ "loginId": login_id }),
                 )
                 .await;
@@ -205,7 +205,7 @@ impl Client {
                         .inner
                         .host_rpc(
                             &device_id,
-                            vardoger_rpc::methods::RELAY_AGENT_LOGIN_CALLBACK,
+                            commutator_rpc::methods::RELAY_AGENT_LOGIN_CALLBACK,
                             serde_json::json!({
                                 "loginId": login,
                                 "requesterDeviceId": requester,
@@ -235,7 +235,7 @@ impl Client {
                             http_response(
                                 "502 Bad Gateway",
                                 &[("Content-Type", "text/plain; charset=utf-8")],
-                                "The computer didn't accept the sign-in. Go back to Vardoger and try again.",
+                                "The computer didn't accept the sign-in. Go back to Commutator and try again.",
                             )
                             .as_bytes(),
                         )
@@ -268,7 +268,7 @@ impl Client {
                     .inner
                     .host_rpc(
                         device_id,
-                        vardoger_rpc::methods::SET_HARNESS_ENABLED,
+                        commutator_rpc::methods::SET_HARNESS_ENABLED,
                         serde_json::json!({ "harness": harness, "enabled": enabled }),
                     )
                     .await?;
@@ -287,7 +287,7 @@ impl Client {
     pub async fn device_agent_accounts(&self, device_id: &str) -> Result<AgentAccountsSnapshot> {
         self.accounts_call(
             device_id,
-            vardoger_rpc::methods::LIST_AGENT_ACCOUNTS,
+            commutator_rpc::methods::LIST_AGENT_ACCOUNTS,
             serde_json::json!({}),
         )
         .await
@@ -305,7 +305,7 @@ impl Client {
         }
         self.accounts_call(
             device_id,
-            vardoger_rpc::methods::ACTIVATE_AGENT_ACCOUNT,
+            commutator_rpc::methods::ACTIVATE_AGENT_ACCOUNT,
             serde_json::json!({ "harness": harness, "accountId": account_id }),
         )
         .await
@@ -323,7 +323,7 @@ impl Client {
         }
         self.accounts_call(
             device_id,
-            vardoger_rpc::methods::FORGET_AGENT_ACCOUNT,
+            commutator_rpc::methods::FORGET_AGENT_ACCOUNT,
             serde_json::json!({ "harness": harness, "accountId": account_id }),
         )
         .await
@@ -370,7 +370,7 @@ pub(crate) fn with_demo_toggles(demo: bool, mut list: Vec<HarnessInfo>) -> Vec<H
 }
 
 fn demo_accounts() -> AgentAccountsSnapshot {
-    let window = |label: &str, used: f32, hours: i64| vardoger_proto::AgentUsageWindow {
+    let window = |label: &str, used: f32, hours: i64| commutator_proto::AgentUsageWindow {
         label: label.into(),
         used_fraction: used,
         resets_at: Some(chrono::Utc::now() + chrono::Duration::hours(hours)),

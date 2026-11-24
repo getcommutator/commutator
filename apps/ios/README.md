@@ -1,12 +1,12 @@
-# Vardoger for iOS
+# Commutator for iOS
 
 A UIKit viewport onto one of your machines, built on the Rust mobile core. The
-phone signs in to your Vardoger server (Google, PKCE, back to
-`vardoger://auth`), picks one of the account's machines, and drives that
-machine's engine through the server's relay (`vardoger-client`'s
+phone signs in to your Commutator server (Google, PKCE, back to
+`commutator://auth`), picks one of the account's machines, and drives that
+machine's engine through the server's relay (`commutator-client`'s
 `Credentials::Remote`). No agent runs on the phone.
 
-Ported from Zeron's iOS app. Cut, with no backend in Vardoger: Cloud (machines,
+Ported from Zeron's iOS app. Cut, with no backend in Commutator: Cloud (machines,
 GitHub, billing, vault logins, onboarding), the agent-accounts / Providers
 screens (tangled with Cloud; an error card's "Log in" says to sign in on the
 machine), voice and its Live Activity, push notifications (the server has no
@@ -23,25 +23,25 @@ Requires Xcode 26+ and a Rust toolchain with the iOS targets:
 ```sh
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 cd apps/ios
-xcodebuild -project Vardoger.xcodeproj -scheme Vardoger \
+xcodebuild -project Commutator.xcodeproj -scheme Commutator \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-The Vardoger target's **Rust core** build phase runs `scripts/ios/build-core.sh`,
+The Commutator target's **Rust core** build phase runs `scripts/ios/build-core.sh`,
 which builds `crates/mobile` for the active platform (always optimized — the
 `mobile` cargo profile) and refreshes the committed UniFFI bindings in
-`Vardoger/Core/Generated/`. `VARDOGER_SKIP_CORE=1` reuses the last built library
+`Commutator/Core/Generated/`. `COMMUTATOR_SKIP_CORE=1` reuses the last built library
 when iterating on Swift only.
 
 ## Layout
 
 ```
-Vardoger/
+Commutator/
   App/         AppDelegate, SceneDelegate, AppModel (owns CoreClient; maps
                workspace snapshots to view models; Keychain credentials)
   Core/        Generated UniFFI bindings; Fonts (the exact bytes Rust measures,
                registered with CoreText) + CoreText fallback measurer
-  Design/      Palette (Vardoger color roles → light/dark), Glass helpers,
+  Design/      Palette (Commutator color roles → light/dark), Glass helpers,
                cell-grid status glyph, harness brand marks
   Transcript/  TranscriptListView (virtualized scroll host over LayoutFrame),
                RowView/RowModel (CoreText painter for Rust display lists,
@@ -79,12 +79,12 @@ A session's subagents, side chats and terminals (`Companions/`):
 
 ### Transcript pipeline
 
-1. `vardoger-client` applies session-doc updates incrementally (O(changed
+1. `commutator-client` applies session-doc updates incrementally (O(changed
    entries)) and publishes immutable snapshots.
 2. `TranscriptView.attach(client, chatId)` subscribes **in Rust**; the layout
    thread turns entries into rows (one per markdown block / user message / tool
    group), reparses streaming markdown incrementally, and measures every row
-   with `vardoger-text` at the viewport width.
+   with `commutator-text` at the viewport width.
 3. Each pass publishes a `LayoutFrame`: exact heights + prefix-sum offsets.
    `rowsIn(y0, y1)` is a binary search; `display(i)` builds a display list
    (text runs at exact positions, boxes, links, scrollers, widgets).
@@ -122,33 +122,33 @@ A session's subagents, side chats and terminals (`Companions/`):
 
 ```sh
 # Rust
-cargo test -p vardoger-text -p vardoger-markdown -p vardoger-client -p vardoger-mobile
-cargo test --release -p vardoger-mobile --lib bench_layout -- --ignored --nocapture
+cargo test -p commutator-text -p commutator-markdown -p commutator-client -p commutator-mobile
+cargo test --release -p commutator-mobile --lib bench_layout -- --ignored --nocapture
 
 # Line-break accuracy vs CoreText (same font bytes), flows, hitch benchmarks
-xcodebuild … -only-testing:VardogerTests/LineBreakAccuracyTests test
-xcodebuild … -only-testing:VardogerUITests/SessionFlowTests test
-xcodebuild … -only-testing:VardogerUITests/ScrollPerformanceTests test
+xcodebuild … -only-testing:CommutatorTests/LineBreakAccuracyTests test
+xcodebuild … -only-testing:CommutatorUITests/SessionFlowTests test
+xcodebuild … -only-testing:CommutatorUITests/ScrollPerformanceTests test
 ```
 
-Live stack (a local vardoger-server + an engine signed in to it, mock harness;
+Live stack (a local commutator-server + an engine signed in to it, mock harness;
 Google can't sign in a server on localhost, so the example mints the phone's
 token and prints the launch arguments):
 
 ```sh
-cargo run -p vardoger-client --example remote_stack -- /tmp/stack 8797
+cargo run -p commutator-client --example remote_stack -- /tmp/stack 8797
 # → ios launch args: -account http://127.0.0.1:8797 <token> <id> -host <machine> -harness mock
-TEST_RUNNER_VARDOGER_LIVE_ACCOUNT="http://127.0.0.1:8797 <token> <id>" TEST_RUNNER_VARDOGER_LIVE_HOST=<machine> \
-  xcodebuild … -only-testing:VardogerUITests/LiveStackTests test
+TEST_RUNNER_COMMUTATOR_LIVE_ACCOUNT="http://127.0.0.1:8797 <token> <id>" TEST_RUNNER_COMMUTATOR_LIVE_HOST=<machine> \
+  xcodebuild … -only-testing:CommutatorUITests/LiveStackTests test
 ```
 
 The test launches the app with `-harness mock`: a chat's configured harness
-wins over the engine's `VARDOGER_HARNESS` default, so without it a real agent
+wins over the engine's `COMMUTATOR_HARNESS` default, so without it a real agent
 would run.
 
 ## Session notifications
 
-Not yet: vardoger-server has no push API, so the app registers no APNs token
+Not yet: commutator-server has no push API, so the app registers no APNs token
 (Zeron's PushNotifications.swift and the `aps-environment` entitlement were
 cut).
 

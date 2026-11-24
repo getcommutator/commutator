@@ -1,6 +1,6 @@
 //! Updates for Windows installs — the per-user installer
-//! (`dist/windows/vardoger.iss`) and the portable zip. Both place
-//! `vardoger-update.json` beside `vardoger.exe`; source builds remain unmanaged.
+//! (`dist/windows/commutator.iss`) and the portable zip. Both place
+//! `commutator-update.json` beside `commutator.exe`; source builds remain unmanaged.
 use std::io::Read;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
@@ -14,41 +14,41 @@ use windows_sys::Win32::System::Threading::{
 };
 
 /// Marks an update-managed installation (the installer and the portable
-/// package put it beside `vardoger.exe`). Releases come from GitHub
+/// package put it beside `commutator.exe`). Releases come from GitHub
 /// ([`super::REPOSITORY`]) whatever it says.
-const CONFIG: &str = "vardoger-update.json";
+const CONFIG: &str = "commutator-update.json";
 /// The running image, moved aside during a swap. A running executable can be
 /// renamed but not deleted, so the file survives until the process exits and
 /// is removed by the relaunched instance (or the next update attempt).
-const BACKUP: &str = "vardoger.exe.old";
+const BACKUP: &str = "commutator.exe.old";
 /// Deterministic name for the copy that becomes the next installation; a
 /// crash between the two renames leaves at most this file behind.
-const INCOMING: &str = ".vardoger-update-incoming.exe";
+const INCOMING: &str = ".commutator-update-incoming.exe";
 /// The installed version, written by each update: the app's background
-/// engine (`vardoger.exe engine`) compares it with its own to restart into the
+/// engine (`commutator.exe engine`) compares it with its own to restart into the
 /// new image once idle.
-const VERSION_FILE: &str = "vardoger-version";
-/// The installer's uninstall entry (`AppId` in `dist/windows/vardoger.iss`, plus
+const VERSION_FILE: &str = "commutator-version";
+/// The installer's uninstall entry (`AppId` in `dist/windows/commutator.iss`, plus
 /// Inno Setup's `_is1` suffix). Settings → Apps reads `DisplayVersion` here.
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{AD5DEC34-E254-467B-8F24-8127EBAF4DA6}_is1";
-/// The zgx app's own files beside `vardoger.exe`, by version:
-/// `beta\<version>\ui`, `plugins-builtin` and `engine\vardoger.exe` (a whole
-/// Vardoger executable run as `vardoger.exe engine`), for a stable release as for a
+/// The zgx app's own files beside `commutator.exe`, by version:
+/// `beta\<version>\ui`, `plugins-builtin` and `engine\commutator.exe` (a whole
+/// Commutator executable run as `commutator.exe engine`), for a stable release as for a
 /// beta. (Named for the betas that came first. Every beta in the field checks
 /// a package for `beta\<version>` before it installs it, and the beta channel
 /// carries stable releases too, so the one name stays.) Such an app can't
 /// update by swapping one file, so it updates from the package
-/// (`vardoger-<version>-windows-<arch>.zip`); nothing already there is replaced,
+/// (`commutator-<version>-windows-<arch>.zip`); nothing already there is replaced,
 /// which a running engine would prevent. The old app (one self-contained
-/// `vardoger.exe`) reads no such folder.
+/// `commutator.exe`) reads no such folder.
 const BETA: &str = "beta";
-/// Where a staged package unpacks, beside the staged `vardoger.exe`.
+/// Where a staged package unpacks, beside the staged `commutator.exe`.
 const PACKAGE: &str = "package";
 /// Held while one process completes an install ([`complete_install`]), so a
 /// relaunched app and a restarting engine don't both unpack at once.
-const COMPLETING: &str = ".vardoger-completing.lock";
+const COMPLETING: &str = ".commutator-completing.lock";
 
-/// Set by an app whose `vardoger.exe` needs its version's folder beside it (the
+/// Set by an app whose `commutator.exe` needs its version's folder beside it (the
 /// zgx app): its updates come as the package on every channel.
 static PACKAGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -67,13 +67,13 @@ pub fn version_files(directory: &Path, version: &str) -> PathBuf {
 }
 
 pub(super) fn is_managed(exe: &Path) -> bool {
-    exe.file_name().is_some_and(|name| name == "vardoger.exe")
+    exe.file_name().is_some_and(|name| name == "commutator.exe")
         && exe.parent().is_some_and(|dir| dir.join(CONFIG).is_file())
 }
 
 /// The installation `exe` belongs to, if it's update-managed: the folder of
-/// its `vardoger.exe`, or for the zgx app's engine
-/// (`<directory>\beta\<version>\engine\vardoger.exe`), the folder its version's
+/// its `commutator.exe`, or for the zgx app's engine
+/// (`<directory>\beta\<version>\engine\commutator.exe`), the folder its version's
 /// files are in.
 pub(super) fn managed_directory(exe: &Path) -> Option<PathBuf> {
     if is_managed(exe) {
@@ -81,20 +81,20 @@ pub(super) fn managed_directory(exe: &Path) -> Option<PathBuf> {
     }
     let engine = exe.parent()?;
     let folder = engine.parent()?.parent()?;
-    if exe.file_name()? != "vardoger.exe" || engine.file_name()? != "engine" || folder.file_name()? != BETA {
+    if exe.file_name()? != "commutator.exe" || engine.file_name()? != "engine" || folder.file_name()? != BETA {
         return None;
     }
     let directory = folder.parent()?;
-    is_managed(&directory.join("vardoger.exe")).then(|| directory.to_path_buf())
+    is_managed(&directory.join("commutator.exe")).then(|| directory.to_path_buf())
 }
 
 pub fn artifact(version: &str) -> String {
-    format!("vardoger-{version}-windows-{}.exe", std::env::consts::ARCH)
+    format!("commutator-{version}-windows-{}.exe", std::env::consts::ARCH)
 }
 
 /// A packaged app's update: the portable package.
 fn package(version: &str) -> String {
-    format!("vardoger-{version}-windows-{}.zip", std::env::consts::ARCH)
+    format!("commutator-{version}-windows-{}.zip", std::env::consts::ARCH)
 }
 
 /// `x.y.z`, or a beta's `x.y.z-beta.n`: digits and dots only, since it names
@@ -136,7 +136,7 @@ async fn verify_staged_version(staged: &Path, version: &str) -> anyhow::Result<(
     .context("staged executable version check timed out")??;
     ensure!(
         output.status.success()
-            && String::from_utf8_lossy(&output.stdout).trim() == format!("vardoger {version}"),
+            && String::from_utf8_lossy(&output.stdout).trim() == format!("commutator {version}"),
         "staged executable has the wrong version or cannot run"
     );
     Ok(())
@@ -151,7 +151,7 @@ async fn stage_package(
     let file = package(&manifest.version);
     expected_checksum(manifest, &file)?;
     let temporary = tempfile::Builder::new()
-        .prefix(".vardoger-update-")
+        .prefix(".commutator-update-")
         .tempdir_in(directory)?;
     let archive = temporary.path().join(&file);
     super::download_release_file(manifest, &file, &archive).await?;
@@ -179,11 +179,11 @@ async fn stage_package(
     // release going back to it) has no such folder at all.
     ensure!(
         files_complete(&version_files(&unpacked, &manifest.version)) || !unpacked.join(BETA).exists(),
-        "the package has no {BETA}\\{}\\engine\\vardoger.exe",
+        "the package has no {BETA}\\{}\\engine\\commutator.exe",
         manifest.version
     );
-    let staged = temporary.path().join("vardoger.exe");
-    std::fs::rename(unpacked.join("vardoger.exe"), &staged).context("the package has no vardoger.exe")?;
+    let staged = temporary.path().join("commutator.exe");
+    std::fs::rename(unpacked.join("commutator.exe"), &staged).context("the package has no commutator.exe")?;
     std::fs::write(temporary.path().join("sha256"), digest(&staged)?)?;
     std::fs::write(temporary.path().join("version"), &manifest.version)?;
     verify_staged_version(&staged, &manifest.version).await?;
@@ -220,7 +220,7 @@ fn install_version_files(staged: &Path, directory: &Path) -> anyhow::Result<()> 
 /// A version's folder has all it runs on: its engine and its scripts. (An
 /// engine alone can be what a cleanup couldn't delete while it ran.)
 fn files_complete(files: &Path) -> bool {
-    files.join("engine").join("vardoger.exe").is_file() && files.join("ui").join("app.luau").is_file()
+    files.join("engine").join("commutator.exe").is_file() && files.join("ui").join("app.luau").is_file()
 }
 
 /// Delete `dir` whole or not at all: it's first moved aside, which Windows
@@ -279,9 +279,9 @@ pub async fn stage(
     let file = artifact(&manifest.version);
     let expected = expected_checksum(manifest, &file)?;
     let temporary = tempfile::Builder::new()
-        .prefix(".vardoger-update-")
+        .prefix(".commutator-update-")
         .tempdir_in(directory)?;
-    let staged = temporary.path().join("vardoger.exe");
+    let staged = temporary.path().join("commutator.exe");
     super::download_release_file(manifest, &file, &staged).await?;
     std::fs::write(temporary.path().join("sha256"), expected)?;
     std::fs::write(temporary.path().join("version"), &manifest.version)?;
@@ -298,22 +298,22 @@ pub enum Completion {
     Complete,
     /// The version's folder is in place now, from its own package.
     Installed,
-    /// The feed had moved on: the newer release replaced `vardoger.exe` and its
-    /// folder is in place. Run the installed `vardoger.exe` instead of this one.
+    /// The feed had moved on: the newer release replaced `commutator.exe` and its
+    /// folder is in place. Run the installed `commutator.exe` instead of this one.
     Updated(String),
 }
 
 /// The installation a packaged app at `exe` must complete before it runs:
-/// its directory, when `exe` is an update-managed `vardoger.exe` whose own
+/// its directory, when `exe` is an update-managed `commutator.exe` whose own
 /// version's folder isn't beside it.
 ///
-/// That's how an updater that only swaps the one file (every Vardoger before
+/// That's how an updater that only swaps the one file (every Commutator before
 /// the zgx app, and the zgx app's own single-file artifact,
 /// [`artifact`]) leaves a zgx app: the executable alone. And how an update's
 /// trial starts one: staged on its own, run in place of the installation.
 pub fn incomplete_install(exe: &Path, version: &str) -> Option<PathBuf> {
     let directory = install_directory(exe)?;
-    (is_managed(&directory.join("vardoger.exe"))
+    (is_managed(&directory.join("commutator.exe"))
         && !files_complete(&version_files(&directory, version)))
     .then_some(directory)
 }
@@ -331,7 +331,7 @@ pub fn install_directory(exe: &Path) -> Option<PathBuf> {
 /// Bring in this version's folder from its GitHub release, as an update
 /// would: the package, its checksum from the release's manifest, unpacked beside the installation.
 /// When the feed has a newer release by now, that one is installed instead,
-/// `vardoger.exe` with it. Nothing already installed is removed or replaced
+/// `commutator.exe` with it. Nothing already installed is removed or replaced
 /// unless the whole new version is in place, so a failure leaves things as
 /// they were and the next start tries again.
 pub async fn complete_install(
@@ -377,12 +377,12 @@ pub async fn complete_install(
         .context("no release has been published to complete this install from")?;
     let latest = manifest.version.trim().to_owned();
     if latest != version && !super::version_newer(&latest, version) {
-        bail!("the release feed offers Vardoger {latest}, which is older than this Vardoger {version}");
+        bail!("the release feed offers Commutator {latest}, which is older than this Commutator {version}");
     }
     let staged = stage_package(&manifest, directory).await?;
-    // A trial (or anything not run as the installed `vardoger.exe`) can't
+    // A trial (or anything not run as the installed `commutator.exe`) can't
     // replace the installation; it installs only its own version's files.
-    let installed = directory.join("vardoger.exe");
+    let installed = directory.join("commutator.exe");
     let is_installed = std::env::current_exe()
         .and_then(|exe| Ok(exe.canonicalize()? == installed.canonicalize()?))
         .unwrap_or(false);
@@ -390,7 +390,7 @@ pub async fn complete_install(
         if let Some(stage) = staged.parent() {
             let _ = std::fs::remove_dir_all(stage);
         }
-        bail!("the release feed has moved on to Vardoger {latest}; this Vardoger {version} can't be completed from it");
+        bail!("the release feed has moved on to Commutator {latest}; this Commutator {version} can't be completed from it");
     }
     if latest == version {
         let result = install_version_files(&staged, directory);
@@ -428,7 +428,7 @@ fn lock_completion_blocking(directory: &Path, wait: std::time::Duration) -> anyh
         }
         ensure!(
             std::time::Instant::now() < deadline,
-            "another start of Vardoger is completing this installation; try again in a moment"
+            "another start of Commutator is completing this installation; try again in a moment"
         );
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
@@ -505,7 +505,7 @@ pub fn apply(staged: &Path, directory: &Path, relaunch: bool) -> anyhow::Result<
 
 /// [`apply`], the completion lock held already.
 fn apply_locked(staged: &Path, directory: &Path, relaunch: bool) -> anyhow::Result<()> {
-    let installed = directory.join("vardoger.exe");
+    let installed = directory.join("commutator.exe");
     ensure!(
         std::env::current_exe()?.canonicalize()? == installed.canonicalize()?,
         "update must run from its installation"
@@ -548,7 +548,7 @@ fn apply_locked(staged: &Path, directory: &Path, relaunch: bool) -> anyhow::Resu
 /// running as. A running image can be renamed, so it simply moves into place; the
 /// old one moves aside first and goes on running until it exits.
 pub(super) fn commit_trial(incoming: &Path, directory: &Path, version: &str) -> anyhow::Result<()> {
-    let installed = directory.join("vardoger.exe");
+    let installed = directory.join("commutator.exe");
     recover_from_backup(&installed)?;
     let backup = directory.join(BACKUP);
     std::fs::rename(&installed, &backup).context("moving the old executable aside")?;
@@ -827,9 +827,9 @@ mod tests {
         }
     }
 
-    /// A staged update layout: `<dir>/vardoger.exe` plus its `sha256` sidecar.
+    /// A staged update layout: `<dir>/commutator.exe` plus its `sha256` sidecar.
     fn staged_with(dir: &Path, bytes: &[u8]) -> PathBuf {
-        let staged = dir.join("vardoger.exe");
+        let staged = dir.join("commutator.exe");
         std::fs::write(&staged, bytes).unwrap();
         std::fs::write(dir.join("sha256"), format!("{:x}", Sha256::digest(bytes))).unwrap();
         staged
@@ -865,7 +865,7 @@ mod tests {
             HKEY, HKEY_CURRENT_USER, KEY_ALL_ACCESS, REG_OPTION_VOLATILE, REG_SZ, RegCloseKey,
             RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegSetValueExW,
         };
-        let subkey = format!(r"Software\vardoger-test-uninstall-{}", std::process::id());
+        let subkey = format!(r"Software\commutator-test-uninstall-{}", std::process::id());
         let path = wide(&subkey);
         let mut key: HKEY = std::ptr::null_mut();
         // SAFETY: a volatile key of this test's own, deleted below.
@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn portable_install_requires_explicit_configuration() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("vardoger.exe");
+        let exe = dir.path().join("commutator.exe");
         assert!(!is_managed(&exe));
         std::fs::write(dir.path().join(CONFIG), "{}").unwrap();
         assert!(is_managed(&exe));
@@ -928,7 +928,7 @@ mod tests {
         let old = install.path().join(BETA).join("0.2.137-beta.1");
         std::fs::create_dir_all(old.join("ui")).unwrap();
         let stage = tempfile::tempdir().unwrap();
-        let staged = stage.path().join("vardoger.exe");
+        let staged = stage.path().join("commutator.exe");
         let incoming = stage.path().join(PACKAGE).join(BETA).join("0.2.137-beta.2");
         std::fs::create_dir_all(incoming.join("ui")).unwrap();
         std::fs::write(incoming.join("ui").join("app.luau"), "").unwrap();
@@ -941,7 +941,7 @@ mod tests {
         assert!(new.is_dir());
         // The old app's update brings no package, and there's nothing to move.
         let plain = tempfile::tempdir().unwrap();
-        install_version_files(&plain.path().join("vardoger.exe"), install.path()).unwrap();
+        install_version_files(&plain.path().join("commutator.exe"), install.path()).unwrap();
         remove_version_files(install.path(), None);
         assert!(!install.path().join(BETA).exists());
     }
@@ -952,11 +952,11 @@ mod tests {
         let beta = version_files(install.path(), "0.2.139-beta.6");
         std::fs::create_dir_all(beta.join("ui")).unwrap();
         let stage = tempfile::tempdir().unwrap();
-        let staged = stage.path().join("vardoger.exe");
+        let staged = stage.path().join("commutator.exe");
         let incoming = stage.path().join(PACKAGE).join(BETA).join("0.2.139");
         std::fs::create_dir_all(incoming.join("engine")).unwrap();
         std::fs::create_dir_all(incoming.join("ui")).unwrap();
-        std::fs::write(incoming.join("engine").join("vardoger.exe"), "").unwrap();
+        std::fs::write(incoming.join("engine").join("commutator.exe"), "").unwrap();
         std::fs::write(incoming.join("ui").join("app.luau"), "").unwrap();
         install_version_files(&staged, install.path()).unwrap();
         let stable = version_files(install.path(), "0.2.139");
@@ -980,7 +980,7 @@ mod tests {
         std::fs::create_dir_all(running.join("engine")).unwrap();
         std::fs::create_dir_all(running.join("ui")).unwrap();
         std::fs::write(running.join("ui").join("app.luau"), "").unwrap();
-        let engine = running.join("engine").join("vardoger.exe");
+        let engine = running.join("engine").join("commutator.exe");
         std::fs::write(&engine, "").unwrap();
         let lock = NoDeleteHandle::open(&engine);
         remove_version_files(install.path(), Some("0.2.139"));
@@ -993,7 +993,7 @@ mod tests {
     #[test]
     fn only_a_managed_install_without_its_files_is_incomplete() {
         let install = tempfile::tempdir().unwrap();
-        let exe = install.path().join("vardoger.exe");
+        let exe = install.path().join("commutator.exe");
         // Not update-managed: a source build, left alone.
         assert_eq!(incomplete_install(&exe, "0.2.139"), None);
         std::fs::write(install.path().join(CONFIG), "{}").unwrap();
@@ -1003,7 +1003,7 @@ mod tests {
         std::fs::create_dir_all(files.join("ui")).unwrap();
         assert!(incomplete_install(&exe, "0.2.139").is_some());
         std::fs::create_dir_all(files.join("engine")).unwrap();
-        std::fs::write(files.join("engine").join("vardoger.exe"), "").unwrap();
+        std::fs::write(files.join("engine").join("commutator.exe"), "").unwrap();
         assert!(incomplete_install(&exe, "0.2.139").is_some());
         std::fs::write(files.join("ui").join("app.luau"), "").unwrap();
         assert_eq!(incomplete_install(&exe, "0.2.139"), None);
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn changed_staging_file_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("vardoger.exe");
+        let exe = dir.path().join("commutator.exe");
         std::fs::write(&exe, b"original").unwrap();
         std::fs::write(
             dir.path().join("sha256"),
@@ -1029,7 +1029,7 @@ mod tests {
     #[test]
     fn failed_swap_after_old_image_moved_restores_the_installation() {
         let install = tempfile::tempdir().unwrap();
-        let installed = install.path().join("vardoger.exe");
+        let installed = install.path().join("commutator.exe");
         std::fs::write(&installed, b"old image").unwrap();
         let stage = tempfile::tempdir().unwrap();
         let staged = staged_with(stage.path(), b"new image");
@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn corrupt_copy_is_rejected_before_the_installation_moves() {
         let install = tempfile::tempdir().unwrap();
-        let installed = install.path().join("vardoger.exe");
+        let installed = install.path().join("commutator.exe");
         std::fs::write(&installed, b"old image").unwrap();
         let stage = tempfile::tempdir().unwrap();
         let staged = staged_with(stage.path(), b"new image");
@@ -1083,7 +1083,7 @@ mod tests {
     #[test]
     fn backup_recovers_a_missing_installation_and_clears_when_intact() {
         let install = tempfile::tempdir().unwrap();
-        let installed = install.path().join("vardoger.exe");
+        let installed = install.path().join("commutator.exe");
         let backup = install.path().join(BACKUP);
         std::fs::write(&backup, b"survivor").unwrap();
 
@@ -1135,7 +1135,7 @@ mod tests {
                 .unwrap();
         });
         let dir = tempfile::tempdir().unwrap();
-        let installed = dir.path().join("vardoger.exe");
+        let installed = dir.path().join("commutator.exe");
         std::fs::write(&installed, b"existing installation").unwrap();
         let manifest = super::super::Manifest {
             version: "1.2.3".into(),

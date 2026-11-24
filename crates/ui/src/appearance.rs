@@ -21,7 +21,7 @@
 
 use gpui::{App, Global, Subscription, Window};
 use serde::{Deserialize, Serialize};
-use vardoger_theme::{AccentSelection, SurfacePreference, ThemeSelection};
+use commutator_theme::{AccentSelection, SurfacePreference, ThemeSelection};
 
 use crate::settings::{self, SavePolicy};
 use crate::theme::{Appearance, Theme};
@@ -293,10 +293,10 @@ pub fn apply_registry_change(cx: &mut App) {
     reapply_window_background(cx);
 }
 
-fn model_appearance(appearance: Appearance) -> vardoger_theme::Appearance {
+fn model_appearance(appearance: Appearance) -> commutator_theme::Appearance {
     match appearance {
-        Appearance::Dark => vardoger_theme::Appearance::Dark,
-        Appearance::Light => vardoger_theme::Appearance::Light,
+        Appearance::Dark => commutator_theme::Appearance::Dark,
+        Appearance::Light => commutator_theme::Appearance::Light,
     }
 }
 

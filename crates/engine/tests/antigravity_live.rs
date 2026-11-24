@@ -1,11 +1,11 @@
 //! Live end-to-end verification against the real `agy_acp_server` 1.5.0 binary
-//! through Vardoger's [`AcpHarness::antigravity`] and [`EngineCore`].
+//! through Commutator's [`AcpHarness::antigravity`] and [`EngineCore`].
 //!
 //! Strictly isolates state in a temporary `GEMINI_HOME` (copying only
 //! `acp_token.json` and `settings.json` from `~/.gemini/antigravity-acp/`).
 //!
 //! Run manually:
-//! `cargo test -p vardoger-engine --test antigravity_live -- --ignored --nocapture`
+//! `cargo test -p commutator-engine --test antigravity_live -- --ignored --nocapture`
 
 #![cfg(unix)]
 
@@ -13,12 +13,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use vardoger_doc::{
+use commutator_doc::{
     MessagePart, MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry,
 };
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{AcpHarness, Harness};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{AcpHarness, Harness};
+use commutator_proto::{
     AccessMode, HarnessId, ReasoningLevel, RunRequest, SandboxLevel, SessionStatus,
 };
 
@@ -30,7 +30,7 @@ fn antigravity_binary() -> PathBuf {
         return PathBuf::from(path);
     }
     let home = std::env::var("HOME").expect("HOME set");
-    PathBuf::from(home).join(".vardoger/adapters/antigravity-acp/1.5.0/agy_acp_server.par")
+    PathBuf::from(home).join(".commutator/adapters/antigravity-acp/1.5.0/agy_acp_server.par")
 }
 
 fn prepare_isolated_gemini_home(tmp: &tempfile::TempDir) -> PathBuf {
@@ -523,7 +523,7 @@ async fn antigravity_live_neon_streams_reasoning_summaries() {
     assert!(bin.is_file(), "missing Antigravity binary at {}", bin.display());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let data_dir = tmp.path().join("vardoger-data");
+    let data_dir = tmp.path().join("commutator-data");
     let work_dir = tmp.path().join("work");
     std::fs::create_dir_all(&work_dir).expect("mkdir work");
     let gemini_home = prepare_isolated_gemini_home(&tmp);

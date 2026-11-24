@@ -1,5 +1,5 @@
 //! Terminals on a chat's host: the engine's PTY sessions, carried by the hub
-//! every viewer runs (`vardoger_term_link::remote`, the desktop engine's too):
+//! every viewer runs (`commutator_term_link::remote`, the desktop engine's too):
 //!
 //! - **Direct when it can be** (Remote mode, [`crate::direct`]). A terminal
 //!   starts on a direct WebRTC link to its host when one is up, else on the
@@ -21,9 +21,9 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
-use vardoger_proto::TerminalEvent;
-use vardoger_rpc::{RpcError, methods};
-use vardoger_term_link::remote::{Direct, Relay, TerminalPath, Write};
+use commutator_proto::TerminalEvent;
+use commutator_rpc::{RpcError, methods};
+use commutator_term_link::remote::{Direct, Relay, TerminalPath, Write};
 
 use crate::client::{Client, ClientInner};
 use crate::error::{ClientError, Result};
@@ -250,7 +250,7 @@ impl Client {
                 json!({ "chatId": chat_id, "cols": cols.max(2), "rows": rows.max(1) }),
             )
             .await?;
-        let session: vardoger_proto::TerminalSession = serde_json::from_value(reply)
+        let session: commutator_proto::TerminalSession = serde_json::from_value(reply)
             .map_err(|e| ClientError::HostError(format!("OpenTerminal: {e}")))?;
         Ok(TerminalInfo {
             id: session.id,
@@ -312,7 +312,7 @@ async fn follow(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,
-            _ = vardoger_sync::wake::until_awake() => {}
+            _ = commutator_sync::wake::until_awake() => {}
         }
         let Some(inner) = weak.upgrade() else { return };
         let hub = inner.remote_terminals.clone();

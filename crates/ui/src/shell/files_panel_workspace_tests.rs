@@ -1,5 +1,5 @@
 //! Exercise the explorer and editors against an isolated real workspace/RPC.
-//! Set VARDOGER_FILES_CAPTURES to a directory to run on X11 and capture the fixture.
+//! Set COMMUTATOR_FILES_CAPTURES to a directory to run on X11 and capture the fixture.
 use super::*;
 use crate::settings::{FILES_PANEL_DEFAULT, RIGHT_PANE_DEFAULT};
 use gpui::{AppContext, AsyncApp, WindowHandle};
@@ -110,10 +110,10 @@ fn files_panel_workspace_navigation_and_external_updates() {
     std::fs::write(project.join("src/new.rs"), "// new file\n").unwrap();
     let core = runtime
         .block_on(async {
-            vardoger_engine::EngineCore::assemble(
+            commutator_engine::EngineCore::assemble(
                 &directory.path().join("engine"),
-                Arc::new(vardoger_engine::default_registry()),
-                vardoger_proto::HarnessId::Mock,
+                Arc::new(commutator_engine::default_registry()),
+                commutator_proto::HarnessId::Mock,
                 None,
             )
         })
@@ -146,13 +146,13 @@ fn files_panel_workspace_navigation_and_external_updates() {
     drop(listener);
     // The viewport below attaches with the bearer published in its data dir.
     let _ipc = runtime
-        .block_on(vardoger_engine::serve_ipc(
+        .block_on(commutator_engine::serve_ipc(
             port,
             &directory.path().join("ui"),
             core.rpc_service(),
         ))
         .unwrap();
-    let output = std::env::var_os("VARDOGER_FILES_CAPTURES").map(PathBuf::from);
+    let output = std::env::var_os("COMMUTATOR_FILES_CAPTURES").map(PathBuf::from);
     let application = if output.is_some() {
         gpui_platform::application()
     } else {
@@ -199,7 +199,7 @@ fn files_panel_workspace_navigation_and_external_updates() {
                 data_dir: data,
                 ipc_port: port,
                 edge_url: String::new(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             };
             let state = cx.new(|_| AppState::new());
             let window = cx

@@ -1,5 +1,5 @@
 //! CheckoutDiffSync — checkout-scoped working-tree diff production (feature-inventory
-//! §3.5; port of vardoger's `checkout-diff-sync.ts` + `git-metadata-sync.ts`).
+//! §3.5; port of commutator's `checkout-diff-sync.ts` + `git-metadata-sync.ts`).
 //!
 //! Chats do not own working-tree state: a concrete Git checkout does. This service
 //! groups this device's chats by their canonical checkout identity (`chat.cwd` →
@@ -38,7 +38,7 @@
 //! (vs `merge-base(baseRef, HEAD)`, same capture path with the base overridden)
 //! and *latest turn* (vs a temp-index `write-tree` snapshot taken when a turn
 //! dispatches — see [`CheckoutDiffSync::note_turn_start`]). Those snapshots
-//! live in Vardoger's own object store, never the checkout's — see
+//! live in Commutator's own object store, never the checkout's — see
 //! [`turn_snapshot`].
 
 use std::collections::{HashMap, HashSet};
@@ -54,7 +54,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use vardoger_proto::{Chat, CheckoutDiff, DiffFileSummary};
+use commutator_proto::{Chat, CheckoutDiff, DiffFileSummary};
 
 use crate::EngineError;
 use crate::fs_watch::{FsWatch, FsWatchHub};
@@ -114,7 +114,7 @@ pub struct DiffSidecar {
 /// One bounded atomic snapshot of a checkout's working tree.
 #[derive(Debug, Clone)]
 pub struct DiffSnapshot {
-    pub git_status: Option<(Vec<vardoger_proto::GitFileStatus>, bool)>,
+    pub git_status: Option<(Vec<commutator_proto::GitFileStatus>, bool)>,
     pub branch: String,
     pub head_sha: Option<String>,
     pub patch: String,
@@ -206,7 +206,7 @@ struct DiffSyncInner {
     /// How long an entry may sit chat-less before reconcile removes it.
     orphan_grace: Duration,
     diffs_tx: watch::Sender<Vec<CheckoutDiff>>,
-    statuses_tx: watch::Sender<Vec<vardoger_proto::CheckoutGitStatus>>,
+    statuses_tx: watch::Sender<Vec<commutator_proto::CheckoutGitStatus>>,
     /// chat_id → turn-start tree (see [`TurnSnapshot`]).
     turn_trees: Mutex<HashMap<String, TurnSnapshot>>,
     /// The tasks hold `Weak` refs, but an in-flight iteration holds an
@@ -384,7 +384,7 @@ impl CheckoutDiffSync {
     }
 
     /// Consumers filter this shared cache; subscribing never starts another Git scan.
-    pub fn watch_git_statuses(&self) -> watch::Receiver<Vec<vardoger_proto::CheckoutGitStatus>> {
+    pub fn watch_git_statuses(&self) -> watch::Receiver<Vec<commutator_proto::CheckoutGitStatus>> {
         self.inner.statuses_tx.subscribe()
     }
 
@@ -1025,8 +1025,8 @@ async fn diff_sync_task(
     interest_changed: Arc<Notify>,
     cancel: CancellationToken,
 ) {
-    // On the beat grid (`vardoger_sync::wake`): it wakes with the sockets' pings.
-    let mut repair = vardoger_sync::wake::beat_interval(REPAIR_INTERVAL);
+    // On the beat grid (`commutator_sync::wake`): it wakes with the sockets' pings.
+    let mut repair = commutator_sync::wake::beat_interval(REPAIR_INTERVAL);
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
@@ -1563,7 +1563,7 @@ pub async fn capture_diff_against(
     if tracked.truncated {
         let boundary = patch.rfind('\n').unwrap_or(0);
         patch.truncate(boundary);
-        patch.push_str("\n# Vardoger diff truncated\n");
+        patch.push_str("\n# Commutator diff truncated\n");
     }
 
     // `?? path` records; rename records (`R  new\0old`) consume their extra field.
@@ -2109,7 +2109,7 @@ pub(crate) async fn capture_tree_diff(
     if tracked.truncated {
         let boundary = patch.rfind('\n').unwrap_or(0);
         patch.truncate(boundary);
-        patch.push_str("\n# Vardoger diff truncated\n");
+        patch.push_str("\n# Commutator diff truncated\n");
     }
 
     let additions: u32 = files.iter().map(|f| f.additions).sum();

@@ -2,8 +2,8 @@
 //! threads, chosen with the composer's own model picker (title-bound mode).
 
 use gpui::{AnyElement, Context, Entity, Subscription, Task, div, prelude::*, px};
-use vardoger_engine::registry::TitleSettings;
-use vardoger_rpc::methods;
+use commutator_engine::registry::TitleSettings;
+use commutator_rpc::methods;
 
 use crate::pickers::{Pickers, TitleModelPicked};
 use crate::popover::Loadable;

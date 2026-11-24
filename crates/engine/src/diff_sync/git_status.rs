@@ -1,5 +1,5 @@
 use super::*;
-use vardoger_proto::{CheckoutGitStatus, GitFileState, GitFileStatus};
+use commutator_proto::{CheckoutGitStatus, GitFileState, GitFileStatus};
 
 fn state(code: u8) -> Option<GitFileState> {
     Some(match code {

@@ -1,4 +1,4 @@
-//! UniFFI facade over `vardoger-client`: the account-scoped [`CoreClient`], the
+//! UniFFI facade over `commutator-client`: the account-scoped [`CoreClient`], the
 //! per-chat [`SessionHandle`], the foreign [`ClientListener`], and the static
 //! helpers the platform needs before a client exists (sign-in, catalogs,
 //! formatting).
@@ -8,7 +8,7 @@
 //! awaited from Swift concurrency / Kotlin coroutines directly.
 //!
 //! Rust consumers inside this crate (the layout engine) reach the transcript
-//! through [`CoreClient::session_handle`] → [`vardoger_client::SessionHandle`]
+//! through [`CoreClient::session_handle`] → [`commutator_client::SessionHandle`]
 //! (`snapshot()` / `subscribe()`), never over FFI.
 
 mod account;
@@ -19,7 +19,7 @@ mod types;
 
 use std::sync::Arc;
 
-use vardoger_client as zc;
+use commutator_client as zc;
 
 pub use session::*;
 pub use types::*;

@@ -26,14 +26,14 @@ use crate::tools::Tools;
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL: &str = "2025-06-18";
 
-/// What every agent Vardoger launches reads on every request (Claude Code puts
+/// What every agent Commutator launches reads on every request (Claude Code puts
 /// a server's instructions in its context whole, while its tools load only
 /// when searched for), so it says only what the agent needs to reach for a
 /// tool. How to use one is in that tool's own description: chat kinds,
 /// hosts, Cloud and the one-level rule in `create_chat`, the visual API and
 /// its style in `show_visual`.
 const INSTRUCTIONS: &str = "\
-Vardoger runs coding agents in chats, each on a device and optionally in a project there. \
+Commutator runs coding agents in chats, each on a device and optionally in a project there. \
 These tools find devices, projects, harnesses, models and chats; create chats to delegate \
 work to, on any connected provider (not only your own); and message, wait on, read and \
 answer them, on any of the person's devices. `run_command` runs shell commands on any online \
@@ -47,17 +47,17 @@ more than prose, show one with it before your final reply, and don't restate it 
 an image file with `show_image`.";
 
 /// Appended to [`INSTRUCTIONS`] where the agent is offered
-/// `wait_on_background` ([`vardoger_proto::McpServer::WAITS_ON_BACKGROUND_ENV`]).
+/// `wait_on_background` ([`commutator_proto::McpServer::WAITS_ON_BACKGROUND_ENV`]).
 /// (Claude Code also gets the longer note in its system prompt.)
 const WAITS_ON_BACKGROUND: &str = "\n\n\
 Before ending a turn while background work you'll come back to is still running (tests, a \
 build), call `wait_on_background` with its task id; never for a dev server or a watcher.";
 
 /// Appended to [`INSTRUCTIONS`] when the host launched the agent without its
-/// own subagent tools ([`vardoger_proto::McpServer::SIDE_CHATS_ONLY_ENV`]).
+/// own subagent tools ([`commutator_proto::McpServer::SIDE_CHATS_ONLY_ENV`]).
 const SIDE_CHATS_ONLY: &str = "\n\n\
-Your own subagent tools are turned off in Vardoger's settings: where you would start a \
-subagent, delegate through Vardoger chats instead, with `create_chats` (or `create_chat`).";
+Your own subagent tools are turned off in Commutator's settings: where you would start a \
+subagent, delegate through Commutator chats instead, with `create_chats` (or `create_chat`).";
 
 /// What `initialize` tells the agent: with when to say it waits where it's
 /// offered `wait_on_background`, and the side-chat rule when its host turned
@@ -72,7 +72,7 @@ pub(crate) fn instructions(waits: bool, side_chats_only: bool) -> std::borrow::C
 }
 
 /// How often a call still running reports progress. Clients abort a call
-/// that sends nothing for long enough (Claude Code: 30 minutes); a Vardoger
+/// that sends nothing for long enough (Claude Code: 30 minutes); a Commutator
 /// wait may run an hour.
 const PROGRESS_EVERY: Duration = Duration::from_secs(30);
 
@@ -236,7 +236,7 @@ pub async fn handle_request(tools: &Tools, id: Value, method: &str, params: Valu
                     "protocolVersion": version,
                     "capabilities": { "tools": {} },
                     "serverInfo": {
-                        "name": "vardoger",
+                        "name": "commutator",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
                     "instructions": instructions(tools.waits_on_background(), tools.side_chats_only()),
@@ -365,10 +365,10 @@ pub(crate) fn error_response(id: Value, code: i64, message: &str) -> Value {
 mod tests {
     use super::*;
 
-    use crate::vardoger::{Origin, Vardoger};
+    use crate::commutator::{Origin, Commutator};
     use async_trait::async_trait;
     use std::time::Duration;
-    use vardoger_rpc::{RpcError, RpcReply, RpcService, memory_client};
+    use commutator_rpc::{RpcError, RpcReply, RpcService, memory_client};
 
     #[tokio::test]
     async fn initialize_and_the_listing_name_the_static_tools() {
@@ -379,7 +379,7 @@ mod tests {
                 Err(RpcError::UnknownMethod(method.into()))
             }
         }
-        let tools = Arc::new(Tools::new(Arc::new(Vardoger::with_client(
+        let tools = Arc::new(Tools::new(Arc::new(Commutator::with_client(
             memory_client(Arc::new(NoEngine)),
             Origin::default(),
         ))));

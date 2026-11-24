@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use vardoger_doc::{REGISTRY_DOC_ID, RegistryDoc};
-use vardoger_proto::{Chat, Device, Session, SessionStatus};
-use vardoger_sync::registry::mock_server::MockRegistryServer;
-use vardoger_sync::{DocsStore, RegistryClient, RegistryEvent};
+use commutator_doc::{REGISTRY_DOC_ID, RegistryDoc};
+use commutator_proto::{Chat, Device, Session, SessionStatus};
+use commutator_sync::registry::mock_server::MockRegistryServer;
+use commutator_sync::{DocsStore, RegistryClient, RegistryEvent};
 
 fn ts(ms: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(ms).unwrap_or(DateTime::UNIX_EPOCH)
@@ -515,11 +515,11 @@ struct FlakyAckTransport {
     push_calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
-impl vardoger_sync::registry::RegistryTransport for FlakyAckTransport {
+impl commutator_sync::registry::RegistryTransport for FlakyAckTransport {
     fn fetch(
         &self,
         _since: u64,
-    ) -> futures::future::BoxFuture<'static, Result<String, vardoger_sync::SyncError>> {
+    ) -> futures::future::BoxFuture<'static, Result<String, commutator_sync::SyncError>> {
         Box::pin(async {
             Ok(r#"{"seq":0,"full":false,"gcFloor":0,"rows":[],"presence":{}}"#.to_string())
         })
@@ -528,7 +528,7 @@ impl vardoger_sync::registry::RegistryTransport for FlakyAckTransport {
     fn push(
         &self,
         body: String,
-    ) -> futures::future::BoxFuture<'static, Result<String, vardoger_sync::SyncError>> {
+    ) -> futures::future::BoxFuture<'static, Result<String, commutator_sync::SyncError>> {
         let call = self
             .push_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -554,10 +554,10 @@ async fn unreadable_http_ack_retries_instead_of_stranding_the_batch() {
     }
     // The WS side never connects (dead port): every sync runs over HTTPS.
     let client = RegistryClient::connect_via_transport(
-        Arc::new(vardoger_sync::StaticUrl("ws://127.0.0.1:1/ws".into())),
+        Arc::new(commutator_sync::StaticUrl("ws://127.0.0.1:1/ws".into())),
         doc.clone(),
         "dev-a",
-        vardoger_sync::RegistryTuning::default(),
+        commutator_sync::RegistryTuning::default(),
         Arc::new(FlakyAckTransport {
             push_calls: push_calls.clone(),
         }),

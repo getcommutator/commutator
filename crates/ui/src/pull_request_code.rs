@@ -1181,25 +1181,25 @@ mod corner_render_tests {
                 "dark-frost",
                 Appearance::Dark,
                 0x181818,
-                vardoger_theme::SurfaceTreatment::Frosted,
+                commutator_theme::SurfaceTreatment::Frosted,
             ),
             (
                 "light-frost",
                 Appearance::Light,
                 0xeeeeee,
-                vardoger_theme::SurfaceTreatment::Frosted,
+                commutator_theme::SurfaceTreatment::Frosted,
             ),
             (
                 "dark-opaque",
                 Appearance::Dark,
                 0x181818,
-                vardoger_theme::SurfaceTreatment::Opaque,
+                commutator_theme::SurfaceTreatment::Opaque,
             ),
             (
                 "light-opaque",
                 Appearance::Light,
                 0xeeeeee,
-                vardoger_theme::SurfaceTreatment::Opaque,
+                commutator_theme::SurfaceTreatment::Opaque,
             ),
         ] {
             let theme = Theme {
@@ -1219,7 +1219,7 @@ mod corner_render_tests {
             cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
                 .unwrap();
             let image = cx.capture_screenshot(window.into()).unwrap();
-            if let Ok(directory) = std::env::var("VARDOGER_PR_CORNER_CAPTURE_DIR") {
+            if let Ok(directory) = std::env::var("COMMUTATOR_PR_CORNER_CAPTURE_DIR") {
                 image
                     .save(std::path::Path::new(&directory).join(format!("{name}.png")))
                     .unwrap();

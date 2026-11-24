@@ -42,7 +42,7 @@ pub enum Credentials {
     /// writes the `ipc-token` a dial presents.
     Local { port: u16, engine_data_dir: PathBuf },
     /// An engine on another of the account's machines, through the relay on
-    /// the account's Vardoger server: its URL, this device's bearer `token`
+    /// the account's Commutator server: its URL, this device's bearer `token`
     /// from its sign-in there, and the machine to drive (`host_device_id`,
     /// a machine from [`crate::server::devices`]).
     Remote {

@@ -2,7 +2,7 @@
 //! into a real `app/<version>/` layout, plays both the old and the new engine. It
 //! really replaces itself with the new binary, really gets killed by the watchdog,
 //! and really crashes (`abort`) at each step. The test plays the service manager,
-//! starting `app/current/vardoger` until the update has settled.
+//! starting `app/current/commutator` until the update has settled.
 //!
 //! The databases here are plain files, since only their bytes matter to the backup.
 
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use vardoger_update::transaction::{self, BootOptions, Layout, Phase, RestartMode};
+use commutator_update::transaction::{self, BootOptions, Layout, Phase, RestartMode};
 
 const DATA_ENV: &str = "FAKE_ENGINE_DATA";
 const ORIGINAL: &str = "original";
@@ -23,16 +23,16 @@ fn this_version() -> String {
     // On Windows: a trial is told where it's installed; once there, a file says.
     #[cfg(windows)]
     {
-        if std::env::var_os(vardoger_update::INSTALLED_AT_ENV).is_some() {
+        if std::env::var_os(commutator_update::INSTALLED_AT_ENV).is_some() {
             return "2.0.0".into();
         }
-        std::fs::read_to_string(dir.join("vardoger-version")).unwrap_or_else(|_| "1.0.0".into())
+        std::fs::read_to_string(dir.join("commutator-version")).unwrap_or_else(|_| "1.0.0".into())
     }
     // A macOS bundle says in its Info.plist; a versioned folder is its name.
     #[cfg(unix)]
     {
         if dir.ends_with("Contents/MacOS") {
-            return vardoger_update::bundle_app_version(dir.parent().unwrap().parent().unwrap())
+            return commutator_update::bundle_app_version(dir.parent().unwrap().parent().unwrap())
                 .unwrap();
         }
         dir.file_name().unwrap().to_str().unwrap().to_owned()
@@ -161,7 +161,7 @@ fn stay_for_the_next_update(data: &Path, options: &BootOptions) {
 
 #[test]
 fn fake_watchdog() {
-    if std::env::var_os("VARDOGER_UPDATE_WATCH_ID").is_none() {
+    if std::env::var_os("COMMUTATOR_UPDATE_WATCH_ID").is_none() {
         return;
     }
     transaction::run_watchdog().unwrap();
@@ -187,7 +187,7 @@ fn write_bundle(bundle: &Path, version: &str, behavior: &str) {
     let dir = bundle.join("Contents/MacOS");
     std::fs::create_dir_all(&dir).unwrap();
     let exe = std::env::current_exe().unwrap();
-    std::fs::copy(&exe, dir.join("vardoger")).unwrap();
+    std::fs::copy(&exe, dir.join("commutator")).unwrap();
     std::fs::write(dir.join("behavior"), behavior).unwrap();
     std::fs::write(
         bundle.join("Contents/Info.plist"),
@@ -200,7 +200,7 @@ impl Rig {
     fn new(behavior: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
-        let data = root.join(".vardoger");
+        let data = root.join(".commutator");
         let app = data.join("app");
         let rig = Self { _dir: dir, data, app, mac: None, windows: None };
         std::fs::create_dir_all(docs(&rig.data).parent().unwrap()).unwrap();
@@ -217,20 +217,20 @@ impl Rig {
         rig
     }
 
-    /// The same, as a Windows install: `vardoger.exe`, and the new one in a folder of
+    /// The same, as a Windows install: `commutator.exe`, and the new one in a folder of
     /// its own inside the installation's.
     #[cfg(windows)]
     fn new_windows(behavior: &str) -> Self {
         let mut rig = Self::new(behavior);
-        let directory = rig.data.parent().unwrap().join("Vardoger");
-        let incoming = directory.join(".vardoger-update-test");
+        let directory = rig.data.parent().unwrap().join("Commutator");
+        let incoming = directory.join(".commutator-update-test");
         std::fs::create_dir_all(&incoming).unwrap();
         let exe = std::env::current_exe().unwrap();
-        std::fs::copy(&exe, directory.join("vardoger.exe")).unwrap();
-        std::fs::copy(&exe, incoming.join("vardoger.exe")).unwrap();
+        std::fs::copy(&exe, directory.join("commutator.exe")).unwrap();
+        std::fs::copy(&exe, incoming.join("commutator.exe")).unwrap();
         std::fs::write(directory.join("behavior"), "ok").unwrap();
         std::fs::write(incoming.join("behavior"), behavior).unwrap();
-        rig.windows = Some((directory, incoming.join("vardoger.exe")));
+        rig.windows = Some((directory, incoming.join("commutator.exe")));
         rig
     }
 
@@ -239,8 +239,8 @@ impl Rig {
         let mut rig = Self::new(behavior);
         let applications = rig.data.parent().unwrap().join("Applications");
         let mac = MacRig {
-            bundle: applications.join("Vardoger.app"),
-            incoming: applications.join(".Vardoger.app.new-test"),
+            bundle: applications.join("Commutator.app"),
+            incoming: applications.join(".Commutator.app.new-test"),
         };
         write_bundle(&mac.bundle, "1.0.0", "ok");
         write_bundle(&mac.incoming, "2.0.0", behavior);
@@ -271,7 +271,7 @@ impl Rig {
         let exe = std::env::current_exe().unwrap();
         // A copy, not a hard link: which name a process's image goes by decides
         // things here, and links to one file across installs muddle that.
-        std::fs::copy(&exe, dir.join("vardoger")).unwrap();
+        std::fs::copy(&exe, dir.join("commutator")).unwrap();
         std::fs::write(dir.join("behavior"), behavior).unwrap();
     }
 
@@ -303,18 +303,18 @@ impl Rig {
     /// `current` is at that moment.
     fn start(&self, crash_at: Option<&str>) -> std::process::ExitStatus {
         let installed = match (&self.mac, &self.windows) {
-            (Some(mac), _) => mac.bundle.join("Contents/MacOS/vardoger"),
-            (_, Some((directory, _))) => directory.join("vardoger.exe"),
-            _ => self.app.join("current/vardoger"),
+            (Some(mac), _) => mac.bundle.join("Contents/MacOS/commutator"),
+            (_, Some((directory, _))) => directory.join("commutator.exe"),
+            _ => self.app.join("current/commutator"),
         };
         let mut command = Command::new(installed);
         command
             .args(["--exact", "fake_engine", "--test-threads=1", "--nocapture"])
             .env(DATA_ENV, &self.data)
-            .env_remove("VARDOGER_UPDATE_CRASH_AT")
+            .env_remove("COMMUTATOR_UPDATE_CRASH_AT")
             .stdout(std::process::Stdio::null());
         if let Some(step) = crash_at {
-            command.env("VARDOGER_UPDATE_CRASH_AT", step);
+            command.env("COMMUTATOR_UPDATE_CRASH_AT", step);
         }
         let status = command.status().unwrap();
         eprintln!("start ({crash_at:?}) ended {status:?}, phase {:?}", transaction::read(&self.data).map(|t| t.phase));
@@ -339,11 +339,11 @@ impl Rig {
 
     fn current(&self) -> String {
         if let Some((directory, _)) = &self.windows {
-            return std::fs::read_to_string(directory.join("vardoger-version"))
+            return std::fs::read_to_string(directory.join("commutator-version"))
                 .unwrap_or_else(|_| "1.0.0".into());
         }
         if let Some(mac) = &self.mac {
-            return vardoger_update::bundle_app_version(&mac.bundle).unwrap();
+            return commutator_update::bundle_app_version(&mac.bundle).unwrap();
         }
         let target = std::fs::read_link(self.app.join("current")).unwrap();
         target.file_name().unwrap().to_str().unwrap().to_owned()
@@ -382,7 +382,7 @@ impl Rig {
                 .unwrap()
                 .flatten()
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| name != "Vardoger.app")
+                .filter(|name| name != "Commutator.app")
                 .collect()
         };
         // What the engine does a moment after committing: at the commit itself
@@ -433,7 +433,7 @@ mod versioned {
         let id = rig.request(Rig::service(), 60);
         rig.run_until_settled();
         rig.assert_updated(&id);
-        assert_eq!(rig.record().report().state, vardoger_update::UpdateState::Updated);
+        assert_eq!(rig.record().report().state, commutator_update::UpdateState::Updated);
     }
 
     impl Rig {
@@ -441,7 +441,7 @@ mod versioned {
         fn install_old(&self, versions: &[&str]) {
             for version in versions {
                 std::fs::create_dir_all(self.app.join(version)).unwrap();
-                std::fs::write(self.app.join(version).join("vardoger"), version).unwrap();
+                std::fs::write(self.app.join(version).join("commutator"), version).unwrap();
             }
         }
 
@@ -458,14 +458,14 @@ mod versioned {
                 names
             };
             // The engine's own later tidy.
-            let kept = vardoger_update::older_versions_kept();
+            let kept = commutator_update::older_versions_kept();
             let record = self.record();
             let abandoned = matches!(record.phase, Phase::RolledBack | Phase::Failed)
                 .then_some(record.target.as_str());
             let waited = Instant::now();
             while left() != expected && waited.elapsed() < Duration::from_secs(5) {
                 std::thread::sleep(Duration::from_millis(100));
-                vardoger_update::prune_installed_versions(&self.app, kept, abandoned);
+                commutator_update::prune_installed_versions(&self.app, kept, abandoned);
             }
             assert_eq!(left(), expected);
         }
@@ -476,15 +476,15 @@ mod versioned {
     fn a_settled_update_keeps_the_version_before() {
         let rig = Rig::new("ok");
         rig.install_old(&["0.8.0", "0.9.0"]);
-        // The engine `vardoger headless` runs, as the release ships it.
+        // The engine `commutator headless` runs, as the release ships it.
         for version in ["1.0.0", "2.0.0"] {
-            std::fs::write(rig.app.join(version).join("vardoger-engine"), "desktop").unwrap();
+            std::fs::write(rig.app.join(version).join("commutator-engine"), "desktop").unwrap();
         }
         let id = rig.request(Rig::service(), 60);
         rig.run_until_settled();
         rig.assert_updated(&id);
         rig.app_settles_to(&["1.0.0", "2.0.0", "current"]);
-        assert!(rig.app.join("2.0.0/vardoger-engine").exists());
+        assert!(rig.app.join("2.0.0/commutator-engine").exists());
     }
 
     #[test]
@@ -516,13 +516,13 @@ mod versioned {
     fn a_boot_doesnt_try_again_a_release_it_went_back_from() {
         for (behavior, deadline) in [("exit-1", 60), ("gives-up", 60), ("hang", 2)] {
             let rig = Rig::new(behavior);
-            let reason = |latest| vardoger_update::boot_skip_reason(&rig.data, latest, "1.0.0");
+            let reason = |latest| commutator_update::boot_skip_reason(&rig.data, latest, "1.0.0");
             assert_eq!(reason("2.0.0"), None, "{behavior}: nothing against it yet");
             let id = rig.request(Rig::service(), deadline);
-            assert_eq!(reason("2.0.0"), Some(vardoger_update::BootSkipReason::InProgress), "{behavior}");
+            assert_eq!(reason("2.0.0"), Some(commutator_update::BootSkipReason::InProgress), "{behavior}");
             rig.run_until_settled();
             rig.assert_back_on_the_old_version(&id, Phase::RolledBack);
-            assert_eq!(reason("2.0.0"), Some(vardoger_update::BootSkipReason::WentBack), "{behavior}");
+            assert_eq!(reason("2.0.0"), Some(commutator_update::BootSkipReason::WentBack), "{behavior}");
             // The next release is a new chance.
             assert_eq!(reason("2.0.1"), None, "{behavior}");
         }
@@ -540,11 +540,11 @@ mod versioned {
         let record = rig.record();
         assert!(record.interrupted);
         let reason = record.reason.unwrap();
-        assert!(reason.starts_with("Vardoger was stopped while it was trying the new version"), "{reason}");
+        assert!(reason.starts_with("Commutator was stopped while it was trying the new version"), "{reason}");
         assert!(reason.ends_with("will try 2.0.0 again."), "{reason}");
-        assert_eq!(vardoger_update::boot_skip_reason(&rig.data, "2.0.0", "1.0.0"), None);
+        assert_eq!(commutator_update::boot_skip_reason(&rig.data, "2.0.0", "1.0.0"), None);
         // Kept for the next try, unlike a release it gave up on.
-        assert!(rig.app.join("2.0.0").join("vardoger").exists());
+        assert!(rig.app.join("2.0.0").join("commutator").exists());
     }
 
     /// A trial that crashes says what it said, so a rollback found later can be
@@ -563,8 +563,8 @@ mod versioned {
             "{reason}"
         );
         assert_eq!(
-            vardoger_update::boot_skip_reason(&rig.data, "2.0.0", "1.0.0"),
-            Some(vardoger_update::BootSkipReason::WentBack)
+            commutator_update::boot_skip_reason(&rig.data, "2.0.0", "1.0.0"),
+            Some(commutator_update::BootSkipReason::WentBack)
         );
     }
 
@@ -589,7 +589,7 @@ mod versioned {
         let id = rig.request(Rig::service(), 60);
         rig.run_until_settled();
         rig.assert_back_on_the_old_version(&id, Phase::RolledBack);
-        assert_eq!(rig.record().report().state, vardoger_update::UpdateState::RolledBack);
+        assert_eq!(rig.record().report().state, commutator_update::UpdateState::RolledBack);
     }
 
     /// A clean exit is still a failed trial, whatever a service manager makes of it.
@@ -760,7 +760,7 @@ mod versioned {
         std::fs::remove_dir_all(rig.app.join("2.0.0")).unwrap();
         rig.run_until_settled();
         rig.assert_back_on_the_old_version(&id, Phase::Failed);
-        assert_eq!(rig.record().report().state, vardoger_update::UpdateState::Failed);
+        assert_eq!(rig.record().report().state, commutator_update::UpdateState::Failed);
     }
 
     /// A binary that can't even be started: it never ran, so nothing was restored
@@ -770,7 +770,7 @@ mod versioned {
         use std::os::unix::fs::PermissionsExt as _;
         let rig = Rig::new("ok");
         let id = rig.request(Rig::service(), 60);
-        let broken = rig.app.join("2.0.0/vardoger");
+        let broken = rig.app.join("2.0.0/commutator");
         std::fs::remove_file(&broken).unwrap();
         std::fs::write(&broken, "not a program").unwrap();
         std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -913,11 +913,11 @@ mod mac {
     /// An engine that stays up, started once with no app and no service
     /// manager: nothing else ever starts an engine, as on m1-laptop.
     fn start_headless(rig: &Rig) -> std::process::Child {
-        Command::new(rig.mac.as_ref().unwrap().bundle.join("Contents/MacOS/vardoger"))
+        Command::new(rig.mac.as_ref().unwrap().bundle.join("Contents/MacOS/commutator"))
             .args(["--exact", "fake_engine", "--test-threads=1", "--nocapture"])
             .env(DATA_ENV, &rig.data)
             .env(STAYS_ENV, "1")
-            .env_remove("VARDOGER_UPDATE_CRASH_AT")
+            .env_remove("COMMUTATOR_UPDATE_CRASH_AT")
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap()
@@ -926,7 +926,7 @@ mod mac {
     /// The 3.0.0 release, and an update to it asked of the running engine.
     fn ask_for_the_next_update(rig: &Rig, behavior: &str) -> String {
         let mac = rig.mac.as_ref().unwrap();
-        let incoming = mac.bundle.with_file_name(".Vardoger.app.new-next");
+        let incoming = mac.bundle.with_file_name(".Commutator.app.new-next");
         write_bundle(&incoming, "3.0.0", behavior);
         let layout = Layout::MacBundle { bundle: mac.bundle.clone(), incoming };
         let id = transaction::request(&rig.data, layout, "2.0.0", "3.0.0", RestartMode::Relaunch)
@@ -937,8 +937,8 @@ mod mac {
     }
 
     /// m1-laptop, Nov 11. The background engine had become 0.2.138 as an
-    /// update's trial, so it ran from `.Vardoger.app.new-<id>`, which its commit
-    /// renamed to `Vardoger.app`. Asked from another device for the next update,
+    /// update's trial, so it ran from `.Commutator.app.new-<id>`, which its commit
+    /// renamed to `Commutator.app`. Asked from another device for the next update,
     /// with the app closed, it stopped, didn't recognise its own installation,
     /// and nothing started again. Now it becomes the new version itself.
     #[test]
@@ -1024,8 +1024,8 @@ mod mac {
     fn a_bundle_in_use_is_kept_until_nothing_runs_from_it() {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
-        let bundle = root.join("Vardoger.app");
-        let retired = root.join(".Vardoger.app.old-123");
+        let bundle = root.join("Commutator.app");
+        let retired = root.join(".Commutator.app.old-123");
         std::fs::create_dir_all(&bundle).unwrap();
         std::fs::create_dir_all(retired.join("Contents/MacOS")).unwrap();
         let sleeper = retired.join("Contents/MacOS/sleeper");
@@ -1038,14 +1038,14 @@ mod mac {
         }
         let mut running = Command::new(&sleeper).spawn().unwrap();
         std::thread::sleep(Duration::from_millis(200));
-        assert!(vardoger_update::process_runs_from(&retired));
-        vardoger_update::prune_retired_mac_bundles(&bundle);
+        assert!(commutator_update::process_runs_from(&retired));
+        commutator_update::prune_retired_mac_bundles(&bundle);
         assert!(retired.exists(), "deleted from under a running process");
 
         running.kill().unwrap();
         running.wait().unwrap();
-        assert!(!vardoger_update::process_runs_from(&retired));
-        vardoger_update::prune_retired_mac_bundles(&bundle);
+        assert!(!commutator_update::process_runs_from(&retired));
+        commutator_update::prune_retired_mac_bundles(&bundle);
         assert!(!retired.exists(), "left behind once nothing ran from it");
         assert!(bundle.exists());
     }

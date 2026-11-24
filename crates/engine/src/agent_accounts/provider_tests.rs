@@ -490,7 +490,7 @@ async fn a_rejected_saved_grok_token_refreshes_once_against_its_issuer() {
         store_key: detected.store_key,
     };
     accounts.write_slot(&slot).unwrap();
-    // The LIVE login is never refreshed by vardoger.
+    // The LIVE login is never refreshed by commutator.
     let live = accounts.grok_usage(&slot, true).await;
     assert!(matches!(live, Err(ProbeError::Unauthorized { .. })));
     assert_eq!(issuer_hits.load(Ordering::SeqCst), 0);
@@ -1026,7 +1026,7 @@ done
 /// Google account it saves is a row named by its address: the first one
 /// goes live in Antigravity's token file (its settings set to that
 /// sign-in), a second waits to be switched to, and removing the live one
-/// signs Vardoger's Antigravity out of it.
+/// signs Commutator's Antigravity out of it.
 #[cfg(unix)]
 #[tokio::test]
 async fn antigravity_signs_in_to_a_google_account_each_switchable_by_its_address() {
@@ -1073,11 +1073,11 @@ async fn antigravity_signs_in_to_a_google_account_each_switchable_by_its_address
     );
     // Live: its token file as the server writes it, the settings switched
     // to the Google sign-in it's for and the rest kept.
-    let live = vardoger_harness::acp::antigravity_token_file(&gemini);
+    let live = commutator_harness::acp::antigravity_token_file(&gemini);
     let token: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&live).unwrap()).unwrap();
     assert_eq!(token["refresh_token"], "grt-a");
     assert_eq!(mode(&live), 0o600);
-    assert!(vardoger_harness::acp::antigravity_reads_token_file(&gemini));
+    assert!(commutator_harness::acp::antigravity_reads_token_file(&gemini));
     let settings: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(gemini.join("antigravity-acp/settings.json")).unwrap(),
     )
@@ -1118,10 +1118,10 @@ async fn antigravity_signs_in_to_a_google_account_each_switchable_by_its_address
     assert!(now.iter().find(|r| r.id == b.id).unwrap().active);
     assert!(!now.iter().find(|r| r.id == a.id).unwrap().active);
 
-    // Removing the live one signs Vardoger's Antigravity out of it.
+    // Removing the live one signs Commutator's Antigravity out of it.
     let left = accounts.forget(HarnessId::Antigravity, &b.id).await.unwrap();
     assert!(!live.exists());
-    assert!(!vardoger_harness::acp::antigravity_reads_token_file(&gemini));
+    assert!(!commutator_harness::acp::antigravity_reads_token_file(&gemini));
     let left = rows(&left, HarnessId::Antigravity);
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, a.id);
@@ -1169,7 +1169,7 @@ done
         std::fs::read_to_string(&settings).unwrap(),
         r#"{"auth": {"type": "oauth-business"}}"#
     );
-    assert!(!vardoger_harness::acp::antigravity_token_file(&gemini).exists());
+    assert!(!commutator_harness::acp::antigravity_token_file(&gemini).exists());
 }
 
 // ── OpenCode / Pi ───────────────────────────────────────────────────────────
@@ -1484,7 +1484,7 @@ async fn re_signing_in_the_live_chatgpt_account_replaces_its_dead_tokens() {
     assert_eq!(slot.credentials["refresh"], "fresh-refresh");
 }
 
-/// A live login vardoger can't identify (an opaque token whose profile call
+/// A live login commutator can't identify (an opaque token whose profile call
 /// failed) is never replaced by a new sign-in — it has no slot, so it would
 /// be lost.
 #[tokio::test]
@@ -1772,7 +1772,7 @@ async fn hermes_lists_its_own_pool_read_only() {
         hermes[3].usage_error.as_deref(),
         Some("API keys have no plan usage")
     );
-    // vardoger never writes Hermes' pool: no switch, no forget, no slot files.
+    // commutator never writes Hermes' pool: no switch, no forget, no slot files.
     assert!(
         accounts
             .activate(HarnessId::Hermes, &hermes[1].id)
@@ -2052,7 +2052,7 @@ fn credential_defined_endpoints_must_be_the_vendors_own_https_hosts() {
         "evil.example",
         "https://evil.example",
         // Self-hosted GHES: skipped (its REST root is /api/v3, and the
-        // host isn't one vardoger can vouch for).
+        // host isn't one commutator can vouch for).
         "github.company.com",
         // Look-alikes and nesting.
         "ghe.com",
@@ -2149,7 +2149,7 @@ async fn untrusted_endpoints_in_credentials_are_never_sent_a_secret() {
     let devin = rows(&snapshot, HarnessId::Devin);
     assert_eq!(
         devin[0].usage_error.as_deref(),
-        Some("Usage skipped — this login names a server vardoger doesn't recognize")
+        Some("Usage skipped — this login names a server commutator doesn't recognize")
     );
     let hermes = rows(&snapshot, HarnessId::Hermes);
     assert_eq!(hermes[0].usage_error, devin[0].usage_error);
@@ -2211,7 +2211,7 @@ fn the_accounts_root_and_sign_in_homes_are_owner_only() {
     for file in [&devin.url_file, &missing] {
         let status = std::process::Command::new(&browser)
             .arg("https://app.devin.ai/auth/cli/continue")
-            .env("VARDOGER_LOGIN_URL_FILE", file)
+            .env("COMMUTATOR_LOGIN_URL_FILE", file)
             .status()
             .unwrap();
         assert!(status.success());
@@ -2227,7 +2227,7 @@ fn the_accounts_root_and_sign_in_homes_are_owner_only() {
     assert_eq!(mode(&slots), 0o700);
 }
 
-/// A self-hosted GHES Copilot login (a host vardoger never sends the token to)
+/// A self-hosted GHES Copilot login (a host commutator never sends the token to)
 /// still switches: keyed by a fingerprint of its token, snapshotted without
 /// any network call, and restored byte-for-byte after switching away.
 #[tokio::test]
@@ -2268,7 +2268,7 @@ async fn a_self_hosted_ghes_login_switches_away_and_back_without_the_network() {
     assert!(ghes_row.active && ghes_row.switchable);
     assert_eq!(
         ghes_row.usage_error.as_deref(),
-        Some("Usage skipped — this login names a server vardoger doesn't recognize")
+        Some("Usage skipped — this login names a server commutator doesn't recognize")
     );
     let ghes_id = ghes_row.id.clone();
     // Keyed by a fingerprint — the token itself is never the account key.
@@ -2367,13 +2367,13 @@ fn secret_writes_are_exclusive_owner_only_and_never_follow_symlinks() {
     assert_eq!(mode(&config), 0o640);
 }
 
-/// OpenCode takes no lock of its own: vardoger serialises its writers on a
+/// OpenCode takes no lock of its own: commutator serialises its writers on a
 /// sidecar lock (released after the write) and never leaves it held.
 #[test]
-fn opencode_writes_hold_a_vardoger_side_lock_only_while_writing() {
+fn opencode_writes_hold_a_commutator_side_lock_only_while_writing() {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("auth.json");
-    let lock = tmp.path().join("auth.json.vardoger-lock");
+    let lock = tmp.path().join("auth.json.commutator-lock");
     std::fs::write(&file, r#"{"other":{"type":"api","key":"k"}}"#).unwrap();
     merge_json_entry(
         &file,
@@ -2849,7 +2849,7 @@ async fn key_server() -> MockServer {
     .await
 }
 
-/// Everything vardoger wrote for itself under `root` (slots, usage cache,
+/// Everything commutator wrote for itself under `root` (slots, usage cache,
 /// pins…) and every file of the agents' stores, as one string.
 fn every_file(root: &Path) -> String {
     fn walk(dir: &Path, out: &mut String) {
@@ -2986,7 +2986,7 @@ async fn a_refused_or_malformed_key_is_never_stored_echoed_or_sent_on() {
         assert!(err.contains("doesn't look like"), "{bad}: {err}");
     }
     assert_eq!(server.hits("GET"), 0);
-    // A provider Vardoger doesn't add keys for.
+    // A provider Commutator doesn't add keys for.
     assert!(accounts.add_api_key(HarnessId::Pi, "acme", OR_KEY, None).await.is_err());
     assert!(accounts.add_api_key(HarnessId::ClaudeCode, "anthropic", OR_KEY, None).await.is_err());
     assert!(!config.pi_agent_dir.join("auth.json").exists());
@@ -3069,7 +3069,7 @@ echo 'Added openrouter credential #1: "api-key-1"'
     let wire = serde_json::to_string(&snapshot).unwrap();
     assert!(!wire.contains(OR_KEY), "{wire}");
     assert!(!log.contains(OR_KEY), "{log}");
-    // Hermes keeps it in its own store; vardoger keeps no copy of its own.
+    // Hermes keeps it in its own store; commutator keeps no copy of its own.
     assert!(accounts.read_slots(HarnessId::Hermes).is_empty());
     assert!(!every_file(&config.data_dir).contains(OR_KEY));
 
@@ -3149,7 +3149,7 @@ async fn a_refresh_the_agent_made_since_the_last_list_is_kept_when_switching_awa
     let pi = rows(&accounts.list(false).await.unwrap(), HarnessId::Pi);
     let a_id = pi.iter().find(|r| r.email.as_deref() == Some("a@example.com")).unwrap().id.clone();
     // Pi refreshes b's login (a single-use refresh token, rotated) — and
-    // vardoger switches before any list sees it.
+    // commutator switches before any list sees it.
     let mut rotated = openai_entry("b@example.com", "acct-b");
     rotated["refresh"] = serde_json::json!("refresh-acct-b-ROTATED");
     write(&file, &serde_json::json!({ "openai-codex": rotated }).to_string());
@@ -3183,7 +3183,7 @@ async fn claude_for_pi_signs_in_as_pis_own_login_on_this_device_or_for_another()
     })
     .await;
     let tmp = tempfile::tempdir().unwrap();
-    let routes = vardoger_preview::login::CallbackRoutes::default();
+    let routes = commutator_preview::login::CallbackRoutes::default();
     let config = AgentAccountsConfig::isolated(tmp.path());
     let accounts = AgentAccounts::with_endpoints(config.clone(), mocked(&server.base), routes.clone());
     let file = config.pi_agent_dir.join("auth.json");
@@ -3239,7 +3239,7 @@ async fn claude_for_pi_signs_in_when_the_profile_is_rate_limited() {
     })
     .await;
     let tmp = tempfile::tempdir().unwrap();
-    let routes = vardoger_preview::login::CallbackRoutes::default();
+    let routes = commutator_preview::login::CallbackRoutes::default();
     let config = AgentAccountsConfig::isolated(tmp.path());
     let accounts = AgentAccounts::with_endpoints(config.clone(), mocked(&server.base), routes.clone());
     let start = accounts
@@ -3381,17 +3381,17 @@ async fn hermes_lists_only_what_hermes_itself_would_use() {
                 // Seeded from a variable: counted only while it holds a key.
                 "deepseek": [
                     { "id": "d1", "label": "DEEPSEEK_API_KEY", "auth_type": "api_key", "priority": 0,
-                      "source": "env:VARDOGER_TEST_HERMES_DEEPSEEK", "access_token": "sk-ds" },
+                      "source": "env:COMMUTATOR_TEST_HERMES_DEEPSEEK", "access_token": "sk-ds" },
                 ],
                 "xai": [
                     { "id": "x1", "label": "XAI_API_KEY", "auth_type": "api_key", "priority": 0,
-                      "source": "env:VARDOGER_TEST_HERMES_GONE", "access_token": "xai-gone" },
+                      "source": "env:COMMUTATOR_TEST_HERMES_GONE", "access_token": "xai-gone" },
                 ],
             }
         })
         .to_string(),
     );
-    write(&config.hermes_home.join(".env"), "VARDOGER_TEST_HERMES_DEEPSEEK=sk-live\nVARDOGER_TEST_HERMES_GONE=\n");
+    write(&config.hermes_home.join(".env"), "COMMUTATOR_TEST_HERMES_DEEPSEEK=sk-live\nCOMMUTATOR_TEST_HERMES_GONE=\n");
     let hermes = rows(&accounts.list(false).await.unwrap(), HarnessId::Hermes);
     let providers: Vec<_> = hermes.iter().map(|a| a.provider.clone().unwrap()).collect();
     assert_eq!(providers, ["openai-codex", "deepseek"]);

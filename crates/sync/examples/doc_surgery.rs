@@ -5,8 +5,8 @@
 //!   inspect-chat      <data_dir> <chat_id>
 //!   cut-chat          <data_dir> <chat_id> <from_index>
 use loro::{LoroDoc, ToJson};
-use vardoger_doc::SessionDoc;
-use vardoger_sync::DocsStore;
+use commutator_doc::SessionDoc;
+use commutator_sync::DocsStore;
 
 fn load_doc(store: &DocsStore, doc_id: &str) -> LoroDoc {
     let bytes = store

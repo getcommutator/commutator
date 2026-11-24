@@ -6,8 +6,8 @@
 //! verbose CLI — tokens. [`redact_output`] keeps the human part ("Device code
 //! request failed: 503") and replaces the rest. The doc fold runs a
 //! command's output tail through it before the tail enters a chat's doc
-//! (vardoger-doc `command_output_tail`). (Harness crash diagnostics use the
-//! narrower credential-marker redaction in vardoger-harness's crate root.)
+//! (commutator-doc `command_output_tail`). (Harness crash diagnostics use the
+//! narrower credential-marker redaction in commutator-harness's crate root.)
 
 /// `text` with terminal escapes stripped and every secret-shaped token
 /// replaced:
@@ -1082,8 +1082,8 @@ mod tests {
             assert_eq!(redact_output(url), kept);
         }
         assert_eq!(
-            redact_output("https://github.com/zeronsh/vardoger"),
-            "https://github.com/zeronsh/vardoger"
+            redact_output("https://github.com/zeronsh/commutator"),
+            "https://github.com/zeronsh/commutator"
         );
     }
 
@@ -1210,7 +1210,7 @@ mod tests {
             "digest [redacted]"
         );
         // Paths stay readable.
-        let path = "/tmp/vardoger/data/agent-accounts/.login-0123456789abcdef/auth.json";
+        let path = "/tmp/commutator/data/agent-accounts/.login-0123456789abcdef/auth.json";
         assert_eq!(redact_output(path), path);
     }
 

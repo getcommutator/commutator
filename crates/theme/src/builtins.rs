@@ -12,7 +12,7 @@ pub fn builtin_registry() -> &'static ThemeRegistry {
     static REGISTRY: OnceLock<ThemeRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| ThemeRegistry {
         families: vec![
-            family("vardoger", "Vardoger", vec![vardoger_light(), vardoger_dark()]),
+            family("commutator", "Commutator", vec![commutator_light(), commutator_dark()]),
             family(
                 "vscode-default",
                 "VS Code Default",
@@ -236,11 +236,11 @@ const ANSI_LIGHT: [&str; 16] = [
     "#71717a", "#b91c1c", "#15803d", "#92400e", "#1d4ed8", "#7e22ce", "#155e75", "#18181b",
 ];
 
-fn vardoger_dark() -> ThemeVariant {
+fn commutator_dark() -> ThemeVariant {
     variant(Seeds {
-        id: "vardoger-dark",
-        family_id: "vardoger",
-        name: "Vardoger Dark",
+        id: "commutator-dark",
+        family_id: "commutator",
+        name: "Commutator Dark",
         appearance: Appearance::Dark,
         treatment: SurfaceTreatment::Frosted,
         background: "#060606",
@@ -261,7 +261,7 @@ fn vardoger_dark() -> ThemeVariant {
             "#a1a1aa", "#f472b6", "#22d3ee", "#f87171",
         ],
         source: source(
-            "vardoger-dark",
+            "commutator-dark",
             "native",
             "https://github.com/zeronsh/comet",
             "d138049",
@@ -270,11 +270,11 @@ fn vardoger_dark() -> ThemeVariant {
     })
 }
 
-fn vardoger_light() -> ThemeVariant {
+fn commutator_light() -> ThemeVariant {
     variant(Seeds {
-        id: "vardoger-light",
-        family_id: "vardoger",
-        name: "Vardoger Light",
+        id: "commutator-light",
+        family_id: "commutator",
+        name: "Commutator Light",
         appearance: Appearance::Light,
         treatment: SurfaceTreatment::Frosted,
         background: "#ffffff",
@@ -295,7 +295,7 @@ fn vardoger_light() -> ThemeVariant {
             "#52525b", "#be185d", "#0e7490", "#b91c1c",
         ],
         source: source(
-            "vardoger-light",
+            "commutator-light",
             "native",
             "https://github.com/zeronsh/comet",
             "d138049",

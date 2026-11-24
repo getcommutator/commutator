@@ -15,12 +15,12 @@
 //! Everything else keeps the peer path: chats on a user's own computers, hosts
 //! too old to look in the store, edges too old to have one.
 
-use vardoger_doc::{
+use commutator_doc::{
     CommandBasedOn, QueuedMessage, SessionCommandEntry,
     SessionCommandPayload, SessionCommandStatus,
 };
-use vardoger_proto::{HeldSendStatus, WaitingMessage};
-use vardoger_sync::attachment_store::{
+use commutator_proto::{HeldSendStatus, WaitingMessage};
+use commutator_sync::attachment_store::{
     self, HeldBody, HeldPayload, HeldSend, HeldUpload, PutError,
 };
 
@@ -417,8 +417,8 @@ impl DocHost {
     }
 
     async fn run_held_sends(&self, chat: &str) {
-        let mut wake = vardoger_sync::wake::subscribe();
-        let mut online = vardoger_sync::wake::subscribe_online();
+        let mut wake = commutator_sync::wake::subscribe();
+        let mut online = commutator_sync::wake::subscribe_online();
         let mut backoff = TRANSFER_BACKOFF_BASE;
         loop {
             let send = match self.inner.store.next_held_send(chat) {
@@ -523,7 +523,7 @@ impl DocHost {
                         // The clock of a message starts when it goes out.
                         issued_at: now,
                         based_on,
-                        expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
+                        expires_at: Some(now + commutator_doc::COMMAND_DEFAULT_TTL_MS),
                         status: SessionCommandStatus::Pending,
                         resolution: None,
                     };

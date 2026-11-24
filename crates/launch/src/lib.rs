@@ -1,8 +1,8 @@
-//! How a Vardoger app starts its engine: the engine executable beside the app's
-//! ("Vardoger Engine" in a macOS bundle, `vardoger-engine` elsewhere), else the app
+//! How a Commutator app starts its engine: the engine executable beside the app's
+//! ("Commutator Engine" in a macOS bundle, `commutator-engine` elsewhere), else the app
 //! binary's [`ENGINE_SUBCOMMAND`]; the environment it's given; detached, so
 //! it outlives the app. The engine's `managed` module, the command line
-//! (`vardoger headless` and the other engine subcommands, run in the helper) and
+//! (`commutator headless` and the other engine subcommands, run in the helper) and
 //! the zgx app all start it through here, without linking the engine.
 
 use std::ffi::OsString;
@@ -16,17 +16,17 @@ pub const ENGINE_SUBCOMMAND: &str = "engine";
 
 /// The separate engine executable's name next to the app's.
 #[cfg(target_os = "macos")]
-pub const ENGINE_EXECUTABLES: &[&str] = &["Vardoger Engine", "vardoger-engine"];
+pub const ENGINE_EXECUTABLES: &[&str] = &["Commutator Engine", "commutator-engine"];
 #[cfg(windows)]
-pub const ENGINE_EXECUTABLES: &[&str] = &["vardoger-engine.exe"];
+pub const ENGINE_EXECUTABLES: &[&str] = &["commutator-engine.exe"];
 #[cfg(not(any(target_os = "macos", windows)))]
-pub const ENGINE_EXECUTABLES: &[&str] = &["vardoger-engine"];
+pub const ENGINE_EXECUTABLES: &[&str] = &["commutator-engine"];
 
 /// Set on the background engine's environment by the app that started it.
-pub const MANAGED_ENV: &str = "VARDOGER_MANAGED_ENGINE";
+pub const MANAGED_ENV: &str = "COMMUTATOR_MANAGED_ENGINE";
 /// The app to open for a clicked banner: its bundle on macOS, its
 /// executable elsewhere.
-pub const APP_ENV: &str = "VARDOGER_APP";
+pub const APP_ENV: &str = "COMMUTATOR_APP";
 
 static FULL_APP_ENGINE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -101,9 +101,9 @@ pub fn launch(config: &LaunchConfig, app_exe: &Path) -> std::io::Result<Child> {
     command
         .env(MANAGED_ENV, "1")
         .env(APP_ENV, app_path(app_exe))
-        .env("VARDOGER_DATA_DIR", &config.data_dir)
-        .env("VARDOGER_IPC_PORT", config.ipc_port.to_string())
-        .env("VARDOGER_EDGE_URL", &config.edge_url);
+        .env("COMMUTATOR_DATA_DIR", &config.data_dir)
+        .env("COMMUTATOR_IPC_PORT", config.ipc_port.to_string())
+        .env("COMMUTATOR_EDGE_URL", &config.edge_url);
     spawn_detached(&mut command)
 }
 
@@ -176,11 +176,11 @@ pub fn reap(mut child: Child) {
 }
 
 /// Become the engine helper beside the app at `app_exe`, given `args` (this
-/// process's own, `vardoger headless`'s `headless` and on): the standard helper
+/// process's own, `commutator headless`'s `headless` and on): the standard helper
 /// pattern for an app whose interface binary doesn't link the engine. On
 /// Unix the helper replaces this process (`exec`), so the pid, signals,
 /// standard streams and exit status are the helper's own — a service
-/// manager watching `vardoger headless` watches the engine. Elsewhere it runs
+/// manager watching `commutator headless` watches the engine. Elsewhere it runs
 /// as a child with the same streams, and its exit status is passed on.
 /// Returns only when it couldn't start.
 pub fn exec_helper(app_exe: &Path, args: impl IntoIterator<Item = OsString>) -> std::io::Error {
@@ -207,11 +207,11 @@ pub fn exec_helper(app_exe: &Path, args: impl IntoIterator<Item = OsString>) -> 
             Ok(child) => child,
             Err(error) => return error,
         };
-        // Only for an update's trial (`VARDOGER_INSTALLED_AT`, crates/update):
+        // Only for an update's trial (`COMMUTATOR_INSTALLED_AT`, crates/update):
         // otherwise this one must outlive the helper's own clean shutdown
         // (Ctrl+C reaches both, and a job would cut the helper's short).
         #[cfg(windows)]
-        if std::env::var_os("VARDOGER_INSTALLED_AT").is_some() {
+        if std::env::var_os("COMMUTATOR_INSTALLED_AT").is_some() {
             ends_with_this_process(&child);
         }
         match child.wait() {
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn engine_command_prefers_the_engine_beside_the_app() {
         let dir = tempfile::tempdir().unwrap();
-        let app = dir.path().join("vardoger");
+        let app = dir.path().join("commutator");
         std::fs::write(&app, "").unwrap();
         // Only the app: it runs the engine as a subcommand.
         let command = engine_command(&app);
@@ -290,12 +290,12 @@ mod tests {
     #[test]
     fn app_path_is_the_bundle_on_macos_layouts() {
         assert_eq!(
-            app_path(Path::new("/Applications/Vardoger.app/Contents/MacOS/vardoger")),
-            PathBuf::from("/Applications/Vardoger.app")
+            app_path(Path::new("/Applications/Commutator.app/Contents/MacOS/commutator")),
+            PathBuf::from("/Applications/Commutator.app")
         );
         assert_eq!(
-            app_path(Path::new("/home/me/.vardoger/app/current/vardoger")),
-            PathBuf::from("/home/me/.vardoger/app/current/vardoger")
+            app_path(Path::new("/home/me/.commutator/app/current/commutator")),
+            PathBuf::from("/home/me/.commutator/app/current/commutator")
         );
     }
 
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn a_missing_helper_is_an_error_not_a_hang() {
         let dir = tempfile::tempdir().unwrap();
-        let app = dir.path().join("vardoger");
+        let app = dir.path().join("commutator");
         let error = exec_helper(&app, [OsString::from("headless")]);
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }

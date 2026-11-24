@@ -1,5 +1,5 @@
-//! Observe only this user's listeners, and attribute each to the Vardoger agent
-//! run or terminal that started it (see [`vardoger_proto::ORIGIN_ENV`]). HTTP probes
+//! Observe only this user's listeners, and attribute each to the Commutator agent
+//! run or terminal that started it (see [`commutator_proto::ORIGIN_ENV`]). HTTP probes
 //! run only after that origin is established and commands performing
 //! authentication, and test runs with their fixture servers, have been
 //! excluded.
@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use vardoger_proto::ORIGIN_ENV;
+use commutator_proto::ORIGIN_ENV;
 
 #[derive(Debug, Clone)]
 pub struct Listener {
@@ -20,9 +20,9 @@ pub struct Listener {
     pub args: Vec<String>,
     pub started_at: u64,
     pub address: SocketAddr,
-    /// Started, directly or through any ancestor, by a Vardoger agent run or
+    /// Started, directly or through any ancestor, by a Commutator agent run or
     /// terminal.
-    pub vardoger_owned: bool,
+    pub commutator_owned: bool,
     /// What started it: the origin marker's value (`chat:…`, `terminal:…`).
     pub origin: Option<String>,
     /// The chat that owns [`Self::origin`], once resolved against the chats
@@ -41,7 +41,7 @@ pub struct Listener {
 
 /// What an engine sets on an agent's sign-in (the file its browser's page
 /// is recorded in): a listener under it is that sign-in's callback.
-pub const SIGN_IN_ENV: &str = "VARDOGER_LOGIN_URL_FILE";
+pub const SIGN_IN_ENV: &str = "COMMUTATOR_LOGIN_URL_FILE";
 
 /// Programs that are test runners whatever their arguments.
 const TEST_RUNNERS: &[&str] = &[
@@ -345,7 +345,7 @@ pub struct Origins {
 
 const UNREADABLE_TRIES: u8 = 3;
 
-/// What Vardoger started here and still runs: each process whose own origin
+/// What Commutator started here and still runs: each process whose own origin
 /// marker the scope accepts (an agent, a terminal's shell, anything they
 /// left running), and everything below it. Only these can own a listener
 /// discovery lists, so the socket scan looks at nothing else, and none
@@ -589,10 +589,10 @@ impl Origins {
         for listener in listeners.iter_mut() {
             let (origin, signing_in) = self.resolve(listener.pid, processes, &mut read);
             listener.signing_in = signing_in;
-            listener.vardoger_owned = origin.is_some();
+            listener.commutator_owned = origin.is_some();
             listener.origin = origin.filter(|origin| !origin.is_empty());
             // (Only for what could be listed: nothing else's ancestry is read.)
-            listener.test_run = listener.vardoger_owned
+            listener.test_run = listener.commutator_owned
                 && !signing_in
                 && self.under_test_run(listener.pid, processes, &mut arguments);
         }
@@ -792,7 +792,7 @@ fn linux_listeners(origins: &mut Origins, only: Option<&HashSet<u32>>) -> Option
                 args: args.clone(),
                 started_at,
                 address,
-                vardoger_owned: false,
+                commutator_owned: false,
                 origin: None,
                 chat_id: None,
                 signing_in: false,
@@ -899,7 +899,7 @@ pub fn listeners(origins: &mut Origins) -> Option<Vec<Listener>> {
     Some(macos_listeners(origins, sockets, &processes))
 }
 
-/// The processes Vardoger started here and still runs ([`Owned`]): one
+/// The processes Commutator started here and still runs ([`Owned`]): one
 /// process-table read, plus the environment of each process new since the
 /// last call. `accept` says which origin markers count (the chats and
 /// terminals this device hosts).
@@ -960,7 +960,7 @@ fn macos_listeners(
                 args: args.clone(),
                 started_at: process.started_at,
                 address,
-                vardoger_owned: false,
+                commutator_owned: false,
                 origin: None,
                 chat_id: None,
                 signing_in: false,
@@ -1174,7 +1174,7 @@ fn lsof_listeners(origins: &mut Origins) -> Option<Vec<Listener>> {
                 args: args.clone(),
                 started_at: process.started_at,
                 address,
-                vardoger_owned: false,
+                commutator_owned: false,
                 origin: None,
                 chat_id: None,
                 signing_in: false,
@@ -1451,7 +1451,7 @@ mod tests {
             args: args.iter().map(|arg| (*arg).into()).collect(),
             started_at: 1,
             address: "127.0.0.1:3000".parse().unwrap(),
-            vardoger_owned: true,
+            commutator_owned: true,
             origin: Some("chat:chat".into()),
             chat_id: Some("chat".into()),
             signing_in: false,
@@ -1623,7 +1623,7 @@ mod tests {
                 _ => words(&["node", "server.js"]),
             })
         };
-        let marked = |_| Some(environment(&["VARDOGER_ORIGIN=chat:a"]));
+        let marked = |_| Some(environment(&["COMMUTATOR_ORIGIN=chat:a"]));
         let mut origins = Origins::default();
         let mut listeners: Vec<Listener> =
             [103, 104, 105, 106].into_iter().map(listener_of).collect();
@@ -1645,7 +1645,7 @@ mod tests {
             args: Vec::new(),
             started_at: 0,
             address: "127.0.0.1:3000".parse().unwrap(),
-            vardoger_owned: false,
+            commutator_owned: false,
             origin: None,
             chat_id: None,
             signing_in: false,
@@ -1707,18 +1707,18 @@ mod tests {
         let mut read = |pid: u32| {
             reads.borrow_mut().push(pid);
             Some(match pid {
-                100 => environment(&["PATH=/bin", "VARDOGER_ORIGIN=chat:a"]),
-                101 => environment(&["PATH=/bin", "VARDOGER_ORIGIN=terminal:b"]),
+                100 => environment(&["PATH=/bin", "COMMUTATOR_ORIGIN=chat:a"]),
+                101 => environment(&["PATH=/bin", "COMMUTATOR_ORIGIN=terminal:b"]),
                 _ => environment(&["PATH=/bin"]),
             })
         };
         let mut origins = Origins::default();
         let mut listeners = vec![listener_of(102), listener_of(200), listener_of(300)];
         origins.attribute(&mut listeners, &processes, &mut read, |_| None);
-        assert!(listeners[0].vardoger_owned);
+        assert!(listeners[0].commutator_owned);
         assert_eq!(listeners[0].origin.as_deref(), Some("terminal:b"));
-        assert!(!listeners[1].vardoger_owned);
-        assert!(!listeners[2].vardoger_owned);
+        assert!(!listeners[1].commutator_owned);
+        assert!(!listeners[2].commutator_owned);
         assert!(
             !reads.borrow().contains(&engine),
             "the engine's own environment is never consulted"
@@ -1739,11 +1739,11 @@ mod tests {
         );
         let mut listeners = vec![listener_of(102)];
         origins.attribute(&mut listeners, &recycled, &mut read, |_| None);
-        assert!(!listeners[0].vardoger_owned);
+        assert!(!listeners[0].commutator_owned);
     }
     #[test]
     fn an_agents_sign_in_is_never_probed() {
-        // A chat's engine (vardoger-owned, chat:a) runs an agent's sign-in
+        // A chat's engine (commutator-owned, chat:a) runs an agent's sign-in
         // (the marker on it); the agent's callback server is its child.
         let processes: HashMap<u32, Process> = [
             (100, Process { parent: 1, started_at: 1 }),
@@ -1754,18 +1754,18 @@ mod tests {
         .into();
         let read = |pid: u32| {
             Some(match pid {
-                100 => environment(&["VARDOGER_ORIGIN=chat:a"]),
-                101 => environment(&["VARDOGER_LOGIN_URL_FILE=/tmp/x/browser-url"]),
+                100 => environment(&["COMMUTATOR_ORIGIN=chat:a"]),
+                101 => environment(&["COMMUTATOR_LOGIN_URL_FILE=/tmp/x/browser-url"]),
                 _ => environment(&["PATH=/bin"]),
             })
         };
         let mut origins = Origins::default();
         let mut listeners = vec![listener_of(102), listener_of(103)];
         origins.attribute(&mut listeners, &processes, read, |_| None);
-        assert!(listeners[0].vardoger_owned && listeners[0].signing_in, "the sign-in's callback");
-        assert!(listeners[1].vardoger_owned && !listeners[1].signing_in, "a dev server beside it");
-        assert!(has_variable(&environment(&["A=1", "VARDOGER_LOGIN_URL_FILE="]), SIGN_IN_ENV));
-        assert!(!has_variable(&environment(&["XVARDOGER_LOGIN_URL_FILE=1"]), SIGN_IN_ENV));
+        assert!(listeners[0].commutator_owned && listeners[0].signing_in, "the sign-in's callback");
+        assert!(listeners[1].commutator_owned && !listeners[1].signing_in, "a dev server beside it");
+        assert!(has_variable(&environment(&["A=1", "COMMUTATOR_LOGIN_URL_FILE="]), SIGN_IN_ENV));
+        assert!(!has_variable(&environment(&["XCOMMUTATOR_LOGIN_URL_FILE=1"]), SIGN_IN_ENV));
     }
     #[test]
     fn an_unreadable_environment_is_retried_not_remembered() {
@@ -1780,11 +1780,11 @@ mod tests {
         let mut origins = Origins::default();
         let mut listeners = vec![listener_of(100)];
         origins.attribute(&mut listeners, &processes, |_| None, |_| None);
-        assert!(!listeners[0].vardoger_owned);
+        assert!(!listeners[0].commutator_owned);
         origins.attribute(
             &mut listeners,
             &processes,
-            |_| Some(environment(&["VARDOGER_ORIGIN=chat:c"])),
+            |_| Some(environment(&["COMMUTATOR_ORIGIN=chat:c"])),
             |_| None,
         );
         assert_eq!(listeners[0].origin.as_deref(), Some("chat:c"));
@@ -1809,7 +1809,7 @@ mod tests {
             reads.borrow_mut().push(pid);
             Some(match (pid, scan.get()) {
                 (200, 0) | (300, _) => Vec::new(),
-                _ => environment(&["VARDOGER_ORIGIN=chat:a"]),
+                _ => environment(&["COMMUTATOR_ORIGIN=chat:a"]),
             })
         };
         let mut origins = Origins::default();
@@ -1820,7 +1820,7 @@ mod tests {
         // Its listener is not attributed while unknown, nor remembered so.
         let mut listeners = vec![listener_of(200)];
         origins.attribute(&mut listeners, &processes, read, |_| None);
-        assert!(!listeners[0].vardoger_owned);
+        assert!(!listeners[0].commutator_owned);
         scan.set(1);
         let owned = origins.owned(processes.clone(), &mine, &accept, read);
         let mut pids: Vec<_> = owned.pids.iter().copied().collect();
@@ -1867,8 +1867,8 @@ mod tests {
         let read = |pid: u32| {
             reads.borrow_mut().push(pid);
             match pid {
-                100 | 110 => Some(environment(&["VARDOGER_ORIGIN=chat:a"])),
-                200 => Some(environment(&["VARDOGER_ORIGIN=chat:z"])),
+                100 | 110 => Some(environment(&["COMMUTATOR_ORIGIN=chat:a"])),
+                200 => Some(environment(&["COMMUTATOR_ORIGIN=chat:z"])),
                 500 => None,
                 _ => Some(environment(&["PATH=/bin"])),
             }
@@ -1907,12 +1907,12 @@ mod tests {
     #[test]
     fn origin_marker_matches_the_whole_name() {
         assert_eq!(
-            origin_marker(&environment(&["XVARDOGER_ORIGIN=no", "VARDOGER_ORIGIN=yes"])),
+            origin_marker(&environment(&["XCOMMUTATOR_ORIGIN=no", "COMMUTATOR_ORIGIN=yes"])),
             Some("yes".into())
         );
-        assert_eq!(origin_marker(&environment(&["VARDOGER_ORIGIN_X=no"])), None);
+        assert_eq!(origin_marker(&environment(&["COMMUTATOR_ORIGIN_X=no"])), None);
         assert_eq!(
-            origin_marker(&environment(&["VARDOGER_ORIGIN="])),
+            origin_marker(&environment(&["COMMUTATOR_ORIGIN="])),
             Some(String::new())
         );
     }
@@ -1920,7 +1920,7 @@ mod tests {
     fn procargs_environment_skips_the_exec_path_and_arguments() {
         let mut buffer = 2i32.to_ne_bytes().to_vec();
         buffer.extend_from_slice(
-            b"/usr/bin/node\0\0\0\0node\0VARDOGER_ORIGIN=argv\0A=1\0VARDOGER_ORIGIN=env\0\0junk",
+            b"/usr/bin/node\0\0\0\0node\0COMMUTATOR_ORIGIN=argv\0A=1\0COMMUTATOR_ORIGIN=env\0\0junk",
         );
         let environment = procargs_environment(&buffer).unwrap();
         assert_eq!(origin_marker(&environment), Some("env".into()));
@@ -2098,7 +2098,7 @@ mod tests {
             .count();
         assert!(missing <= 2, "{missing} of {} missing", listed.len());
     }
-    /// `cargo test -p vardoger-preview --release -- --ignored scan_cost --nocapture`
+    /// `cargo test -p commutator-preview --release -- --ignored scan_cost --nocapture`
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore]

@@ -1,4 +1,4 @@
-//! The account's Vardoger server (`apps/vardoger-server`): which machines the
+//! The account's Commutator server (`apps/commutator-server`): which machines the
 //! account has, before a [`crate::Credentials::Remote`] client picks one.
 
 use std::time::Duration;

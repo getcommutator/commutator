@@ -14,10 +14,10 @@ use std::time::Duration;
 
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
-use vardoger_doc::parts::SubagentStatus;
-use vardoger_doc::{MessagePart, SessionMessageEntry, TranscriptUpdate, apply_transcript_frame};
-use vardoger_proto::ToolCall;
-use vardoger_rpc::methods;
+use commutator_doc::parts::SubagentStatus;
+use commutator_doc::{MessagePart, SessionMessageEntry, TranscriptUpdate, apply_transcript_frame};
+use commutator_proto::ToolCall;
+use commutator_rpc::methods;
 
 use crate::client::{Client, ClientInner};
 use crate::error::Result;
@@ -83,7 +83,7 @@ pub fn subagents(entries: &[Arc<SessionMessageEntry>]) -> Vec<SubagentInfo> {
                 _ if !*resolved => SubagentState::Running,
                 _ => SubagentState::Done,
             };
-            let (_, detail) = vardoger_proto::view::tool_chip_content(call);
+            let (_, detail) = commutator_proto::view::tool_chip_content(call);
             out.push(SubagentInfo {
                 id: id.clone(),
                 doc_id: subagent_ref.clone(),
@@ -265,7 +265,7 @@ async fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vardoger_doc::{MessageRole, MessageStatus};
+    use commutator_doc::{MessageRole, MessageStatus};
 
     fn spawn(id: &str, name: &str, status: Option<SubagentStatus>, resolved: bool) -> MessagePart {
         MessagePart::Tool {

@@ -3,14 +3,14 @@
 //! tiny turns of real usage and needs both CLIs logged in):
 //!
 //! ```text
-//! cargo test -p vardoger-engine --test provider_switch_live -- --ignored --nocapture
+//! cargo test -p commutator-engine --test provider_switch_live -- --ignored --nocapture
 //! ```
 
 use std::time::{Duration, Instant};
 
-use vardoger_doc::{MessagePart, MessageRole};
-use vardoger_engine::{EngineCore, default_registry};
-use vardoger_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
+use commutator_doc::{MessagePart, MessageRole};
+use commutator_engine::{EngineCore, default_registry};
+use commutator_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
 
 const CHAT: &str = "live-switch";
 const CODEWORD: &str = "TANGERINE-4417";

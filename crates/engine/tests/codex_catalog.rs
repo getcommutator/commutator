@@ -1,8 +1,8 @@
 //! Windows npm Codex must survive the production registry and ListHarnesses RPC.
 #![cfg(windows)]
 
-use vardoger_engine::{EngineCore, registry::default_registry};
-use vardoger_proto::HarnessId;
+use commutator_engine::{EngineCore, registry::default_registry};
+use commutator_proto::HarnessId;
 
 #[tokio::test]
 async fn catalog_child() {
@@ -16,9 +16,9 @@ async fn catalog_child() {
         HarnessId::Codex,
     )
     .expect("assemble isolated engine");
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     let catalog = client
-        .call(vardoger_rpc::methods::LIST_HARNESSES, serde_json::json!({}))
+        .call(commutator_rpc::methods::LIST_HARNESSES, serde_json::json!({}))
         .await
         .unwrap();
     let codex = catalog

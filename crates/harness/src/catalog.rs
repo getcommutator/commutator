@@ -5,7 +5,7 @@ use std::{
     future::Future,
     time::{Duration, Instant},
 };
-use vardoger_proto::Model;
+use commutator_proto::Model;
 
 #[derive(Default)]
 pub(crate) struct Catalog {

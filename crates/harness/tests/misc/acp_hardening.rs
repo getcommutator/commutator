@@ -11,10 +11,10 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::{mpsc, oneshot};
 
-use vardoger_harness::{
+use commutator_harness::{
     AcpHarness, CancellationToken, Harness, HarnessError, RunControls, SteerMessage, TurnControl,
 };
-use vardoger_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
+use commutator_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
 
 fn fixture_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -60,7 +60,7 @@ struct Run {
     turn: TurnControl,
     _interrupt: CancellationToken,
     /// Held so a question dialog stays open until the test drops it.
-    _answers: mpsc::UnboundedReceiver<oneshot::Sender<Vec<vardoger_proto::UserInputAnswer>>>,
+    _answers: mpsc::UnboundedReceiver<oneshot::Sender<Vec<commutator_proto::UserInputAnswer>>>,
 }
 
 impl Run {

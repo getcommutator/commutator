@@ -22,8 +22,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use vardoger_text::WidthCache;
-use vardoger_visual::{DrawCmd, HandlerArg, HandlerId, Node, Visual};
+use commutator_text::WidthCache;
+use commutator_visual::{DrawCmd, HandlerArg, HandlerId, Node, Visual};
 
 use crate::layout::style::Typography;
 use crate::layout::{StyleDesc, TextSystem};
@@ -282,10 +282,10 @@ impl VisualHub {
     }
 
     /// Where scripts load from: the chat's host device.
-    pub fn set_source(&self, client: vardoger_client::Client, device: String, pixel_scale: f32) {
+    pub fn set_source(&self, client: commutator_client::Client, device: String, pixel_scale: f32) {
         let fetch: Fetch = Arc::new(move |path: &str| {
             let (client, device, path) = (client.clone(), device.clone(), path.to_owned());
-            block_on(vardoger_client::runtime::run(async move {
+            block_on(commutator_client::runtime::run(async move {
                 client.read_attachment(&device, &path).await
             }))
             .ok()
@@ -397,7 +397,7 @@ impl VisualSession {
         let title = slot.title.clone();
         let text = text.clone();
         std::thread::Builder::new()
-            .name("vardoger-visual".into())
+            .name("commutator-visual".into())
             .spawn(move || Worker::new(&text, rx, slot, row_key, source, changed).run())
             .expect("spawn visual thread");
         Arc::new(Self {
@@ -498,12 +498,12 @@ struct SurfaceState {
     moved: bool,
     reads_pointer: bool,
     orbit: Option<Orbit>,
-    shader: Option<vardoger_visual_gpu::ShaderState>,
+    shader: Option<commutator_visual_gpu::ShaderState>,
     /// A scene's GPU targets, kept while its size holds.
-    scene_gpu: Option<vardoger_visual_gpu::SceneState>,
+    scene_gpu: Option<commutator_visual_gpu::SceneState>,
     shader_frame: u32,
     shader_time: f64,
-    scene: Option<(u64, vardoger_visual::Scene)>,
+    scene: Option<(u64, commutator_visual::Scene)>,
     hints: Vec<([f32; 2], f32, String)>,
     hint: Option<String>,
     hover: chart::Hover,
@@ -748,8 +748,8 @@ impl Worker {
         {
             for name in names
                 .into_iter()
-                .filter(|name| vardoger_visual::assets::valid_name(name))
-                .take(vardoger_visual::assets::MAX_ASSETS)
+                .filter(|name| commutator_visual::assets::valid_name(name))
+                .take(commutator_visual::assets::MAX_ASSETS)
             {
                 if let Some(bytes) = self.fetch(format!("{stem}-asset-{name}")) {
                     files.insert(name, Arc::<[u8]>::from(bytes));
@@ -757,10 +757,10 @@ impl Worker {
             }
         }
         // Seeded like the engine's check, so the reader sees the same data.
-        let seed = vardoger_visual::seed_for(&self.slot.id);
+        let seed = commutator_visual::seed_for(&self.slot.id);
         match Visual::load(&script, seed) {
             Ok(visual) => {
-                self.visual = Some(visual.with_assets(vardoger_visual::Assets::new(files)));
+                self.visual = Some(visual.with_assets(commutator_visual::Assets::new(files)));
                 self.load = Load::Ready;
                 self.rerender();
             }
@@ -803,7 +803,7 @@ impl Worker {
         };
         let para = ctx.line(
             message,
-            Face::new(vardoger_visual::TextSize::Sm, vardoger_visual::Weight::Regular),
+            Face::new(commutator_visual::TextSize::Sm, commutator_visual::Weight::Regular),
             color,
         );
         laid.paint.para(
@@ -812,7 +812,7 @@ impl Worker {
             0.0,
             y,
             self.width,
-            vardoger_visual::Align::Start,
+            commutator_visual::Align::Start,
             false,
         )
     }
@@ -1035,10 +1035,10 @@ impl Worker {
     fn canvas_frame(
         &mut self,
         state: &mut SurfaceState,
-        canvas: &vardoger_visual::Canvas,
+        canvas: &commutator_visual::Canvas,
     ) -> Option<(Option<FrameImage>, Paint)> {
         let (w, h) = state.spec.size();
-        let pointer = state.pointer.map(|[x, y]| vardoger_visual::Pointer {
+        let pointer = state.pointer.map(|[x, y]| commutator_visual::Pointer {
             x,
             y,
             down: state.down,
@@ -1107,7 +1107,7 @@ impl Worker {
     fn scene_frame(
         &mut self,
         state: &mut SurfaceState,
-        node: &vardoger_visual::SceneNode,
+        node: &commutator_visual::SceneNode,
     ) -> Option<(Option<FrameImage>, Paint)> {
         let (w, h) = state.spec.size();
         let animate = node.animate && !self.reduce_motion;
@@ -1128,7 +1128,7 @@ impl Worker {
         let (_, scene) = state.scene.as_ref()?;
         let spin = if self.reduce_motion { 0.0 } else { node.spin };
         let orbit = state.orbit.as_ref()?;
-        let camera = vardoger_visual::Camera {
+        let camera = commutator_visual::Camera {
             yaw: orbit.yaw(spin),
             pitch: orbit.pitch,
             zoom: node.zoom,
@@ -1140,7 +1140,7 @@ impl Worker {
         };
         let pixel_scale = self.source.pixel_scale.min(MAX_GPU_SCALE);
         let (image, hints, labels) =
-            match vardoger_visual_gpu::render_scene(
+            match commutator_visual_gpu::render_scene(
                 scene,
                 camera,
                 w,
@@ -1160,9 +1160,9 @@ impl Worker {
                 None => {
                     // No GPU: the software renderer, rougher while it moves.
                     let quality = if self.moving(state) || orbit.drag.is_some() {
-                        vardoger_visual::Quality::Draft
+                        commutator_visual::Quality::Draft
                     } else {
-                        vardoger_visual::Quality::Final
+                        commutator_visual::Quality::Final
                     };
                     let raster = scene.render(camera, w, h, pixel_scale, quality, &rgba);
                     (
@@ -1179,27 +1179,27 @@ impl Worker {
         };
         let mut paint = Paint::default();
         for label in &labels {
-            let face = Face::new(label.size, vardoger_visual::Weight::Regular);
+            let face = Face::new(label.size, commutator_visual::Weight::Regular);
             paint.label(
                 &mut ctx,
                 &label.text,
                 face,
                 palette.color(label.color),
                 label.at,
-                vardoger_visual::Align::Center,
-                vardoger_visual::Align::End,
+                commutator_visual::Align::Center,
+                commutator_visual::Align::End,
             );
         }
         if let Some(hint) = &state.hint {
-            let face = Face::new(vardoger_visual::TextSize::Sm, vardoger_visual::Weight::Medium);
+            let face = Face::new(commutator_visual::TextSize::Sm, commutator_visual::Weight::Medium);
             paint.label(
                 &mut ctx,
                 hint,
                 face,
                 palette.text,
                 [0.0, 0.0],
-                vardoger_visual::Align::Start,
-                vardoger_visual::Align::Start,
+                commutator_visual::Align::Start,
+                commutator_visual::Align::Start,
             );
         }
         Some((Some(image), paint))
@@ -1208,7 +1208,7 @@ impl Worker {
     fn shader_frame(
         &mut self,
         state: &mut SurfaceState,
-        node: &vardoger_visual::ShaderNode,
+        node: &commutator_visual::ShaderNode,
     ) -> Option<(Option<FrameImage>, Paint)> {
         let (w, h) = state.spec.size();
         let scale = self.source.pixel_scale.min(MAX_GPU_SCALE);
@@ -1234,14 +1234,14 @@ impl Worker {
             }
             _ => [0.0, 0.0, -1.0, -1.0],
         };
-        let mut inputs = [[0.0f32; 4]; vardoger_visual::shader::MAX_INPUTS / 4];
+        let mut inputs = [[0.0f32; 4]; commutator_visual::shader::MAX_INPUTS / 4];
         for (i, (_, value)) in node.inputs.iter().enumerate() {
             inputs[i / 4][i % 4] = *value;
         }
         let time = self.time();
         let shown_time = if animate { time } else { state.shader_time };
         let delta = (time - state.shader_time).max(0.0);
-        let uniforms = vardoger_visual::shader::ShaderUniforms {
+        let uniforms = commutator_visual::shader::ShaderUniforms {
             resolution: [size.0 as f32, size.1 as f32, scale, 0.0],
             mouse,
             camera: [yaw, orbit.pitch, node.zoom, 0.0],
@@ -1256,18 +1256,18 @@ impl Worker {
         };
         let names: Vec<String> = node.inputs.iter().map(|(n, _)| n.clone()).collect();
         let assets = self.visual.as_ref()?.assets().clone();
-        let textures: Vec<vardoger_visual::TextureData> = node
+        let textures: Vec<commutator_visual::TextureData> = node
             .textures
             .iter()
             // A missing one keeps its slot (and samples as clear).
             .map(|name| {
-                vardoger_visual::TextureData::Encoded(
+                commutator_visual::TextureData::Encoded(
                     assets.get(name).unwrap_or_else(|| Arc::from([])),
                 )
             })
             .collect();
-        let rendered = vardoger_visual_gpu::render_shader(
-            &vardoger_visual_gpu::ShaderSpec {
+        let rendered = commutator_visual_gpu::render_shader(
+            &commutator_visual_gpu::ShaderSpec {
                 image: &node.code,
                 buffers: &node.buffers,
                 inputs: &names,

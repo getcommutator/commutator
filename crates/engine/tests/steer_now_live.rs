@@ -5,17 +5,17 @@
 //! The current answer must stop early and the steer must be answered within
 //! the same live runtime — not after the long answer finishes.
 //!
-//! VARDOGER_TEST_HARNESS=codex cargo test -p vardoger-engine --test steer_now_live -- --ignored --nocapture
+//! COMMUTATOR_TEST_HARNESS=codex cargo test -p commutator-engine --test steer_now_live -- --ignored --nocapture
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use vardoger_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{
+use commutator_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{
     AcpHarness, ClaudeHarness, CodexHarness, CursorHarness, Harness, OpencodeHarness,
 };
-use vardoger_proto::{ChatConfig, RunRequest, SandboxLevel, SessionStatus};
+use commutator_proto::{ChatConfig, RunRequest, SandboxLevel, SessionStatus};
 
 const CHAT: &str = "steer-now";
 
@@ -28,7 +28,7 @@ fn harness(name: &str) -> Arc<dyn Harness> {
         "grok" => Arc::new(AcpHarness::grok()),
         "devin" => Arc::new(AcpHarness::devin()),
         "hermes" => Arc::new(AcpHarness::hermes()),
-        "pi" => Arc::new(vardoger_harness::PiHarness::new()),
+        "pi" => Arc::new(commutator_harness::PiHarness::new()),
         "antigravity" => Arc::new(AcpHarness::antigravity()),
         _ => panic!("unknown harness {name}"),
     }
@@ -78,9 +78,9 @@ fn dump(entries: &[SessionMessageEntry]) -> String {
 #[tokio::test]
 #[ignore = "uses real model quota; select the harness explicitly"]
 async fn steer_now_interrupts_a_streaming_answer() {
-    let name = std::env::var("VARDOGER_TEST_HARNESS").expect("select harness");
-    let model = std::env::var("VARDOGER_TEST_MODEL").ok();
-    let bursts: usize = std::env::var("VARDOGER_TEST_BURST")
+    let name = std::env::var("COMMUTATOR_TEST_HARNESS").expect("select harness");
+    let model = std::env::var("COMMUTATOR_TEST_MODEL").ok();
+    let bursts: usize = std::env::var("COMMUTATOR_TEST_BURST")
         .ok()
         .map(|b| b.parse().unwrap())
         .unwrap_or(1);
@@ -175,9 +175,9 @@ async fn steer_now_interrupts_a_streaming_answer() {
     }
     let words_at_steer = assistant_text(&entries()).split_whitespace().count();
     let steer_at = Instant::now();
-    // VARDOGER_TEST_CLICK_GAP_MS: the UI flow of queueing every message first
+    // COMMUTATOR_TEST_CLICK_GAP_MS: the UI flow of queueing every message first
     // (Enter while busy) and then pressing Steer on each row in turn.
-    if let Some(gap) = std::env::var("VARDOGER_TEST_CLICK_GAP_MS")
+    if let Some(gap) = std::env::var("COMMUTATOR_TEST_CLICK_GAP_MS")
         .ok()
         .map(|g| Duration::from_millis(g.parse().unwrap()))
     {
@@ -201,7 +201,7 @@ async fn steer_now_interrupts_a_streaming_answer() {
             assert!(core.doc_host.steer_queued_now(CHAT, &row).await.unwrap());
         }
     }
-    for i in (0..bursts).filter(|_| std::env::var("VARDOGER_TEST_CLICK_GAP_MS").is_err()) {
+    for i in (0..bursts).filter(|_| std::env::var("COMMUTATOR_TEST_CLICK_GAP_MS").is_err()) {
         let word = format!("PINEAPPLE{i}");
         let row = core
             .doc_host

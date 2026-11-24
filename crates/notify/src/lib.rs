@@ -1,5 +1,5 @@
 //! Desktop banner notifications, posted by whichever process owns the engine
-//! — the app's background engine (`vardoger-engine`) or, when the app embeds its
+//! — the app's background engine (`commutator-engine`) or, when the app embeds its
 //! engine, the app itself. Platform facilities, failures swallowed:
 //!
 //! - macOS: `NSUserNotification` through the ObjC runtime, so the banner is
@@ -20,7 +20,7 @@
 //!   desktop).
 //! - Windows: no-op for now — toasts require a registered AppUserModelID
 //!   (an installer concern); the app's chime still covers it.
-//! - `VARDOGER_DISABLE_NOTIFICATIONS` env kill-switch (callers also check the
+//! - `COMMUTATOR_DISABLE_NOTIFICATIONS` env kill-switch (callers also check the
 //!   `notificationsEnabled` setting);
 //! - failures are logged and swallowed — a missing notifier must never
 //!   bother the session flow.
@@ -33,18 +33,18 @@ pub mod links;
 
 use std::sync::Mutex;
 
-const DISABLE_ENV: &str = "VARDOGER_DISABLE_NOTIFICATIONS";
+const DISABLE_ENV: &str = "COMMUTATOR_DISABLE_NOTIFICATIONS";
 
 /// Reserved notification target routed to Settings → Agents rather than a
 /// conversation. Session ids are generated UUIDs, so this cannot collide
 /// with a real chat.
-pub const AGENT_UPDATES_TARGET: &str = "__vardoger_agent_updates__";
+pub const AGENT_UPDATES_TARGET: &str = "__commutator_agent_updates__";
 
 /// The app-side link a clicked banner opens when the engine posted it from
-/// its own process: `vardoger://notification/<target>`.
-pub const LINK_PREFIX: &str = "vardoger://notification/";
+/// its own process: `commutator://notification/<target>`.
+pub const LINK_PREFIX: &str = "commutator://notification/";
 
-/// `vardoger://notification/<target>` for a banner's target.
+/// `commutator://notification/<target>` for a banner's target.
 pub fn link(target: &str) -> String {
     format!("{LINK_PREFIX}{target}")
 }
@@ -93,7 +93,7 @@ fn clicked(target: String) {
 }
 
 /// The bundle identifier banners are attributed to when this process has
-/// none of its own: the app's (`sh.vardoger.app`, `sh.vardoger.app.dev` for the
+/// none of its own: the app's (`sh.commutator.app`, `sh.commutator.app.dev` for the
 /// development bundle). Call before the first [`post`].
 pub fn set_app_bundle_id(id: &str) {
     #[cfg(target_os = "macos")]
@@ -204,7 +204,7 @@ mod macos {
     }
 
     /// The production app's id: the default identity to adopt.
-    const DEFAULT_BUNDLE_ID: &str = "sh.vardoger.app";
+    const DEFAULT_BUNDLE_ID: &str = "sh.commutator.app";
 
     pub(super) static APP_BUNDLE_ID: OnceLock<String> = OnceLock::new();
 
@@ -340,8 +340,8 @@ mod macos {
     pub(super) fn delegate() -> *mut Object {
         static DELEGATE: OnceLock<usize> = OnceLock::new();
         *DELEGATE.get_or_init(|| unsafe {
-            let mut decl = ClassDecl::new("VardogerNotifyDelegate", class!(NSObject))
-                .expect("VardogerNotifyDelegate registered twice");
+            let mut decl = ClassDecl::new("CommutatorNotifyDelegate", class!(NSObject))
+                .expect("CommutatorNotifyDelegate registered twice");
             decl.add_method(
                 sel!(userNotificationCenter:shouldPresentNotification:),
                 should_present as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> BOOL,
@@ -447,7 +447,7 @@ fn post_impl(title: &str, body: &str, _target: Option<&str>) {
         // `--` ends option parsing: session titles are model-generated, so a
         // `-`-leading one must land as the summary, not as a flag.
         let result = std::process::Command::new("notify-send")
-            .args(["--app-name=Vardoger", "--", &title, &body])
+            .args(["--app-name=Commutator", "--", &title, &body])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
@@ -479,26 +479,26 @@ mod tests {
 
     #[test]
     fn links_round_trip_their_target() {
-        assert_eq!(link("chat-1"), "vardoger://notification/chat-1");
+        assert_eq!(link("chat-1"), "commutator://notification/chat-1");
         assert_eq!(link_target(&link("chat-1")), Some("chat-1"));
         assert_eq!(link_target(LINK_PREFIX), None);
-        assert_eq!(link_target("vardoger://chat/x"), None);
+        assert_eq!(link_target("commutator://chat/x"), None);
     }
 
     #[test]
     fn reads_the_bundle_id_from_an_app_plist() {
-        let dir = std::env::temp_dir().join(format!("vardoger-notify-{}", std::process::id()));
-        let contents = dir.join("Vardoger Dev.app").join("Contents");
+        let dir = std::env::temp_dir().join(format!("commutator-notify-{}", std::process::id()));
+        let contents = dir.join("Commutator Dev.app").join("Contents");
         std::fs::create_dir_all(&contents).unwrap();
         std::fs::write(
             contents.join("Info.plist"),
-            "<dict>\n<key>CFBundleName</key>\n<string>Vardoger Dev</string>\n\
-             <key>CFBundleIdentifier</key>\n    <string>sh.vardoger.app.dev</string>\n</dict>",
+            "<dict>\n<key>CFBundleName</key>\n<string>Commutator Dev</string>\n\
+             <key>CFBundleIdentifier</key>\n    <string>sh.commutator.app.dev</string>\n</dict>",
         )
         .unwrap();
         assert_eq!(
-            bundle_id_of(&dir.join("Vardoger Dev.app")).as_deref(),
-            Some("sh.vardoger.app.dev")
+            bundle_id_of(&dir.join("Commutator Dev.app")).as_deref(),
+            Some("sh.commutator.app.dev")
         );
         assert_eq!(bundle_id_of(&dir.join("Missing.app")), None);
         let _ = std::fs::remove_dir_all(dir);

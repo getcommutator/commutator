@@ -13,8 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vardoger_engine::{CheckoutDiffSync, EngineCore, HarnessRegistry};
-use vardoger_proto::CheckoutDiff;
+use commutator_engine::{CheckoutDiffSync, EngineCore, HarnessRegistry};
+use commutator_proto::CheckoutDiff;
 
 async fn git(cwd: &Path, args: &[&str]) {
     let output = tokio::process::Command::new("git")
@@ -50,7 +50,7 @@ fn assemble(dir: &Path) -> EngineCore {
     EngineCore::assemble(
         dir,
         Arc::new(HarnessRegistry::new()),
-        vardoger_proto::HarnessId::Mock,
+        commutator_proto::HarnessId::Mock,
     )
     .expect("engine assembles")
 }
@@ -421,7 +421,7 @@ async fn unopened_chats_stay_idle_and_shared_checkout_lasts_until_last_viewer() 
     core.shutdown().await;
 }
 
-fn chat_row(core: &EngineCore, chat_id: &str) -> vardoger_proto::Chat {
+fn chat_row(core: &EngineCore, chat_id: &str) -> commutator_proto::Chat {
     core.workspace
         .watch_chats()
         .borrow()
@@ -542,7 +542,7 @@ async fn discard_works_for_an_untracked_checkout() {
         "one\ntwo\nedited\n"
     );
 
-    let snapshot = vardoger_engine::capture_diff(&core.repos, &identity.root)
+    let snapshot = commutator_engine::capture_diff(&core.repos, &identity.root)
         .await
         .expect("capture");
     sync.discard_working_tree(&identity, &snapshot.checksum)

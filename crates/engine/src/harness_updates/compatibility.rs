@@ -1,28 +1,28 @@
-//! Agent CLI releases this vardoger is known not to work with.
+//! Agent CLI releases this commutator is known not to work with.
 //!
-//! A CLI release can break the protocol vardoger speaks to it (a renamed
+//! A CLI release can break the protocol commutator speaks to it (a renamed
 //! stream-json frame, a dropped flag). The policy lists those releases per
 //! CLI, so an update never installs one, and an installed one says so with
-//! the release to go back to. The list is built into this vardoger
+//! the release to go back to. The list is built into this commutator
 //! (`compatibility.json`); a newly broken CLI release is held back by the
-//! next vardoger release.
+//! next commutator release.
 //!
 //! ```json
 //! { "policies": [ {
 //!     "harness": "claude-code",
-//!     "vardoger": "<0.3.0",
+//!     "commutator": "<0.3.0",
 //!     "recommended": "2.1.309",
 //!     "ranges": [ { "range": ">=2.1.310, <2.1.312", "status": "broken",
 //!                   "reason": "stream-json results lost their session id" } ]
 //! } ] }
 //! ```
 //!
-//! `vardoger` (optional) scopes a policy to the vardoger versions it was written
-//! for, so a vardoger that adapted is not held back by it. A range is a semver
+//! `commutator` (optional) scopes a policy to the commutator versions it was written
+//! for, so a commutator that adapted is not held back by it. A range is a semver
 //! requirement; `||` separates alternatives.
 
 use serde::{Deserialize, Serialize};
-use vardoger_proto::{HarnessCompatibility, HarnessCompatibilityStatus, HarnessId};
+use commutator_proto::{HarnessCompatibility, HarnessCompatibilityStatus, HarnessId};
 
 const BUILT_IN: &str = include_str!("compatibility.json");
 
@@ -36,7 +36,7 @@ pub(super) struct Feed {
 pub(super) struct Policy {
     pub harness: HarnessId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vardoger: Option<String>,
+    pub commutator: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended: Option<String>,
     #[serde(default)]
@@ -61,8 +61,8 @@ impl Feed {
     pub(super) fn parse(json: &str) -> Result<Self, String> {
         let feed: Feed = serde_json::from_str(json).map_err(|error| error.to_string())?;
         for policy in &feed.policies {
-            if let Some(vardoger) = &policy.vardoger {
-                requirement(vardoger)?;
+            if let Some(commutator) = &policy.commutator {
+                requirement(commutator)?;
             }
             for range in &policy.ranges {
                 requirement(&range.range)?;
@@ -71,7 +71,7 @@ impl Feed {
         Ok(feed)
     }
 
-    /// What the policy says about `harness` at `version`, for this vardoger.
+    /// What the policy says about `harness` at `version`, for this commutator.
     /// `None`: nothing (supported, or not listed).
     pub(super) fn verdict(
         &self,
@@ -85,15 +85,15 @@ impl Feed {
         &self,
         harness: HarnessId,
         version: &str,
-        vardoger: &str,
+        commutator: &str,
     ) -> Option<HarnessCompatibility> {
-        let vardoger = lenient(vardoger)?;
+        let commutator = lenient(commutator)?;
         let policy = self.policies.iter().find(|policy| {
             policy.harness == harness
                 && policy
-                    .vardoger
+                    .commutator
                     .as_deref()
-                    .is_none_or(|range| matches(range, &vardoger))
+                    .is_none_or(|range| matches(range, &commutator))
         })?;
         let parsed = lenient(version)?;
         let range = policy
@@ -104,8 +104,8 @@ impl Feed {
             return None;
         }
         let what = match range.status {
-            HarnessCompatibilityStatus::Broken => "doesn't work with this version of Vardoger",
-            _ => "isn't supported by this version of Vardoger",
+            HarnessCompatibilityStatus::Broken => "doesn't work with this version of Commutator",
+            _ => "isn't supported by this version of Commutator",
         };
         let mut message = format!("{version} {what}");
         if let Some(reason) = &range.reason {
@@ -161,7 +161,7 @@ mod tests {
     fn feed() -> Feed {
         Feed::parse(
             r#"{ "policies": [
-                { "harness": "claude-code", "vardoger": "<0.3.0", "recommended": "2.1.309",
+                { "harness": "claude-code", "commutator": "<0.3.0", "recommended": "2.1.309",
                   "ranges": [
                     { "range": ">=2.1.310, <2.1.312", "status": "broken",
                       "reason": "results lost their session id" },
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(broken.recommended_version.as_deref(), Some("2.1.309"));
         assert_eq!(
             broken.message,
-            "2.1.311 doesn't work with this version of Vardoger (results lost their session id). \
+            "2.1.311 doesn't work with this version of Commutator (results lost their session id). \
              Use 2.1.309"
         );
         assert_eq!(
@@ -213,7 +213,7 @@ mod tests {
             feed.verdict_for(HarnessId::Grok, "1.0.0", "0.2.120")
                 .is_none()
         );
-        // A vardoger that adapted is not held back.
+        // A commutator that adapted is not held back.
         assert!(
             feed.verdict_for(HarnessId::ClaudeCode, "2.1.311", "0.3.0")
                 .is_none()

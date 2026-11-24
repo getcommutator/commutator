@@ -349,7 +349,7 @@ impl Render for NotificationsPage {
                     .child(
                         toggle(
                             "notifications-background-toggle",
-                            "Only notify when Vardoger is in the background",
+                            "Only notify when Commutator is in the background",
                             background_only,
                             desktop,
                         )

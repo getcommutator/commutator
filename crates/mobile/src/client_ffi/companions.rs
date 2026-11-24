@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use vardoger_client as zc;
+use commutator_client as zc;
 
 use super::CoreClient;
 use super::session::SessionHandle;

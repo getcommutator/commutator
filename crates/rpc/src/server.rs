@@ -249,7 +249,7 @@ const CALLING_CHAT_METHODS: [&str; 3] = [
 
 /// The service as one run's agent reaches it: only [`crate::agent_allowed`]
 /// methods, served as [`crate::Caller::Agent`] for `chat` — which, unlike
-/// the WS handshake's claimed `x-vardoger-chat`, the engine itself vouches for
+/// the WS handshake's claimed `x-commutator-chat`, the engine itself vouches for
 /// (the run's own MCP token named it). What acts on "the calling chat"
 /// ([`CALLING_CHAT_METHODS`]) is refused for any other chat.
 pub fn agent_service(inner: Arc<dyn RpcService>, chat: String) -> Arc<dyn RpcService> {
@@ -266,7 +266,7 @@ impl RpcService for AgentGuard {
         if !crate::agent_allowed(method) {
             tracing::warn!(method, chat = ?self.chat, "rpc: refused an agent's call outside its scope");
             return Err(RpcError::Failed(format!(
-                "{method} isn't open to agents: only the person can do that, in Vardoger"
+                "{method} isn't open to agents: only the person can do that, in Commutator"
             )));
         }
         if self.pinned

@@ -1,4 +1,4 @@
-//! This machine's sign-in to a Vardoger server (`apps/vardoger-server`):
+//! This machine's sign-in to a Commutator server (`apps/commutator-server`):
 //! what lets the account's other devices reach it through the server's
 //! relay. Saved at `{data_dir}/account.json` (0600) as the server's URL,
 //! this machine's bearer token, and who signed in.
@@ -29,11 +29,11 @@ pub struct Account {
     pub name: Option<String>,
 }
 
-/// The server to sign in to: the one named, else `VARDOGER_SERVER_URL`,
+/// The server to sign in to: the one named, else `COMMUTATOR_SERVER_URL`,
 /// else the one this machine signed in to before.
 pub fn server_url(named: Option<String>, saved: Option<&Account>) -> Option<String> {
     named
-        .or_else(|| std::env::var("VARDOGER_SERVER_URL").ok())
+        .or_else(|| std::env::var("COMMUTATOR_SERVER_URL").ok())
         .filter(|url| !url.trim().is_empty())
         .or_else(|| saved.map(|account| account.server_url.clone()))
         .map(|url| url.trim().trim_end_matches('/').to_owned())
@@ -46,13 +46,13 @@ pub fn path(data_dir: &Path) -> PathBuf {
 impl Account {
     /// The saved sign-in, if any (an unreadable one counts as none).
     pub fn load(data_dir: &Path) -> Option<Self> {
-        let raw = vardoger_rpc::ipc_auth::read_token(&path(data_dir)).ok()??;
+        let raw = commutator_rpc::ipc_auth::read_token(&path(data_dir)).ok()??;
         serde_json::from_str(&raw).ok()
     }
 
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
         let json = serde_json::to_string(self).map_err(std::io::Error::other)?;
-        vardoger_rpc::ipc_auth::write_token(&path(data_dir), &json)
+        commutator_rpc::ipc_auth::write_token(&path(data_dir), &json)
     }
 
     /// Forget the sign-in here. The server keeps the device until it's
@@ -67,20 +67,20 @@ impl Account {
     /// Remove this device on the server, then forget it here. A server
     /// that can't be reached still leaves this machine signed out.
     pub async fn sign_out(&self, data_dir: &Path) -> std::io::Result<Result<(), String>> {
-        let removed = vardoger_account::remove_device(&self.server_url, &self.token, &self.device_id)
+        let removed = commutator_account::remove_device(&self.server_url, &self.token, &self.device_id)
             .await
             .map_err(|err| err.to_string());
         Self::forget(data_dir)?;
         Ok(removed)
     }
 
-    pub fn token_source(&self) -> std::sync::Arc<dyn vardoger_rpc::TokenSource> {
-        std::sync::Arc::new(vardoger_rpc::StaticToken(self.token.clone()))
+    pub fn token_source(&self) -> std::sync::Arc<dyn commutator_rpc::TokenSource> {
+        std::sync::Arc::new(commutator_rpc::StaticToken(self.token.clone()))
     }
 
     /// WebRTC signaling on the server (`GET /preview/ws`), as this device.
-    pub fn preview_signaling(&self) -> vardoger_preview::signaling::Config {
-        vardoger_preview::signaling::Config {
+    pub fn preview_signaling(&self) -> commutator_preview::signaling::Config {
+        commutator_preview::signaling::Config {
             server_url: self.server_url.clone(),
             tokens: std::sync::Arc::new(PreviewToken(self.token.clone())),
         }
@@ -90,7 +90,7 @@ impl Account {
 struct PreviewToken(String);
 
 #[async_trait::async_trait]
-impl vardoger_preview::signaling::TokenSource for PreviewToken {
+impl commutator_preview::signaling::TokenSource for PreviewToken {
     async fn token(&self) -> anyhow::Result<String> {
         Ok(self.0.clone())
     }
@@ -107,12 +107,12 @@ pub enum Callback {
 /// A started sign-in: open [`Self::url`], then [`Self::wait`] (loopback) or
 /// [`Self::redeem`] the pasted code.
 pub struct SignIn {
-    inner: vardoger_account::SignIn,
+    inner: commutator_account::SignIn,
     device_id: String,
     listener: Option<tokio::net::TcpListener>,
 }
 
-pub use vardoger_account::pkce_challenge;
+pub use commutator_account::pkce_challenge;
 
 impl SignIn {
     pub async fn start(
@@ -132,10 +132,10 @@ impl SignIn {
             )),
             None => None,
         };
-        let inner = vardoger_account::SignIn::start(
+        let inner = commutator_account::SignIn::start(
             server_url,
             name,
-            vardoger_account::Kind::Machine,
+            commutator_account::Kind::Machine,
             redirect.as_deref(),
         )
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -260,11 +260,11 @@ mod tests {
         });
         let (mut stream, _) = listener.accept().await.unwrap();
         assert_eq!(callback_code(&mut stream).await.as_deref(), Some("abc 123"));
-        redirect(&mut stream, "https://vardoger.example/signed-in").await;
+        redirect(&mut stream, "https://commutator.example/signed-in").await;
         drop(stream);
         let reply = browser.await.unwrap();
         assert!(reply.starts_with("HTTP/1.1 303"), "{reply}");
-        assert!(reply.contains("location: https://vardoger.example/signed-in\r\n"));
+        assert!(reply.contains("location: https://commutator.example/signed-in\r\n"));
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(Account::load(dir.path()), None);
         let account = Account {
-            server_url: "https://vardoger.example.com".into(),
+            server_url: "https://commutator.example.com".into(),
             token: "t".into(),
             device_id: "d".into(),
             email: "me@example.com".into(),

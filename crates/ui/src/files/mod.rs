@@ -10,7 +10,7 @@ use gpui::{
     Context, Entity, EventEmitter, FocusHandle, ListAlignment, ListState, Pixels, Point, Render,
     SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
-use vardoger_proto::ListWorkspaceDirectoryRequest;
+use commutator_proto::ListWorkspaceDirectoryRequest;
 
 use crate::{
     composer::{ComposerInput, ComposerInputEvent},
@@ -285,9 +285,9 @@ pub struct FilesSurface {
     surface_id: gpui::EntityId,
     interaction_generation: u64,
     effective_checkout_id: Option<String>,
-    mutation_capabilities: Option<vardoger_proto::WorkspaceMutationCapabilities>,
+    mutation_capabilities: Option<commutator_proto::WorkspaceMutationCapabilities>,
     pending_mutation: Option<mutations::MutationIntent>,
-    deferred_file_changes: Vec<vardoger_proto::WorkspaceFileChanges>,
+    deferred_file_changes: Vec<commutator_proto::WorkspaceFileChanges>,
     applied_mutations: std::collections::VecDeque<String>,
     mutation_error: Option<SharedString>,
     mutation_hold: Vec<String>,
@@ -398,7 +398,7 @@ impl FilesSurface {
                         .unwrap_or(&chat.device_id);
                     // A projectless chat's folder is an implementation detail.
                     match chat.cwd.as_deref() {
-                        Some(cwd) if !vardoger_proto::projectless::is_projectless_cwd(Some(cwd)) => {
+                        Some(cwd) if !commutator_proto::projectless::is_projectless_cwd(Some(cwd)) => {
                             format!("Files in {cwd} · {device}")
                         }
                         _ => format!("Files · {device}"),

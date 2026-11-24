@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::handshake::server::{
     Request as WsRequest, Response as WsResponse,
 };
-use vardoger_rpc::{DeviceFrameHeader, decode_device_frame, encode_device_frame};
+use commutator_rpc::{DeviceFrameHeader, decode_device_frame, encode_device_frame};
 
 #[derive(Default)]
 struct RelayState {

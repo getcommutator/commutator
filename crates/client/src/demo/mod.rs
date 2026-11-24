@@ -22,11 +22,11 @@ use std::time::Duration;
 
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
-use vardoger_doc::{
+use commutator_doc::{
     MessagePart, MessageRole, MessageStatus, QueueDeliveryGate, SegmentWriter,
     SessionCommandPayload, SessionCommandStatus, SessionDoc,
 };
-use vardoger_proto::{FolderEntry, FolderListing, RepoRef, Session, SessionStatus};
+use commutator_proto::{FolderEntry, FolderListing, RepoRef, Session, SessionStatus};
 
 use crate::catalog::{self, HarnessInfo, ModelInfo};
 use crate::client::ClientInner;
@@ -86,7 +86,7 @@ pub(crate) struct DemoHost {
     forks: Mutex<HashMap<String, String>>,
 }
 
-fn doc_err(err: vardoger_doc::DocError) -> ClientError {
+fn doc_err(err: commutator_doc::DocError) -> ClientError {
     ClientError::Internal(err.to_string())
 }
 
@@ -416,7 +416,7 @@ impl DemoHost {
             let Some((upload_id, name)) = crate::attachments::parse_pending_ref(reference) else {
                 continue;
             };
-            let path = format!("/Users/dev/.vardoger/uploads/{upload_id}-{name}");
+            let path = format!("/Users/dev/.commutator/uploads/{upload_id}-{name}");
             if let Some(bytes) = client.attachment_cache.get(host, reference) {
                 lock(&self.uploads).insert(path.clone(), bytes.clone());
                 client.attachment_cache.put(host, &path, bytes);
@@ -588,11 +588,11 @@ impl DemoHost {
             let _ = client.registry_write(|doc| {
                 doc.set_chat_last_message(
                     chat_id,
-                    &vardoger_proto::view::single_line(&preview),
+                    &commutator_proto::view::single_line(&preview),
                     Utc::now(),
                 )?;
                 if untitled {
-                    let title: String = vardoger_proto::view::single_line(&preview)
+                    let title: String = commutator_proto::view::single_line(&preview)
                         .chars()
                         .take(48)
                         .collect();
@@ -743,7 +743,7 @@ impl DemoHost {
                 _ => None,
             })
             .map(|t| {
-                vardoger_proto::view::single_line(
+                commutator_proto::view::single_line(
                     t.lines().find(|l| !l.trim().is_empty()).unwrap_or(""),
                 )
             })
@@ -788,7 +788,7 @@ impl DemoHost {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        use vardoger_rpc::methods as m;
+        use commutator_rpc::methods as m;
         let client = self.client()?;
         if !client.network_online() || !self.host_online(&client, device_id) {
             return Err(ClientError::HostUnavailable(device_id.to_owned()));
@@ -940,7 +940,7 @@ impl DemoHost {
         method: &str,
         params: &serde_json::Value,
     ) -> Result<Option<serde_json::Value>> {
-        use vardoger_rpc::methods as m;
+        use commutator_rpc::methods as m;
         let terminal = || params["terminalId"].as_str().unwrap_or_default().to_owned();
         let ok = serde_json::json!({ "ok": true });
         Ok(Some(match method {
@@ -1030,7 +1030,7 @@ impl DemoHost {
         method: &str,
         params: serde_json::Value,
     ) -> Result<crate::host_stream::HostStream> {
-        use vardoger_rpc::methods as m;
+        use commutator_rpc::methods as m;
         let client = self.client()?;
         if !client.network_online() || !self.host_online(&client, device_id) {
             return Err(ClientError::HostUnavailable(device_id.to_owned()));
@@ -1128,13 +1128,13 @@ impl DemoHost {
             current,
             worktree_path: worktree.map(str::to_owned),
         };
-        if path.contains("vardoger") {
+        if path.contains("commutator") {
             vec![
                 r("main", true, None),
                 r(
                     "veil-fade",
                     false,
-                    Some("/Users/dev/.vardoger/worktrees/vardoger-veil-fade"),
+                    Some("/Users/dev/.commutator/worktrees/commutator-veil-fade"),
                 ),
                 r("feature/diff-pane", false, None),
                 r("fix/tool-colors", false, None),
@@ -1171,7 +1171,7 @@ impl DemoHost {
         tokio::time::sleep(Duration::from_millis(250)).await;
         let folder = path.rsplit('/').next().unwrap_or("repo");
         let worktree = format!(
-            "/Users/dev/.vardoger/worktrees/{folder}-{}",
+            "/Users/dev/.commutator/worktrees/{folder}-{}",
             base.replace('/', "-")
         );
         let mut refs = lock(&self.refs);
@@ -1205,20 +1205,20 @@ impl DemoHost {
                 "Downloads",
                 "Projects",
                 "scratch",
-                "vardoger",
-                "vardoger-ios",
+                "commutator",
+                "commutator-ios",
             ],
             "/Users/dev/Documents" => &["notes", "specs"],
-            "/Users/dev/Projects" => &["blog", "dotfiles", "playground", "vardoger"],
-            "/Users/dev/Projects/vardoger" => &["apps", "crates", "docs", "edge"],
+            "/Users/dev/Projects" => &["blog", "dotfiles", "playground", "commutator"],
+            "/Users/dev/Projects/commutator" => &["apps", "crates", "docs", "edge"],
             "/Users/dev/Projects/blog" => &["content", "public"],
             "/srv" => &["backups", "deploys"],
             "/srv/deploys" => &["edge", "landing"],
             _ => &[],
         };
         const REPOS: &[&str] = &[
-            "vardoger",
-            "vardoger-ios",
+            "commutator",
+            "commutator-ios",
             "dotfiles",
             "blog",
             "playground",
@@ -1253,7 +1253,7 @@ impl DemoHost {
                 progress(step as f64 / 4.0);
             }
         }
-        let path = format!("/Users/dev/.vardoger/uploads/{}-{name}", &crate::new_id()[..8]);
+        let path = format!("/Users/dev/.commutator/uploads/{}-{name}", &crate::new_id()[..8]);
         let bytes = Arc::new(data);
         lock(&self.uploads).insert(path.clone(), bytes.clone());
         client.attachment_cache.put(device_id, &path, bytes);

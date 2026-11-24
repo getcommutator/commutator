@@ -7,7 +7,7 @@ use std::{
 };
 
 use tokio::io::{AsyncRead, AsyncReadExt};
-use vardoger_proto::HarnessId;
+use commutator_proto::HarnessId;
 
 use crate::{
     CancellationToken, Harness, HarnessError, StderrTail,
@@ -186,11 +186,11 @@ fn cli_and_dir(id: HarnessId) -> (&'static str, &'static str) {
         Grok => ("grok", "~/.grok/bin or the npm global bin"),
         Hermes => ("hermes", "~/.local/bin or ~/.hermes/bin"),
         Devin => ("devin", "~/.local/bin"),
-        Antigravity => ("agy_acp_server", "~/.vardoger/adapters"),
+        Antigravity => ("agy_acp_server", "~/.commutator/adapters"),
         Muse => ("muse", "~/.local/bin"),
         Mock => ("mock", "PATH"),
         Fx => ("fx", "~/.local/bin"),
-        Registry(agent) => (agent.registry_id(), "~/.vardoger/agents"),
+        Registry(agent) => (agent.registry_id(), "~/.commutator/agents"),
     }
 }
 
@@ -237,7 +237,7 @@ fn post_install(id: HarnessId) -> Result<(), HarnessError> {
 /// an agent's installer that finds it takes the agent for installed (OpenCode's
 /// "already installed", the stand-in answering `--version`) or reinstalls it
 /// where the image put it (Pi's npm under a root-owned `/usr/local`), and the
-/// real CLI never lands where Vardoger looks for it.
+/// real CLI never lands where Commutator looks for it.
 fn hide_stand_ins(command: &mut Command, cli: &str) {
     let std = command.as_std_mut();
     let path = std
@@ -262,7 +262,7 @@ fn hide_stand_ins(command: &mut Command, cli: &str) {
 fn configure(command: &mut Command) {
     crate::acp::child::configure(command);
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("VARDOGER_") {
+        if key.to_string_lossy().starts_with("COMMUTATOR_") {
             command.env_remove(key);
         }
     }

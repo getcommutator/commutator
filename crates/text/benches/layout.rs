@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use vardoger_text::*;
+use commutator_text::*;
 
 struct Fallback;
 
@@ -102,7 +102,7 @@ const CODE: &[&str] = &[
     "line_count",
     "Vec<Line>",
     "crates/text/src/layout.rs",
-    "cargo test -p vardoger-text",
+    "cargo test -p commutator-text",
     "Arc<FontBook>",
     "&mut WidthCache",
     "u32::MAX",

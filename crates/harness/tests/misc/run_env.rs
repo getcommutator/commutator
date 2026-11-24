@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
-use vardoger_harness::{CancellationToken, ClaudeHarness, CodexHarness, Harness, RunControls};
-use vardoger_proto::{RunRequest, SandboxLevel, UserInputAnswer, UserInputQuestion};
+use commutator_harness::{CancellationToken, ClaudeHarness, CodexHarness, Harness, RunControls};
+use commutator_proto::{RunRequest, SandboxLevel, UserInputAnswer, UserInputQuestion};
 
 /// A stand-in agent CLI: records the env it was started with into its cwd
 /// (atomically, so the reader never sees a partial file) and exits.

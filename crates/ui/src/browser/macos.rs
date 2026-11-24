@@ -99,7 +99,7 @@ impl BrowserData {
             return;
         };
         if url.scheme() != "http"
-            || url.port() != Some(vardoger_proto::PREVIEW_PROXY_PORT)
+            || url.port() != Some(commutator_proto::PREVIEW_PROXY_PORT)
             || !host.ends_with(".localhost")
         {
             return;
@@ -214,7 +214,7 @@ struct ObserverState {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "VardogerBrowserObserver"]
+    #[name = "CommutatorBrowserObserver"]
     #[ivars = ObserverState]
     struct Observer;
     unsafe impl NSObjectProtocol for Observer {}
@@ -306,7 +306,7 @@ struct ClipState {
 define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "VardogerBrowserClipView"]
+    #[name = "CommutatorBrowserClipView"]
     #[ivars = ClipState]
     struct BrowserClipView;
     impl BrowserClipView {

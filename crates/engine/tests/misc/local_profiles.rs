@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 
-use vardoger_engine::{
+use commutator_engine::{
     Engine, EngineConfig, EngineCore, EngineProfile, HarnessId, WorkspaceScope,
     default_registry,
 };

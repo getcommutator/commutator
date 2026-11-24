@@ -17,11 +17,11 @@ use gpui::{
     SharedString, Subscription, Task, Window, canvas, container_query, div, img, list, point,
     prelude::*, px,
 };
-use vardoger_engine::repos::git_history_matches;
-use vardoger_proto::{
+use commutator_engine::repos::git_history_matches;
+use commutator_proto::{
     GitHistoryCommit, GitHistoryComparison, GitHistoryPage, GitHistoryRef, GitHistoryRefKind,
 };
-use vardoger_rpc::methods;
+use commutator_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::motion::AnimationExt;
@@ -2496,7 +2496,7 @@ impl GitHistory {
                 history.search_loading = false;
                 match result.and_then(|value| {
                     serde_json::from_value::<GitHistoryPage>(value)
-                        .map_err(|error| vardoger_rpc::RpcError::Failed(error.to_string()))
+                        .map_err(|error| commutator_rpc::RpcError::Failed(error.to_string()))
                 }) {
                     Ok(page) => {
                         let anchor = history.current_scroll_anchor();
@@ -2606,7 +2606,7 @@ impl GitHistory {
                 }
                 if let Ok(avatars) = result.and_then(|value| {
                     serde_json::from_value::<HashMap<String, String>>(value)
-                        .map_err(|error| vardoger_rpc::RpcError::Failed(error.to_string()))
+                        .map_err(|error| commutator_rpc::RpcError::Failed(error.to_string()))
                 }) {
                     history.avatar_images.extend(avatars.into_iter().filter_map(
                         |(email, encoded)| {
@@ -2670,7 +2670,7 @@ impl GitHistory {
                 history.loading = false;
                 match result.and_then(|value| {
                     serde_json::from_value::<GitHistoryPage>(value)
-                        .map_err(|error| vardoger_rpc::RpcError::Failed(error.to_string()))
+                        .map_err(|error| commutator_rpc::RpcError::Failed(error.to_string()))
                 }) {
                     Ok(page) => {
                         let restart_search = (reset && history.search_active())

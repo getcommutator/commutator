@@ -1,4 +1,4 @@
-//! Vardoger MCP's command tools against a real engine: what an agent runs,
+//! Commutator MCP's command tools against a real engine: what an agent runs,
 //! leaves in the background, reads and stops, with real processes.
 #![cfg(unix)]
 
@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use vardoger_engine::{EngineCore, HarnessId, default_registry};
-use vardoger_mcp::{Origin, Tools, Vardoger};
-use vardoger_rpc::memory_client;
+use commutator_engine::{EngineCore, HarnessId, default_registry};
+use commutator_mcp::{Origin, Tools, Commutator};
+use commutator_rpc::memory_client;
 
 #[tokio::test]
 async fn an_agent_runs_commands_as_its_own_shell_tool_would() {
@@ -19,7 +19,7 @@ async fn an_agent_runs_commands_as_its_own_shell_tool_would() {
         HarnessId::Mock,
     )
     .unwrap();
-    let tools = Tools::new(Arc::new(Vardoger::with_client(
+    let tools = Tools::new(Arc::new(Commutator::with_client(
         memory_client(core.rpc_service()),
         Origin::default(),
     )));

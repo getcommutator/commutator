@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/vardoger",
-    "apps/vardoger-server",
+    "apps/commutator",
+    "apps/commutator-server",
     "crates/account",
     "crates/cli",
     "crates/client",
@@ -40,31 +40,31 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-vardoger-term-link = { path = "crates/term-link" }
-vardoger-proto = { path = "crates/proto" }
-vardoger-preview = { path = "crates/preview" }
-vardoger-preview-label = { path = "crates/preview-label" }
-vardoger-doc = { path = "crates/doc" }
-vardoger-sync = { path = "crates/sync" }
-vardoger-harness = { path = "crates/harness" }
-vardoger-engine = { path = "crates/engine" }
-vardoger-rpc = { path = "crates/rpc" }
-vardoger-update = { path = "crates/update" }
-vardoger-cli = { path = "crates/cli" }
-vardoger-launch = { path = "crates/launch" }
-vardoger-notify = { path = "crates/notify" }
-vardoger-mcp = { path = "crates/mcp" }
-vardoger-visual = { path = "crates/visual" }
-vardoger-client = { path = "crates/client" }
-vardoger-markdown = { path = "crates/markdown" }
-vardoger-syntax = { path = "crates/syntax" }
-vardoger-text = { path = "crates/text" }
-vardoger-account = { path = "crates/account" }
-vardoger-term = { path = "crates/term" }
-vardoger-theme = { path = "crates/theme" }
-vardoger-veil = { path = "crates/veil" }
-vardoger-ui = { path = "crates/ui" }
-vardoger-visual-gpu = { path = "crates/visual-gpu" }
+commutator-term-link = { path = "crates/term-link" }
+commutator-proto = { path = "crates/proto" }
+commutator-preview = { path = "crates/preview" }
+commutator-preview-label = { path = "crates/preview-label" }
+commutator-doc = { path = "crates/doc" }
+commutator-sync = { path = "crates/sync" }
+commutator-harness = { path = "crates/harness" }
+commutator-engine = { path = "crates/engine" }
+commutator-rpc = { path = "crates/rpc" }
+commutator-update = { path = "crates/update" }
+commutator-cli = { path = "crates/cli" }
+commutator-launch = { path = "crates/launch" }
+commutator-notify = { path = "crates/notify" }
+commutator-mcp = { path = "crates/mcp" }
+commutator-visual = { path = "crates/visual" }
+commutator-client = { path = "crates/client" }
+commutator-markdown = { path = "crates/markdown" }
+commutator-syntax = { path = "crates/syntax" }
+commutator-text = { path = "crates/text" }
+commutator-account = { path = "crates/account" }
+commutator-term = { path = "crates/term" }
+commutator-theme = { path = "crates/theme" }
+commutator-veil = { path = "crates/veil" }
+commutator-ui = { path = "crates/ui" }
+commutator-visual-gpu = { path = "crates/visual-gpu" }
 zatex = { path = "crates/zatex" }
 
 # gpui: zeronsh/zui, patched below to the freethinkel/zui fork (the same rev
@@ -175,10 +175,10 @@ debug = true
 debug = true
 
 # Scenes rasterize in software every frame the camera moves.
-[profile.dev.package.vardoger-visual]
+[profile.dev.package.commutator-visual]
 opt-level = 3
 
-[profile.dev.package.vardoger-visual-gpu]
+[profile.dev.package.commutator-visual-gpu]
 opt-level = 3
 
 # Mobile core (scripts/ios/build-core.sh). Always optimized — layout and sync

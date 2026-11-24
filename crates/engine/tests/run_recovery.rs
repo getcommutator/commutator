@@ -17,18 +17,18 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use vardoger_doc::{
+use commutator_doc::{
     MessagePart, MessageRole, MessageStatus, SessionCommandPayload, SessionDoc, SessionMessageEntry,
 };
-use vardoger_engine::{
+use commutator_engine::{
     Auth, AuthState, EngineCore, EngineProfile, HarnessRegistry, RunJournal,
 };
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use vardoger_sync::DocsStore;
+use commutator_sync::DocsStore;
 
 const CHAT: &str = "chat-recovery";
 const DEVICE: &str = "dev-recovery";

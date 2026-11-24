@@ -35,8 +35,8 @@ pub enum ClientError {
     Internal(String),
 }
 
-impl From<vardoger_doc::DocError> for ClientError {
-    fn from(err: vardoger_doc::DocError) -> Self {
+impl From<commutator_doc::DocError> for ClientError {
+    fn from(err: commutator_doc::DocError) -> Self {
         ClientError::Internal(err.to_string())
     }
 }

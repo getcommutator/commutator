@@ -2,7 +2,7 @@ use gpui::{
     AnyElement, Context, KeyDownEvent, ListSizingBehavior, MouseButton, Window, div, list,
     prelude::*, px,
 };
-use vardoger_proto::WorkspaceEntryKind;
+use commutator_proto::WorkspaceEntryKind;
 
 use super::{
     FilesSurface, WorkspacePathDrag, model::DirectoryLoadState, model::VisibleRowKind,

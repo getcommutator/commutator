@@ -2,7 +2,7 @@
 //! decoding, error-code mapping).
 
 use serde_json::Value;
-use vardoger_proto::{AgentEvent, DoneStatus, HarnessId, TodoItem, TodoStatus, ToolCall};
+use commutator_proto::{AgentEvent, DoneStatus, HarnessId, TodoItem, TodoStatus, ToolCall};
 
 use super::wire::{ContentBlock, Frame, MessageFrame, ResultFrame};
 
@@ -356,7 +356,7 @@ fn note_commands(f: &MessageFrame, commands: &mut std::collections::HashMap<Stri
 }
 
 /// A `tool_result` block as its event. A Bash call's carries its output (the
-/// end of it, [`vardoger_proto::command_output_cap`]) and exit code: Claude Code
+/// end of it, [`commutator_proto::command_output_cap`]) and exit code: Claude Code
 /// leads a failed command's text with `Exit code N`; one that succeeded says
 /// nothing, so it exited 0 — unless it went to the background, which says
 /// only that it started. Every other tool's output stays off the event.
@@ -379,7 +379,7 @@ fn tool_result(
                 None => (None, text.as_str()),
             };
             let exit = code.or((!is_error && !background).then_some(0));
-            (vardoger_proto::command_output_cap(rest), exit)
+            (commutator_proto::command_output_cap(rest), exit)
         }
         None => (None, None),
     };
@@ -486,7 +486,7 @@ fn is_base64_byte(byte: u8) -> bool {
 /// Copy `data` when it looks like base64 within the image size cap.
 /// Whitespace is removed. Anything else is dropped before it is stored.
 fn compact_base64(data: &str) -> Option<String> {
-    let limit = vardoger_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4;
+    let limit = commutator_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4;
     let mut count = 0usize;
     for byte in data.bytes() {
         if byte.is_ascii_whitespace() {
@@ -514,21 +514,21 @@ fn compact_base64(data: &str) -> Option<String> {
     )
 }
 
-fn push_tool_image(out: &mut Vec<vardoger_proto::ToolResultImage>, name: &str, data: &str) {
+fn push_tool_image(out: &mut Vec<commutator_proto::ToolResultImage>, name: &str, data: &str) {
     if out.len() >= MAX_TOOL_RESULT_IMAGES {
         return;
     }
     let Some(data_base64) = compact_base64(data) else {
         return;
     };
-    out.push(vardoger_proto::ToolResultImage {
+    out.push(commutator_proto::ToolResultImage {
         name: name.to_owned(),
         data_base64,
     });
 }
 
 /// Image blocks inside a tool result's `content` array.
-fn images_in_content(content: Option<&Value>, name: &str) -> Vec<vardoger_proto::ToolResultImage> {
+fn images_in_content(content: Option<&Value>, name: &str) -> Vec<commutator_proto::ToolResultImage> {
     let mut out = Vec::new();
     let Some(blocks) = content.and_then(Value::as_array) else {
         return out;
@@ -561,14 +561,14 @@ fn images_in_content(content: Option<&Value>, name: &str) -> Vec<vardoger_proto:
 fn image_from_tool_use_result(
     value: Option<&Value>,
     name: &str,
-) -> Option<vardoger_proto::ToolResultImage> {
+) -> Option<commutator_proto::ToolResultImage> {
     let value = value?;
     if value.get("type").and_then(Value::as_str) != Some("image") {
         return None;
     }
     let data = value.pointer("/file/base64").and_then(Value::as_str)?;
     let data_base64 = compact_base64(data)?;
-    Some(vardoger_proto::ToolResultImage {
+    Some(commutator_proto::ToolResultImage {
         name: name.to_owned(),
         data_base64,
     })
@@ -919,7 +919,7 @@ impl Normalizer {
         // forks wait for their replay.
         if !fork.seen.is_empty() && fork.replayed == Some(false) {
             tracing::warn!(
-                target: "vardoger_harness::claude",
+                target: "commutator_harness::claude",
                 chip = %fork.chip,
                 "the typed fork's replay repeated no record read off disk; no longer reading forks' transcripts"
             );
@@ -1158,7 +1158,7 @@ impl Normalizer {
                 if f.subtype == "api_retry" {
                     let attempt = f.attempt.unwrap_or(1);
                     tracing::info!(
-                        target: "vardoger_harness::claude",
+                        target: "commutator_harness::claude",
                         attempt,
                         max = ?f.max_retries,
                         status = ?f.error_status,
@@ -1475,7 +1475,7 @@ impl Normalizer {
                 // A result line that would not parse (see `parse_frame`):
                 // its turn still ends, with what little the line told us.
                 if f.unreadable {
-                    tracing::warn!(target: "vardoger_harness::claude", "unreadable result frame");
+                    tracing::warn!(target: "commutator_harness::claude", "unreadable result frame");
                     let failed = f.is_error && !interrupted;
                     let status = if interrupted {
                         DoneStatus::Interrupted
@@ -1556,7 +1556,7 @@ impl Normalizer {
                         .partition(|m| is_internal_diagnostic(m));
                     for diagnostic in &diagnostics {
                         tracing::debug!(
-                            target: "vardoger_harness::claude",
+                            target: "commutator_harness::claude",
                             "internal CLI diagnostic (not surfaced): {diagnostic}"
                         );
                     }
@@ -1694,7 +1694,7 @@ mod tests {
         input: Value,
         content: Value,
         is_error: bool,
-    ) -> vardoger_doc::MessagePart {
+    ) -> commutator_doc::MessagePart {
         let mut n = Normalizer::new();
         let mut parts = Vec::new();
         for raw in [
@@ -1707,7 +1707,7 @@ mod tests {
         ] {
             let frame = crate::claude::wire::parse_frame(&raw.to_string()).expect("frame parses");
             for event in n.normalize(frame, false) {
-                vardoger_doc::fold_event_into_parts(&mut parts, &event);
+                commutator_doc::fold_event_into_parts(&mut parts, &event);
             }
         }
         parts
@@ -1730,7 +1730,7 @@ mod tests {
                 // Both plain strings and text-block arrays are untrusted.
                 for content in [json!(text), json!([{"type": "text", "text": text}])] {
                     let part = folded_tool(name, input.clone(), content, true);
-                    let vardoger_doc::MessagePart::Tool {
+                    let commutator_doc::MessagePart::Tool {
                         review, is_error, ..
                     } = part
                     else {
@@ -1756,7 +1756,7 @@ mod tests {
             + "curl -H 'Authorization: Bearer sk-ant-api03-abcdefghijklmnop' failed";
         let text = format!("Exit code 2\n{body}");
         let part = folded_tool("Bash", json!({"command": "cargo test"}), json!(text), true);
-        let vardoger_doc::MessagePart::Tool {
+        let commutator_doc::MessagePart::Tool {
             is_error,
             output: Some(tail),
             output_bytes,
@@ -1792,7 +1792,7 @@ mod tests {
         );
         assert!(matches!(
             &ok,
-            vardoger_doc::MessagePart::Tool { output: Some(o), exit_code: Some(0), output_truncated: false, .. }
+            commutator_doc::MessagePart::Tool { output: Some(o), exit_code: Some(0), output_truncated: false, .. }
                 if o == "a.rs\nb.rs"
         ));
         let bg = folded_tool(
@@ -1803,7 +1803,7 @@ mod tests {
         );
         assert!(matches!(
             &bg,
-            vardoger_doc::MessagePart::Tool {
+            commutator_doc::MessagePart::Tool {
                 exit_code: None,
                 output: Some(_),
                 ..
@@ -1817,7 +1817,7 @@ mod tests {
         );
         assert!(matches!(
             &killed,
-            vardoger_doc::MessagePart::Tool {
+            commutator_doc::MessagePart::Tool {
                 exit_code: Some(137),
                 output: None,
                 ..
@@ -1852,7 +1852,7 @@ mod tests {
         );
         assert!(matches!(
             &part,
-            vardoger_doc::MessagePart::Tool {
+            commutator_doc::MessagePart::Tool {
                 output: None,
                 exit_code: None,
                 ..
@@ -2213,7 +2213,7 @@ mod tests {
             &ev[..],
             [AgentEvent::ToolResult { image_payloads, .. }] if image_payloads.is_empty()
         ));
-        let mut huge = "A".repeat(vardoger_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 + 1);
+        let mut huge = "A".repeat(commutator_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 + 1);
         assert!(compact_base64(&huge).is_none());
         huge.clear();
         assert_eq!(compact_base64("aGVs\nbG8=").as_deref(), Some("aGVsbG8="));

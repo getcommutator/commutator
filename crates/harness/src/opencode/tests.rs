@@ -890,7 +890,7 @@ async fn read_http_request_headers(socket: &mut tokio::net::TcpStream) {
 #[test]
 fn http_client_never_proxies_the_loopback_server() {
     const NAME: &str = "opencode::tests::http_client_never_proxies_the_loopback_server";
-    const CHILD: &str = "VARDOGER_OPENCODE_PROXY_PROBE";
+    const CHILD: &str = "COMMUTATOR_OPENCODE_PROXY_PROBE";
     if std::env::var_os(CHILD).is_none() {
         // reqwest reads the proxy from the environment, and mutating it here
         // would race sibling tests, so run the body in a child process.
@@ -1075,7 +1075,7 @@ fn models_map_provider_catalog_with_variant_ladders() {
     // Its provider rides along typed, so the picker can tell namesakes apart.
     assert_eq!(
         opus.provider,
-        Some(vardoger_proto::ModelProvider {
+        Some(commutator_proto::ModelProvider {
             id: "anthropic".into(),
             name: "Anthropic".into(),
         })
@@ -1554,7 +1554,7 @@ fn commands_map_from_wire() {
 
 #[test]
 fn canonical_command_removed_after_discovery_is_not_downgraded_to_prompt_text() {
-    use vardoger_proto::invocation::{Invocation, harness_prompt};
+    use commutator_proto::invocation::{Invocation, harness_prompt};
 
     let discovered = commands_from_wire(&json!([{
         "name": "project-review",
@@ -3215,7 +3215,7 @@ async fn v2_spawn_names_bind_child_traffic_to_the_parent_chip() {
 
 #[test]
 fn native_skill_catalog_rejects_unrepresentable_commands() {
-    use vardoger_proto::invocation::{Invocation, Skill, invocation_links};
+    use commutator_proto::invocation::{Invocation, Skill, invocation_links};
     let mut skills = vec![Skill {
         name: "review[ui]".into(),
         path: "/repo/é skill/SKILL.md".into(),

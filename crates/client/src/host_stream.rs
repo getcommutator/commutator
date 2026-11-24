@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 pub(crate) enum HostStream {
-    Live(vardoger_rpc::RpcSubscription),
+    Live(commutator_rpc::RpcSubscription),
     Local(tokio::sync::mpsc::Receiver<Value>),
 }
 

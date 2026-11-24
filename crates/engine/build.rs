@@ -1,5 +1,5 @@
 //! The git commit this engine is built from, for its build id
-//! (`vardoger_engine::build_id`): `VARDOGER_GIT_COMMIT`, or "unknown" outside a
+//! (`commutator_engine::build_id`): `COMMUTATOR_GIT_COMMIT`, or "unknown" outside a
 //! checkout.
 fn main() {
     let commit = std::process::Command::new("git")
@@ -11,7 +11,7 @@ fn main() {
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=VARDOGER_GIT_COMMIT={commit}");
+    println!("cargo:rustc-env=COMMUTATOR_GIT_COMMIT={commit}");
     // (Run again only when this script changes: the build's own time is
     // the executable's, read as it runs, so a rebuild changes the id without
     // running this again.)

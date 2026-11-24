@@ -1,7 +1,7 @@
 //! Coordinate structural changes across every editor of the affected workspace.
 use super::*;
 use crate::files::{client::WorkspaceFilesClient, mutations::MutationIntent};
-use vardoger_proto::{
+use commutator_proto::{
     DeleteWorkspaceEntryRequest, MoveWorkspaceEntryRequest, WorkspaceMutationOutcome,
 };
 
@@ -96,7 +96,7 @@ impl Shell {
                 if waited_for_save {
                     let page = client
                         .list_directory_snapshot(
-                            vardoger_proto::ListWorkspaceDirectoryRequest {
+                            commutator_proto::ListWorkspaceDirectoryRequest {
                                 target: intent.origin.context.target.clone(),
                                 directory: crate::files::model::parent_path(&intent.entry.path)
                                     .unwrap_or_default(),
@@ -162,7 +162,7 @@ impl Shell {
                             expected_source_revision: revision,
                             expected_kind: intent.entry.kind,
                             recursive: intent.entry.kind
-                                == vardoger_proto::WorkspaceEntryKind::Directory,
+                                == commutator_proto::WorkspaceEntryKind::Directory,
                         })
                         .await
                         .map_err(|e| e.to_string())
@@ -263,7 +263,7 @@ mod tests {
                         data_dir: directory.path().into(),
                         ipc_port: 0,
                         edge_url: "http://127.0.0.1:1".into(),
-                        default_harness: vardoger_proto::HarnessId::Mock,
+                        default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
                 );
@@ -404,7 +404,7 @@ mod tests {
             origin: files.interaction_origin(cx).unwrap(),
             entry: crate::files::test_support::entry(
                 "src/a.txt",
-                vardoger_proto::WorkspaceEntryKind::File,
+                commutator_proto::WorkspaceEntryKind::File,
             ),
             destination: Some("dest/a.txt".into()),
         });

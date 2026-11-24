@@ -974,7 +974,7 @@ mod tests {
 // (macOS: it reads the process's footprint with proc_pid_rusage.)
 #[cfg(all(test, target_os = "macos"))]
 mod bench {
-    /// `HOME_WALK_BENCH=<dir> cargo test -p vardoger-engine --lib home_walk_bench -- --ignored --nocapture`
+    /// `HOME_WALK_BENCH=<dir> cargo test -p commutator-engine --lib home_walk_bench -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn home_walk_bench() {

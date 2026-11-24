@@ -3,7 +3,7 @@
 //! badge, Active, usage meters (indigo → amber ≥80% → red ≥95%, reset time),
 //! Switch / Forget — plus the one sign-in dialog every provider shares (the
 //! browser finishes the login on a loopback callback; Claude's paste-code
-//! step is its fallback) and account-shaped loading skeletons. Vardoger
+//! step is its fallback) and account-shaped loading skeletons. Commutator
 //! retargets devices from the settings sidebar (`targetDeviceId` passthrough;
 //! a remote device's callback is forwarded to this one engine-side).
 //!
@@ -18,11 +18,11 @@ use gpui::{
 };
 use std::time::Duration;
 
-use vardoger_proto::{
+use commutator_proto::{
     AgentAccount, AgentAccountsSnapshot, AgentLoginMode, AgentLoginPoll, AgentLoginStart,
     AgentLoginStatus, HarnessId,
 };
-use vardoger_rpc::methods;
+use commutator_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::popover::{self, Loadable};
@@ -142,7 +142,7 @@ pub(crate) fn open_login_url(url: &str, cx: &mut gpui::App) {
     }
 }
 
-/// Compact absolute reset moment (vardoger settings.agents.tsx `formatReset`):
+/// Compact absolute reset moment (commutator settings.agents.tsx `formatReset`):
 /// a local clock time ("3:45 PM") when it lands within ~22h, a short weekday
 /// ("Mon") within a week, else month + day ("Sep 14") — a weekday is noise
 /// when the window is a Codex free-tier MONTHLY reset weeks out. The caller
@@ -162,7 +162,7 @@ pub fn format_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Opt
 
 /// "Session: resets 3:45 PM · Week: resets Thu" — the usage meters' tooltip.
 pub(crate) fn usage_resets(
-    windows: &[vardoger_proto::AgentUsageWindow],
+    windows: &[commutator_proto::AgentUsageWindow],
     now: DateTime<Utc>,
 ) -> String {
     windows
@@ -175,7 +175,7 @@ pub(crate) fn usage_resets(
         .join(" · ")
 }
 
-pub use vardoger_proto::providers::{
+pub use commutator_proto::providers::{
     LoginOption, PROVIDERS, add_account_label, add_option_label, keeps_one_login, login_options,
     provider_name, provider_note, reports_usage, signs_in, switches_accounts,
 };
@@ -193,7 +193,7 @@ fn login_copy(harness: HarnessId, provider: Option<&str>) -> &'static str {
              your current one — nothing changes until you switch."
         }
         (HarnessId::Cursor, _) => {
-            "Finish signing in to Cursor in your browser. This mints a vardoger-named API key \
+            "Finish signing in to Cursor in your browser. This mints a commutator-named API key \
              you can revoke any time from Cursor's dashboard."
         }
         (HarnessId::Antigravity, _) => {
@@ -253,7 +253,7 @@ pub fn mark_switched(snapshot: &mut AgentAccountsSnapshot, account: &AgentAccoun
 /// One mini meter line of the usage column: label, a short bar, percent.
 /// The reset moment rides the row's tooltip instead of taking a column.
 pub(crate) fn render_usage_meter(
-    window: &vardoger_proto::AgentUsageWindow,
+    window: &commutator_proto::AgentUsageWindow,
     theme: &Theme,
 ) -> AnyElement {
     let fraction = window.used_fraction.clamp(0.0, 1.0);
@@ -290,7 +290,7 @@ pub(crate) fn render_usage_meter(
                         div()
                             .h_full()
                             // A 1.5% floor keeps tiny non-zero usage
-                            // visible (vardoger `max(used, 1.5)%`).
+                            // visible (commutator `max(used, 1.5)%`).
                             .w(gpui::relative(fraction.max(0.015)))
                             .rounded_full()
                             .bg(fill),
@@ -391,7 +391,7 @@ pub struct AccountsPage {
     embedded_harness: Option<HarnessId>,
     scroll: widgets::PageScroll,
     /// Which device's logins are shown; `None` = this device (no passthrough).
-    /// Retargeted by the page-header device switcher (vardoger parity: the
+    /// Retargeted by the page-header device switcher (commutator parity: the
     /// accounts RPCs are relay-forwardable, CLI logins are per-device).
     target_device: Option<String>,
     device_select: widgets::SelectState,
@@ -517,7 +517,7 @@ impl AccountsPage {
         }
     }
 
-    /// The page-header device switcher (vardoger device-switcher.tsx): a quiet
+    /// The page-header device switcher (commutator device-switcher.tsx): a quiet
     /// trigger — platform glyph · name · presence dot · sort glyph — opening a
     /// dropdown of every registered device. Selecting one retargets the page.
     fn render_device_switcher(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -529,7 +529,7 @@ impl AccountsPage {
                 s.local_device_id.clone(),
             )
         };
-        // Stable row order (registration time, then id) — vardoger's switcher
+        // Stable row order (registration time, then id) — commutator's switcher
         // sorts the same way so rows never reshuffle on heartbeats.
         devices.sort_by(|a, b| {
             a.created_at
@@ -1295,7 +1295,7 @@ impl AccountsPage {
     /// same geometry, so loaded rows land without a layout jump.
     fn render_embedded_skeleton(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         use crate::motion;
-        let delta = motion::pulse_delta(&motion::VARDOGER_PULSE, cx.entity_id(), cx);
+        let delta = motion::pulse_delta(&motion::COMMUTATOR_PULSE, cx.entity_id(), cx);
         let ghost = |w: f32, h: f32| {
             div()
                 .flex_none()
@@ -1387,7 +1387,7 @@ impl AccountsPage {
             }
             _ => login_copy(login.harness, login.provider),
         };
-        // "Reopen the sign-in page" (vardoger: `text-[12px]
+        // "Reopen the sign-in page" (commutator: `text-[12px]
         // text-muted-foreground/60 hover:underline`), once there is a page.
         let reopen = login.url.clone().filter(|_| !failed).map(|url| {
             div()
@@ -1507,7 +1507,7 @@ impl AccountsPage {
         Some(popover::modal("add-account-dialog", viewport, card))
     }
 
-    /// A ghost account row (vardoger settings.agents.tsx `SkeletonRow`): avatar,
+    /// A ghost account row (commutator settings.agents.tsx `SkeletonRow`): avatar,
     /// email line, two usage-meter ghosts, a badge — same geometry as the real
     /// row so loaded data lands without a layout jump. `dim` fades row two.
     fn render_skeleton_row(
@@ -1519,7 +1519,7 @@ impl AccountsPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         use crate::motion;
-        let delta = motion::pulse_delta(&motion::VARDOGER_PULSE, cx.entity_id(), cx);
+        let delta = motion::pulse_delta(&motion::COMMUTATOR_PULSE, cx.entity_id(), cx);
         let ghost = |w: gpui::Length, h: f32, round_full: bool| {
             div()
                 .w(w)
@@ -1786,7 +1786,7 @@ impl Render for AccountsPage {
                 Some(crate::icons::claude_brand()),
             ),
         };
-        // Brand mark inside a 24px centered box (vardoger: `grid size-6
+        // Brand mark inside a 24px centered box (commutator: `grid size-6
         // place-items-center [&_svg]:size-4`).
         let provider_mark = |harness: HarnessId, theme: &Theme| {
             let (mark, tint) = provider_icon(harness);
@@ -1803,7 +1803,7 @@ impl Render for AccountsPage {
                 )
         };
 
-        // One section per provider (vardoger settings.agents.tsx `ProviderSection`):
+        // One section per provider (commutator settings.agents.tsx `ProviderSection`):
         // brand header + Add account, then the account rows card.
         let sections: Vec<AnyElement> = match &self.snapshot {
             Loadable::Idle | Loadable::Loading => PROVIDERS
@@ -1891,7 +1891,7 @@ impl Render for AccountsPage {
                     .into_iter()
                     .map(|(harness, name, cli)| {
                         let accounts = provider_accounts(&snapshot, harness);
-                        // EVERY warning renders its own strip (vardoger maps them).
+                        // EVERY warning renders its own strip (commutator maps them).
                         let warnings: Vec<String> = snapshot
                             .warnings
                             .iter()
@@ -2040,7 +2040,7 @@ impl Render for AccountsPage {
                                     .child(div().flex_1())
                                     .child(
                                         // `text-[12.5px]` + leading 16px Refresh icon,
-                                        // dimmed while a refresh is in flight (vardoger
+                                        // dimmed while a refresh is in flight (commutator
                                         // `disabled:opacity-50`).
                                         widgets::ghost_action(&theme)
                                             .id("accounts-refresh")
@@ -2066,7 +2066,7 @@ impl Render for AccountsPage {
                                     .child(self.render_device_switcher(&theme, cx)),
                             )
                             .children(sections)
-                            // Footer note (vardoger: `mt-6 text-[12px] leading-relaxed
+                            // Footer note (commutator: `mt-6 text-[12px] leading-relaxed
                             // text-muted-foreground/60`).
                             .child(
                                 div()
@@ -2123,7 +2123,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_thresholds_match_vardoger() {
+    fn usage_thresholds_match_commutator() {
         assert_eq!(usage_level(0.0), UsageLevel::Normal);
         assert_eq!(usage_level(0.79), UsageLevel::Normal);
         assert_eq!(usage_level(0.80), UsageLevel::Warn);
@@ -2180,12 +2180,12 @@ mod tests {
         let now = Utc::now();
         let soon = now + TimeDelta::minutes(125);
         let windows = [
-            vardoger_proto::AgentUsageWindow {
+            commutator_proto::AgentUsageWindow {
                 label: "Session".into(),
                 used_fraction: 0.07,
                 resets_at: Some(soon),
             },
-            vardoger_proto::AgentUsageWindow {
+            commutator_proto::AgentUsageWindow {
                 label: "Week".into(),
                 used_fraction: 0.44,
                 resets_at: None,
@@ -2235,7 +2235,7 @@ mod tests {
         // Every agent but Fx reports usage, and none keeps a single login.
         assert!(!reports_usage(HarnessId::Fx) && reports_usage(HarnessId::Antigravity));
         assert!(!keeps_one_login(HarnessId::Antigravity) && !keeps_one_login(HarnessId::Cursor));
-        // Hermes rotates its own pool; vardoger never switches it, and says so.
+        // Hermes rotates its own pool; commutator never switches it, and says so.
         assert!(!switches_accounts(HarnessId::Hermes) && switches_accounts(HarnessId::Grok));
         assert!(provider_note(HarnessId::Hermes).is_some_and(|n| n.contains("hermes auth add")));
         assert!(provider_note(HarnessId::Grok).is_none());
@@ -2423,7 +2423,7 @@ mod tests {
             email: Some(email.into()),
             plan_label: Some("ChatGPT Plus".into()),
             active,
-            usage_windows: vec![vardoger_proto::AgentUsageWindow {
+            usage_windows: vec![commutator_proto::AgentUsageWindow {
                 label: "Session".into(),
                 used_fraction: 0.4,
                 resets_at: None,

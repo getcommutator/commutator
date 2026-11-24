@@ -43,7 +43,7 @@ pub(super) const ANTIGRAVITY_API: &str = "https://daily-cloudcode-pa.googleapis.
 /// The user agent Antigravity's requests carry: Google answers its limits
 /// only to an Antigravity client ("You do not have a valid license of this
 /// product" to any other); its server sends `antigravity/acp/<version>`.
-const ANTIGRAVITY_USER_AGENT: &str = "antigravity/acp/vardoger";
+const ANTIGRAVITY_USER_AGENT: &str = "antigravity/acp/commutator";
 /// Who Antigravity's server says it is to `loadCodeAssist`.
 fn antigravity_client() -> serde_json::Value {
     serde_json::json!({ "ideType": "ANTIGRAVITY", "pluginType": "GEMINI" })
@@ -60,7 +60,7 @@ fn antigravity_project(assist: &serde_json::Value) -> Option<String> {
 }
 
 /// `quota` with `loadCodeAssist`'s tiers beside its groups: the reply
-/// [`vardoger_proto::plan_usage::antigravity`] reads (the vault's is the same).
+/// [`commutator_proto::plan_usage::antigravity`] reads (the vault's is the same).
 fn with_tiers(quota: &mut serde_json::Value, assist: &serde_json::Value) {
     if let Some(quota) = quota.as_object_mut() {
         for tier in ["paidTier", "currentTier"] {
@@ -218,7 +218,7 @@ impl AgentAccounts {
                         "extensionVersion": DEVIN_CLI_VERSION,
                         "locale": "en_US",
                         "os": std::env::consts::OS,
-                        "sessionId": "vardoger-accounts",
+                        "sessionId": "commutator-accounts",
                         "requestId": "1",
                     }
                 })),
@@ -424,7 +424,7 @@ impl AgentAccounts {
                 ))
                 .header("Authorization", format!("token {token}"))
                 .header("Accept", "application/json")
-                .header("User-Agent", "vardoger"),
+                .header("User-Agent", "commutator"),
         )
         .await?;
         copilot_usage_snapshot(&body).ok_or_else(|| schema_error("copilot", &body))

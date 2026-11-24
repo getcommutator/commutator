@@ -1,5 +1,5 @@
 //! One Muse session over one host: open (or resume) it, run its turns, and
-//! carry Vardoger's steering, stops and answers in.
+//! carry Commutator's steering, stops and answers in.
 //!
 //! - TURNS. A fresh turn's id is its `turn/start` command id, so the run
 //!   knows it before the ack and owns every frame naming it. Its end is the
@@ -36,7 +36,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::{AbortHandle, JoinSet},
 };
-use vardoger_proto::{
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, RunRequest, UserInputAnswer, UserInputQuestion,
 };
 
@@ -201,7 +201,7 @@ impl Runner {
         }
     }
 
-    /// Vardoger's MCP server, as a session-scoped stdio server. `optional`: a
+    /// Commutator's MCP server, as a session-scoped stdio server. `optional`: a
     /// server that cannot start must not fail the whole turn.
     /// The plugins' native servers ([`RunRequest::extra_mcp`]) ride beside it.
     fn config(&self) -> Option<Value> {
@@ -366,7 +366,7 @@ impl Runner {
             "ifBusy": if_busy,
         });
         // A resumed session keeps the root it was created with; pin it to
-        // this run's checkout so edits land where Vardoger tracks them. The root
+        // this run's checkout so edits land where Commutator tracks them. The root
         // is sticky (it binds at this turn and persists), and Muse refuses it
         // on a steer, which may launch no turn to bind it to: the run's first
         // prompt carries it, later ones inherit it.
@@ -465,9 +465,9 @@ impl Runner {
         ids.sort();
         self.turn.set_background_agents(
             ids.into_iter()
-                .map(|id| vardoger_proto::WaitingOn {
+                .map(|id| commutator_proto::WaitingOn {
                     id: id.clone(),
-                    kind: vardoger_proto::WaitingKind::Agent,
+                    kind: commutator_proto::WaitingKind::Agent,
                     label: "Subagent".into(),
                 })
                 .collect(),
@@ -533,7 +533,7 @@ impl Runner {
                 self.emit(AgentEvent::Error { message }).await?;
             }
             (Pending::Other(method), Err(failure)) => {
-                tracing::warn!(target: "vardoger_harness::muse", %method, kind = %failure.kind, "{}", failure.message);
+                tracing::warn!(target: "commutator_harness::muse", %method, kind = %failure.kind, "{}", failure.message);
                 if method == "session/setModel" {
                     self.emit(AgentEvent::Error {
                         message: format!("Muse kept its model: {}", failure.message),
@@ -747,7 +747,7 @@ impl Runner {
             let approval = approval.clone();
             move |choice: Option<Value>| {
                 let Some(choice) = choice else {
-                    tracing::warn!(target: "vardoger_harness::muse", "Muse offered no usable approval choice");
+                    tracing::warn!(target: "commutator_harness::muse", "Muse offered no usable approval choice");
                     return Ok(None);
                 };
                 client
@@ -1055,12 +1055,12 @@ mod tests {
     }
 }
 
-/// `mcpServers` for a session: Vardoger's own server and the plugins' native
+/// `mcpServers` for a session: Commutator's own server and the plugins' native
 /// ones, each optional. `None` when there are none, or when the build can't
 /// take session servers (`granted` lacks `sessionMcp`).
 fn session_mcp_config(
-    mcp: Option<&vardoger_proto::McpServer>,
-    extras: &[vardoger_proto::McpServer],
+    mcp: Option<&commutator_proto::McpServer>,
+    extras: &[commutator_proto::McpServer],
     session_mcp: bool,
 ) -> Option<Value> {
     if mcp.is_none() && extras.is_empty() {
@@ -1068,8 +1068,8 @@ fn session_mcp_config(
     }
     if !session_mcp {
         tracing::warn!(
-            target: "vardoger_harness::muse",
-            "this Muse Code build cannot take session MCP servers; running without Vardoger's"
+            target: "commutator_harness::muse",
+            "this Muse Code build cannot take session MCP servers; running without Commutator's"
         );
         return None;
     }
@@ -1094,15 +1094,15 @@ mod session_mcp_tests {
     use super::*;
 
     #[test]
-    fn session_mcp_config_adds_plugin_servers_beside_vardoger() {
-        let vardoger = vardoger_proto::McpServer {
-            name: "vardoger".into(),
-            command: "/opt/vardoger/vardoger".into(),
+    fn session_mcp_config_adds_plugin_servers_beside_commutator() {
+        let commutator = commutator_proto::McpServer {
+            name: "commutator".into(),
+            command: "/opt/commutator/commutator".into(),
             args: vec!["mcp".into()],
             env: Default::default(),
             http: None,
         };
-        let extra = vardoger_proto::McpServer {
+        let extra = commutator_proto::McpServer {
             name: "plugin-focus".into(),
             command: "/data/plugins/.loaded/focus/0123/bin/server".into(),
             args: vec![],
@@ -1111,11 +1111,11 @@ mod session_mcp_tests {
         };
         assert_eq!(session_mcp_config(None, &[], true), None);
         assert_eq!(
-            session_mcp_config(Some(&vardoger), std::slice::from_ref(&extra), false),
+            session_mcp_config(Some(&commutator), std::slice::from_ref(&extra), false),
             None
         );
-        let config = session_mcp_config(Some(&vardoger), std::slice::from_ref(&extra), true).unwrap();
-        assert_eq!(config["mcpServers"]["vardoger"]["command"], "/opt/vardoger/vardoger");
+        let config = session_mcp_config(Some(&commutator), std::slice::from_ref(&extra), true).unwrap();
+        assert_eq!(config["mcpServers"]["commutator"]["command"], "/opt/commutator/commutator");
         assert_eq!(
             config["mcpServers"]["plugin-focus"],
             json!({

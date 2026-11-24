@@ -1,18 +1,18 @@
 [package]
-name = "vardoger-cli"
+name = "commutator-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# `vardoger`'s command line, shared by the Vardoger app, its engine helper and the
+# `commutator`'s command line, shared by the Commutator app, its engine helper and the
 # zgx interface: no engine, no interface. Subcommands that run the engine
 # hand over to the binary that links it, or to the engine helper beside an
-# interface that doesn't (vardoger-launch).
+# interface that doesn't (commutator-launch).
 
 [dependencies]
-vardoger-launch.workspace = true
-vardoger-update.workspace = true
+commutator-launch.workspace = true
+commutator-update.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 libc.workspace = true

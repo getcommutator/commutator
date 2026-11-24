@@ -1,5 +1,5 @@
 //! Mends half-streamed inline markdown for display (after streamdown's
-//! `remend`, ported to vardoger's incremental parser).
+//! `remend`, ported to commutator's incremental parser).
 //!
 //! While a block is streaming, an unclosed `**bold`, `*em`, `` `code ``,
 //! `~~strike` or `[link](partial-url` parses as literal text; the closing
@@ -12,7 +12,7 @@
 //! flip when the row completes — instead of jittering throughout.
 //!
 //! Repairs, in the spirit of remend's handler set (its html/comparison
-//! handlers don't apply here — vardoger renders raw HTML literally):
+//! handlers don't apply here — commutator renders raw HTML literally):
 //! - emphasis parity: `**a`→`**a**`, `*a`→`*a*`, `_a`/`__a`, `~~a`, nested
 //!   closers innermost-first (`**a *b` → `**a *b***`), half-streamed closers
 //!   completed (`**a*` → `**a**`);
@@ -47,11 +47,11 @@
 //! top-level block of the stream, so per-append work stays O(tail) — the same
 //! bound as the incremental reparse itself. remend re-scans the entire
 //! accumulated message every delta; feeding just the tail is what makes the
-//! port fit vardoger's parser.
+//! port fit commutator's parser.
 
 /// Sentinel destination for a link whose URL is still streaming. The renderer
 /// styles it like any link but must not register it as clickable.
-pub const PENDING_LINK_URL: &str = "vardoger:pending-link";
+pub const PENDING_LINK_URL: &str = "commutator:pending-link";
 
 /// The open delimiter runs, innermost last, with each character's runs
 /// indexed so a closer finds its opener without scanning the others (a
@@ -657,7 +657,7 @@ mod tests {
     fn shell_variables_open_no_formula() {
         mends(
             "set $HOME and [docs](https://x.dev/lo",
-            "set $HOME and [docs](vardoger:pending-link)",
+            "set $HOME and [docs](commutator:pending-link)",
         );
         mends("echo $PATH:$HOME/bin **bo", "echo $PATH:$HOME/bin **bo**");
         mends("'$USER@$HOST' then *em", "'$USER@$HOST' then *em*");
@@ -705,10 +705,10 @@ mod tests {
 
     #[test]
     fn links_mend_to_pending_sentinel() {
-        mends("[docs](https://x.dev/lo", "[docs](vardoger:pending-link)");
-        mends("[docs](", "[docs](vardoger:pending-link)");
-        mends("see [do", "see [do](vardoger:pending-link)");
-        mends("![alt](https://x/i.p", "![alt](vardoger:pending-link)");
+        mends("[docs](https://x.dev/lo", "[docs](commutator:pending-link)");
+        mends("[docs](", "[docs](commutator:pending-link)");
+        mends("see [do", "see [do](commutator:pending-link)");
+        mends("![alt](https://x/i.p", "![alt](commutator:pending-link)");
         stays("see [");
         stays("[x] task-like"); // completed bracket, no url
     }
@@ -716,13 +716,13 @@ mod tests {
     #[test]
     fn link_urls_allow_nested_parens() {
         stays("[a](https://x.dev/(y)) done");
-        mends("[a](https://x.dev/(y", "[a](vardoger:pending-link)");
+        mends("[a](https://x.dev/(y", "[a](commutator:pending-link)");
     }
 
     #[test]
     fn emphasis_inside_link_text_closes_inside() {
-        mends("[**a", "[**a**](vardoger:pending-link)");
-        mends("**a [b", "**a [b](vardoger:pending-link)**");
+        mends("[**a", "[**a**](commutator:pending-link)");
+        mends("**a [b", "**a [b](commutator:pending-link)**");
     }
 
     #[test]

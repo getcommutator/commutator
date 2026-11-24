@@ -1,7 +1,7 @@
 //! The tool catalog and its dispatch.
 //!
 //! Every tool is a thin composition of engine reads/writes from
-//! [`Vardoger`]; the only logic that lives here is argument resolution (chat
+//! [`Commutator`]; the only logic that lives here is argument resolution (chat
 //! by prefix, project by path), sender attribution, and the "how do I
 //! deliver a message to a chat in this state" choice the composer makes
 //! for humans.
@@ -13,14 +13,14 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use vardoger_doc::{SessionCommandPayload, TranscriptWindow};
-use vardoger_proto::{
+use commutator_doc::{SessionCommandPayload, TranscriptWindow};
+use commutator_proto::{
     AccessMode, Chat, ChatConfig, HarnessId, ReasoningLevel, RunRequest, SandboxLevel, Session, SessionStatus,
     Space, UserInputAnswer,
 };
 
 use crate::transcript::{RenderOptions, RenderedMessage, render_entries};
-use crate::vardoger::{HarnessInfo, TranscriptFollow, TurnOutcome, Vardoger, session_for, short};
+use crate::commutator::{HarnessInfo, TranscriptFollow, TurnOutcome, Commutator, session_for, short};
 
 mod commands;
 
@@ -40,7 +40,7 @@ pub struct ToolDef {
 }
 
 pub struct Tools {
-    vardoger: Arc<Vardoger>,
+    commutator: Arc<Commutator>,
     // Remember successful sends on this MCP connection so wait_for_turn after
     // wait:false also waits for a newly created chat with no session row yet.
     pending_turns: tokio::sync::Mutex<HashMap<String, Arc<PendingTurn>>>,
@@ -83,7 +83,7 @@ fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: DEVICE_STATS,
-            description: "One device's machine stats, asked live of that device (local when omitted): OS (name, version, kernel, architecture), CPU (model, physical and logical cores), memory (total and available bytes), storage (the volumes holding Vardoger's data and the home folder, plus every local volume: mount point, filesystem, total/available/used bytes), GPU names where the platform says them cheaply, uptime, load average (Unix), battery, and the Vardoger engine version. Any field is null when that machine can't say. Another device answers within about 5 s, or the error says it's offline (with when it was last seen) or its Vardoger is too old. Reports are cached for 5 s.",
+            description: "One device's machine stats, asked live of that device (local when omitted): OS (name, version, kernel, architecture), CPU (model, physical and logical cores), memory (total and available bytes), storage (the volumes holding Commutator's data and the home folder, plus every local volume: mount point, filesystem, total/available/used bytes), GPU names where the platform says them cheaply, uptime, load average (Unix), battery, and the Commutator engine version. Any field is null when that machine can't say. Another device answers within about 5 s, or the error says it's offline (with when it was last seen) or its Commutator is too old. Reports are cached for 5 s.",
             input_schema: json!({ "type": "object", "properties": { "device": device_schema() } }),
         },
         ToolDef {
@@ -297,7 +297,7 @@ fn catalog() -> Vec<ToolDef> {
 }
 
 /// Shows a page in the CALLING chat, so it is offered only to an agent that
-/// Vardoger launched (`VARDOGER_CHAT_ID` set).
+/// Commutator launched (`COMMUTATOR_CHAT_ID` set).
 const SHOW_VISUAL: &str = "show_visual";
 
 /// Shows an image file in the CALLING chat; offered like `show_visual`.
@@ -320,7 +320,7 @@ inside your turn instead.";
 const SHOW_IMAGE_DESCRIPTION: &str = "\
 Show an image file (a screenshot, a rendered chart or diagram, a photo) inline in this chat, above \
 your final text reply; call it before writing that reply, once per image, in the order they should \
-appear. PNG, JPEG, WebP, or GIF, at most 10 MB and 4096 pixels on a side. Vardoger copies the file \
+appear. PNG, JPEG, WebP, or GIF, at most 10 MB and 4096 pixels on a side. Commutator copies the file \
 into the chat, so it stays visible after the file changes or is deleted. The reader \
 already sees the image, so the reply should not announce or describe it: add only what the image \
 doesn't show.";
@@ -332,10 +332,10 @@ than prose. The reader already sees it, so the reply should not announce, locate
 only what the visual doesn't say. To show an image file as it is (a screenshot, a photo), use \
 show_image instead.\n\
 \n\
-A visual is a Luau script (Lua 5.1 plus `+=`, `continue`, and `if` expressions). Vardoger runs it in a \
+A visual is a Luau script (Lua 5.1 plus `+=`, `continue`, and `if` expressions). Commutator runs it in a \
 sandbox (no I/O or network; math.random is seeded, so data is the same on every render) and renders \
-what it returns with Vardoger's own native interface. Build data and state at the top level, then return \
-a view function. Vardoger calls the view again after every handler, so handlers just assign to state:\n\
+what it returns with Commutator's own native interface. Build data and state at the top level, then return \
+a view function. Commutator calls the view again after every handler, so handlers just assign to state:\n\
 \n\
 local s = ui.state { metric = \"p95\" }\n\
 local data = { { region = \"us-east\", p95 = 182, p99 = 240 }, { region = \"eu-west\", p95 = 140, p99 = 210 } }\n\
@@ -349,7 +349,7 @@ return function()\n\
   }\n\
 end\n\
 \n\
-Vardoger runs the script before showing it (setup, render, every draw, and each tab, toggle, slider, and \
+Commutator runs the script before showing it (setup, render, every draw, and each tab, toggle, slider, and \
 button once) and returns the first error with its line; fix it and call again.\n\
 \n\
 Nodes are props tables: children are the array part, strings are plain text, nil and false children \
@@ -387,7 +387,7 @@ radians clockwise from 3 o'clock), g:text(x, y, str, { size, color, weight, alig
 effects with it); t is seconds, and animate = true redraws every frame while visible.\n\
 - ui.scene { height = 320, draw = function(s, t) ... end, orbit = true, spin = 0.3 (turntable \
 radians per second), camera = { yaw = 0.6, pitch = 0.45, zoom = 1 }, animate = bool }: real 3D, y up, \
-rendered on the GPU with depth, soft shadows from a key light, and bloom. Vardoger frames the camera on \
+rendered on the GPU with depth, soft shadows from a key light, and bloom. Commutator frames the camera on \
 your geometry and the reader drags to orbit. Solids (box, sphere, cylinder, surface, mesh) take \
 material props: roughness (0 mirror to 1 matte), metal (0-1), glow (emits its color and blooms; \
 use for lamps, beams, highlights), glass = true (refracts what's behind it; ior = 1.5, dispersion \
@@ -456,7 +456,7 @@ Style, enforced: layout nodes have no fill, border, shadow, padding, or font pro
 of the reply, not a widget, so lay content directly on the chat with type, spacing, and alignment: no \
 cards, tiles, boxed panels, banners, or canvas backgrounds. Stats are a row of plain ui.stat figures; \
 a chart is a plain heading, then the chart; separate sections with gap or one ui.rule. Text renders \
-in Vardoger's interface font at the reader's text size: body for most text, sm and xs for labels and \
+in Commutator's interface font at the reader's text size: body for most text, sm and xs for labels and \
 notes, lg and xl for headings, 2xl for a headline figure. The width is the reply column (about 720px, \
 as narrow as 360px), so lay out fluidly with grow, wrap, and grid, and give charts, canvases, and \
 scenes heights of 160-420px.";
@@ -467,7 +467,7 @@ async fn read_visual_assets(
     assets: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<serde_json::Map<String, Value>> {
     use base64::Engine as _;
-    use vardoger_proto::{
+    use commutator_proto::{
         VISUAL_MAX_ASSET_BYTES as MAX_ASSET_BYTES, VISUAL_MAX_ASSETS as MAX_ASSETS,
         VISUAL_MAX_TOTAL_ASSET_BYTES as MAX_TOTAL_ASSET_BYTES,
         valid_visual_asset_name as valid_name,
@@ -533,7 +533,7 @@ async fn read_visual_assets(
 /// directory), bounded however the file changes (or lies about its size).
 async fn read_image(path: &str) -> anyhow::Result<Vec<u8>> {
     use tokio::io::AsyncReadExt as _;
-    use vardoger_proto::IMAGE_MAX_BYTES;
+    use commutator_proto::IMAGE_MAX_BYTES;
     let too_large = || anyhow::anyhow!("{path} is over {} MB", IMAGE_MAX_BYTES / (1024 * 1024));
     let metadata = tokio::fs::metadata(path)
         .await
@@ -754,11 +754,11 @@ fn status_of(session: Option<&Session>) -> (String, Option<i64>) {
         return ("idle".into(), None);
     };
     let age = chrono::Utc::now() - session.updated_at;
-    let label = match vardoger_proto::view::effective_indicator(Some(session), chrono::Utc::now()) {
-        vardoger_proto::view::Indicator::Working => "working",
-        vardoger_proto::view::Indicator::AwaitingInput => "awaitingInput",
-        vardoger_proto::view::Indicator::Errored => "errored",
-        vardoger_proto::view::Indicator::None => "idle",
+    let label = match commutator_proto::view::effective_indicator(Some(session), chrono::Utc::now()) {
+        commutator_proto::view::Indicator::Working => "working",
+        commutator_proto::view::Indicator::AwaitingInput => "awaitingInput",
+        commutator_proto::view::Indicator::Errored => "errored",
+        commutator_proto::view::Indicator::None => "idle",
     };
     (label.into(), Some(age.num_seconds().max(0)))
 }
@@ -771,7 +771,7 @@ fn summarize_chat(chat: &Chat, spaces: &[Space], sessions: &[Session]) -> Value 
     let session = session_for(sessions, chat);
     let (_, status_age) = status_of(session.as_ref());
     let now = chrono::Utc::now();
-    let status = vardoger_proto::view::display_status(chat, session.as_ref(), now);
+    let status = commutator_proto::view::display_status(chat, session.as_ref(), now);
     json!({
         "id": chat.id,
         "title": chat.title,
@@ -791,7 +791,7 @@ fn summarize_chat(chat: &Chat, spaces: &[Space], sessions: &[Session]) -> Value 
         "childKind": chat.child_kind,
         "status": status,
         "sessionStatus": session.as_ref().map(|s| s.status),
-        "statusStale": session.as_ref().is_some_and(|s| vardoger_proto::view::session_stale(s, now)),
+        "statusStale": session.as_ref().is_some_and(|s| commutator_proto::view::session_stale(s, now)),
         "lastTurnOutcome": session.as_ref().and_then(|s| s.last_turn_outcome),
         "terminalActivity": session.as_ref().and_then(|s| s.terminal_activity.as_ref()),
         "statusAgeSecs": status_age,
@@ -831,9 +831,9 @@ impl Tools {
 // ---- dispatch ----------------------------------------------------------------
 
 impl Tools {
-    pub fn new(vardoger: Arc<Vardoger>) -> Self {
+    pub fn new(commutator: Arc<Commutator>) -> Self {
         Self {
-            vardoger,
+            commutator,
             pending_turns: Default::default(),
             command_state: Default::default(),
         }
@@ -842,18 +842,18 @@ impl Tools {
     /// Whether the host launched this server's agent without its own
     /// subagent tools, so `initialize` says to delegate through chats.
     pub fn side_chats_only(&self) -> bool {
-        self.vardoger.origin().side_chats_only
+        self.commutator.origin().side_chats_only
     }
 
     /// Whether this server's agent is offered `wait_on_background`: a
     /// chat's, on a runtime that wakes it as background work ends.
     pub fn waits_on_background(&self) -> bool {
-        let origin = self.vardoger.origin();
+        let origin = self.commutator.origin();
         origin.chat_id.is_some() && origin.waits_on_background
     }
 
     pub fn list(&self) -> Vec<ToolDef> {
-        let in_chat = self.vardoger.origin().chat_id.is_some();
+        let in_chat = self.commutator.origin().chat_id.is_some();
         let waits = self.waits_on_background();
         catalog()
             .into_iter()
@@ -934,14 +934,14 @@ impl Tools {
     }
 
     async fn whoami(&self) -> anyhow::Result<Value> {
-        let origin = self.vardoger.origin().clone();
-        let local_device = self.vardoger.local_device_id().await?;
-        let engine = self.vardoger.engine_info().await.unwrap_or(Value::Null);
+        let origin = self.commutator.origin().clone();
+        let local_device = self.commutator.local_device_id().await?;
+        let engine = self.commutator.engine_info().await.unwrap_or(Value::Null);
         let chat = match origin.chat_id.as_deref() {
-            Some(id) => match self.vardoger.resolve_chat(id).await {
+            Some(id) => match self.commutator.resolve_chat(id).await {
                 Ok(chat) => {
                     let (spaces, sessions) =
-                        tokio::try_join!(self.vardoger.spaces(), self.vardoger.sessions())?;
+                        tokio::try_join!(self.commutator.spaces(), self.commutator.sessions())?;
                     summarize_chat(&chat, &spaces, &sessions)
                 }
                 Err(_) => json!({ "id": id }),
@@ -963,7 +963,7 @@ impl Tools {
 
     async fn list_devices(&self) -> anyhow::Result<Value> {
         let (devices, local) =
-            tokio::try_join!(self.vardoger.devices(), self.vardoger.local_device_id())?;
+            tokio::try_join!(self.commutator.devices(), self.commutator.local_device_id())?;
         let now = chrono::Utc::now();
         Ok(json!({
             "devices": devices.iter().map(|d| json!({
@@ -984,20 +984,20 @@ impl Tools {
     /// old, no answer); only this engine lacking the method is said here.
     async fn device_stats(&self, args: DeviceArgs) -> anyhow::Result<Value> {
         let (devices, local) =
-            tokio::try_join!(self.vardoger.devices(), self.vardoger.local_device_id())?;
-        let device = self.vardoger.resolve_device_id(args.device.as_deref()).await?;
+            tokio::try_join!(self.commutator.devices(), self.commutator.local_device_id())?;
+        let device = self.commutator.resolve_device_id(args.device.as_deref()).await?;
         let mut params = json!({});
         if device != local {
             params["targetDeviceId"] = json!(device);
         }
         let stats = match self
-            .vardoger
-            .call_rpc(vardoger_rpc::methods::DEVICE_STATS, params)
+            .commutator
+            .call_rpc(commutator_rpc::methods::DEVICE_STATS, params)
             .await
         {
             Ok(stats) => stats,
-            Err(vardoger_rpc::RpcError::UnknownMethod(_)) => anyhow::bail!(
-                "This device's running Vardoger is too old to report stats: update Vardoger and restart it"
+            Err(commutator_rpc::RpcError::UnknownMethod(_)) => anyhow::bail!(
+                "This device's running Commutator is too old to report stats: update Commutator and restart it"
             ),
             Err(error) => anyhow::bail!("{error}"),
         };
@@ -1009,9 +1009,9 @@ impl Tools {
     }
 
     async fn list_projects(&self, args: DeviceArgs) -> anyhow::Result<Value> {
-        let (mut spaces, devices) = tokio::try_join!(self.vardoger.spaces(), self.vardoger.devices())?;
+        let (mut spaces, devices) = tokio::try_join!(self.commutator.spaces(), self.commutator.devices())?;
         if let Some(device) = args.device.as_deref() {
-            let device = self.vardoger.resolve_device_id(Some(device)).await?;
+            let device = self.commutator.resolve_device_id(Some(device)).await?;
             spaces.retain(|s| s.device_id == device);
         }
         let device_name = |id: &str| devices.iter().find(|d| d.id == id).map(|d| d.name.clone());
@@ -1029,10 +1029,10 @@ impl Tools {
 
     async fn list_harnesses(&self, args: DeviceArgs) -> anyhow::Result<Value> {
         let device = match args.device.as_deref() {
-            Some(key) => Some(self.vardoger.resolve_device_id(Some(key)).await?),
+            Some(key) => Some(self.commutator.resolve_device_id(Some(key)).await?),
             None => None,
         };
-        let harnesses = self.vardoger.harnesses_on(device.as_deref()).await?;
+        let harnesses = self.commutator.harnesses_on(device.as_deref()).await?;
         Ok(json!({
             "harnesses": harnesses.iter().map(|h| json!({
                 "id": h.id,
@@ -1053,10 +1053,10 @@ impl Tools {
         let harness: HarnessId =
             parse_enum("harness", &args.harness).map_err(anyhow::Error::msg)?;
         let device = match args.device.as_deref() {
-            Some(key) => Some(self.vardoger.resolve_device_id(Some(key)).await?),
+            Some(key) => Some(self.commutator.resolve_device_id(Some(key)).await?),
             None => None,
         };
-        let models = self.vardoger.models_on(harness, device.as_deref()).await?;
+        let models = self.commutator.models_on(harness, device.as_deref()).await?;
         Ok(json!({
             "harness": harness,
             "models": models.iter().map(|m| json!({
@@ -1070,27 +1070,27 @@ impl Tools {
 
     async fn list_chats(&self, args: ListChatsArgs) -> anyhow::Result<Value> {
         let (mut chats, spaces, sessions) = tokio::try_join!(
-            self.vardoger.chats(),
-            self.vardoger.spaces(),
-            self.vardoger.sessions()
+            self.commutator.chats(),
+            self.commutator.spaces(),
+            self.commutator.sessions()
         )?;
         if let Some(project) = args.project.as_deref() {
             let (space, _) = self
-                .vardoger
+                .commutator
                 .resolve_target(Some(project), args.device.as_deref())
                 .await?;
             let space = space.expect("project provided");
             chats.retain(|c| c.space_id.as_deref() == Some(space.id.as_str()));
         }
         if args.device.is_some() {
-            let device = self.vardoger.resolve_device_id(args.device.as_deref()).await?;
+            let device = self.commutator.resolve_device_id(args.device.as_deref()).await?;
             chats.retain(|c| c.device_id == device);
         }
         if !args.include_archived {
             chats.retain(|c| !c.archived);
         }
         if let Some(parent) = args.parent.as_deref() {
-            let parent = self.vardoger.resolve_chat(parent).await?;
+            let parent = self.commutator.resolve_chat(parent).await?;
             chats.retain(|c| c.parent_chat_id.as_deref() == Some(parent.id.as_str()));
         }
         chats.sort_by(|a, b| {
@@ -1109,12 +1109,12 @@ impl Tools {
     }
 
     async fn get_chat(&self, args: ChatArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
-        let (spaces, sessions) = tokio::try_join!(self.vardoger.spaces(), self.vardoger.sessions())?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
+        let (spaces, sessions) = tokio::try_join!(self.commutator.spaces(), self.commutator.sessions())?;
         let mut summary = summarize_chat(&chat, &spaces, &sessions);
         // The chat's facts don't depend on reaching its host.
         match self
-            .vardoger
+            .commutator
             .window_of(&chat, TranscriptWindow::tail(1))
             .await
         {
@@ -1149,8 +1149,8 @@ impl Tools {
             None
         } else {
             match explicit_parent {
-                Some(key) => Some(self.vardoger.resolve_chat(key).await?.id),
-                None => self.vardoger.origin().chat_id.clone(),
+                Some(key) => Some(self.commutator.resolve_chat(key).await?.id),
+                None => self.commutator.origin().chat_id.clone(),
             }
         };
         anyhow::ensure!(
@@ -1173,8 +1173,8 @@ impl Tools {
         // asks nothing (the engine caps it again: rpc/agent_gate.rs).
         let mut ceiling = AccessMode::FullAccess;
         let mut sandbox_ceiling = SandboxLevel::DangerFullAccess;
-        if let Some(origin) = self.vardoger.origin().chat_id.as_deref() {
-            let origin = self.vardoger.resolve_chat(origin).await?;
+        if let Some(origin) = self.commutator.origin().chat_id.as_deref() {
+            let origin = self.commutator.resolve_chat(origin).await?;
             anyhow::ensure!(
                 origin.parent_chat_id.is_none(),
                 "A delegated chat can't create chats of its own. Do the work in this chat, or ask the chat that started you."
@@ -1185,7 +1185,7 @@ impl Tools {
             }
         }
         if let Some(parent) = parent_chat_id.as_deref() {
-            let parent = self.vardoger.resolve_chat(parent).await?;
+            let parent = self.commutator.resolve_chat(parent).await?;
             anyhow::ensure!(
                 parent.parent_chat_id.is_none(),
                 "{} is itself a delegated chat: only top-level chats have side chats.",
@@ -1193,10 +1193,10 @@ impl Tools {
             );
         }
         let (space, device_id) = self
-            .vardoger
+            .commutator
             .resolve_target(args.project.as_deref(), args.device.as_deref())
             .await?;
-        let harnesses = self.vardoger.harnesses_on(Some(&device_id)).await?;
+        let harnesses = self.commutator.harnesses_on(Some(&device_id)).await?;
         let harness = match args.harness.as_deref() {
             Some(raw) => {
                 let id: HarnessId = parse_enum("harness", raw).map_err(anyhow::Error::msg)?;
@@ -1209,7 +1209,7 @@ impl Tools {
             None => default_harness(&harnesses).with_context(|| format!("device {device_id}"))?,
         };
         if let Some(model) = args.model.as_deref() {
-            let models = self.vardoger.models_on(harness, Some(&device_id)).await?;
+            let models = self.commutator.models_on(harness, Some(&device_id)).await?;
             anyhow::ensure!(
                 models.iter().any(|m| m.id == model),
                 "model {model:?} is not offered by {harness:?} on device {device_id}; available: {}",
@@ -1234,7 +1234,7 @@ impl Tools {
         };
         // Never more than this chat's own: lowered, and the reply says so.
         let (sandbox, access, capped) =
-            vardoger_proto::cap_access((asked_sandbox, asked_access), (sandbox_ceiling, ceiling));
+            commutator_proto::cap_access((asked_sandbox, asked_access), (sandbox_ceiling, ceiling));
         let capped = capped.then(|| {
             format!(
                 "This chat runs {} in a {} sandbox, so the new chat runs with no more: {}, {} sandbox (asked {}, {}).",
@@ -1283,8 +1283,8 @@ impl Tools {
         if let Some(parent) = &parent_chat_id {
             mutate["parentChatId"] = json!(parent);
             mutate["childKind"] = json!(match kind {
-                ChatKind::Side => vardoger_proto::ChildKind::Side,
-                _ => vardoger_proto::ChildKind::Subagent,
+                ChatKind::Side => commutator_proto::ChildKind::Side,
+                _ => commutator_proto::ChildKind::Subagent,
             });
         }
         if let Some(branch) = args
@@ -1306,14 +1306,14 @@ impl Tools {
         // in agreement.
         if space.is_none()
             && cwd.is_none()
-            && self.vardoger.devices().await?.iter().any(|d| {
+            && self.commutator.devices().await?.iter().any(|d| {
                 d.id == device_id
                     && d.capabilities
                         .iter()
-                        .any(|c| c == vardoger_proto::capabilities::PROJECTLESS_SCRATCH_V1)
+                        .any(|c| c == commutator_proto::capabilities::PROJECTLESS_SCRATCH_V1)
             })
         {
-            cwd = Some(vardoger_proto::projectless::scratch_cwd(
+            cwd = Some(commutator_proto::projectless::scratch_cwd(
                 &chat_id,
                 chrono::Utc::now(),
             ));
@@ -1321,14 +1321,14 @@ impl Tools {
         if let Some(cwd) = &cwd {
             mutate["cwd"] = json!(cwd);
         }
-        self.vardoger.mutate(mutate).await?;
+        self.commutator.mutate(mutate).await?;
         if let Some(title) = args
             .title
             .as_deref()
             .map(str::trim)
             .filter(|t| !t.is_empty())
         {
-            self.vardoger
+            self.commutator
                 .mutate(json!({ "op": "renameChat", "chatId": chat_id, "title": title }))
                 .await?;
         }
@@ -1377,8 +1377,8 @@ impl Tools {
                 harness_session_harness: None,
                 parent_chat_id: parent_chat_id.clone(),
                 child_kind: match kind {
-                    ChatKind::Side => Some(vardoger_proto::ChildKind::Side),
-                    ChatKind::Subagent => Some(vardoger_proto::ChildKind::Subagent),
+                    ChatKind::Side => Some(commutator_proto::ChildKind::Side),
+                    ChatKind::Subagent => Some(commutator_proto::ChildKind::Subagent),
                     ChatKind::Chat => None,
                 },
                 space_id: space.as_ref().map(|s| s.id.clone()),
@@ -1410,10 +1410,10 @@ impl Tools {
     }
 
     async fn read_chat(&self, args: ReadChatArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
         let limit = args.limit.unwrap_or(40).clamp(1, 500);
         let view = self
-            .vardoger
+            .commutator
             .window_of(
                 &chat,
                 TranscriptWindow {
@@ -1449,20 +1449,20 @@ impl Tools {
         if text.is_empty() {
             anyhow::bail!("text is empty");
         }
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
-        if self.vardoger.origin().chat_id.as_deref() == Some(chat.id.as_str()) {
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
+        if self.commutator.origin().chat_id.as_deref() == Some(chat.id.as_str()) {
             anyhow::bail!(
                 "refusing to send a message to your own chat ({})",
                 short(&chat.id)
             );
         }
-        let (spaces, sessions) = tokio::try_join!(self.vardoger.spaces(), self.vardoger.sessions())?;
+        let (spaces, sessions) = tokio::try_join!(self.commutator.spaces(), self.commutator.sessions())?;
         // Only a chat with no harness of its own needs its host's catalog:
         // the others are delivered through the doc, host reachable or not.
         let harnesses = if chat.config.is_some() {
             Vec::new()
         } else {
-            self.vardoger.harnesses_on(Some(&chat.device_id)).await?
+            self.commutator.harnesses_on(Some(&chat.device_id)).await?
         };
         let space = chat
             .space_id
@@ -1507,7 +1507,7 @@ impl Tools {
     }
 
     async fn wait_for_turn(&self, args: WaitArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
         let pending = self.pending_turns.lock().await.get(&chat.id).cloned();
         let turn = match pending {
             Some(pending) => {
@@ -1529,9 +1529,9 @@ impl Tools {
     }
 
     async fn archive_chat(&self, args: ArchiveArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
         let archived = args.archived.unwrap_or(true);
-        self.vardoger
+        self.commutator
             .mutate(json!({ "op": "setChatArchived", "chatId": chat.id, "archived": archived }))
             .await?;
         Ok(json!({ "chatId": chat.id, "title": chat.title, "archived": archived }))
@@ -1539,16 +1539,16 @@ impl Tools {
 
     async fn show_visual(&self, args: ShowVisualArgs) -> anyhow::Result<Value> {
         let chat_id = self
-            .vardoger
+            .commutator
             .origin()
             .chat_id
             .clone()
-            .context("show_visual only works from an agent Vardoger launched in a chat")?;
+            .context("show_visual only works from an agent Commutator launched in a chat")?;
         let assets = read_visual_assets(&args.assets).await?;
         let shown = self
-            .vardoger
+            .commutator
             .call(
-                vardoger_rpc::methods::PUBLISH_VISUAL,
+                commutator_rpc::methods::PUBLISH_VISUAL,
                 json!({
                     "chatId": chat_id,
                     "title": args.title,
@@ -1566,20 +1566,20 @@ impl Tools {
     async fn show_image(&self, args: ShowImageArgs) -> anyhow::Result<Value> {
         use base64::Engine as _;
         let chat_id = self
-            .vardoger
+            .commutator
             .origin()
             .chat_id
             .clone()
-            .context("show_image only works from an agent Vardoger launched in a chat")?;
+            .context("show_image only works from an agent Commutator launched in a chat")?;
         let bytes = read_image(&args.path).await?;
         let name = std::path::Path::new(&args.path)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "image".into());
         let shown = self
-            .vardoger
+            .commutator
             .call(
-                vardoger_rpc::methods::PUBLISH_IMAGE,
+                commutator_rpc::methods::PUBLISH_IMAGE,
                 json!({
                     "chatId": chat_id,
                     "name": name,
@@ -1595,16 +1595,16 @@ impl Tools {
 
     async fn wait_on_background(&self, args: WaitOnBackgroundArgs) -> anyhow::Result<Value> {
         let chat_id = self
-            .vardoger
+            .commutator
             .origin()
             .chat_id
             .clone()
-            .context("wait_on_background only works from an agent Vardoger launched in a chat")?;
+            .context("wait_on_background only works from an agent Commutator launched in a chat")?;
         let waiting = args.waiting.unwrap_or(true);
         let marked = self
-            .vardoger
+            .commutator
             .call(
-                vardoger_rpc::methods::AWAIT_BACKGROUND,
+                commutator_rpc::methods::AWAIT_BACKGROUND,
                 json!({ "chatId": chat_id, "taskIds": args.task_ids, "waiting": waiting }),
             )
             .await?;
@@ -1624,20 +1624,20 @@ impl Tools {
     }
 
     async fn interrupt_chat(&self, args: ChatArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
         let command_id = self
-            .vardoger
+            .commutator
             .queue_command(&chat.id, &SessionCommandPayload::Interrupt {})
             .await?;
         Ok(json!({ "chatId": chat.id, "commandId": command_id }))
     }
 
     async fn respond_to_input(&self, args: RespondArgs) -> anyhow::Result<Value> {
-        let chat = self.vardoger.resolve_chat(&args.chat).await?;
+        let chat = self.commutator.resolve_chat(&args.chat).await?;
         let request_id = match args.request_id {
             Some(id) => id,
             None => self
-                .vardoger
+                .commutator
                 .window_of(&chat, TranscriptWindow::tail(1))
                 .await?
                 .info
@@ -1659,7 +1659,7 @@ impl Tools {
             })
             .collect();
         let command_id = self
-            .vardoger
+            .commutator
             .queue_command(
                 &chat.id,
                 &SessionCommandPayload::RespondInput {
@@ -1678,13 +1678,13 @@ impl Tools {
     /// an agent-to-agent message from a typed one. Reply instructions always
     /// use the full id: display prefixes need not uniquely identify a chat.
     async fn attribute(&self, target: &Chat, text: &str) -> String {
-        let Some(origin_id) = self.vardoger.origin().chat_id.as_deref() else {
+        let Some(origin_id) = self.commutator.origin().chat_id.as_deref() else {
             return text.to_owned();
         };
         if origin_id == target.id {
             return text.to_owned();
         }
-        let title = match self.vardoger.resolve_chat(origin_id).await {
+        let title = match self.commutator.resolve_chat(origin_id).await {
             Ok(chat) => chat.title,
             Err(_) => None,
         };
@@ -1694,7 +1694,7 @@ impl Tools {
             }
             _ => short(origin_id).to_owned(),
         };
-        vardoger_proto::agent_messages::agent_message(&label, origin_id, text)
+        commutator_proto::agent_messages::agent_message(&label, origin_id, text)
     }
 
     /// Pick and perform the delivery the composer would.
@@ -1763,7 +1763,7 @@ impl Tools {
                     extra_mcp: Vec::new(),
                 };
                 let id = self
-                    .vardoger
+                    .commutator
                     .queue_command(
                         &chat.id,
                         &SessionCommandPayload::Run {
@@ -1776,7 +1776,7 @@ impl Tools {
             }
             "steer" => {
                 let id = self
-                    .vardoger
+                    .commutator
                     .queue_command(
                         &chat.id,
                         &SessionCommandPayload::Steer {
@@ -1789,7 +1789,7 @@ impl Tools {
             }
             // A held message keeps its row's id when it's sent.
             _ => {
-                let id = self.vardoger.queue_message(&chat.id, &text).await?;
+                let id = self.commutator.queue_message(&chat.id, &text).await?;
                 (id.clone(), id)
             }
         };
@@ -1843,7 +1843,7 @@ impl Tools {
     ) -> anyhow::Result<Value> {
         let deadline = Instant::now() + timeout;
         let (mut outcome, session) = self
-            .vardoger
+            .commutator
             .wait_for_turn(chat, baseline, expect_turn, timeout)
             .await?;
         // Registry session updates can arrive before the separate transcript
@@ -1864,7 +1864,7 @@ impl Tools {
             let next = tokio::time::timeout(remaining, async {
                 if follow.is_none() {
                     follow = Some(
-                        self.vardoger
+                        self.commutator
                             .follow_transcript(&chat.id, Some(&chat.device_id), start.window())
                             .await?,
                     );
@@ -1907,22 +1907,22 @@ impl Tools {
             pending_input = view.info.pending_input.map(|p| json!(p));
             replies = render_entries(&view.entries, RenderOptions::default())
                 .into_iter()
-                .filter(|m| m.role == vardoger_doc::MessageRole::Assistant)
+                .filter(|m| m.role == commutator_doc::MessageRole::Assistant)
                 .collect();
             if !expect_turn
                 || outcome != TurnOutcome::Completed
                 || replies
                     .iter()
-                    .any(|m| m.status != Some(vardoger_doc::MessageStatus::Streaming))
+                    .any(|m| m.status != Some(commutator_doc::MessageStatus::Streaming))
             {
                 break;
             }
         }
         let now = chrono::Utc::now();
-        let status = vardoger_proto::view::display_status(chat, session.as_ref(), now);
+        let status = commutator_proto::view::display_status(chat, session.as_ref(), now);
         let stale = session
             .as_ref()
-            .is_some_and(|s| vardoger_proto::view::session_stale(s, now));
+            .is_some_and(|s| commutator_proto::view::session_stale(s, now));
         let mut turn = json!({
             "outcome": outcome,
             "status": status,
@@ -1968,11 +1968,11 @@ fn default_harness(harnesses: &[HarnessInfo]) -> anyhow::Result<HarnessId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vardoger::Origin;
+    use crate::commutator::Origin;
     use async_trait::async_trait;
     use futures::StreamExt;
     use std::sync::Mutex;
-    use vardoger_rpc::{RpcError, RpcReply, RpcService, memory_client, methods};
+    use commutator_rpc::{RpcError, RpcReply, RpcService, memory_client, methods};
 
     /// Two devices with distinct catalogs and repeated project paths, plus
     /// two chats with a two-message transcript. Writes are recorded for assertions.
@@ -2150,7 +2150,7 @@ mod tests {
 
     fn tools(world: Arc<World>, origin: Origin) -> Tools {
         let client = memory_client(world);
-        Tools::new(Arc::new(Vardoger::with_client(client, origin)))
+        Tools::new(Arc::new(Commutator::with_client(client, origin)))
     }
 
     #[tokio::test]
@@ -2175,7 +2175,7 @@ mod tests {
         let stats = json!({
             "os": { "name": "Darwin", "arch": "arm64" },
             "memory": { "totalBytes": 34359738368u64, "availableBytes": null },
-            "vardoger": { "engineVersion": "0.2.139" }
+            "commutator": { "engineVersion": "0.2.139" }
         });
         let world = Arc::new(World { stats: Some(stats.clone()), ..Default::default() });
         let tools = tools(world.clone(), Origin::default());
@@ -2221,9 +2221,9 @@ mod tests {
         let start = SHOW_VISUAL_DESCRIPTION.find("local s = ui.state").unwrap();
         let end = start
             + SHOW_VISUAL_DESCRIPTION[start..]
-                .find("\n\nVardoger runs the script")
+                .find("\n\nCommutator runs the script")
                 .unwrap();
-        let report = vardoger_visual::check(&SHOW_VISUAL_DESCRIPTION[start..end], 1).unwrap();
+        let report = commutator_visual::check(&SHOW_VISUAL_DESCRIPTION[start..end], 1).unwrap();
         assert_eq!(report.interactions, 2, "both tabs");
     }
 
@@ -2252,7 +2252,7 @@ mod tests {
         );
         assert!(inside.has("show_visual"));
         // The guidance names every color the runtime accepts.
-        for name in vardoger_visual::TOKEN_NAMES {
+        for name in commutator_visual::TOKEN_NAMES {
             assert!(SHOW_VISUAL_DESCRIPTION.contains(name), "{name}");
         }
         let shown = inside
@@ -2326,7 +2326,7 @@ mod tests {
         let huge = dir.path().join("huge.png");
         std::fs::File::create(&huge)
             .unwrap()
-            .set_len(vardoger_proto::IMAGE_MAX_BYTES as u64 + 1)
+            .set_len(commutator_proto::IMAGE_MAX_BYTES as u64 + 1)
             .unwrap();
         let error = inside
             .call("show_image", json!({ "path": huge.to_string_lossy() }))
@@ -2399,7 +2399,7 @@ mod tests {
         assert_eq!(params["command"]["kind"], "run");
         let prompt = params["command"]["request"]["prompt"].as_str().unwrap();
         assert!(
-            prompt.starts_with("[Message from Vardoger chat Beta (chat-bet)"),
+            prompt.starts_with("[Message from Commutator chat Beta (chat-bet)"),
             "{prompt}"
         );
         assert!(prompt.ends_with("please review"));
@@ -2413,7 +2413,7 @@ mod tests {
     async fn auto_steers_busy_chats_even_at_turn_boundaries_or_after_long_quiet_tools() {
         let world = Arc::new(World::default());
         let tools = tools(world.clone(), Origin::default());
-        let chats = tools.vardoger.chats().await.unwrap();
+        let chats = tools.commutator.chats().await.unwrap();
         let session = Session {
             chat_id: chats[0].id.clone(),
             device_id: "dev-local".into(),
@@ -3306,7 +3306,7 @@ mod tests {
                 no_transcript: false,
                 host_skew_millis: 0,
             });
-            let tools = Tools::new(Arc::new(Vardoger::with_client(
+            let tools = Tools::new(Arc::new(Commutator::with_client(
                 memory_client(service),
                 Origin::default(),
             )));
@@ -3347,7 +3347,7 @@ mod tests {
                 no_transcript: false,
                 host_skew_millis: 0,
             });
-            let tools = Tools::new(Arc::new(Vardoger::with_client(
+            let tools = Tools::new(Arc::new(Commutator::with_client(
                 memory_client(service),
                 Origin::default(),
             )));
@@ -3397,7 +3397,7 @@ mod tests {
             no_transcript: true,
             host_skew_millis: 0,
         });
-        let tools = Tools::new(Arc::new(Vardoger::with_client(
+        let tools = Tools::new(Arc::new(Commutator::with_client(
             memory_client(service.clone()),
             Origin::default(),
         )));
@@ -3466,7 +3466,7 @@ mod tests {
                 no_transcript: false,
                 host_skew_millis: -30_000,
             });
-            let tools = Tools::new(Arc::new(Vardoger::with_client(
+            let tools = Tools::new(Arc::new(Commutator::with_client(
                 memory_client(service),
                 Origin::default(),
             )));
@@ -3502,7 +3502,7 @@ mod tests {
             never_reply: true,
             host_skew_millis: 0,
         });
-        let tools = Tools::new(Arc::new(Vardoger::with_client(
+        let tools = Tools::new(Arc::new(Commutator::with_client(
             memory_client(service),
             Origin::default(),
         )));
@@ -3533,7 +3533,7 @@ mod tests {
                     no_transcript: false,
                     host_skew_millis,
                 });
-                let tools = Tools::new(Arc::new(Vardoger::with_client(
+                let tools = Tools::new(Arc::new(Commutator::with_client(
                     memory_client(service),
                     Origin::default(),
                 )));
@@ -3603,7 +3603,7 @@ mod tests {
         )
         .await;
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
-        assert_eq!(init["result"]["serverInfo"]["name"], "vardoger");
+        assert_eq!(init["result"]["serverInfo"]["name"], "commutator");
         let list =
             crate::jsonrpc::handle_request(&tools, json!(2), "tools/list", Value::Null).await;
         assert!(list["result"]["tools"].as_array().unwrap().len() >= 10);

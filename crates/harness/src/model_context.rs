@@ -2,7 +2,7 @@
 use crate::{HarnessError, ModelContext};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use vardoger_proto::HarnessId;
+use commutator_proto::HarnessId;
 
 pub(crate) fn root(variable: &str, fallback: PathBuf) -> PathBuf {
     std::env::var_os(variable)
@@ -70,7 +70,7 @@ pub(crate) fn context(
         HarnessId::Pi => {
             vec![root("PI_CODING_AGENT_DIR", home.join(".pi/agent")).join("auth.json")]
         }
-        // Its file login (one Vardoger signed it in to) and the method its
+        // Its file login (one Commutator signed it in to) and the method its
         // settings choose: a sign-in is another account's catalog. (A
         // Keychain login has no file to tell by.)
         HarnessId::Antigravity => match crate::acp::antigravity_home() {

@@ -4,7 +4,7 @@
 use super::*;
 use crate::state::EngineHandle;
 use std::collections::VecDeque;
-use vardoger_proto::{SidebarPinChange, SidebarPreferencesState};
+use commutator_proto::{SidebarPinChange, SidebarPreferencesState};
 
 pub(super) struct PendingSidebarPins {
     pub id: u64,
@@ -166,7 +166,7 @@ impl Shell {
                 matches!(
                     pending.queue.front(),
                     Some(SidebarPinChange::Section {
-                        change: vardoger_proto::SidebarSectionChange::Import { .. }
+                        change: commutator_proto::SidebarSectionChange::Import { .. }
                     })
                 )
                 .then(|| pending.profile_key.clone())

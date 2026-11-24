@@ -87,14 +87,14 @@ mod tests {
                     data_dir: path.into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             )
         })
     }
 
-    fn chat(id: &str) -> vardoger_proto::Chat {
+    fn chat(id: &str) -> commutator_proto::Chat {
         serde_json::from_value(serde_json::json!({
             "id": id, "title": id, "deviceId": "local", "archived": false,
             "createdAt": "2026-09-20T00:00:00Z",
@@ -116,7 +116,7 @@ mod tests {
                 return warms;
             };
             let request: serde_json::Value = serde_json::from_str(&request).unwrap();
-            if request["method"] == vardoger_rpc::methods::WARM_WORKSPACE_SEARCH {
+            if request["method"] == commutator_rpc::methods::WARM_WORKSPACE_SEARCH {
                 warms.push(request["params"]["chatId"].as_str().unwrap().to_owned());
             }
             let reply = serde_json::json!({ "id": request["id"], "ok": { "state": "ready" } });
@@ -134,7 +134,7 @@ mod tests {
         let (out, mut requests) = tokio::sync::mpsc::channel(16);
         let (replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         let window = test_shell(cx, dir.path());
         window

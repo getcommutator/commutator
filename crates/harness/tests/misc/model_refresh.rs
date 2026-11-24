@@ -2,7 +2,7 @@
 //! probes without pinning a stale catalog for the lifetime of the engine.
 #![cfg(unix)]
 use std::{os::unix::fs::PermissionsExt, path::Path};
-use vardoger_harness::{AcpHarness, Harness};
+use commutator_harness::{AcpHarness, Harness};
 
 fn fixture(dir: &Path) -> std::path::PathBuf {
     let script = dir.join("agent.py");

@@ -36,7 +36,7 @@ pub(super) fn session_card_reserve(main: f32, transcript: f32) -> Option<f32> {
 /// Changes pane's `WatchCheckoutDiffs` stream, kept without the pane.
 #[derive(Default)]
 pub(super) struct SessionDiffs {
-    diffs: Vec<vardoger_proto::CheckoutDiff>,
+    diffs: Vec<commutator_proto::CheckoutDiff>,
     /// Device the running watch targets: `None` the connected engine, else
     /// a remote chat's host (diffs are produced where the checkout lives).
     target: Option<Option<String>>,
@@ -45,7 +45,7 @@ pub(super) struct SessionDiffs {
 
 impl SessionDiffs {
     /// The chat's uncommitted line totals; `None` while clean or unknown.
-    fn totals(&self, chat: &vardoger_proto::Chat) -> Option<(u32, u32)> {
+    fn totals(&self, chat: &commutator_proto::Chat) -> Option<(u32, u32)> {
         crate::changes::resolve_diff(&self.diffs, chat)
             .map(|diff| (diff.additions, diff.deletions))
             .filter(|&(adds, dels)| adds + dels > 0)
@@ -430,7 +430,7 @@ impl Shell {
     }
 
     /// The Actions section: a row per project action (click runs it; the
-    /// gear edits it), imports from vardoger.json, and Add action.
+    /// gear edits it), imports from commutator.json, and Add action.
     fn render_session_info_actions(
         &mut self,
         theme: &Theme,

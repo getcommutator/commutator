@@ -76,13 +76,13 @@ fn helper_path() -> Result<std::path::PathBuf, String> {
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".cache")))
         .ok_or("Could not locate the browser cache directory")?
-        .join("vardoger/browser");
+        .join("commutator/browser");
     extract_helper(&root)
 }
 
 fn extract_helper(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
     use sha2::{Digest, Sha256};
-    const HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vardoger-webkit"));
+    const HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/commutator-webkit"));
     let hash = format!("{:x}", Sha256::digest(HELPER));
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
     let path = root.join(format!("webkit-{hash}"));
@@ -860,7 +860,7 @@ mod storage_tests {
         let root = tempfile::tempdir().unwrap();
         let profile = super::super::profile::BrowserProfile::for_workspace(
             root.path(),
-            Some(vardoger_proto::WorkspaceScope::Local),
+            Some(commutator_proto::WorkspaceScope::Local),
             None,
             Some("device"),
         )

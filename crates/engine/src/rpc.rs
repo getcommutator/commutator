@@ -70,12 +70,12 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::watch;
 
-use vardoger_doc::{MessagePart, SessionCommandPayload};
-use vardoger_proto::{
+use commutator_doc::{MessagePart, SessionCommandPayload};
+use commutator_proto::{
     AgentEvent, ChatConfig, CreateWorktreeOutcome, EngineInfo, HarnessId, HarnessUpdatePolicy,
     ProjectActionDraft, Space, ToolCall, WorkspaceScope,
 };
-use vardoger_rpc::{
+use commutator_rpc::{
     LinkCache, RpcError, RpcReply, RpcService, capability_errors, methods, parse_params,
 };
 
@@ -167,7 +167,7 @@ struct RelayCommandParams {
     chat_id: String,
     /// The full command entry, client-minted id included — the exactly-once
     /// key the host claims in its processed ledger before executing.
-    entry: vardoger_doc::SessionCommandEntry,
+    entry: commutator_doc::SessionCommandEntry,
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,7 +414,7 @@ const CANVAS_TERMINAL_PREFIX: &str = "space-canvas:";
 /// `chat_image_root`), as configured: the jail matches a reply's path against
 /// it raw or canonical. Fails closed: no folder of its own (a legacy
 /// projectless chat runs in home), a relative or missing folder, and any
-/// folder that is `home` or above it, or holds one of `data` (Vardoger's own
+/// folder that is `home` or above it, or holds one of `data` (Commutator's own
 /// dirs), are refused, comparing canonical forms. A scratch folder is
 /// resolved under `scratch_root`, never created: only a run creates it.
 fn chat_image_folder(
@@ -424,9 +424,9 @@ fn chat_image_folder(
     data: &[std::path::PathBuf],
 ) -> Result<std::path::PathBuf, &'static str> {
     let cwd = cwd
-        .filter(|cwd| !vardoger_proto::projectless::is_home_cwd(cwd))
+        .filter(|cwd| !commutator_proto::projectless::is_home_cwd(cwd))
         .ok_or("the chat has no working folder of its own")?;
-    let folder = if vardoger_proto::projectless::is_scratch_cwd(cwd) {
+    let folder = if commutator_proto::projectless::is_scratch_cwd(cwd) {
         scratch_root.join(cwd.trim().rsplit('/').next().unwrap_or_default())
     } else {
         std::path::PathBuf::from(crate::repos::expand_home(cwd)?)
@@ -444,7 +444,7 @@ fn chat_image_folder(
             .filter_map(|dir| std::fs::canonicalize(dir).ok())
             .any(|dir| dir.starts_with(&canonical))
     {
-        return Err("the chat works in the home folder, above it, or around Vardoger's data");
+        return Err("the chat works in the home folder, above it, or around Commutator's data");
     }
     Ok(folder)
 }
@@ -666,11 +666,11 @@ struct ReadChatImageChunkParams {
     offset: u64,
 }
 
-const _: () = assert!(vardoger_proto::VISUAL_MAX_BYTES == vardoger_visual::MAX_SCRIPT_BYTES);
-const _: () = assert!(vardoger_proto::VISUAL_MAX_ASSETS == vardoger_visual::assets::MAX_ASSETS);
-const _: () = assert!(vardoger_proto::VISUAL_MAX_ASSET_BYTES == vardoger_visual::assets::MAX_ASSET_BYTES);
+const _: () = assert!(commutator_proto::VISUAL_MAX_BYTES == commutator_visual::MAX_SCRIPT_BYTES);
+const _: () = assert!(commutator_proto::VISUAL_MAX_ASSETS == commutator_visual::assets::MAX_ASSETS);
+const _: () = assert!(commutator_proto::VISUAL_MAX_ASSET_BYTES == commutator_visual::assets::MAX_ASSET_BYTES);
 const _: () = assert!(
-    vardoger_proto::VISUAL_MAX_TOTAL_ASSET_BYTES == vardoger_visual::assets::MAX_TOTAL_ASSET_BYTES
+    commutator_proto::VISUAL_MAX_TOTAL_ASSET_BYTES == commutator_visual::assets::MAX_TOTAL_ASSET_BYTES
 );
 
 #[derive(Debug, Deserialize)]
@@ -709,7 +709,7 @@ fn decode_visual_assets(
     assets: &std::collections::BTreeMap<String, String>,
 ) -> Result<Vec<(String, Vec<u8>)>, RpcError> {
     use base64::Engine as _;
-    use vardoger_visual::assets::{MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, valid_name};
+    use commutator_visual::assets::{MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, valid_name};
     if assets.len() > MAX_ASSETS {
         return Err(RpcError::BadParams(format!(
             "a visual takes at most {MAX_ASSETS} assets"
@@ -777,15 +777,15 @@ enum MutateParams {
         /// Cwd override (isolated-worktree path); default = the space's folder.
         #[serde(default)]
         cwd: Option<String>,
-        /// The chat whose agent is creating this one (Vardoger MCP); recorded
+        /// The chat whose agent is creating this one (Commutator MCP); recorded
         /// on the row as `parentChatId` for orchestration trees.
         #[serde(default)]
         parent_chat_id: Option<String>,
         /// What the child is to its parent (`childKind`: `side` | `subagent`,
-        /// the Vardoger MCP's `kind`): kept on the row only with a parent. An
+        /// the Commutator MCP's `kind`): kept on the row only with a parent. An
         /// unknown kind reads as none (a side chat).
-        #[serde(default, deserialize_with = "vardoger_proto::lenient_child_kind")]
-        child_kind: Option<vardoger_proto::ChildKind>,
+        #[serde(default, deserialize_with = "commutator_proto::lenient_child_kind")]
+        child_kind: Option<commutator_proto::ChildKind>,
     },
     /// Create a space (device + folder pair). Idempotent by id; a live
     /// duplicate `(deviceId, path)` no-ops. `gitDetected` is seeded from the
@@ -813,7 +813,7 @@ enum MutateParams {
     SetSpaceIcon {
         space_id: String,
         #[serde(default)]
-        icon: Option<vardoger_proto::SpaceIcon>,
+        icon: Option<commutator_proto::SpaceIcon>,
     },
     /// Hard delete: cascades to every chat (and session row) in the space.
     /// Live runs hosted here are interrupted best-effort.
@@ -849,9 +849,9 @@ enum MutateParams {
     /// Change one pin without replacing another device's edits.
     #[serde(rename_all = "camelCase")]
     ChangeSidebarPin {
-        change: vardoger_proto::SidebarPinChange,
+        change: commutator_proto::SidebarPinChange,
     },
-    /// Full-config replace on the chat row (vardoger `SetChatConfig`): the
+    /// Full-config replace on the chat row (commutator `SetChatConfig`): the
     /// composer's mid-session model / reasoning / options changes, LWW-synced
     /// so they survive restarts and reach every device.
     #[serde(rename_all = "camelCase")]
@@ -900,7 +900,7 @@ pub struct EngineRpc {
     /// Agents' shell commands here ([`crate::commands`]).
     commands: crate::commands::Commands,
     project_actions: ProjectActionsStore,
-    previews: Option<vardoger_preview::PreviewService>,
+    previews: Option<commutator_preview::PreviewService>,
     change_requests: CheckoutChangeRequests,
     github: GitHubCli,
     diff_sync: CheckoutDiffSync,
@@ -909,7 +909,7 @@ pub struct EngineRpc {
     agent_accounts: AgentAccounts,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
-    updater: Option<vardoger_update::Updater>,
+    updater: Option<commutator_update::Updater>,
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
     /// Viewports' window focus, for desktop banners.
     viewport_focus: crate::desktop_notify::ViewportFocus,
@@ -937,12 +937,12 @@ impl EngineRpc {
         let engine_info = EngineInfo {
             device_id: doc_host.device_id().to_string(),
             workspace_scope,
-            cursor_sdk_version: Some(vardoger_harness::CursorHarness::sdk_version().into()),
+            cursor_sdk_version: Some(commutator_harness::CursorHarness::sdk_version().into()),
             capabilities: {
-                let mut capabilities = vardoger_proto::capabilities::current();
+                let mut capabilities = commutator_proto::capabilities::current();
                 if crate::desktop_notify::enabled() {
                     capabilities
-                        .push(vardoger_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
+                        .push(commutator_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
                 }
                 capabilities
             },
@@ -976,7 +976,7 @@ impl EngineRpc {
         }
     }
 
-    pub fn with_previews(mut self, previews: vardoger_preview::PreviewService) -> Self {
+    pub fn with_previews(mut self, previews: commutator_preview::PreviewService) -> Self {
         self.previews = Some(previews);
         self
     }
@@ -1009,7 +1009,7 @@ impl EngineRpc {
     }
 
     /// Attach the release checker (UpdateStatus stream + ApplyUpdate).
-    pub fn with_updater(mut self, updater: vardoger_update::Updater) -> Self {
+    pub fn with_updater(mut self, updater: commutator_update::Updater) -> Self {
         self.updater = Some(updater);
         self
     }
@@ -1056,8 +1056,8 @@ impl EngineRpc {
                     .is_some_and(|session| {
                         matches!(
                             session.status,
-                            vardoger_proto::SessionStatus::Working
-                                | vardoger_proto::SessionStatus::AwaitingInput
+                            commutator_proto::SessionStatus::Working
+                                | commutator_proto::SessionStatus::AwaitingInput
                         )
                     })
             {
@@ -1103,12 +1103,12 @@ impl EngineRpc {
             || self.workspace.read_devices().is_ok_and(|devices| {
                 devices.iter().any(|device| {
                     device.id == device_id
-                        && device.supports(vardoger_proto::capabilities::PROVIDER_SWITCH_V1)
+                        && device.supports(commutator_proto::capabilities::PROVIDER_SWITCH_V1)
                 })
             })
     }
 
-    fn updater(&self) -> Result<&vardoger_update::Updater, RpcError> {
+    fn updater(&self) -> Result<&commutator_update::Updater, RpcError> {
         self.updater
             .as_ref()
             .ok_or_else(|| RpcError::Failed("updates unavailable".into()))
@@ -1140,7 +1140,7 @@ impl EngineRpc {
     /// name an existing linked worktree for a new chat, but it is verified
     /// against the space repository before any filesystem walk begins.
     async fn file_search_root(&self, p: &FileSearchParams) -> Result<std::path::PathBuf, RpcError> {
-        let target = vardoger_proto::WorkspaceTarget {
+        let target = commutator_proto::WorkspaceTarget {
             chat_id: p.chat_id.clone(),
             space_id: p.space_id.clone(),
             checkout_path: p.path.clone(),
@@ -1181,7 +1181,7 @@ impl EngineRpc {
     /// The one folder a chat's reply images (`![alt](path)`) may come from:
     /// its working folder on this host. Refused, failing closed, when the chat
     /// runs elsewhere, has no folder of its own, or works in the home folder,
-    /// above it, or around Vardoger's own data — so a reply can never show an
+    /// above it, or around Commutator's own data — so a reply can never show an
     /// image from all of home, or another chat's attachments.
     fn chat_image_root(&self, chat_id: &str) -> Result<std::path::PathBuf, RpcError> {
         let refused = |why: &str| RpcError::BadParams(why.into());
@@ -1333,7 +1333,7 @@ impl EngineRpc {
 
     /// An agent login runs on `target`, but the browser that finishes it runs
     /// HERE: while the login waits on a loopback callback, this device's same
-    /// port forwards to it over P2P ([`vardoger_preview::login`]). The forwarder
+    /// port forwards to it over P2P ([`commutator_preview::login`]). The forwarder
     /// opens when a reply first names the port and closes when the login
     /// finishes, fails, is cancelled or its time runs out; a port taken here
     /// fails the login with that reason instead of stranding the browser.
@@ -1343,7 +1343,7 @@ impl EngineRpc {
         method: &str,
         mut params: serde_json::Value,
     ) -> Result<RpcReply, RpcError> {
-        use vardoger_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus};
+        use commutator_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus};
         let login_id = params
             .get("loginId")
             .and_then(|v| v.as_str())
@@ -1612,7 +1612,7 @@ impl EngineRpc {
     /// processes until it ends ([`Self::follow_commands`]). Only an agent's
     /// own call: a peer forwarding one here runs it for a chat hosted there.
     fn show_command(&self, device: Option<&str>, started: &serde_json::Value) {
-        let vardoger_rpc::Caller::Agent { chat: Some(chat) } = vardoger_rpc::caller() else {
+        let commutator_rpc::Caller::Agent { chat: Some(chat) } = commutator_rpc::caller() else {
             return;
         };
         let Some(id) = started["id"].as_str() else {
@@ -1629,7 +1629,7 @@ impl EngineRpc {
         let task = crate::commands::CommandTask {
             device: device.map(str::to_owned),
             id: id.to_owned(),
-            task: vardoger_proto::BackgroundTask {
+            task: commutator_proto::BackgroundTask {
                 id: match device {
                     Some(device) => format!("{id}@{device}"),
                     None => id.to_owned(),
@@ -1656,7 +1656,7 @@ impl EngineRpc {
         const COMMANDS_UNREACHABLE: Duration = Duration::from_secs(120);
         const REDIAL: Duration = Duration::from_secs(3);
         let heartbeat_every =
-            Duration::from_millis(vardoger_proto::view::SESSION_HEARTBEAT_MS as u64 / 2);
+            Duration::from_millis(commutator_proto::view::SESSION_HEARTBEAT_MS as u64 / 2);
         let mut heartbeat = tokio::time::interval(heartbeat_every);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut lost_since: Option<tokio::time::Instant> = None;
@@ -1830,7 +1830,7 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::SetSpaceIcon { space_id, icon } => {
-                let icon = match icon.map(vardoger_proto::SpaceIcon::normalized).transpose() {
+                let icon = match icon.map(commutator_proto::SpaceIcon::normalized).transpose() {
                     Ok(icon) => icon.flatten(),
                     Err(part) => return Err(RpcError::BadParams(format!("invalid icon: {part}"))),
                 };
@@ -1918,7 +1918,7 @@ impl EngineRpc {
                 }
                 if switching && !self.host_switches_providers(&chat_id) {
                     return Err(RpcError::Failed(
-                        "This chat's computer needs a newer Vardoger to switch provider".into(),
+                        "This chat's computer needs a newer Commutator to switch provider".into(),
                     ));
                 }
                 self.workspace
@@ -1951,7 +1951,7 @@ impl EngineRpc {
                 if device_id == self.workspace.device_id() {
                     return Err(RpcError::BadParams("this_device".into()));
                 }
-                if self.workspace.peer_liveness(&device_id) == vardoger_rpc::PeerLiveness::Live {
+                if self.workspace.peer_liveness(&device_id) == commutator_rpc::PeerLiveness::Live {
                     return Err(RpcError::Failed("device_online".into()));
                 }
                 self.workspace
@@ -1987,7 +1987,7 @@ impl EngineRpc {
 
 /// The chats that go when `root` is deleted: its children (subagents, side
 /// chats) and theirs in turn.
-fn chat_descendants(chats: &[vardoger_proto::Chat], root: &str) -> Vec<String> {
+fn chat_descendants(chats: &[commutator_proto::Chat], root: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::from([root]);
     let mut frontier: Vec<&str> = vec![root];
@@ -2032,13 +2032,13 @@ fn change_request_rpc_error(error: ChangeRequestError) -> RpcError {
 /// everything else is interactive and must fail fast.
 #[derive(Default)]
 pub(crate) struct Installations(
-    std::sync::Mutex<std::collections::HashMap<HarnessId, vardoger_harness::CancellationToken>>,
+    std::sync::Mutex<std::collections::HashMap<HarnessId, commutator_harness::CancellationToken>>,
 );
 
 struct Installing<'a> {
     installs: &'a Installations,
     harness: HarnessId,
-    cancel: vardoger_harness::CancellationToken,
+    cancel: commutator_harness::CancellationToken,
 }
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
@@ -2056,7 +2056,7 @@ impl Installations {
         if installs.contains_key(&harness) {
             return Err(RpcError::Failed("already installing".into()));
         }
-        let cancel = vardoger_harness::CancellationToken::new();
+        let cancel = commutator_harness::CancellationToken::new();
         installs.insert(harness, cancel.clone());
         Ok(Installing {
             installs: self,
@@ -2078,14 +2078,14 @@ impl Installations {
 
 async fn run_requested_install(
     harness: HarnessId,
-    cancel: vardoger_harness::CancellationToken,
-) -> Result<(), vardoger_harness::HarnessError> {
+    cancel: commutator_harness::CancellationToken,
+) -> Result<(), commutator_harness::HarnessError> {
     #[cfg(test)]
-    if let Ok(script) = std::env::var(format!("VARDOGER_INSTALLER_COMMAND_{harness:?}").to_uppercase())
+    if let Ok(script) = std::env::var(format!("COMMUTATOR_INSTALLER_COMMAND_{harness:?}").to_uppercase())
     {
-        return vardoger_harness::install::install_with_command(harness, &script, cancel).await;
+        return commutator_harness::install::install_with_command(harness, &script, cancel).await;
     }
-    vardoger_harness::install::install_harness(harness, cancel).await
+    commutator_harness::install::install_harness(harness, cancel).await
 }
 
 async fn install_harness_with<F, Fut>(
@@ -2095,7 +2095,7 @@ async fn install_harness_with<F, Fut>(
 ) -> Result<Vec<crate::registry::HarnessDescriptor>, RpcError>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<(), vardoger_harness::HarnessError>>,
+    Fut: std::future::Future<Output = Result<(), commutator_harness::HarnessError>>,
 {
     // A harness this device doesn't register would be a CLI nothing may run.
     if !registry.is_registered(harness) {
@@ -2103,7 +2103,7 @@ where
             "{harness:?} is not available on this device"
         )));
     }
-    if !vardoger_harness::install::can_install(harness) {
+    if !commutator_harness::install::can_install(harness) {
         return Err(RpcError::Failed(
             "No supported installer or required tools available on this device".into(),
         ));
@@ -2168,11 +2168,11 @@ const LOGIN_TUNNEL_TTL: Duration = Duration::from_secs(15 * 60);
 /// variables its CLI signs in with. Unknown (never listed, or an agent whose
 /// logins aren't tracked) is not signed out.
 fn warm_signed_out(
-    snapshot: Option<&vardoger_proto::AgentAccountsSnapshot>,
-    harness: vardoger_proto::HarnessId,
+    snapshot: Option<&commutator_proto::AgentAccountsSnapshot>,
+    harness: commutator_proto::HarnessId,
     set: impl Fn(&str) -> bool,
 ) -> bool {
-    use vardoger_proto::HarnessId;
+    use commutator_proto::HarnessId;
     let env: &[&str] = match harness {
         HarnessId::ClaudeCode => &[
             "ANTHROPIC_API_KEY",
@@ -2456,15 +2456,15 @@ fn keyed_frame(rows: Vec<serde_json::Value>, key: &str, last: Option<SentRows>) 
     (Some(frame), (keys, now_rows))
 }
 
-/// The transcript watch as delta frames (`vardoger_doc::transcript_delta`): a
+/// The transcript watch as delta frames (`commutator_doc::transcript_delta`): a
 /// full `reset` first, then only changed entries per commit — the whole-Vec
 /// serialization here was the per-tick cost that scaled with transcript size.
 /// (`options`: what the watcher asked for beyond the original frames: a long
 /// reply's changed parts alone, `partPatches`.)
 fn doc_messages_stream(
     rx: watch::Receiver<crate::doc_host::TranscriptSnapshot>,
-    doc: std::sync::Arc<vardoger_doc::SessionDoc>,
-    options: vardoger_doc::DiffOptions,
+    doc: std::sync::Arc<commutator_doc::SessionDoc>,
+    options: commutator_doc::DiffOptions,
 ) -> BoxStream<'static, serde_json::Value> {
     doc_messages_stream_from(rx, doc, options, None)
 }
@@ -2473,14 +2473,14 @@ fn doc_messages_stream(
 /// has, and its opening cutoff) when given: deltas from it, no reset.
 fn doc_messages_stream_from(
     rx: watch::Receiver<crate::doc_host::TranscriptSnapshot>,
-    doc: std::sync::Arc<vardoger_doc::SessionDoc>,
-    options: vardoger_doc::DiffOptions,
-    start: Option<(crate::doc_host::TranscriptSnapshot, vardoger_doc::TranscriptBaseline)>,
+    doc: std::sync::Arc<commutator_doc::SessionDoc>,
+    options: commutator_doc::DiffOptions,
+    start: Option<(crate::doc_host::TranscriptSnapshot, commutator_doc::TranscriptBaseline)>,
 ) -> BoxStream<'static, serde_json::Value> {
-    use vardoger_doc::transcript_delta::{TranscriptFrame, diff_transcript_with};
+    use commutator_doc::transcript_delta::{TranscriptFrame, diff_transcript_with};
     let (prev, baseline) = match start {
         Some((snapshot, baseline)) => (Some(snapshot), baseline),
-        None => (None, vardoger_doc::TranscriptBaseline::default()),
+        None => (None, commutator_doc::TranscriptBaseline::default()),
     };
     let usage = prev.as_ref().map(|_| doc.context_usage());
     futures::stream::unfold(
@@ -2499,7 +2499,7 @@ fn doc_messages_stream_from(
                 };
                 let replay_baseline = match prev.as_ref() {
                     None => {
-                        opening_baseline = vardoger_doc::TranscriptBaseline::capture(&current.entries);
+                        opening_baseline = commutator_doc::TranscriptBaseline::capture(&current.entries);
                         Some(opening_baseline.clone())
                     }
                     Some(prev)
@@ -2533,7 +2533,7 @@ fn doc_messages_stream_from(
                     continue;
                 }
                 previous_usage = usage;
-                let value = serde_json::to_value(vardoger_doc::TranscriptUpdate {
+                let value = serde_json::to_value(commutator_doc::TranscriptUpdate {
                     frame,
                     context_usage: usage,
                     replay_baseline,
@@ -2552,9 +2552,9 @@ fn doc_messages_stream_from(
 async fn windowed_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    window: vardoger_doc::TranscriptWindow,
+    window: commutator_doc::TranscriptWindow,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
-    use vardoger_doc::transcript_delta::{TranscriptFrame, diff_transcript};
+    use commutator_doc::transcript_delta::{TranscriptFrame, diff_transcript};
     // Opening a whale and building its mirror mustn't stall the RPC task.
     let (rx, doc) = tokio::task::spawn_blocking(move || {
         let handle = host.open(&chat_id)?;
@@ -2567,7 +2567,7 @@ async fn windowed_doc_messages_stream(
         (rx, doc, window, None, None, None),
         |(mut rx, doc, window, mut prev, mut prev_info, mut prev_usage)| async move {
             loop {
-                let prev_slice: Option<&Vec<std::sync::Arc<vardoger_doc::SessionMessageEntry>>> =
+                let prev_slice: Option<&Vec<std::sync::Arc<commutator_doc::SessionMessageEntry>>> =
                     prev.as_ref();
                 if prev_slice.is_some() {
                     rx.changed().await.ok()?;
@@ -2586,7 +2586,7 @@ async fn windowed_doc_messages_stream(
                 if unchanged {
                     continue;
                 }
-                let mut value = serde_json::to_value(vardoger_doc::TranscriptUpdate {
+                let mut value = serde_json::to_value(commutator_doc::TranscriptUpdate {
                     frame,
                     context_usage: usage,
                     replay_baseline: None,
@@ -2623,7 +2623,7 @@ const SINCE_TAIL_PARTS: usize = 2_048;
 async fn since_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    options: vardoger_doc::DiffOptions,
+    options: commutator_doc::DiffOptions,
     known: Vec<(String, u64)>,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
     let (preview, handle, known) = match tokio::task::spawn_blocking(move || {
@@ -2632,16 +2632,16 @@ async fn since_doc_messages_stream(
             true => handle.doc().read_newest_entries(SINCE_TAIL_ENTRIES, SINCE_TAIL_PARTS)?,
             false => Vec::new(),
         };
-        let (changed, holds) = vardoger_doc::tail_since_known(&known, &tail);
+        let (changed, holds) = commutator_doc::tail_since_known(&known, &tail);
         // (A short chat, or nothing changed among its newest: the `since`
         // frame at once.)
         if changed.is_empty() {
             return since_stream(&handle, options, &known).map(Err);
         }
-        let mut preview = serde_json::to_value(vardoger_doc::TranscriptUpdate {
-            frame: vardoger_doc::TranscriptFrame::reset(&changed),
+        let mut preview = serde_json::to_value(commutator_doc::TranscriptUpdate {
+            frame: commutator_doc::TranscriptFrame::reset(&changed),
             context_usage: handle.doc().context_usage(),
-            replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&changed)),
+            replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&changed)),
         })
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         preview["historyPending"] = serde_json::Value::Bool(true);
@@ -2676,7 +2676,7 @@ async fn since_doc_messages_stream(
 /// then its deltas.
 fn since_stream(
     handle: &crate::doc_host::ChatDocHandle,
-    options: vardoger_doc::DiffOptions,
+    options: commutator_doc::DiffOptions,
     known: &[(String, u64)],
 ) -> Result<BoxStream<'static, serde_json::Value>, crate::EngineError> {
     let (rx, doc, first, start) = {
@@ -2686,18 +2686,18 @@ fn since_stream(
         // doc reads only the entries changed since its last read.
         handle.publish_messages();
         let current = rx.borrow().clone();
-        let baseline = vardoger_doc::TranscriptBaseline::capture(&current.entries);
-        let frame = vardoger_doc::delta_from_known(known, &current.entries);
+        let baseline = commutator_doc::TranscriptBaseline::capture(&current.entries);
+        let frame = commutator_doc::delta_from_known(known, &current.entries);
         // What the frame carries is history, not a reply arriving: its
         // cutoff, only for what it carries (the reader's rows have theirs).
         let sent = match &frame {
-            vardoger_doc::TranscriptFrame::Delta { upsert, .. } => {
+            commutator_doc::TranscriptFrame::Delta { upsert, .. } => {
                 let entries: Vec<_> = upsert.iter().map(|u| u.entry.clone()).collect();
-                vardoger_doc::TranscriptBaseline::capture(&entries)
+                commutator_doc::TranscriptBaseline::capture(&entries)
             }
             _ => baseline.clone(),
         };
-        let mut first = serde_json::to_value(vardoger_doc::TranscriptUpdate {
+        let mut first = serde_json::to_value(commutator_doc::TranscriptUpdate {
             frame,
             context_usage: handle.doc().context_usage(),
             replay_baseline: Some(sent),
@@ -2705,7 +2705,7 @@ fn since_stream(
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         first["since"] = serde_json::Value::Bool(true);
         // The order the reader must now hold its rows in (it checks).
-        first["orderSum"] = serde_json::json!(vardoger_doc::order_sum(
+        first["orderSum"] = serde_json::json!(commutator_doc::order_sum(
             current.entries.iter().map(|e| e.id.as_str())
         ));
         (rx, handle.doc_arc(), first, (current, baseline))
@@ -2720,15 +2720,15 @@ fn since_stream(
 async fn opening_doc_messages_stream(
     host: crate::doc_host::DocHost,
     chat_id: String,
-    options: vardoger_doc::DiffOptions,
+    options: commutator_doc::DiffOptions,
 ) -> Result<BoxStream<'static, serde_json::Value>, RpcError> {
     let (handle, preview) = tokio::task::spawn_blocking(move || {
         let handle = host.open(&chat_id)?;
         let entries = handle.doc().read_opening_tail(128)?;
-        let mut preview = serde_json::to_value(vardoger_doc::TranscriptUpdate {
-            frame: vardoger_doc::TranscriptFrame::reset(&entries),
+        let mut preview = serde_json::to_value(commutator_doc::TranscriptUpdate {
+            frame: commutator_doc::TranscriptFrame::reset(&entries),
             context_usage: handle.doc().context_usage(),
-            replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&entries)),
+            replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&entries)),
         })
         .map_err(|e| crate::EngineError::Other(e.to_string()))?;
         preview["historyPending"] = serde_json::Value::Bool(true);
@@ -2826,7 +2826,7 @@ impl crate::remote_terminals::Relay for EngineRpc {
 impl RpcService for EngineRpc {
     async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
         // An agent's chats: capped at its own access, runs as the chat is
-        // set, attributed by Vardoger (rpc/agent_gate.rs). Before forwarding.
+        // set, attributed by Commutator (rpc/agent_gate.rs). Before forwarding.
         let params = self.agent_gate(method, params)?;
         // Machine stats: answered here, or asked of another of the
         // account's devices with its own deadline and error words.
@@ -2842,7 +2842,7 @@ impl RpcService for EngineRpc {
             let target = target.to_string();
             // What only that device may answer for itself (credentials,
             // signing, templates' consent), refused there too.
-            if vardoger_rpc::peer_refused(method, &params) {
+            if commutator_rpc::peer_refused(method, &params) {
                 return Err(RpcError::Failed(format!(
                     "{method}: only that device's own window can do that. It's waiting for you there."
                 )));
@@ -3047,7 +3047,7 @@ impl RpcService for EngineRpc {
                 #[serde(rename_all = "camelCase")]
                 struct WarmStartParams {
                     chat_id: String,
-                    request: vardoger_proto::RunRequest,
+                    request: commutator_proto::RunRequest,
                     #[serde(default)]
                     typed: bool,
                 }
@@ -3166,8 +3166,8 @@ impl RpcService for EngineRpc {
                 let boundary = entries
                     .iter()
                     .rposition(|entry| {
-                        entry.role == vardoger_doc::MessageRole::Assistant
-                            && entry.status == Some(vardoger_doc::MessageStatus::Complete)
+                        entry.role == commutator_doc::MessageRole::Assistant
+                            && entry.status == Some(commutator_doc::MessageStatus::Complete)
                     })
                     .ok_or_else(|| {
                         RpcError::Failed(
@@ -3206,7 +3206,7 @@ impl RpcService for EngineRpc {
                     // sweep; the subagent's doc stays the source's.
                     for part in &mut entry.parts {
                         match part {
-                            vardoger_doc::MessagePart::Input {
+                            commutator_doc::MessagePart::Input {
                                 resolved, answers, ..
                             } => {
                                 if !*resolved {
@@ -3215,10 +3215,10 @@ impl RpcService for EngineRpc {
                                 }
                                 *resolved = true;
                             }
-                            vardoger_doc::MessagePart::Tool {
+                            commutator_doc::MessagePart::Tool {
                                 subagent_status, ..
-                            } if *subagent_status == Some(vardoger_doc::SubagentStatus::Running) => {
-                                *subagent_status = Some(vardoger_doc::SubagentStatus::Failed);
+                            } if *subagent_status == Some(commutator_doc::SubagentStatus::Running) => {
+                                *subagent_status = Some(commutator_doc::SubagentStatus::Failed);
                             }
                             _ => {}
                         }
@@ -3240,18 +3240,18 @@ impl RpcService for EngineRpc {
                         .unwrap_or_else(|| "New session".into());
                     target
                         .doc()
-                        .push_message(&vardoger_doc::SessionMessageEntry {
+                        .push_message(&commutator_doc::SessionMessageEntry {
                             duration_ms: None,
                             id: marker_id.clone(),
-                            role: vardoger_doc::MessageRole::System,
-                            parts: vec![vardoger_doc::MessagePart::Fork {
+                            role: commutator_doc::MessageRole::System,
+                            parts: vec![commutator_doc::MessagePart::Fork {
                                 id: marker_id,
                                 source_chat_id: source.id.clone(),
                                 source_title,
                             }],
                             created_at: chrono::Utc::now().timestamp_millis(),
                             device_id: self.doc_host.device_id().to_owned(),
-                            status: Some(vardoger_doc::MessageStatus::Complete),
+                            status: Some(commutator_doc::MessageStatus::Complete),
                             continuation_of: None,
                         })
                         .map_err(|e| RpcError::Failed(e.to_string()))?;
@@ -3311,7 +3311,7 @@ impl RpcService for EngineRpc {
                     .unwrap_or(false);
                 // Opt-in too: a reply's changed parts alone (`parts` frames),
                 // for a viewport that applies them.
-                let options = vardoger_doc::DiffOptions {
+                let options = commutator_doc::DiffOptions {
                     part_patches: params
                         .get("partPatches")
                         .and_then(|v| v.as_bool())
@@ -3320,7 +3320,7 @@ impl RpcService for EngineRpc {
                 let window = params
                     .get("window")
                     .filter(|v| !v.is_null())
-                    .map(|v| serde_json::from_value::<vardoger_doc::TranscriptWindow>(v.clone()))
+                    .map(|v| serde_json::from_value::<commutator_doc::TranscriptWindow>(v.clone()))
                     .transpose()
                     .map_err(|e| RpcError::BadParams(e.to_string()))?;
                 // What the reader holds (each entry's id and `entry_sum`):
@@ -3336,7 +3336,7 @@ impl RpcService for EngineRpc {
                 // device) keeps its parked agent for the longer idle window:
                 // its person is likely to write next. Not an agent reading
                 // it through its tools.
-                let viewer = (!matches!(vardoger_rpc::caller(), vardoger_rpc::Caller::Agent { .. }))
+                let viewer = (!matches!(commutator_rpc::caller(), commutator_rpc::Caller::Agent { .. }))
                     .then(|| self.sessions.retain_viewer(&p.chat_id));
                 if let Some(window) = window {
                     return windowed_doc_messages_stream(self.doc_host.clone(), p.chat_id, window)
@@ -3406,7 +3406,7 @@ impl RpcService for EngineRpc {
                         .is_some_and(|current| current.harness != cfg.harness);
                     if switching && !self.host_switches_providers(&p.chat_id) {
                         return Err(RpcError::Failed(
-                            "This chat's computer needs a newer Vardoger to switch provider".into(),
+                            "This chat's computer needs a newer Commutator to switch provider".into(),
                         ));
                     }
                 }
@@ -3577,7 +3577,7 @@ impl RpcService for EngineRpc {
                         },
                         None => self.commands.tail(&id).ok(),
                     };
-                    let output: Option<vardoger_proto::BackgroundTaskOutput> = output;
+                    let output: Option<commutator_proto::BackgroundTaskOutput> = output;
                     return RpcReply::value(&output);
                 }
                 let output = self
@@ -3610,7 +3610,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({}))
             }
             methods::SYNC_STATUS => {
-                fn room_json(s: &vardoger_sync::RoomStatsSnapshot) -> serde_json::Value {
+                fn room_json(s: &commutator_sync::RoomStatsSnapshot) -> serde_json::Value {
                     serde_json::json!({
                         "connected": s.connected,
                         "synced": s.synced,
@@ -3623,7 +3623,7 @@ impl RpcService for EngineRpc {
                         "rejected": s.rejected,
                     })
                 }
-                fn chat2_json(s: &vardoger_sync::ChatStatsSnapshot) -> serde_json::Value {
+                fn chat2_json(s: &commutator_sync::ChatStatsSnapshot) -> serde_json::Value {
                     serde_json::json!({
                         "connected": s.connected,
                         "cursor": s.cursor,
@@ -3723,7 +3723,7 @@ impl RpcService for EngineRpc {
                 ))
             }
             methods::WATCH_PREVIEWS => {
-                let p: vardoger_proto::WatchPreviewsParams = parse_params(params)?;
+                let p: commutator_proto::WatchPreviewsParams = parse_params(params)?;
                 if self
                     .workspace
                     .chat(&p.chat_id)
@@ -3774,11 +3774,11 @@ impl RpcService for EngineRpc {
                             .and_then(|p| p.file_name())
                             .map(|s| s.to_string_lossy().into_owned());
                         // Servers in this checkout, and any this chat's agent
-                        // or terminals started elsewhere. Only Vardoger-started
+                        // or terminals started elsewhere. Only Commutator-started
                         // ones: an older peer advertises every listener.
                         snapshot.services.retain(|service| {
                             service.device_id == device
-                                && service.vardoger_owned
+                                && service.commutator_owned
                                 && (service.chat_id.as_deref() == Some(chat_id.as_str())
                                     || cwd.as_ref().is_some_and(|cwd| {
                                         cwd == std::path::Path::new(&service.project_cwd)
@@ -3921,7 +3921,7 @@ impl RpcService for EngineRpc {
                 ))
             }
             methods::WATCH_WORKSPACE_GIT_STATUS => {
-                let request: vardoger_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
+                let request: commutator_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
                 let workspace = self.workspace_files.resolve_target(&request.target).await?;
                 // A file browser can outlive its chat's transcript stream, or
                 // have none (a project's).
@@ -3948,7 +3948,7 @@ impl RpcService for EngineRpc {
                                 emitted = true;
                                 previous = next.clone();
                                 let value =
-                                    serde_json::to_value(vardoger_proto::WorkspaceGitStatusFrame {
+                                    serde_json::to_value(commutator_proto::WorkspaceGitStatusFrame {
                                         status: next,
                                     })
                                     .ok()?;
@@ -4005,7 +4005,7 @@ impl RpcService for EngineRpc {
                 struct P {
                     repository: String,
                     #[serde(default)]
-                    filter: vardoger_proto::ChangeRequestFilter,
+                    filter: commutator_proto::ChangeRequestFilter,
                     #[serde(default)]
                     after: Option<String>,
                     #[serde(default)]
@@ -4201,7 +4201,7 @@ impl RpcService for EngineRpc {
                         _ => crate::diff_sync::capture_diff(&self.repos, root).await,
                     }
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                    RpcReply::value(&vardoger_proto::CheckoutDiff {
+                    RpcReply::value(&commutator_proto::CheckoutDiff {
                         checkout_id: identity.id,
                         device_id: self.doc_host.device_id().to_string(),
                         cwd: identity.root.to_string_lossy().to_string(),
@@ -4267,19 +4267,19 @@ impl RpcService for EngineRpc {
                 .await
             }
             methods::LIST_CHECKPOINTS => {
-                let p: vardoger_proto::checkpoints::ListCheckpointsRequest = parse_params(params)?;
+                let p: commutator_proto::checkpoints::ListCheckpointsRequest = parse_params(params)?;
                 let checkpoints = self
                     .checkpoints()?
                     .list(&p.chat_id)
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&vardoger_proto::checkpoints::ListCheckpointsResponse {
+                RpcReply::value(&commutator_proto::checkpoints::ListCheckpointsResponse {
                     checkpoints,
                 })
             }
             methods::GET_CHECKPOINT_DIFF => {
                 Box::pin(async move {
-                    let p: vardoger_proto::checkpoints::GetCheckpointDiffRequest =
+                    let p: commutator_proto::checkpoints::GetCheckpointDiffRequest =
                         parse_params(params)?;
                     let (root, snapshot) = self
                         .checkpoints()?
@@ -4291,7 +4291,7 @@ impl RpcService for EngineRpc {
                         .checkout_identity(&root)
                         .await
                         .map_err(|e| RpcError::Failed(e.to_string()))?;
-                    RpcReply::value(&vardoger_proto::CheckoutDiff {
+                    RpcReply::value(&commutator_proto::CheckoutDiff {
                         checkout_id: identity.id,
                         device_id: self.doc_host.device_id().to_string(),
                         cwd: root.to_string_lossy().to_string(),
@@ -4308,7 +4308,7 @@ impl RpcService for EngineRpc {
             }
             methods::ROLLBACK_TO_CHECKPOINT => {
                 Box::pin(async move {
-                    let p: vardoger_proto::checkpoints::RollbackToCheckpointRequest =
+                    let p: commutator_proto::checkpoints::RollbackToCheckpointRequest =
                         parse_params(params)?;
                     let checkpoints = self.checkpoints()?;
                     // Other chats on the same checkout count too: never roll
@@ -4345,7 +4345,7 @@ impl RpcService for EngineRpc {
                 // behind an allocation so every unrelated RPC does not carry that
                 // state in `EngineRpc::handle`'s stack frame.
                 Box::pin(async move {
-                    let p: vardoger_proto::GetCheckoutFileDiffTextRequest = parse_params(params)?;
+                    let p: commutator_proto::GetCheckoutFileDiffTextRequest = parse_params(params)?;
                     let identity =
                         Box::pin(self.repos.checkout_identity(std::path::Path::new(&p.cwd)))
                             .await
@@ -4423,7 +4423,7 @@ impl RpcService for EngineRpc {
                             (snapshot, base, None)
                         }
                     };
-                    let stale = || vardoger_proto::CheckoutFileDiffText {
+                    let stale = || commutator_proto::CheckoutFileDiffText {
                         diff_checksum: p.diff_checksum.clone(),
                         old_text: None,
                         new_text: None,
@@ -4490,7 +4490,7 @@ impl RpcService for EngineRpc {
                     if current.checksum != p.diff_checksum {
                         return RpcReply::value(&stale());
                     }
-                    RpcReply::value(&vardoger_proto::CheckoutFileDiffText {
+                    RpcReply::value(&commutator_proto::CheckoutFileDiffText {
                         diff_checksum: p.diff_checksum,
                         old_text: pair.old_text,
                         new_text: pair.new_text,
@@ -4676,7 +4676,7 @@ impl RpcService for EngineRpc {
             }
             methods::GET_WORKTREE_SETTINGS => RpcReply::value(&self.repos.worktree_settings()),
             methods::SET_WORKTREE_SETTINGS => {
-                let settings: vardoger_proto::WorktreeSettings = parse_params(params)?;
+                let settings: commutator_proto::WorktreeSettings = parse_params(params)?;
                 let status = self
                     .repos
                     .set_worktree_settings(settings)
@@ -4694,7 +4694,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&listing)
             }
             methods::SEARCH_HOME_FOLDERS => {
-                let request: vardoger_proto::SearchHomeFoldersRequest = parse_params(params)?;
+                let request: commutator_proto::SearchHomeFoldersRequest = parse_params(params)?;
                 if request.query.chars().count() > 256 {
                     return Err(RpcError::BadParams(
                         "SearchHomeFolders query must not exceed 256 characters".into(),
@@ -4721,7 +4721,7 @@ impl RpcService for EngineRpc {
                     .list_drives()
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&vardoger_proto::DriveListing { drives })
+                RpcReply::value(&commutator_proto::DriveListing { drives })
             }
             methods::SEARCH_FILES => {
                 let p: FileSearchParams = parse_params(params)?;
@@ -4748,7 +4748,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&matches)
             }
             methods::LIST_WORKSPACE_DIRECTORY => {
-                let request: vardoger_proto::ListWorkspaceDirectoryRequest = parse_params(params)?;
+                let request: commutator_proto::ListWorkspaceDirectoryRequest = parse_params(params)?;
                 let page = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.list_directory(request),
@@ -4759,7 +4759,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&page)
             }
             methods::SEARCH_WORKSPACE_FILES => {
-                let request: vardoger_proto::SearchWorkspaceFilesRequest = parse_params(params)?;
+                let request: commutator_proto::SearchWorkspaceFilesRequest = parse_params(params)?;
                 let matches = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.search(request),
@@ -4770,7 +4770,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&matches)
             }
             methods::SEARCH_WORKSPACE_CONTENT => {
-                let request: vardoger_proto::SearchWorkspaceContentRequest = parse_params(params)?;
+                let request: commutator_proto::SearchWorkspaceContentRequest = parse_params(params)?;
                 let result = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.search_content(request),
@@ -4781,7 +4781,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&result)
             }
             methods::WARM_WORKSPACE_SEARCH => {
-                let request: vardoger_proto::WarmWorkspaceSearchRequest = parse_params(params)?;
+                let request: commutator_proto::WarmWorkspaceSearchRequest = parse_params(params)?;
                 let result = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.warm_search(request),
@@ -4792,7 +4792,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&result)
             }
             methods::READ_WORKSPACE_IMAGE => {
-                let request: vardoger_proto::ReadWorkspaceImageRequest = parse_params(params)?;
+                let request: commutator_proto::ReadWorkspaceImageRequest = parse_params(params)?;
                 let chunk = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.read_image(request),
@@ -4803,7 +4803,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&chunk)
             }
             methods::READ_WORKSPACE_FILE => {
-                let request: vardoger_proto::ReadWorkspaceFileRequest = parse_params(params)?;
+                let request: commutator_proto::ReadWorkspaceFileRequest = parse_params(params)?;
                 let file = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.read_file(request),
@@ -4814,7 +4814,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&file)
             }
             methods::DELETE_WORKSPACE_ENTRY => {
-                let request: vardoger_proto::DeleteWorkspaceEntryRequest = parse_params(params)?;
+                let request: commutator_proto::DeleteWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .delete_entry(request)
@@ -4823,7 +4823,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::MOVE_WORKSPACE_ENTRY => {
-                let request: vardoger_proto::MoveWorkspaceEntryRequest = parse_params(params)?;
+                let request: commutator_proto::MoveWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .move_entry(request)
@@ -4832,7 +4832,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::CREATE_WORKSPACE_ENTRY => {
-                let request: vardoger_proto::CreateWorkspaceEntryRequest = parse_params(params)?;
+                let request: commutator_proto::CreateWorkspaceEntryRequest = parse_params(params)?;
                 let outcome = self
                     .workspace_files
                     .create_entry(request)
@@ -4841,7 +4841,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::WRITE_WORKSPACE_FILE => {
-                let request: vardoger_proto::WriteWorkspaceFileRequest = parse_params(params)?;
+                let request: commutator_proto::WriteWorkspaceFileRequest = parse_params(params)?;
                 let outcome = tokio::time::timeout(
                     crate::workspace_files::WORKSPACE_FILE_RPC_TIMEOUT,
                     self.workspace_files.write_file(request),
@@ -4852,7 +4852,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&outcome)
             }
             methods::WATCH_WORKSPACE_FILES => {
-                let request: vardoger_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
+                let request: commutator_proto::WatchWorkspaceFilesRequest = parse_params(params)?;
                 let subscription = self
                     .workspace_files
                     .watch_files(request)
@@ -5225,7 +5225,7 @@ impl RpcService for EngineRpc {
                     .is_some_and(|target| !target.is_empty() && target != self.doc_host.device_id())
                 {
                     return Err(RpcError::Failed(
-                        "API keys are added on the device that runs the agent — open Vardoger there."
+                        "API keys are added on the device that runs the agent — open Commutator there."
                             .into(),
                     ));
                 }
@@ -5397,15 +5397,15 @@ impl RpcService for EngineRpc {
                     .title
                     .trim()
                     .chars()
-                    .take(vardoger_proto::VISUAL_MAX_TITLE_CHARS)
+                    .take(commutator_proto::VISUAL_MAX_TITLE_CHARS)
                     .collect();
                 if title.is_empty() {
                     return Err(RpcError::BadParams("title is empty".into()));
                 }
-                if p.script.trim().is_empty() || p.script.len() > vardoger_proto::VISUAL_MAX_BYTES {
+                if p.script.trim().is_empty() || p.script.len() > commutator_proto::VISUAL_MAX_BYTES {
                     return Err(RpcError::BadParams(format!(
                         "script must be 1 to {} bytes",
-                        vardoger_proto::VISUAL_MAX_BYTES
+                        commutator_proto::VISUAL_MAX_BYTES
                     )));
                 }
                 // Before decoding and storing anything (checked again below).
@@ -5420,15 +5420,15 @@ impl RpcService for EngineRpc {
                 let uploads = self.uploads.clone();
                 let (stored_id, script) = (id.clone(), p.script);
                 let (path, report) = tokio::task::spawn_blocking(move || {
-                    let files = vardoger_visual::Assets::new(
+                    let files = commutator_visual::Assets::new(
                         assets
                             .iter()
                             .map(|(name, bytes)| (name.clone(), bytes.as_slice().into()))
                             .collect(),
                     );
-                    let checked = vardoger_visual::check_with_assets(
+                    let checked = commutator_visual::check_with_assets(
                         &script,
-                        vardoger_visual::seed_for(&stored_id),
+                        commutator_visual::seed_for(&stored_id),
                         files,
                     );
                     let report = checked
@@ -5468,10 +5468,10 @@ impl RpcService for EngineRpc {
                     return Err(no_turn_for("show_image"));
                 }
                 // Bounded before decoding: base64 is 4 bytes per 3.
-                if p.data.len() > vardoger_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 {
+                if p.data.len() > commutator_proto::IMAGE_MAX_BYTES.div_ceil(3) * 4 {
                     return Err(RpcError::BadParams(format!(
                         "an image is at most {} MB",
-                        vardoger_proto::IMAGE_MAX_BYTES / (1024 * 1024)
+                        commutator_proto::IMAGE_MAX_BYTES / (1024 * 1024)
                     )));
                 }
                 let bytes = base64::engine::general_purpose::STANDARD
@@ -5525,8 +5525,8 @@ mod tests {
     /// aren't known yet, or that signs in from the environment, still gets it.
     #[test]
     fn a_new_chat_starts_early_only_for_an_agent_not_known_signed_out() {
-        use vardoger_proto::HarnessId;
-        let snapshot = |accounts: serde_json::Value| -> vardoger_proto::AgentAccountsSnapshot {
+        use commutator_proto::HarnessId;
+        let snapshot = |accounts: serde_json::Value| -> commutator_proto::AgentAccountsSnapshot {
             serde_json::from_value(serde_json::json!({ "accounts": accounts, "warnings": [] }))
                 .unwrap()
         };
@@ -5627,7 +5627,7 @@ mod tests {
         )
         .unwrap();
         let rpc = core.rpc_service();
-        use vardoger_proto::ChildKind;
+        use commutator_proto::ChildKind;
         for (chat, parent, kind, expected) in [
             ("sub", Some("main"), Some("subagent"), Some(ChildKind::Subagent)),
             ("side", Some("main"), Some("side"), Some(ChildKind::Side)),
@@ -5657,13 +5657,13 @@ mod tests {
     #[cfg(unix)]
     async fn installer_rpc_fixture(mode: &str) {
         use std::{os::unix::fs::PermissionsExt, sync::Arc};
-        if std::env::var_os("VARDOGER_INSTALL_FIXTURE_CHILD").is_none() {
+        if std::env::var_os("COMMUTATOR_INSTALL_FIXTURE_CHILD").is_none() {
             let root = tempfile::tempdir().unwrap();
             let bin = root.path().join("bin");
             std::fs::create_dir(&bin).unwrap();
             let script = match mode {
                 "success" => {
-                    "test -z \"$VARDOGER_INSTALL_FIXTURE_CHILD\" && test -z \"$CLAUDECODE\" && printf '#!/bin/sh\\necho 99.0.0\\n' > \"$CODEX_EXECUTABLE\" && /bin/chmod +x \"$CODEX_EXECUTABLE\""
+                    "test -z \"$COMMUTATOR_INSTALL_FIXTURE_CHILD\" && test -z \"$CLAUDECODE\" && printf '#!/bin/sh\\necho 99.0.0\\n' > \"$CODEX_EXECUTABLE\" && /bin/chmod +x \"$CODEX_EXECUTABLE\""
                 }
                 "failure" => "echo 'fixture failure api_key=private' >&2; exit 7",
                 "missing" => "exit 0",
@@ -5674,9 +5674,9 @@ mod tests {
             let test = format!("rpc::tests::installer_rpc_{mode}");
             let output = tokio::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", &test, "--nocapture", "--include-ignored"])
-                .env("VARDOGER_INSTALL_FIXTURE_CHILD", root.path())
-                .env("VARDOGER_INSTALLER_COMMAND_CODEX", script)
-                .env("VARDOGER_NO_LOGIN_SHELL", "1")
+                .env("COMMUTATOR_INSTALL_FIXTURE_CHILD", root.path())
+                .env("COMMUTATOR_INSTALLER_COMMAND_CODEX", script)
+                .env("COMMUTATOR_NO_LOGIN_SHELL", "1")
                 .env("HOME", root.path())
                 .env("XDG_CONFIG_HOME", root.path().join("config"))
                 .env("CODEX_EXECUTABLE", bin.join("codex"))
@@ -5705,9 +5705,9 @@ mod tests {
             return;
         }
         let root =
-            std::path::PathBuf::from(std::env::var_os("VARDOGER_INSTALL_FIXTURE_CHILD").unwrap());
+            std::path::PathBuf::from(std::env::var_os("COMMUTATOR_INSTALL_FIXTURE_CHILD").unwrap());
         let registry = Arc::new(HarnessRegistry::new());
-        registry.register(Arc::new(vardoger_harness::CodexHarness::new()));
+        registry.register(Arc::new(commutator_harness::CodexHarness::new()));
         let core = crate::EngineCore::assemble(
             &root.join("engine"),
             registry.clone(),
@@ -5812,8 +5812,8 @@ mod tests {
         use sha2::{Digest, Sha512};
         use std::io::Write;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use vardoger_harness::archive_install::{ArchivePin, ensure_installed, installed_entry};
-        if std::env::var_os("VARDOGER_INSTALL_RPC_TEST").is_none() {
+        use commutator_harness::archive_install::{ArchivePin, ensure_installed, installed_entry};
+        if std::env::var_os("COMMUTATOR_INSTALL_RPC_TEST").is_none() {
             let root = tempfile::tempdir().unwrap();
             let output = tokio::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -5821,8 +5821,8 @@ mod tests {
                     "rpc::tests::explicit_install_rpc_verifies_archive_and_refreshes_descriptors",
                     "--nocapture",
                 ])
-                .env("VARDOGER_INSTALL_RPC_TEST", "1")
-                .env("VARDOGER_ADAPTERS_DIR", root.path())
+                .env("COMMUTATOR_INSTALL_RPC_TEST", "1")
+                .env("COMMUTATOR_ADAPTERS_DIR", root.path())
                 .output()
                 .await
                 .unwrap();
@@ -5834,7 +5834,7 @@ mod tests {
             );
             return;
         }
-        if !vardoger_harness::acp::can_install(HarnessId::Antigravity) {
+        if !commutator_harness::acp::can_install(HarnessId::Antigravity) {
             return;
         }
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -5926,10 +5926,10 @@ mod tests {
         use crate::doc_host::{DocHost, DocHostConfig};
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(commutator_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store,
-            DocHostConfig { device_id: "viewer".into(), default_harness: vardoger_proto::HarnessId::Mock },
+            DocHostConfig { device_id: "viewer".into(), default_harness: commutator_proto::HarnessId::Mock },
         );
         let handle = host.open("kept").unwrap();
         for i in 0..300 {
@@ -5942,7 +5942,7 @@ mod tests {
         let held: Vec<serde_json::Value> = sent["reset"].as_array().unwrap().clone();
         let known: Vec<(String, u64)> = held
             .iter()
-            .map(|e| (e["id"].as_str().unwrap().to_owned(), vardoger_doc::entry_sum(e)))
+            .map(|e| (e["id"].as_str().unwrap().to_owned(), commutator_doc::entry_sum(e)))
             .collect();
         // While it was away: one more message.
         handle.write_user_message("away", "while away", 400).unwrap();
@@ -5959,7 +5959,7 @@ mod tests {
         let ids: Vec<String> = handle.doc().read_entries().unwrap().into_iter().map(|e| e.id).collect();
         assert_eq!(
             first["orderSum"].as_u64(),
-            Some(vardoger_doc::order_sum(ids.iter().map(String::as_str))),
+            Some(commutator_doc::order_sum(ids.iter().map(String::as_str))),
             "the order the reader must hold its rows in"
         );
         assert!(serde_json::to_string(&first).unwrap().len() < 4_000);
@@ -5975,22 +5975,22 @@ mod tests {
         use crate::doc_host::{DocHost, DocHostConfig};
         use std::sync::Arc;
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(commutator_sync::DocsStore::open(dir.path()).unwrap());
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             },
         );
         let handle = host.open("whale").unwrap();
         handle
             .doc()
-            .push_message(&vardoger_doc::SessionMessageEntry {
+            .push_message(&commutator_doc::SessionMessageEntry {
                 id: "turn".into(),
-                role: vardoger_doc::MessageRole::Assistant,
+                role: commutator_doc::MessageRole::Assistant,
                 parts: (0..500)
-                    .map(|i| vardoger_doc::MessagePart::Text {
+                    .map(|i| commutator_doc::MessagePart::Text {
                         id: format!("part-{i}"),
                         text: "local text".into(),
                     })
@@ -6044,8 +6044,8 @@ mod tests {
             .unwrap();
         let mut entries = Vec::new();
         for value in [full, live] {
-            let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(value).unwrap();
-            vardoger_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
+            let update: commutator_doc::TranscriptUpdate = serde_json::from_value(value).unwrap();
+            commutator_doc::apply_transcript_frame(&mut entries, update.frame).unwrap();
         }
         assert_eq!(entries.len(), 3);
         assert_eq!(entries.last().unwrap().id, "live");
@@ -6057,10 +6057,10 @@ mod tests {
         let registry = HarnessRegistry::new();
         let executable = std::env::current_exe().unwrap();
         registry.register(std::sync::Arc::new(
-            vardoger_harness::AcpHarness::grok().with_executable(executable.clone()),
+            commutator_harness::AcpHarness::grok().with_executable(executable.clone()),
         ));
         registry.register(std::sync::Arc::new(
-            vardoger_harness::AcpHarness::antigravity().with_executable(executable),
+            commutator_harness::AcpHarness::antigravity().with_executable(executable),
         ));
         registry.set_enabled(HarnessId::Antigravity, true).unwrap();
 
@@ -6104,7 +6104,7 @@ mod tests {
         .expect("sidebar preferences params");
         assert!(matches!(
             p,
-            MutateParams::ChangeSidebarPin { change: vardoger_proto::SidebarPinChange::Move { session_id, before, .. } }
+            MutateParams::ChangeSidebarPin { change: commutator_proto::SidebarPinChange::Move { session_id, before, .. } }
                 if session_id == "chat-b" && before.as_deref() == Some("chat-a")
         ));
     }
@@ -6120,15 +6120,15 @@ mod tests {
         // An API key never leaves the device it was typed on: not forwarded,
         // not served to a peer through the relay, not an agent's to call.
         assert!(!forwardable(methods::ADD_AGENT_API_KEY));
-        assert!(vardoger_rpc::local_only(methods::ADD_AGENT_API_KEY));
-        assert!(vardoger_rpc::peer_refused(methods::ADD_AGENT_API_KEY, &serde_json::json!({})));
-        assert!(!vardoger_rpc::agent_allowed(methods::ADD_AGENT_API_KEY));
+        assert!(commutator_rpc::local_only(methods::ADD_AGENT_API_KEY));
+        assert!(commutator_rpc::peer_refused(methods::ADD_AGENT_API_KEY, &serde_json::json!({})));
+        assert!(!commutator_rpc::agent_allowed(methods::ADD_AGENT_API_KEY));
         // Per-provider account actions do travel, provider and all.
         assert!(forwardable(methods::START_AGENT_LOGIN));
         assert!(forwardable(methods::ACTIVATE_AGENT_ACCOUNT));
         // A key's name is no secret: renamed wherever the key lives.
         assert!(forwardable(methods::RENAME_AGENT_ACCOUNT));
-        assert!(!vardoger_rpc::local_only(methods::RENAME_AGENT_ACCOUNT));
+        assert!(!commutator_rpc::local_only(methods::RENAME_AGENT_ACCOUNT));
         assert!(forwardable(methods::QUEUE_COMMAND));
         assert!(forwardable(methods::SEARCH_FILES));
         assert!(forwardable(methods::SEARCH_GIT_HISTORY));
@@ -6264,7 +6264,7 @@ mod tests {
     fn chat_image_folders_fail_closed() {
         let home = tempfile::tempdir().unwrap();
         let project = home.path().join("code").join("app");
-        let data = home.path().join(".vardoger");
+        let data = home.path().join(".commutator");
         let scratch_root = data.join("scratch");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(scratch_root.join("2026-10-25-a1b2c3d4")).unwrap();
@@ -6280,7 +6280,7 @@ mod tests {
             Ok(project.clone())
         );
         assert_eq!(
-            folder(Some("~/.vardoger/scratch/2026-10-25-a1b2c3d4")),
+            folder(Some("~/.commutator/scratch/2026-10-25-a1b2c3d4")),
             Ok(scratch_root.join("2026-10-25-a1b2c3d4"))
         );
         let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
@@ -6298,16 +6298,16 @@ mod tests {
             (Some("relative/app"), "not an absolute path"),
             (Some(missing.as_str()), "doesn't exist"),
             (
-                Some("~/.vardoger/scratch/2026-10-25-zzzz9999"),
+                Some("~/.commutator/scratch/2026-10-25-zzzz9999"),
                 "doesn't exist",
             ),
             (Some(home_text.as_str()), "home folder, above it"),
             (Some(above_home.as_str()), "home folder, above it"),
             (Some(root.as_str()), "home folder, above it"),
-            (Some(data_text.as_str()), "around Vardoger's data"),
-            (Some(scratch_text.as_str()), "around Vardoger's data"),
-            (Some("~/.vardoger/scratch/."), "around Vardoger's data"),
-            (Some("~/.vardoger/scratch/.."), "around Vardoger's data"),
+            (Some(data_text.as_str()), "around Commutator's data"),
+            (Some(scratch_text.as_str()), "around Commutator's data"),
+            (Some("~/.commutator/scratch/."), "around Commutator's data"),
+            (Some("~/.commutator/scratch/.."), "around Commutator's data"),
         ] {
             let error = folder(cwd).expect_err(&format!("{cwd:?}"));
             assert!(error.contains(why), "{cwd:?}: {error}");
@@ -6418,11 +6418,11 @@ mod context_usage_tests {
 
     #[tokio::test]
     async fn context_only_commits_reach_remote_watch_and_reconnect() {
-        let host = vardoger_doc::SessionDoc::init("context-chat").unwrap();
+        let host = commutator_doc::SessionDoc::init("context-chat").unwrap();
         host.update_context_usage(Some(42000), Some(200000))
             .unwrap();
         // The viewing engine reads a replicated document, with no harness process.
-        let remote = Arc::new(vardoger_doc::SessionDoc::from_doc(loro::LoroDoc::new()));
+        let remote = Arc::new(commutator_doc::SessionDoc::from_doc(loro::LoroDoc::new()));
         remote
             .doc()
             .import(&host.export_snapshot().unwrap())
@@ -6471,7 +6471,7 @@ mod cold_open_tests {
     use futures::StreamExt;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
+    use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
 
     /// Words for a synthetic chat: varied enough not to compress away.
     struct Words(u64);
@@ -6550,7 +6550,7 @@ mod cold_open_tests {
 
     /// A chat of `entries` entries, stored as the engine stores one (a
     /// chat2 snapshot), so a host opens it cold.
-    fn store_synthetic_chat(store: &vardoger_sync::DocsStore, chat_id: &str, entries: usize) -> usize {
+    fn store_synthetic_chat(store: &commutator_sync::DocsStore, chat_id: &str, entries: usize) -> usize {
         let doc = SessionDoc::init(chat_id).unwrap();
         let mut words = Words(0x9e37_79b9_7f4a_7c15);
         for i in 0..entries {
@@ -6563,12 +6563,12 @@ mod cold_open_tests {
         bytes.len()
     }
 
-    fn new_host(store: &Arc<vardoger_sync::DocsStore>) -> DocHost {
+    fn new_host(store: &Arc<commutator_sync::DocsStore>) -> DocHost {
         DocHost::new(
             store.clone(),
             DocHostConfig {
                 device_id: "viewer".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             },
         )
     }
@@ -6577,12 +6577,12 @@ mod cold_open_tests {
     fn known_of(entries: &[serde_json::Value]) -> Vec<(String, u64)> {
         entries
             .iter()
-            .map(|e| (e["id"].as_str().unwrap().to_owned(), vardoger_doc::entry_sum(e)))
+            .map(|e| (e["id"].as_str().unwrap().to_owned(), commutator_doc::entry_sum(e)))
             .collect()
     }
 
     /// The transcript as a reader of the whole of it gets it.
-    async fn whole_transcript(store: &Arc<vardoger_sync::DocsStore>, chat: &str) -> Vec<serde_json::Value> {
+    async fn whole_transcript(store: &Arc<commutator_sync::DocsStore>, chat: &str) -> Vec<serde_json::Value> {
         let host = new_host(store);
         let handle = host.open(chat).unwrap();
         let rx = handle.watch_messages();
@@ -6600,7 +6600,7 @@ mod cold_open_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_reader_holding_rows_gets_a_cold_chats_newest_changes_first() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
+        let store = Arc::new(commutator_sync::DocsStore::open(dir.path()).unwrap());
         let chat = "long";
         assert!(store_synthetic_chat(&store, chat, 400) > 1 << 20);
         let whole: Vec<SessionMessageEntry> = whole_transcript(&store, chat)
@@ -6617,7 +6617,7 @@ mod cold_open_tests {
             held[at].parts.truncate(1);
         }
         let known: Vec<(String, u64)> =
-            held.iter().map(|e| (e.id.clone(), vardoger_doc::entry_sum_of(e))).collect();
+            held.iter().map(|e| (e.id.clone(), commutator_doc::entry_sum_of(e))).collect();
 
         let host = new_host(&store);
         let handle = host.open(chat).unwrap();
@@ -6632,7 +6632,7 @@ mod cold_open_tests {
             })
         });
         locked_rx.recv().unwrap();
-        let options = vardoger_doc::DiffOptions { part_patches: true };
+        let options = commutator_doc::DiffOptions { part_patches: true };
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
             since_doc_messages_stream(host.clone(), chat.into(), options, known.clone()),
@@ -6668,22 +6668,22 @@ mod cold_open_tests {
             since["upsert"].as_array().unwrap().iter().map(|u| u["entry"]["id"].as_str().unwrap()).collect();
         assert_eq!(upserts, [whole[11].id.as_str()], "the older change, nothing of the tail again");
         let order = since["orderSum"].as_u64();
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(since).unwrap();
-        vardoger_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
+        let update: commutator_doc::TranscriptUpdate = serde_json::from_value(since).unwrap();
+        commutator_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
         assert_eq!(rows, whole);
-        assert_eq!(order, Some(vardoger_doc::order_sum(rows.iter().map(|e| e.id.as_str()))));
+        assert_eq!(order, Some(commutator_doc::order_sum(rows.iter().map(|e| e.id.as_str()))));
         // Then live changes, as deltas.
         handle.write_user_message("live", "after", 1).unwrap();
         let live = tokio::time::timeout(Duration::from_secs(5), stream.next()).await.unwrap().unwrap();
-        let update: vardoger_doc::TranscriptUpdate = serde_json::from_value(live).unwrap();
-        vardoger_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
+        let update: commutator_doc::TranscriptUpdate = serde_json::from_value(live).unwrap();
+        commutator_doc::apply_transcript_frame(&mut rows, update.frame).unwrap();
         assert_eq!(rows.len(), n + 1);
         assert_eq!(rows.last().unwrap().id, "live");
         drop(stream);
 
         // Nothing among the newest entries changed: the `since` frame alone.
         let mut known: Vec<(String, u64)> =
-            rows.iter().map(|e| (e.id.clone(), vardoger_doc::entry_sum_of(e))).collect();
+            rows.iter().map(|e| (e.id.clone(), commutator_doc::entry_sum_of(e))).collect();
         known[11].1 = 0;
         let mut again = since_doc_messages_stream(host.clone(), chat.into(), options, known).await.unwrap();
         let first = again.next().await.unwrap();
@@ -6704,19 +6704,19 @@ mod cold_open_tests {
     /// the whole history) for a cold doc: (a) the opening tail, no `known`;
     /// (b) `known` all but the newest few entries; and (b) again on the doc
     /// warm. Each frame is serialized as the RPC layer would. Run with:
-    /// `cargo test --release -p vardoger-engine --lib cold_open_first_frame -- --ignored --nocapture`
-    /// (`VARDOGER_COLD_OPEN_ENTRIES=4000,20000` for other sizes).
+    /// `cargo test --release -p commutator-engine --lib cold_open_first_frame -- --ignored --nocapture`
+    /// (`COMMUTATOR_COLD_OPEN_ENTRIES=4000,20000` for other sizes).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "benchmark: builds tens of MB of chat"]
     async fn cold_open_first_frame_bench() {
         const RUNS: usize = 7;
-        let sizes: Vec<usize> = std::env::var("VARDOGER_COLD_OPEN_ENTRIES")
+        let sizes: Vec<usize> = std::env::var("COMMUTATOR_COLD_OPEN_ENTRIES")
             .ok()
             .map(|v| v.split(',').map(|n| n.parse().unwrap()).collect())
             .unwrap_or_else(|| vec![4_000, 20_000]);
         for entries in sizes {
             let dir = tempfile::tempdir().unwrap();
-            let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).unwrap());
+            let store = Arc::new(commutator_sync::DocsStore::open(dir.path()).unwrap());
             let chat = "bench";
             let built = Instant::now();
             let snapshot = store_synthetic_chat(&store, chat, entries);
@@ -6751,7 +6751,7 @@ mod cold_open_tests {
                 let (mut first, mut rest, mut bytes) = (Vec::new(), Vec::new(), (0, 0));
                 for _ in 0..RUNS {
                     let host = new_host(&store);
-                    let options = vardoger_doc::DiffOptions { part_patches: true };
+                    let options = commutator_doc::DiffOptions { part_patches: true };
                     if scenario.ends_with("warm") {
                         // Viewed a moment ago: open, its reader gone, its
                         // read cache kept.

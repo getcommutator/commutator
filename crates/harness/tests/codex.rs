@@ -10,10 +10,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use vardoger_harness::{
+use commutator_harness::{
     CancellationToken, CodexHarness, Harness, HarnessError, RunControls, SteerMessage,
 };
-use vardoger_proto::{
+use commutator_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, ReasoningLevel, RunRequest, SandboxLevel,
     TodoItem, TodoStatus, ToolCall, UserInputAnswer, UserInputQuestion,
 };
@@ -481,7 +481,7 @@ async fn a_stale_turn_completion_never_settles_the_running_turn() {
 /// its end, and the host's fallback tore the whole runtime down.
 #[tokio::test]
 async fn a_stop_before_the_turn_is_announced_still_interrupts_it() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, _steer, _token) = controls("Yes");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -509,7 +509,7 @@ async fn a_stop_before_the_turn_is_announced_still_interrupts_it() {
 /// command — which never gets an `item/completed` — does not.
 #[tokio::test]
 async fn open_commands_report_background_work_and_killed_ones_do_not() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("Yes");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -565,7 +565,7 @@ async fn open_commands_report_background_work_and_killed_ones_do_not() {
 /// its output; stopping it terminates its exec session.
 #[tokio::test]
 async fn a_background_command_is_listed_read_and_terminated() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, _steer, _token) = controls("Yes");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -612,7 +612,7 @@ async fn rejected_steer_falls_back_to_a_follow_up_turn() {
         .send(SteerMessage {
             prompt: format!(
                 "redirect please {}",
-                vardoger_proto::invocation::Invocation::Skill {
+                commutator_proto::invocation::Invocation::Skill {
                     command: None,
                     name: "review".into(),
                     path: "/repo/followup/SKILL.md".into(),
@@ -987,7 +987,7 @@ async fn resume_falls_back_to_fresh_thread() {
                  starts a new one without its context."
             )
         );
-        assert_eq!(vardoger_proto::run_errors::provider_problem(notices[0]), None);
+        assert_eq!(commutator_proto::run_errors::provider_problem(notices[0]), None);
         assert_eq!(
             events.last(),
             Some(&AgentEvent::Done {
@@ -1094,8 +1094,8 @@ async fn retry_notices_stay_out_of_the_transcript_and_the_final_error_lands_once
         "{error}"
     );
     assert_eq!(
-        vardoger_proto::run_errors::provider_problem(error),
-        Some(vardoger_proto::run_errors::ProviderProblem::LimitReached)
+        commutator_proto::run_errors::provider_problem(error),
+        Some(commutator_proto::run_errors::ProviderProblem::LimitReached)
     );
 }
 
@@ -1126,8 +1126,8 @@ async fn a_crash_after_a_final_error_reports_both() {
                 "{error}"
             );
             assert_eq!(
-                vardoger_proto::run_errors::provider_problem(error),
-                Some(vardoger_proto::run_errors::ProviderProblem::SignedOut)
+                commutator_proto::run_errors::provider_problem(error),
+                Some(commutator_proto::run_errors::ProviderProblem::SignedOut)
             );
         }
         other => panic!("expected an errored Done, got {other:?}"),
@@ -1716,7 +1716,7 @@ async fn live_subagent_spawn_and_followup_keep_one_transcript() {
 
 /// Live smoke against the REAL codex app-server (installed + authed):
 /// one trivial turn, ending on turn/completed.
-/// `cargo test -p vardoger-harness --test codex -- --ignored`.
+/// `cargo test -p commutator-harness --test codex -- --ignored`.
 #[tokio::test]
 #[ignore = "spawns the real codex app-server; needs install + auth + network"]
 async fn live_real_app_server_single_turn() {
@@ -1794,7 +1794,7 @@ async fn skills_are_not_advertised_as_commands() {
     );
 }
 
-/// Live smoke against the real CLI: `cargo test -p vardoger-harness --test
+/// Live smoke against the real CLI: `cargo test -p commutator-harness --test
 /// codex -- --ignored live_skills`.
 #[tokio::test]
 #[ignore]
@@ -1986,7 +1986,7 @@ async fn real_image_generation_smoke() {
 
 #[tokio::test]
 async fn native_commands_use_rpc_operations_and_render_results() {
-    let selected_review = vardoger_proto::invocation::Invocation::Command {
+    let selected_review = commutator_proto::invocation::Invocation::Command {
         name: "review".into(),
     }
     .link();
@@ -2028,7 +2028,7 @@ async fn native_commands_use_rpc_operations_and_render_results() {
 
 #[tokio::test]
 async fn compact_requires_existing_session_and_commands_reject_attachments() {
-    let selected_compact = vardoger_proto::invocation::Invocation::Command {
+    let selected_compact = commutator_proto::invocation::Invocation::Command {
         name: "compact".into(),
     }
     .link();
@@ -2089,7 +2089,7 @@ async fn native_command_during_a_turn_waits_for_its_boundary() {
 
 #[tokio::test]
 async fn native_skill_and_file_references_survive_initial_and_steered_turns() {
-    use vardoger_proto::invocation::{Invocation, harness_prompt};
+    use commutator_proto::invocation::{Invocation, harness_prompt};
     let initial = Invocation::Skill {
         command: None,
         name: "review".into(),
@@ -2114,7 +2114,7 @@ async fn native_skill_and_file_references_survive_initial_and_steered_turns() {
     let raw = format!(
         "scenario:native-skills {} {}",
         initial.link(),
-        vardoger_proto::file_mentions::local_file_link("src/lib.rs", false)
+        commutator_proto::file_mentions::local_file_link("src/lib.rs", false)
     );
     let events = run_to_end(
         &harness(),
@@ -2253,7 +2253,7 @@ async fn a_model_change_sent_mid_turn_takes_effect_in_its_own_turn() {
 
 #[tokio::test]
 async fn a_stopped_turn_keeps_the_app_server_for_the_next_prompt() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("Yes");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -2325,16 +2325,16 @@ async fn a_side_chats_only_thread_starts_without_agent_tools() {
         let dir = tempfile::tempdir().unwrap();
         let mut req = request("delegate this");
         req.cwd = dir.path().display().to_string();
-        let mut server = vardoger_proto::McpServer {
-            name: "vardoger".into(),
-            command: "vardoger".into(),
+        let mut server = commutator_proto::McpServer {
+            name: "commutator".into(),
+            command: "commutator".into(),
             args: vec!["mcp".into()],
             env: Default::default(),
             http: None,
         };
         if side_chats_only {
             server.env.insert(
-                vardoger_proto::McpServer::SIDE_CHATS_ONLY_ENV.into(),
+                commutator_proto::McpServer::SIDE_CHATS_ONLY_ENV.into(),
                 "1".into(),
             );
         }
@@ -2359,7 +2359,7 @@ async fn a_side_chats_only_thread_starts_without_agent_tools() {
             .find(|frame| frame["method"] == "thread/start")
             .expect("a thread starts");
         let config = &start["params"]["config"];
-        assert_eq!(config["mcp_servers.vardoger.command"], "vardoger", "{config}");
+        assert_eq!(config["mcp_servers.commutator.command"], "commutator", "{config}");
         for key in [
             "features.multi_agent",
             "features.multi_agent_v2",

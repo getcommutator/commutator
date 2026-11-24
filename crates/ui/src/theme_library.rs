@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Global};
-use vardoger_theme::vscode::SourceCompilation;
-use vardoger_theme::{
+use commutator_theme::vscode::SourceCompilation;
+use commutator_theme::{
     CustomThemeEntry, CustomThemeLibrary, InstallMode, ThemeRegistry, replace_custom_families,
 };
 
@@ -164,9 +164,9 @@ fn reconcile_and_refresh(cx: &mut App) {
     let selected = appearance::themes(cx);
     for appearance_kind in [Appearance::Light, Appearance::Dark] {
         let model = if appearance_kind.is_light() {
-            vardoger_theme::Appearance::Light
+            commutator_theme::Appearance::Light
         } else {
-            vardoger_theme::Appearance::Dark
+            commutator_theme::Appearance::Dark
         };
         let selected_id = selected.variant_id(model);
         if registry.variant(selected_id).is_none()
@@ -197,17 +197,17 @@ mod tests {
         next.entries.push(CustomThemeEntry {
             id: "unpersisted".into(),
             name: "Unpersisted".into(),
-            source: vardoger_theme::CustomThemeSource::ImportedSnapshot {
+            source: commutator_theme::CustomThemeSource::ImportedSnapshot {
                 imported_from: None,
             },
-            family: vardoger_theme::ThemeFamily {
+            family: commutator_theme::ThemeFamily {
                 id: "unpersisted".into(),
                 name: "Unpersisted".into(),
                 variants: Vec::new(),
             },
             reports: Default::default(),
             selected_variant_ids: Vec::new(),
-            status: vardoger_theme::CustomThemeStatus::Ready,
+            status: commutator_theme::CustomThemeStatus::Ready,
         });
 
         assert!(persist_and_activate(&mut state, next).is_err());

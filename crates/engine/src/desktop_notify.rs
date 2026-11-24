@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use vardoger_proto::view::{Indicator, effective_indicator};
-use vardoger_proto::{Chat, ConnectivityState, HarnessUpdatePhase, HarnessUpdateStatus, Session};
+use commutator_proto::view::{Indicator, effective_indicator};
+use commutator_proto::{Chat, ConnectivityState, HarnessUpdatePhase, HarnessUpdateStatus, Session};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -40,7 +40,7 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 const DONE_SETTLE: chrono::Duration = chrono::Duration::seconds(2);
 
 /// This process shows desktop banners: engines assembled from now on post
-/// them (and advertise [`vardoger_proto::capabilities::DESKTOP_NOTIFICATIONS_V1`]).
+/// them (and advertise [`commutator_proto::capabilities::DESKTOP_NOTIFICATIONS_V1`]).
 pub fn enable() {
     ENABLED.store(true, Ordering::SeqCst);
 }
@@ -77,7 +77,7 @@ impl SessionNotificationState {
             fresh: now
                 .signed_duration_since(session.updated_at)
                 .num_milliseconds()
-                <= vardoger_proto::view::SESSION_STALE_MS,
+                <= commutator_proto::view::SESSION_STALE_MS,
         }
     }
 
@@ -260,13 +260,13 @@ pub(crate) fn post_asked(
     let prefs = Prefs::read(data_dir);
     let outcome = asked_outcome(prefs.enabled, prefs.background_only, focus.any(), enabled());
     if outcome == "posted" {
-        vardoger_notify::post(title, body, target);
+        commutator_notify::post(title, body, target);
     }
     outcome
 }
 
 /// A banner a plugin asked for (`PostNotification`, a service's
-/// `vardoger.notify`): its body cut to 500 characters, paced per `source` (a
+/// `commutator.notify`): its body cut to 500 characters, paced per `source` (a
 /// few a minute), then as [`post_asked`]. The outcome word.
 pub(crate) fn post_for(
     data_dir: &Path,
@@ -320,7 +320,7 @@ pub(crate) const ASKED_APART: Duration = Duration::from_secs(5);
 
 const VERSIONLESS: &str = "versionless";
 
-fn versionless_key(device: &str, harness: vardoger_proto::HarnessId) -> String {
+fn versionless_key(device: &str, harness: commutator_proto::HarnessId) -> String {
     format!("{device}:{harness:?}:{VERSIONLESS}")
 }
 
@@ -459,7 +459,7 @@ impl Notifier {
         }
         let body = match state {
             ConnectivityState::Offline => "Your device is offline",
-            _ => "Vardoger is trying to reconnect",
+            _ => "Commutator is trying to reconnect",
         };
         (self.post)("Connection unavailable", body, None);
     }
@@ -506,7 +506,7 @@ impl Notifier {
                 if count == 1 { "" } else { "s" }
             ),
             body,
-            Some(vardoger_notify::AGENT_UPDATES_TARGET),
+            Some(commutator_notify::AGENT_UPDATES_TARGET),
         );
     }
 }
@@ -524,7 +524,7 @@ pub(crate) fn spawn(core: &crate::EngineCore, data_dir: PathBuf) -> tokio::task:
         data_dir,
         core.device_id.clone(),
         core.viewport_focus.clone(),
-        Box::new(vardoger_notify::post),
+        Box::new(commutator_notify::post),
     );
     tokio::spawn(async move {
         const UPDATE_DEBOUNCE: Duration = Duration::from_secs(1);
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn durable_connectivity_degradation_pings_once_per_outage() {
-        use vardoger_proto::ConnectivityState as State;
+        use commutator_proto::ConnectivityState as State;
 
         assert_eq!(
             connectivity_ping_since(State::Connected, State::Disabled),
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn connectivity_boot_outages_seed_silently_then_later_outages_alert() {
-        use vardoger_proto::ConnectivityState as State;
+        use commutator_proto::ConnectivityState as State;
         let t0 = Instant::now();
 
         // Warm daemon: the first authoritative snapshot is already degraded.
@@ -914,7 +914,7 @@ mod tests {
 
     fn working(chat_id: &str, turn: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Session {
         let mut row = session(chat_id, turn, now);
-        row.status = vardoger_proto::SessionStatus::Working;
+        row.status = commutator_proto::SessionStatus::Working;
         row.started_at = Some(now);
         row
     }
@@ -964,7 +964,7 @@ mod tests {
         let now = chrono::Utc::now();
         notifier.sessions(&[working("a", Some("t1"), now)], &chats, now);
         let mut asking = working("a", Some("t1"), now);
-        asking.status = vardoger_proto::SessionStatus::AwaitingInput;
+        asking.status = commutator_proto::SessionStatus::AwaitingInput;
         notifier.sessions(&[asking], &chats, now);
         assert_eq!(posted.lock().unwrap().len(), 1);
         assert_eq!(posted.lock().unwrap()[0].1, "Waiting on your input");
@@ -987,7 +987,7 @@ mod tests {
         assert_eq!(posted.lock().unwrap().len(), 1);
         assert_eq!(
             posted.lock().unwrap()[0].2.as_deref(),
-            Some(vardoger_notify::AGENT_UPDATES_TARGET)
+            Some(commutator_notify::AGENT_UPDATES_TARGET)
         );
         // Versionless availability re-arms after the agent reports current.
         notifier.updates(&[status("available", None)]);

@@ -23,14 +23,14 @@ use gpui::{
     px,
 };
 
-use vardoger_engine::registry::{HarnessDescriptor, descriptor_enabled};
+use commutator_engine::registry::{HarnessDescriptor, descriptor_enabled};
 
-use vardoger_proto::{
+use commutator_proto::{
     HarnessId, HarnessUpdateFailureKind, HarnessUpdatePhase, HarnessUpdatePolicy,
     HarnessUpdateStatus,
 };
 
-use vardoger_rpc::methods;
+use commutator_rpc::methods;
 
 use crate::motion;
 use crate::pickers::visible_harnesses;
@@ -88,7 +88,7 @@ fn install_hint(harness: HarnessId, enabled: bool, can_install: bool) -> String 
     } else {
         format!("Install the {} CLI to enable", cli_name(harness))
     };
-    if !can_install && let Some(command) = vardoger_harness::install::manual_command(harness) {
+    if !can_install && let Some(command) = commutator_harness::install::manual_command(harness) {
         format!("{hint}. Install with `{command}`")
     } else {
         hint
@@ -146,7 +146,7 @@ fn harness_update_label(status: &HarnessUpdateStatus, theme: &Theme) -> (SharedS
         None => detail.to_owned(),
     };
     let version_only = || installed.clone().unwrap_or_default();
-    // An installed release this Vardoger can't run explains failing runs: it
+    // An installed release this Commutator can't run explains failing runs: it
     // outranks everything but an update in flight.
     if let Some(compatibility) = &status.compatibility
         && matches!(
@@ -173,7 +173,7 @@ fn harness_update_label(status: &HarnessUpdateStatus, theme: &Theme) -> (SharedS
         HarnessUpdatePhase::Dormant
         | HarnessUpdatePhase::Checking
         | HarnessUpdatePhase::Current => version_only(),
-        // The row's Update button already says it; one Vardoger can only
+        // The row's Update button already says it; one Commutator can only
         // describe (a command to run yourself) is just the version too.
         HarnessUpdatePhase::Available | HarnessUpdatePhase::ManualActionRequired
             if status.can_apply =>
@@ -540,9 +540,9 @@ impl HarnessesPage {
             || {
                 engine
                     .engine_info()
-                    .supports(vardoger_proto::capabilities::HARNESS_UPDATES_V1)
+                    .supports(commutator_proto::capabilities::HARNESS_UPDATES_V1)
             },
-            |device| state.device_supports(device, vardoger_proto::capabilities::HARNESS_UPDATES_V1),
+            |device| state.device_supports(device, commutator_proto::capabilities::HARNESS_UPDATES_V1),
         )
     }
 
@@ -1487,28 +1487,28 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Loading;
-                page.sign_in(None, vardoger_proto::HarnessId::Codex, cx);
+                page.sign_in(None, commutator_proto::HarnessId::Codex, cx);
                 assert_eq!(page.expanded_harness, None, "nothing to open yet");
                 page.harnesses =
-                    super::Loadable::Ready(vec![vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
-                        id: vardoger_proto::HarnessId::Codex,
+                    super::Loadable::Ready(vec![commutator_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
+                        id: commutator_proto::HarnessId::Codex,
                         name: "Codex".into(),
                         supports_steering: false,
-                        steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
+                        steering_mode: commutator_proto::SteeringMode::TurnBoundary,
                         reasoning_levels: Vec::new(),
                         installed: true,
                         can_install: false,
                         enabled: Some(true),
                     }]);
                 page.run_pending_sign_in(cx);
-                assert_eq!(page.expanded_harness, Some(vardoger_proto::HarnessId::Codex));
+                assert_eq!(page.expanded_harness, Some(commutator_proto::HarnessId::Codex));
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(vardoger_proto::HarnessId::Codex)
+                    Some(commutator_proto::HarnessId::Codex)
                 );
                 assert_eq!(page.pending_sign_in, None, "started once");
             })
@@ -1528,11 +1528,11 @@ mod tests {
             let state = cx.new(|_| crate::state::AppState::new());
             super::HarnessesPage::new(state, cx)
         });
-        let descriptor = |id, name: &str| vardoger_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
+        let descriptor = |id, name: &str| commutator_engine::registry::HarnessDescriptor { access_modes: Default::default(), icon: Default::default(), supports_plan: Default::default(),
             id,
             name: name.into(),
             supports_steering: false,
-            steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
+            steering_mode: commutator_proto::SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed: true,
             can_install: false,
@@ -1541,13 +1541,13 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Ready(vec![
-                    descriptor(vardoger_proto::HarnessId::ClaudeCode, "Claude Code"),
-                    descriptor(vardoger_proto::HarnessId::Codex, "Codex"),
+                    descriptor(commutator_proto::HarnessId::ClaudeCode, "Claude Code"),
+                    descriptor(commutator_proto::HarnessId::Codex, "Codex"),
                 ]);
-                page.toggle_agent_details(vardoger_proto::HarnessId::ClaudeCode, cx);
+                page.toggle_agent_details(commutator_proto::HarnessId::ClaudeCode, cx);
                 assert_eq!(
                     page.expanded_harness,
-                    Some(vardoger_proto::HarnessId::ClaudeCode)
+                    Some(commutator_proto::HarnessId::ClaudeCode)
                 );
                 assert_eq!(
                     page.accounts_page
@@ -1555,7 +1555,7 @@ mod tests {
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(vardoger_proto::HarnessId::ClaudeCode)
+                    Some(commutator_proto::HarnessId::ClaudeCode)
                 );
             })
             .unwrap();
@@ -1563,15 +1563,15 @@ mod tests {
             .unwrap();
         window
             .update(cx, |page, _, cx| {
-                page.toggle_agent_details(vardoger_proto::HarnessId::Codex, cx);
-                assert_eq!(page.expanded_harness, Some(vardoger_proto::HarnessId::Codex));
+                page.toggle_agent_details(commutator_proto::HarnessId::Codex, cx);
+                assert_eq!(page.expanded_harness, Some(commutator_proto::HarnessId::Codex));
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(vardoger_proto::HarnessId::Codex)
+                    Some(commutator_proto::HarnessId::Codex)
                 );
             })
             .unwrap();
@@ -1581,17 +1581,17 @@ mod tests {
         window
             .update(cx, |page, _, cx| {
                 page.harnesses = super::Loadable::Ready(vec![descriptor(
-                    vardoger_proto::HarnessId::Antigravity,
+                    commutator_proto::HarnessId::Antigravity,
                     "Antigravity",
                 )]);
-                page.toggle_agent_details(vardoger_proto::HarnessId::Antigravity, cx);
+                page.toggle_agent_details(commutator_proto::HarnessId::Antigravity, cx);
                 assert_eq!(
                     page.accounts_page
                         .as_ref()
                         .unwrap()
                         .read(cx)
                         .embedded_harness(),
-                    Some(vardoger_proto::HarnessId::Antigravity)
+                    Some(commutator_proto::HarnessId::Antigravity)
                 );
             })
             .unwrap();

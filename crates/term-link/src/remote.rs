@@ -30,9 +30,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::{mpsc, watch};
-use vardoger_preview::mux::BoxIo;
-use vardoger_proto::TerminalEvent;
-use vardoger_rpc::{RpcError, methods};
+use commutator_preview::mux::BoxIo;
+use commutator_proto::TerminalEvent;
+use commutator_rpc::{RpcError, methods};
 
 use crate::link::{self, Link, Outgoing};
 
@@ -84,17 +84,17 @@ pub trait Direct: Send + Sync + 'static {
 }
 
 #[async_trait]
-impl Direct for vardoger_preview::viewer::ViewerPeers {
+impl Direct for commutator_preview::viewer::ViewerPeers {
     async fn ready(&self, device: &str) -> bool {
-        vardoger_preview::viewer::ViewerPeers::ready(self, device).await
+        commutator_preview::viewer::ViewerPeers::ready(self, device).await
     }
     async fn open(&self, device: &str, service: &str) -> anyhow::Result<BoxIo> {
         Ok(Box::new(
-            vardoger_preview::viewer::ViewerPeers::open(self, device, service).await?,
+            commutator_preview::viewer::ViewerPeers::open(self, device, service).await?,
         ))
     }
     async fn changed(&self) {
-        vardoger_preview::viewer::ViewerPeers::changed(self).await
+        commutator_preview::viewer::ViewerPeers::changed(self).await
     }
 }
 
@@ -108,7 +108,7 @@ pub enum TerminalPath {
 }
 
 #[async_trait]
-impl Direct for vardoger_preview::PreviewService {
+impl Direct for commutator_preview::PreviewService {
     async fn ready(&self, device: &str) -> bool {
         self.peer_ready(device).await
     }

@@ -1,5 +1,5 @@
-//! vardoger-update — release checking and self-update, shared by the engine (the
-//! background checker + `ApplyUpdate`), the CLI (`vardoger update`), and the UI
+//! commutator-update — release checking and self-update, shared by the engine (the
+//! background checker + `ApplyUpdate`), the CLI (`commutator update`), and the UI
 //! (its own report-only checker, the "Check for Updates…" menu item, the
 //! sidebar update strip, and the desktop install paths).
 //!
@@ -11,7 +11,7 @@
 //! download, not a tampered release.
 //!
 //! Install kinds and their update paths:
-//! - **Managed** (`~/.vardoger/app/<ver>` + `current` symlink — the curl|sh
+//! - **Managed** (`~/.commutator/app/<ver>` + `current` symlink — the curl|sh
 //!   installer and the Linux tarball's `install.sh`): download the headless
 //!   tarball into a new versioned dir, then restart into a trial of it that
 //!   moves the symlink only once it has proved it's ready ([`transaction`]).
@@ -19,7 +19,7 @@
 //!   bundle directory, relaunch, driven by the UI; or, asked from another device,
 //!   the engine's own trial of it ([`transaction`]).
 //! - **WindowsPortable** (the Windows installer or portable zip — both carry
-//!   `vardoger-update.json`): swap the executable in place, the same two ways.
+//!   `commutator-update.json`): swap the executable in place, the same two ways.
 //! - **Unmanaged** (source builds, hand-copied binaries): report only — the
 //!   UI's advisory strip links to [`RELEASES_PAGE`].
 //!
@@ -50,11 +50,11 @@ pub use channel::Channel;
 pub use transaction::{UpdateReport, UpdateState};
 
 /// The version compiled into this binary: the workspace's, or a beta's
-/// (`VARDOGER_ENGINE_VERSION=0.2.137-beta.3` at build time). Betas of one release
+/// (`COMMUTATOR_ENGINE_VERSION=0.2.137-beta.3` at build time). Betas of one release
 /// share a workspace version, and a running engine only knows a bundle replaced
 /// it by this being older than the bundle's.
 pub const fn current_version() -> &'static str {
-    match option_env!("VARDOGER_ENGINE_VERSION") {
+    match option_env!("COMMUTATOR_ENGINE_VERSION") {
         Some(version) => version,
         None => env!("CARGO_PKG_VERSION"),
     }
@@ -62,7 +62,7 @@ pub const fn current_version() -> &'static str {
 
 static APP_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-/// Set by the zgx app, the Vardoger app on every platform: its updater follows
+/// Set by the zgx app, the Commutator app on every platform: its updater follows
 /// the channel on record ([`InstallKind::follows_channels`]). Not by an
 /// engine, whose process runs this crate too.
 static APP_FOLLOWS_CHANNELS: AtomicBool = AtomicBool::new(false);
@@ -194,10 +194,10 @@ fn require_mac_app_update_platform() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `vardoger-<ver>-<os>-<arch>.tar.gz` — the headless/CLI tarball (Linux CI builds).
+/// `commutator-<ver>-<os>-<arch>.tar.gz` — the headless/CLI tarball (Linux CI builds).
 pub fn headless_artifact(version: &str) -> String {
     let (os, arch) = platform_key();
-    format!("vardoger-{version}-{os}-{arch}.tar.gz")
+    format!("commutator-{version}-{os}-{arch}.tar.gz")
 }
 
 /// The directory under a managed install's root that holds `version`.
@@ -213,10 +213,10 @@ pub fn managed_dir(version: &str) -> String {
     }
 }
 
-/// `vardoger-<ver>-macos-<arch>-app.tar.gz` — the macOS app update payload.
+/// `commutator-<ver>-macos-<arch>-app.tar.gz` — the macOS app update payload.
 pub fn mac_app_artifact(version: &str) -> String {
     let (_, arch) = platform_key();
-    format!("vardoger-{version}-macos-{arch}-app.tar.gz")
+    format!("commutator-{version}-macos-{arch}-app.tar.gz")
 }
 
 /// A release version: dotted numbers and, for a prerelease, its semver
@@ -368,7 +368,7 @@ fn offer_given(
         && !channel::macos_at_least(system, minimum)
     {
         return Offer::Held(format!(
-            "Vardoger {latest} needs macOS {minimum} or later. This Mac has macOS {system}."
+            "Commutator {latest} needs macOS {minimum} or later. This Mac has macOS {system}."
         ));
     }
     if !leaving_beta {
@@ -379,7 +379,7 @@ fn offer_given(
         && version_newer(engine, target_engine)
     {
         return Offer::Held(format!(
-            "This beta's engine ({engine}) is newer than Vardoger {latest}'s. You'll move to Stable once it catches up."
+            "This beta's engine ({engine}) is newer than Commutator {latest}'s. You'll move to Stable once it catches up."
         ));
     }
     if version_newer(latest, running) {
@@ -389,9 +389,9 @@ fn offer_given(
     }
 }
 
-/// The GitHub repository releases come from, unless `VARDOGER_RELEASES_REPO`
+/// The GitHub repository releases come from, unless `COMMUTATOR_RELEASES_REPO`
 /// names another (`owner/name`).
-pub const REPOSITORY: &str = "getvardoger/vardoger";
+pub const REPOSITORY: &str = "getvardoger/commutator";
 const GITHUB_API: &str = "https://api.github.com";
 
 /// The newest release on the channel this install follows
@@ -542,7 +542,7 @@ async fn fetch_github_metadata(
 }
 
 fn repository() -> anyhow::Result<String> {
-    let Ok(repository) = std::env::var("VARDOGER_RELEASES_REPO") else {
+    let Ok(repository) = std::env::var("COMMUTATOR_RELEASES_REPO") else {
         return Ok(REPOSITORY.to_owned());
     };
     let repository = repository.trim();
@@ -552,15 +552,15 @@ fn repository() -> anyhow::Result<String> {
                 && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         })
     });
-    anyhow::ensure!(valid, "VARDOGER_RELEASES_REPO must be owner/name");
+    anyhow::ensure!(valid, "COMMUTATOR_RELEASES_REPO must be owner/name");
     Ok(repository.to_owned())
 }
 
 /// The GitHub API, or in a debug build a test's local stand-in
-/// (`VARDOGER_RELEASES_API`).
+/// (`COMMUTATOR_RELEASES_API`).
 fn api_base() -> anyhow::Result<String> {
     if cfg!(debug_assertions)
-        && let Ok(url) = std::env::var("VARDOGER_RELEASES_API")
+        && let Ok(url) = std::env::var("COMMUTATOR_RELEASES_API")
         && !url.trim().is_empty()
     {
         return validate_release_override(&url);
@@ -642,7 +642,7 @@ fn http_client_with_timeouts(connect: Duration, read: Duration) -> anyhow::Resul
         // Inactivity timeout, not a total download cap: slow progressing
         // updates remain viable on constrained links.
         .read_timeout(read)
-        .user_agent(concat!("vardoger/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("commutator/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 10 {
                 return attempt.error("too many update redirects");
@@ -681,11 +681,11 @@ fn validate_release_override(value: &str) -> anyhow::Result<String> {
 /// The project's GitHub releases page — the advisory update strip opens this
 /// for unmanaged installs (source builds, hand-copied binaries), where no
 /// updater flow exists to drive.
-pub const RELEASES_PAGE: &str = "https://github.com/getvardoger/vardoger/releases";
+pub const RELEASES_PAGE: &str = "https://github.com/getvardoger/commutator/releases";
 
 /// The newest release's page — the download destination offered when this
 /// installation cannot replace itself.
-pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getvardoger/vardoger/releases/latest";
+pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getvardoger/commutator/releases/latest";
 
 
 // ---------------------------------------------------------------------------
@@ -695,14 +695,14 @@ pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getvardoger/vardoger/r
 /// How this binary was installed — decides the update path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallKind {
-    /// `~/.vardoger/app/<ver>/vardoger` behind the `current` symlink
+    /// `~/.commutator/app/<ver>/commutator` behind the `current` symlink
     /// (curl|sh installer, the Linux tarball's `install.sh`, or a previous
-    /// `vardoger update`).
+    /// `commutator update`).
     Managed { app_root: PathBuf },
     /// Running out of a macOS `.app` bundle.
     MacApp { bundle: PathBuf },
     /// Windows installer or portable package (marked by
-    /// `vardoger-update.json`).
+    /// `commutator-update.json`).
     #[cfg(windows)]
     WindowsPortable { directory: PathBuf },
     /// Source build or hand-copied binary — updates are report-only.
@@ -725,12 +725,12 @@ impl std::fmt::Display for UpdateBlocker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Translocated | Self::DiskImage => f.write_str(
-                "Vardoger is running from a temporary, read-only location. Move Vardoger to your \
+                "Commutator is running from a temporary, read-only location. Move Commutator to your \
                  Applications folder and reopen it to turn on updates.",
             ),
             Self::NotWritable(dir) => write!(
                 f,
-                "Vardoger doesn't have permission to replace itself in {}.",
+                "Commutator doesn't have permission to replace itself in {}.",
                 dir.display()
             ),
         }
@@ -838,7 +838,7 @@ impl InstallKind {
                     .context("staged install has no version directory")?;
                 apply_headless(app_root, dir.strip_prefix("beta-").unwrap_or(dir))?;
                 if relaunch {
-                    let binary = app_root.join("current").join("vardoger");
+                    let binary = app_root.join("current").join("commutator");
                     relaunch_after_exit(&binary, Path::new(""));
                 }
                 Ok(())
@@ -870,7 +870,7 @@ fn mac_bundle_blocker(bundle: &Path, writable: impl Fn(&Path) -> bool) -> Option
 /// Probe by creating (and removing) a file: permission bits alone miss
 /// read-only mounts, ACLs, and sandboxed locations.
 fn dir_writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".vardoger-write-probe-{}", std::process::id()));
+    let probe = dir.join(format!(".commutator-write-probe-{}", std::process::id()));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -890,7 +890,7 @@ fn dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// How this copy of Vardoger is installed, as `UpdateStatus` reports it. A client
+/// How this copy of Commutator is installed, as `UpdateStatus` reports it. A client
 /// shows what the device can do from this and `can_apply_remotely`, rather
 /// than guessing from its platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -926,7 +926,7 @@ pub struct UpdateAbility {
     pub manual_command: Option<String>,
 }
 
-/// The one command that installs Vardoger on Linux.
+/// The one command that installs Commutator on Linux.
 
 impl UpdateAbility {
     fn refused(
@@ -956,14 +956,14 @@ impl UpdateAbility {
         match kind {
             InstallKind::Managed { .. } if os != "linux" => Self::refused(
                 InstallMethod::Unmanaged,
-                "Vardoger on a Mac updates through the Vardoger app. Install the app on this Mac.",
+                "Commutator on a Mac updates through the Commutator app. Install the app on this Mac.",
                 None,
             ),
             InstallKind::Managed { .. } if !supervised => Self::refused(
                 InstallMethod::StartedByHand,
-                "Vardoger was started by hand on this device, so nothing would start it again \
+                "Commutator was started by hand on this device, so nothing would start it again \
                  after an update. Update it on the device, then start it again.",
-                Some("vardoger update"),
+                Some("commutator update"),
             ),
             InstallKind::Managed { .. } => {
                 let install = if systemd {
@@ -985,22 +985,22 @@ impl UpdateAbility {
             // run any other way has nothing to bring it back.
             InstallKind::MacApp { .. } => Self::desktop(
                 InstallMethod::MacApp,
-                "This Vardoger wasn't started by the app, so nothing would bring it back after an \
-                 update. Update it from the Vardoger app on that Mac.",
+                "This Commutator wasn't started by the app, so nothing would bring it back after an \
+                 update. Update it from the Commutator app on that Mac.",
                 supervised,
                 blocker,
             ),
             #[cfg(windows)]
             InstallKind::WindowsPortable { .. } => Self::desktop(
                 InstallMethod::WindowsApp,
-                "This Vardoger wasn't started by the app, so nothing would bring it back after an \
-                 update. Update it from the Vardoger app on that PC.",
+                "This Commutator wasn't started by the app, so nothing would bring it back after an \
+                 update. Update it from the Commutator app on that PC.",
                 supervised,
                 blocker,
             ),
             InstallKind::Unmanaged => Self::refused(
                 InstallMethod::Unmanaged,
-                "This copy of Vardoger wasn't installed by the installer, so it can't replace itself.",
+                "This copy of Commutator wasn't installed by the installer, so it can't replace itself.",
                 // No installer yet: there's no command to offer instead.
                 None,
             ),
@@ -1040,10 +1040,10 @@ impl UpdateAbility {
 
 /// Set on a new version on trial: the installation it's running in place of
 /// (macOS: the app bundle; Windows: the folder).
-pub const INSTALLED_AT_ENV: &str = "VARDOGER_INSTALLED_AT";
+pub const INSTALLED_AT_ENV: &str = "COMMUTATOR_INSTALLED_AT";
 
 /// Where this process was installed from, resolved once: an update moves
-/// the running image aside (Windows renames it to `vardoger.exe.old`), and a
+/// the running image aside (Windows renames it to `commutator.exe.old`), and a
 /// long-running engine must still recognise the installation it belongs to.
 pub fn detect_install() -> InstallKind {
     static INSTALL: std::sync::OnceLock<InstallKind> = std::sync::OnceLock::new();
@@ -1077,14 +1077,14 @@ fn detect_install_from_for_os(exe: &Path, home: Option<&Path>, os: &str) -> Inst
     {
         return InstallKind::WindowsPortable { directory };
     }
-    // Never interpret a coincidental Windows `%HOME%\.vardoger\app` layout as
+    // Never interpret a coincidental Windows `%HOME%\.commutator\app` layout as
     // the Unix symlink-managed installation.
     if !managed_updates_supported(os) {
         return InstallKind::Unmanaged;
     }
     if let Some(home) = home {
         // `current_exe` resolves the `current` symlink to the versioned dir.
-        let app_root = home.join(".vardoger").join("app");
+        let app_root = home.join(".commutator").join("app");
         if exe.starts_with(&app_root) {
             return InstallKind::Managed { app_root };
         }
@@ -1103,7 +1103,7 @@ fn detect_install_from_for_os(exe: &Path, home: Option<&Path>, os: &str) -> Inst
 
 /// The version currently installed on disk for `kind`, read without executing
 /// anything. A long-running process compares it with its own version to notice
-/// that something else (the desktop app, `vardoger update`, a re-run installer)
+/// that something else (the desktop app, `commutator update`, a re-run installer)
 /// has already replaced its binary.
 pub fn installed_version(kind: &InstallKind) -> Option<String> {
     let version = match kind {
@@ -1120,7 +1120,7 @@ pub fn installed_version(kind: &InstallKind) -> Option<String> {
     parse_version(&version).map(|_| version)
 }
 
-/// The engine a macOS app bundle carries: its Info.plist's `VardogerEngineVersion`
+/// The engine a macOS app bundle carries: its Info.plist's `CommutatorEngineVersion`
 /// (packaging writes it; a beta app's engine is stable's, older than the app),
 /// else `CFBundleShortVersionString` (bundles from before the key, whose
 /// engine was always the app's own version). An engine compares this with
@@ -1128,15 +1128,15 @@ pub fn installed_version(kind: &InstallKind) -> Option<String> {
 /// restart a beta's engine forever.
 pub fn bundle_engine_version(bundle: &Path) -> Option<String> {
     let plist = std::fs::read_to_string(bundle.join("Contents/Info.plist")).ok()?;
-    plist_string(&plist, "VardogerEngineVersion").or_else(|| plist_string(&plist, "CFBundleShortVersionString"))
+    plist_string(&plist, "CommutatorEngineVersion").or_else(|| plist_string(&plist, "CFBundleShortVersionString"))
 }
 
 /// The app's own version in a macOS bundle (a beta's isn't its engine's). A
-/// beta says it in `VardogerVersion`: its short version has to stay numeric, so
+/// beta says it in `CommutatorVersion`: its short version has to stay numeric, so
 /// that alone would read `0.2.137-beta.3` as the stable `0.2.137`.
 pub fn bundle_app_version(bundle: &Path) -> Option<String> {
     let plist = std::fs::read_to_string(bundle.join("Contents/Info.plist")).ok()?;
-    plist_string(&plist, "VardogerVersion").or_else(|| plist_string(&plist, "CFBundleShortVersionString"))
+    plist_string(&plist, "CommutatorVersion").or_else(|| plist_string(&plist, "CFBundleShortVersionString"))
 }
 
 /// A string value from an XML property list (the packaging template;
@@ -1231,8 +1231,8 @@ async fn verify_staged_binary(binary: &Path, version: &str) -> anyhow::Result<()
     .with_context(|| format!("running {} --version", binary.display()))?;
     let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     anyhow::ensure!(
-        output.status.success() && reported == format!("vardoger {version}"),
-        "staged binary reported {reported:?} (exit {}), expected \"vardoger {version}\"",
+        output.status.success() && reported == format!("commutator {version}"),
+        "staged binary reported {reported:?} (exit {}), expected \"commutator {version}\"",
         output.status
     );
     Ok(())
@@ -1261,7 +1261,7 @@ async fn stage_headless_on(manifest: &Manifest, app_root: &Path) -> anyhow::Resu
         "invalid release version {version:?}"
     );
     let dest = app_root.join(managed_dir(version));
-    if dest.join("vardoger").exists() {
+    if dest.join("commutator").exists() {
         return Ok(dest);
     }
     let file = headless_artifact(version);
@@ -1285,14 +1285,14 @@ async fn stage_headless_on(manifest: &Manifest, app_root: &Path) -> anyhow::Resu
                 "--strip-components=1",
             ],
         )?;
-        if !unpacked.join("vardoger").is_file() {
-            bail!("tarball {file} did not contain a vardoger binary");
+        if !unpacked.join("commutator").is_file() {
+            bail!("tarball {file} did not contain a commutator binary");
         }
-        verify_staged_binary(&unpacked.join("vardoger"), version).await?;
+        verify_staged_binary(&unpacked.join("commutator"), version).await?;
         match std::fs::rename(&unpacked, &dest) {
             Ok(()) => {}
             // Lost a race with another stager — the staged copy is equivalent.
-            Err(_) if dest.join("vardoger").exists() => {}
+            Err(_) if dest.join("commutator").exists() => {}
             Err(err) => {
                 return Err(err).with_context(|| format!("moving {} into place", dest.display()));
             }
@@ -1310,7 +1310,7 @@ pub fn apply_headless(app_root: &Path, version: &str) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         let target = app_root.join(managed_dir(version));
-        if !target.join("vardoger").exists() {
+        if !target.join("commutator").exists() {
             bail!("{} is not a staged install", target.display());
         }
         let tmp = app_root.join(format!(".current-{}", std::process::id()));
@@ -1347,7 +1347,7 @@ pub fn prune_installed_versions(
     let Some(current) = std::fs::read_link(app_root.join("current"))
         .ok()
         .and_then(|target| Some(target.file_name()?.to_str()?.to_owned()))
-        .filter(|name| app_root.join(name).join("vardoger").is_file())
+        .filter(|name| app_root.join(name).join("commutator").is_file())
     else {
         // No working install to measure against: leave everything alone.
         return Vec::new();
@@ -1482,23 +1482,23 @@ fn managed_restart_ready() -> bool {
 
 /// Whether this process is the engine service [`restart_service`] manages:
 /// the desktop app's background engine ([`set_managed_restart`]); systemd
-/// places a service in the `vardoger.service` cgroup; launchd names the job in
+/// places a service in the `commutator.service` cgroup; launchd names the job in
 /// `XPC_SERVICE_NAME`.
 pub fn running_as_installed_service() -> bool {
     if MANAGED_RESTART.get().is_some() {
         return true;
     }
     if cfg!(target_os = "macos") {
-        std::env::var("XPC_SERVICE_NAME").is_ok_and(|label| label == "sh.vardoger.app")
+        std::env::var("XPC_SERVICE_NAME").is_ok_and(|label| label == "sh.commutator.app")
     } else if cfg!(target_os = "linux") {
         std::fs::read_to_string("/proc/self/cgroup")
-            .is_ok_and(|cgroups| in_vardoger_service_cgroup(&cgroups))
+            .is_ok_and(|cgroups| in_commutator_service_cgroup(&cgroups))
     } else {
         false
     }
 }
 
-fn in_vardoger_service_cgroup(cgroups: &str) -> bool {
+fn in_commutator_service_cgroup(cgroups: &str) -> bool {
     in_service_cgroup(cgroups, &service_unit())
 }
 
@@ -1509,20 +1509,20 @@ fn in_service_cgroup(cgroups: &str, unit: &str) -> bool {
         .any(|path| path.split('/').any(|part| part == unit))
 }
 
-/// The systemd unit this engine runs as. `VARDOGER_SERVICE_UNIT` names another, so
+/// The systemd unit this engine runs as. `COMMUTATOR_SERVICE_UNIT` names another, so
 /// a test install beside a real one can never restart the real one.
 pub fn service_unit() -> String {
-    resolve_service_unit(std::env::var("VARDOGER_SERVICE_UNIT").ok().as_deref())
+    resolve_service_unit(std::env::var("COMMUTATOR_SERVICE_UNIT").ok().as_deref())
 }
 
 fn resolve_service_unit(unit: Option<&str>) -> String {
     match unit.filter(|unit| !unit.trim().is_empty()) {
         Some(unit) => unit.to_owned(),
-        None => "vardoger.service".to_owned(),
+        None => "commutator.service".to_owned(),
     }
 }
 
-/// `systemctl` for the login user's manager (`vardoger daemon` and the
+/// `systemctl` for the login user's manager (`commutator daemon` and the
 /// curl|sh installer's units), to act on `unit`.
 pub fn systemctl_action(_unit: &str) -> std::process::Command {
     let mut command = std::process::Command::new("systemctl");
@@ -1535,7 +1535,7 @@ pub fn systemctl_query(unit: &str) -> std::process::Command {
     systemctl_action(unit)
 }
 
-/// Restart the installed engine service (the same units `vardoger daemon` and the
+/// Restart the installed engine service (the same units `commutator daemon` and the
 /// curl|sh installer manage). Called after a symlink swap so the running daemon
 /// picks up the new binary. Only queues the restart: the caller may be the
 /// service itself, which must stay responsive to the stop signal that follows.
@@ -1550,7 +1550,7 @@ pub fn restart_service() -> anyhow::Result<()> {
         let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
         run(
             "launchctl",
-            &["kickstart", "-k", &format!("gui/{uid}/sh.vardoger.app")],
+            &["kickstart", "-k", &format!("gui/{uid}/sh.commutator.app")],
         )
     } else {
         ask_systemd_to_restart(&service_unit())
@@ -1582,7 +1582,7 @@ fn restart_outcome(code: Option<i32>, stderr: &[u8]) -> anyhow::Result<()> {
 // macOS app-bundle installs — the desktop path
 // ---------------------------------------------------------------------------
 
-/// Download + unpack the app tarball into `{data_dir}/updates/<ver>/Vardoger.app`
+/// Download + unpack the app tarball into `{data_dir}/updates/<ver>/Commutator.app`
 /// (idempotent). The bundle is unpacked beside its final name and renamed in
 /// only after its binary answers with the expected version, so an interrupted
 /// unpack can never be mistaken for a staged update. Returns the staged bundle.
@@ -1599,8 +1599,8 @@ pub async fn stage_mac_app(
     );
     let updates = data_dir.join("updates");
     let dir = updates.join(version);
-    let staged = dir.join("Vardoger.app");
-    let staged_binary = staged.join("Contents/MacOS/vardoger");
+    let staged = dir.join("Commutator.app");
+    let staged_binary = staged.join("Contents/MacOS/commutator");
     if staged_binary.exists() && verify_staged_binary(&staged_binary, version).await.is_ok() {
         return Ok(staged);
     }
@@ -1621,13 +1621,13 @@ pub async fn stage_mac_app(
             &unpack.to_string_lossy(),
         ],
     )
-    .map(|()| unpack.join("Vardoger.app"));
+    .map(|()| unpack.join("Commutator.app"));
     std::fs::remove_file(&tarball).ok();
     let unpacked = unpacked?;
-    let unpacked_binary = unpacked.join("Contents/MacOS/vardoger");
+    let unpacked_binary = unpacked.join("Contents/MacOS/commutator");
     if !unpacked_binary.exists() {
         let _ = std::fs::remove_dir_all(&dir);
-        bail!("app tarball {file} did not contain Vardoger.app");
+        bail!("app tarball {file} did not contain Commutator.app");
     }
     if let Err(err) = verify_staged_binary(&unpacked_binary, version).await {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1682,8 +1682,8 @@ pub fn process_runs_from(dir: &Path) -> bool {
     }
 }
 
-/// Bundles an update set aside (`.Vardoger.app.old-…`) or left half-installed
-/// (`.Vardoger.app.new-…`), once nothing runs from them.
+/// Bundles an update set aside (`.Commutator.app.old-…`) or left half-installed
+/// (`.Commutator.app.new-…`), once nothing runs from them.
 pub fn prune_retired_mac_bundles(bundle: &Path) {
     let (Some(parent), Some(name)) = (bundle.parent(), bundle.file_name()) else {
         return;
@@ -1792,7 +1792,7 @@ if [ -n "$3" ]; then exec "$2" "$3"; else exec "$2"; fi"#;
         command
             .arg("-c")
             .arg(script)
-            .arg("vardoger-relaunch")
+            .arg("commutator-relaunch")
             .arg(&pid)
             .arg(program)
             .arg(argument)
@@ -1905,16 +1905,16 @@ pub fn can_update_at_boot() -> bool {
         && UpdateAbility::current().can_apply_remotely
 }
 
-/// `VARDOGER_AUTO_UPDATE=1|true|yes` — headless daemons apply updates themselves.
+/// `COMMUTATOR_AUTO_UPDATE=1|true|yes` — headless daemons apply updates themselves.
 fn auto_update_enabled() -> bool {
-    std::env::var("VARDOGER_AUTO_UPDATE")
+    std::env::var("COMMUTATOR_AUTO_UPDATE")
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
 
-/// `VARDOGER_AUTO_UPDATE=1|true|yes` — the desktop app downloads releases in
+/// `COMMUTATOR_AUTO_UPDATE=1|true|yes` — the desktop app downloads releases in
 /// the background and installs them on quit. Unset, it only reports.
-// ponytail: opt-in until Vardoger has published releases; flip to opt-out then.
+// ponytail: opt-in until Commutator has published releases; flip to opt-out then.
 pub fn desktop_auto_update_enabled() -> bool {
     auto_update_enabled()
 }
@@ -1925,7 +1925,7 @@ pub type QuiescentCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Who runs the checker — decides what it may do beyond reporting.
 enum Role {
-    /// The engine: managed installs with `VARDOGER_AUTO_UPDATE` apply themselves,
+    /// The engine: managed installs with `COMMUTATOR_AUTO_UPDATE` apply themselves,
     /// and a service daemon restarts into a binary someone else installed.
     Engine { quiescent: Option<QuiescentCheck> },
     /// The desktop app: report only — downloading and installing are UI
@@ -1936,7 +1936,7 @@ enum Role {
 /// Background release checker: polls GitHub releases hourly on a wall-clock
 /// schedule (so sleep/wake cannot stretch it), backs off on failure, and
 /// publishes [`UpdateStatus`] over a watch channel. In the engine, managed
-/// installs with `VARDOGER_AUTO_UPDATE` set stage + apply + service restart on
+/// installs with `COMMUTATOR_AUTO_UPDATE` set stage + apply + service restart on
 /// their own — but only in a quiet window: while `quiescent` reports activity,
 /// the apply defers and re-probes every [`IDLE_RECHECK`].
 #[derive(Clone)]
@@ -1950,7 +1950,7 @@ pub struct Updater {
     /// a fresh look at the wall clock.
     wake_tx: Arc<watch::Sender<u64>>,
     forced: Arc<AtomicBool>,
-    /// Set by `vardoger headless`: this process is the installed service and may
+    /// Set by `commutator headless`: this process is the installed service and may
     /// restart itself into a newer installed binary.
     service: Arc<AtomicBool>,
     /// The OS's wake events reach the loop ([`Updater::follow_wakes`]): it
@@ -2099,9 +2099,9 @@ impl Updater {
         self.poke();
     }
 
-    /// Called by `vardoger headless`: when this process is the installed engine
+    /// Called by `commutator headless`: when this process is the installed engine
     /// service and something else installs a newer binary, restart into it at
-    /// the next quiet moment. A hand-started `vardoger headless` is left alone —
+    /// the next quiet moment. A hand-started `commutator headless` is left alone —
     /// restarting the service unit would start a second engine beside it.
     pub fn restart_when_superseded(&self) {
         if !running_as_installed_service() {
@@ -2436,7 +2436,7 @@ impl Updater {
                 transaction::fail_request(
                     &data_dir,
                     &requested.id,
-                    "Vardoger couldn't restart to install the update, so nothing changed.".into(),
+                    "Commutator couldn't restart to install the update, so nothing changed.".into(),
                 );
                 self.refresh_update_report();
             }
@@ -2536,7 +2536,7 @@ impl Updater {
                     transaction::fail_request(
                         data_dir,
                         id,
-                        "Vardoger couldn't restart to install the update, so nothing changed.".into(),
+                        "Commutator couldn't restart to install the update, so nothing changed.".into(),
                     );
                     updater.refresh_update_report();
                 }
@@ -2818,7 +2818,7 @@ pub async fn prepare_install(
     app_root: &Path,
     data_dir: &Path,
 ) -> anyhow::Result<()> {
-    let download = if app_root.join(&manifest.version).join("vardoger").exists() {
+    let download = if app_root.join(&manifest.version).join("commutator").exists() {
         0
     } else {
         artifact_size(manifest, &headless_artifact(&manifest.version))
@@ -2901,7 +2901,7 @@ impl Schedule {
 }
 
 /// Restarts a service daemon into a newer binary that is already installed
-/// (the desktop app swapped the bundle, `vardoger update` flipped the symlink).
+/// (the desktop app swapped the bundle, `commutator update` flipped the symlink).
 /// Waits for quiescence, and tries at most once per installed version so a
 /// broken service manager cannot turn into a restart loop.
 #[derive(Debug, Default)]
@@ -2974,7 +2974,7 @@ mod tests {
 
     fn managed() -> InstallKind {
         InstallKind::Managed {
-            app_root: PathBuf::from("/home/me/.vardoger/app"),
+            app_root: PathBuf::from("/home/me/.commutator/app"),
         }
     }
 
@@ -2982,9 +2982,9 @@ mod tests {
     /// one's cgroup isn't its own.
     #[test]
     fn the_service_is_recognised_by_its_own_unit_only() {
-        let cgroups = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vardoger.service\n";
-        assert!(in_service_cgroup(cgroups, "vardoger.service"));
-        assert!(!in_service_cgroup(cgroups, "vardoger-test.service"));
+        let cgroups = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/commutator.service\n";
+        assert!(in_service_cgroup(cgroups, "commutator.service"));
+        assert!(!in_service_cgroup(cgroups, "commutator-test.service"));
     }
 
     /// Cloud runs a system unit of its own; every other install a user one.
@@ -3151,7 +3151,7 @@ mod tests {
         let (base, server) = serve_forever(good.clone()).await;
         install_release_within(&served_from(manifest(&good), &base), &app_root, &data, limit).await.unwrap();
         server.abort();
-        assert!(app_root.join("9.9.9").join("vardoger").is_file());
+        assert!(app_root.join("9.9.9").join("commutator").is_file());
     }
 
     #[tokio::test]
@@ -3212,21 +3212,21 @@ mod tests {
         let by_hand = UpdateAbility::decide(&managed(), "linux", false, false, None);
         assert_eq!(by_hand.install, InstallMethod::StartedByHand);
         assert!(!by_hand.can_apply_remotely);
-        assert_eq!(by_hand.manual_command.as_deref(), Some("vardoger update"));
+        assert_eq!(by_hand.manual_command.as_deref(), Some("commutator update"));
 
         let read_only = UpdateAbility::decide(
             &managed(),
             "linux",
             true,
             true,
-            Some(UpdateBlocker::NotWritable(PathBuf::from("/opt/vardoger"))),
+            Some(UpdateBlocker::NotWritable(PathBuf::from("/opt/commutator"))),
         );
         assert_eq!(read_only.install, InstallMethod::LinuxService);
         assert!(!read_only.can_apply_remotely);
-        assert!(read_only.cannot_apply_reason.unwrap().contains("/opt/vardoger"));
+        assert!(read_only.cannot_apply_reason.unwrap().contains("/opt/commutator"));
 
         let bundle = InstallKind::MacApp {
-            bundle: PathBuf::from("/Applications/Vardoger.app"),
+            bundle: PathBuf::from("/Applications/Commutator.app"),
         };
         let mac = UpdateAbility::decide(&bundle, "macos", true, false, None);
         assert_eq!(mac.install, InstallMethod::MacApp);
@@ -3294,7 +3294,7 @@ mod tests {
         let value = serde_json::to_value(&status).unwrap();
         assert_eq!(value["install"], "startedByHand");
         assert_eq!(value["canApplyRemotely"], false);
-        assert_eq!(value["manualCommand"], "vardoger update");
+        assert_eq!(value["manualCommand"], "commutator update");
         assert!(value["cannotApplyReason"].is_string());
     }
 
@@ -3508,32 +3508,32 @@ mod tests {
     fn install_kind_detection() {
         assert_eq!(
             detect_install_from_for_os(
-                Path::new("/home/u/.vardoger/app/0.1.1/vardoger"),
+                Path::new("/home/u/.commutator/app/0.1.1/commutator"),
                 Some(Path::new("/home/u")),
                 "linux",
             ),
             InstallKind::Managed {
-                app_root: PathBuf::from("/home/u/.vardoger/app")
+                app_root: PathBuf::from("/home/u/.commutator/app")
             }
         );
         assert_eq!(
             detect_install_from_for_os(
-                Path::new("/Applications/Vardoger.app/Contents/MacOS/vardoger"),
+                Path::new("/Applications/Commutator.app/Contents/MacOS/commutator"),
                 Some(Path::new("/Users/u")),
                 "macos",
             ),
             InstallKind::MacApp {
-                bundle: PathBuf::from("/Applications/Vardoger.app")
+                bundle: PathBuf::from("/Applications/Commutator.app")
             }
         );
         // A path merely containing `.app` without the bundle layout is not a bundle.
         assert_eq!(
-            detect_install_from_for_os(Path::new("/tmp/foo.app/vardoger"), None, "macos"),
+            detect_install_from_for_os(Path::new("/tmp/foo.app/commutator"), None, "macos"),
             InstallKind::Unmanaged
         );
         assert_eq!(
             detect_install_from_for_os(
-                Path::new("/src/target/release/vardoger"),
+                Path::new("/src/target/release/commutator"),
                 Some(Path::new("/home/u")),
                 "linux",
             ),
@@ -3544,10 +3544,10 @@ mod tests {
     #[test]
     fn artifact_names_match_packaging() {
         let (os, arch) = platform_key();
-        assert!(headless_artifact("0.2.0").starts_with("vardoger-0.2.0-"));
+        assert!(headless_artifact("0.2.0").starts_with("commutator-0.2.0-"));
         assert_eq!(
             headless_artifact("0.2.0"),
-            format!("vardoger-0.2.0-{os}-{arch}.tar.gz")
+            format!("commutator-0.2.0-{os}-{arch}.tar.gz")
         );
         assert!(mac_app_artifact("0.2.0").ends_with("-app.tar.gz"));
     }
@@ -3563,7 +3563,7 @@ mod tests {
     fn windows_install_is_always_unmanaged() {
         assert_eq!(
             detect_install_from(
-                Path::new(r"C:\Users\u\.vardoger\app\0.2.0\vardoger.exe"),
+                Path::new(r"C:\Users\u\.commutator\app\0.2.0\commutator.exe"),
                 Some(Path::new(r"C:\Users\u")),
             ),
             InstallKind::Unmanaged
@@ -3600,7 +3600,7 @@ mod tests {
                 .contains("not supported on windows")
         );
         assert!(
-            apply_mac_app(&data_dir.join("Vardoger.app"), &data_dir.join("Installed.app"))
+            apply_mac_app(&data_dir.join("Commutator.app"), &data_dir.join("Installed.app"))
                 .unwrap_err()
                 .to_string()
                 .contains("not supported on windows")
@@ -3616,12 +3616,12 @@ mod tests {
     #[test]
     fn manifest_parses_with_and_without_files() {
         let full: Manifest = serde_json::from_str(
-            r#"{"version":"0.1.1","files":{"vardoger-0.1.1-linux-x86_64.tar.gz":{"sha256":"abc"}}}"#,
+            r#"{"version":"0.1.1","files":{"commutator-0.1.1-linux-x86_64.tar.gz":{"sha256":"abc"}}}"#,
         )
         .unwrap();
         assert_eq!(full.version, "0.1.1");
         assert_eq!(
-            full.files["vardoger-0.1.1-linux-x86_64.tar.gz"]
+            full.files["commutator-0.1.1-linux-x86_64.tar.gz"]
                 .sha256
                 .as_deref(),
             Some("abc")
@@ -3637,7 +3637,7 @@ mod tests {
         let app_root = tmp.path().join("app");
         for ver in ["0.1.0", "0.1.1"] {
             std::fs::create_dir_all(app_root.join(ver)).unwrap();
-            std::fs::write(app_root.join(ver).join("vardoger"), ver).unwrap();
+            std::fs::write(app_root.join(ver).join("commutator"), ver).unwrap();
         }
         apply_headless(&app_root, "0.1.0").unwrap();
         assert_eq!(
@@ -3658,7 +3658,7 @@ mod tests {
     fn versions_installed(app_root: &Path, versions: &[&str]) {
         for ver in versions {
             std::fs::create_dir_all(app_root.join(ver)).unwrap();
-            std::fs::write(app_root.join(ver).join("vardoger"), ver).unwrap();
+            std::fs::write(app_root.join(ver).join("commutator"), ver).unwrap();
         }
     }
 
@@ -3817,17 +3817,17 @@ mod tests {
 
     #[test]
     fn systemd_service_cgroup_is_recognized() {
-        assert!(in_vardoger_service_cgroup(
-            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vardoger.service\n"
+        assert!(in_commutator_service_cgroup(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/commutator.service\n"
         ));
-        assert!(in_vardoger_service_cgroup(
-            "12:pids:/user.slice/user@1000.service/vardoger.service\n1:name=systemd:/x\n"
+        assert!(in_commutator_service_cgroup(
+            "12:pids:/user.slice/user@1000.service/commutator.service\n1:name=systemd:/x\n"
         ));
-        assert!(!in_vardoger_service_cgroup(
+        assert!(!in_commutator_service_cgroup(
             "0::/user.slice/user-1000.slice/session-3.scope\n"
         ));
-        assert!(!in_vardoger_service_cgroup(
-            "0::/user.slice/user@1000.service/app.slice/vardoger.service.d\n"
+        assert!(!in_commutator_service_cgroup(
+            "0::/user.slice/user@1000.service/app.slice/commutator.service.d\n"
         ));
     }
 
@@ -3837,21 +3837,21 @@ mod tests {
         let plist = template.replace("__VERSION__", "0.3.1");
         assert_eq!(plist_string(&plist, "CFBundleShortVersionString").as_deref(), Some("0.3.1"));
         // Packaging names the engine it bundles.
-        assert_eq!(plist_string(&plist, "VardogerEngineVersion").as_deref(), Some("0.3.1"));
+        assert_eq!(plist_string(&plist, "CommutatorEngineVersion").as_deref(), Some("0.3.1"));
         assert_eq!(plist_string("<plist></plist>", "CFBundleShortVersionString"), None);
     }
 
     #[test]
     fn a_bundle_s_engine_version_is_its_key_else_the_app_s() {
         let tmp = tempfile::tempdir().unwrap();
-        let bundle = tmp.path().join("Vardoger.app");
+        let bundle = tmp.path().join("Commutator.app");
         std::fs::create_dir_all(bundle.join("Contents")).unwrap();
         let write = |body: &str| std::fs::write(bundle.join("Contents/Info.plist"), body).unwrap();
         // A beta: the app is 0.2.136-beta.1, its engine stable's 0.2.135. An
         // engine weighing the app's version would restart forever.
         write(
             "<plist><dict><key>CFBundleShortVersionString</key><string>0.2.136</string>\
-             <key>VardogerEngineVersion</key><string>0.2.135</string></dict></plist>",
+             <key>CommutatorEngineVersion</key><string>0.2.135</string></dict></plist>",
         );
         assert_eq!(bundle_engine_version(&bundle).as_deref(), Some("0.2.135"));
         let mac = InstallKind::MacApp { bundle: bundle.clone() };
@@ -3872,7 +3872,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         for dir in ["beta-0.2.137-beta.1", "0.2.136"] {
             std::fs::create_dir_all(root.path().join(dir)).unwrap();
-            std::fs::write(root.path().join(dir).join("vardoger"), "").unwrap();
+            std::fs::write(root.path().join(dir).join("commutator"), "").unwrap();
         }
         let managed = InstallKind::Managed { app_root: root.path().to_path_buf() };
         apply_headless(root.path(), "0.2.137-beta.1").unwrap();
@@ -3965,7 +3965,7 @@ mod tests {
         assert_eq!(offer_given(&caught_up, "0.2.139-beta.6", Channel::Stable, None, None, false), Offer::Newer);
         #[cfg(target_os = "linux")]
         {
-            let unpacked = std::path::Path::new("/home/someone/Downloads/vardoger-0.2.139-beta.6-linux-x86_64/vardoger");
+            let unpacked = std::path::Path::new("/home/someone/Downloads/commutator-0.2.139-beta.6-linux-x86_64/commutator");
             let home = std::path::Path::new("/home/someone");
             assert_eq!(detect_install_from(unpacked, Some(home)), InstallKind::Unmanaged);
             assert!(!InstallKind::Unmanaged.follows_channels());
@@ -4013,7 +4013,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app_root = tmp.path().join("app");
         std::fs::create_dir_all(app_root.join("0.4.0")).unwrap();
-        std::fs::write(app_root.join("0.4.0").join("vardoger"), "").unwrap();
+        std::fs::write(app_root.join("0.4.0").join("commutator"), "").unwrap();
         let managed = InstallKind::Managed {
             app_root: app_root.clone(),
         };
@@ -4021,7 +4021,7 @@ mod tests {
         apply_headless(&app_root, "0.4.0").unwrap();
         assert_eq!(installed_version(&managed).as_deref(), Some("0.4.0"));
 
-        let bundle = tmp.path().join("Vardoger.app");
+        let bundle = tmp.path().join("Commutator.app");
         std::fs::create_dir_all(bundle.join("Contents")).unwrap();
         std::fs::write(
             bundle.join("Contents/Info.plist"),
@@ -4040,27 +4040,27 @@ mod tests {
         let writable = |_: &Path| true;
         let read_only = |_: &Path| false;
         assert_eq!(
-            mac_bundle_blocker(Path::new("/Applications/Vardoger.app"), writable),
+            mac_bundle_blocker(Path::new("/Applications/Commutator.app"), writable),
             None
         );
         assert_eq!(
             mac_bundle_blocker(
-                Path::new("/private/var/folders/x/T/AppTranslocation/ABC/d/Vardoger.app"),
+                Path::new("/private/var/folders/x/T/AppTranslocation/ABC/d/Commutator.app"),
                 writable
             ),
             Some(UpdateBlocker::Translocated)
         );
         assert_eq!(
-            mac_bundle_blocker(Path::new("/Volumes/Vardoger/Vardoger.app"), read_only),
+            mac_bundle_blocker(Path::new("/Volumes/Commutator/Commutator.app"), read_only),
             Some(UpdateBlocker::DiskImage)
         );
         // An external drive the user can write to updates in place.
         assert_eq!(
-            mac_bundle_blocker(Path::new("/Volumes/Work/Vardoger.app"), writable),
+            mac_bundle_blocker(Path::new("/Volumes/Work/Commutator.app"), writable),
             None
         );
         assert_eq!(
-            mac_bundle_blocker(Path::new("/Applications/Vardoger.app"), read_only),
+            mac_bundle_blocker(Path::new("/Applications/Commutator.app"), read_only),
             Some(UpdateBlocker::NotWritable(PathBuf::from("/Applications")))
         );
     }
@@ -4147,7 +4147,7 @@ mod tests {
     }
 
     /// The only test that points the checker at a stand-in API
-    /// (`VARDOGER_RELEASES_API` is process-wide): every case runs here.
+    /// (`COMMUTATOR_RELEASES_API` is process-wide): every case runs here.
     #[tokio::test]
     async fn github_releases_feed_the_checker() {
         let repo = format!("/repos/{REPOSITORY}");
@@ -4174,7 +4174,7 @@ mod tests {
         })
         .await;
         // SAFETY: no other test reads this variable.
-        unsafe { std::env::set_var("VARDOGER_RELEASES_API", &base) };
+        unsafe { std::env::set_var("COMMUTATOR_RELEASES_API", &base) };
 
         let stable = fetch_latest_on(Channel::Stable).await.unwrap().unwrap();
         assert_eq!(stable.version, "999.0.0");
@@ -4198,7 +4198,7 @@ mod tests {
         // No release published yet: nothing on offer, and nothing wrong.
         let (base, server) = serve_github(|_| Vec::new()).await;
         // SAFETY: as above.
-        unsafe { std::env::set_var("VARDOGER_RELEASES_API", &base) };
+        unsafe { std::env::set_var("COMMUTATOR_RELEASES_API", &base) };
         assert!(fetch_latest_on(Channel::Stable).await.unwrap().is_none());
         let updater = Updater::spawn_desktop();
         let status = updater.check().await.unwrap();
@@ -4209,14 +4209,14 @@ mod tests {
         server.abort();
     }
 
-    /// A headless tarball whose `vardoger` reports `reported` from `--version`.
+    /// A headless tarball whose `commutator` reports `reported` from `--version`.
     #[cfg(unix)]
     fn fake_headless_tarball(dir: &Path, reported: &str) -> Vec<u8> {
         use std::os::unix::fs::PermissionsExt as _;
-        let root = dir.join("vardoger-pkg");
+        let root = dir.join("commutator-pkg");
         std::fs::create_dir_all(&root).unwrap();
-        let binary = root.join("vardoger");
-        std::fs::write(&binary, format!("#!/bin/sh\necho \"vardoger {reported}\"\n")).unwrap();
+        let binary = root.join("commutator");
+        std::fs::write(&binary, format!("#!/bin/sh\necho \"commutator {reported}\"\n")).unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         let tarball = dir.join("pkg.tar.gz");
         run(
@@ -4226,7 +4226,7 @@ mod tests {
                 &tarball.to_string_lossy(),
                 "-C",
                 &dir.to_string_lossy(),
-                "vardoger-pkg",
+                "commutator-pkg",
             ],
         )
         .unwrap();
@@ -4258,7 +4258,7 @@ mod tests {
             .unwrap_err();
         server.abort();
         assert!(
-            format!("{error:#}").contains("expected \"vardoger 9.9.9\""),
+            format!("{error:#}").contains("expected \"commutator 9.9.9\""),
             "unexpected error: {error:#}"
         );
         assert!(!app_root.join("9.9.9").exists());
@@ -4271,7 +4271,7 @@ mod tests {
             .unwrap();
         server.abort();
         assert_eq!(staged, app_root.join("9.9.9"));
-        assert!(staged.join("vardoger").is_file());
+        assert!(staged.join("commutator").is_file());
     }
 
     #[test]
@@ -4283,12 +4283,12 @@ mod tests {
         std::fs::write(
             contents.join("Info.plist"),
             "<plist><dict><key>CFBundleShortVersionString</key><string>0.2.137</string>\
-             <key>VardogerEngineVersion</key><string>0.2.136</string>\
-             <key>VardogerVersion</key><string>0.2.137-beta.16</string></dict></plist>",
+             <key>CommutatorEngineVersion</key><string>0.2.136</string>\
+             <key>CommutatorVersion</key><string>0.2.137-beta.16</string></dict></plist>",
         )
         .unwrap();
         assert_eq!(bundle_app_version(dir.path()).as_deref(), Some("0.2.137-beta.16"));
-        // A stable bundle has no `VardogerVersion`.
+        // A stable bundle has no `CommutatorVersion`.
         std::fs::write(
             contents.join("Info.plist"),
             "<plist><dict><key>CFBundleShortVersionString</key><string>0.2.136</string></dict></plist>",

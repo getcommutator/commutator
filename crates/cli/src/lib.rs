@@ -1,5 +1,5 @@
-//! `vardoger`'s command line, for every binary that answers to it: the Vardoger
-//! app (`apps/vardoger`), its engine helper (`vardoger-engine`) and the zgx
+//! `commutator`'s command line, for every binary that answers to it: the Commutator
+//! app (`apps/commutator`), its engine helper (`commutator-engine`) and the zgx
 //! interface (`apps/zgx`). One parser, one help text, one set of exit codes,
 //! with no engine and no interface linked in.
 //!
@@ -10,9 +10,9 @@
 //!   - a subcommand that runs the engine's code here ([`EngineCommand`]:
 //!     `headless`, `engine`, `login`, `logout`, `status`, `sync`, `quiesce`,
 //!     `mcp`). A binary that links the engine runs it
-//!     itself ([`Engines::InProcess`], `vardoger_app::run_engine_command`); an
+//!     itself ([`Engines::InProcess`], `commutator_app::run_engine_command`); an
 //!     interface that doesn't hands the whole command line to the engine
-//!     helper beside it ([`Engines::Helper`]: `Contents/MacOS/Vardoger Engine`
+//!     helper beside it ([`Engines::Helper`]: `Contents/MacOS/Commutator Engine`
 //!     in a macOS bundle), which replaces this process and runs it there.
 
 pub mod daemon;
@@ -30,18 +30,18 @@ pub use logging::{RotatingLog, init_logging, long_running_setup, open_log_file};
 
 #[derive(Parser)]
 #[command(
-    name = "vardoger",
+    name = "commutator",
     version,
     about = "Multi-device controller for coding agents"
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-    /// Open a Vardoger conversation URL.
+    /// Open a Commutator conversation URL.
     #[arg(value_name = "URL")]
     open_url: Option<String>,
-    /// Open with Vardoger's own interface, whatever template is in use (as
-    /// holding Alt, or ⌥ on a Mac, as Vardoger opens does).
+    /// Open with Commutator's own interface, whatever template is in use (as
+    /// holding Alt, or ⌥ on a Mac, as Commutator opens does).
     #[arg(long)]
     safe_mode: bool,
     #[cfg(windows)]
@@ -53,16 +53,16 @@ struct Cli {
 enum Command {
     /// Run the engine without a UI (local-only unless a saved session enables sync).
     Headless,
-    /// The desktop app's background engine (`vardoger-engine` where it ships
+    /// The desktop app's background engine (`commutator-engine` where it ships
     /// separately): started by the app, it keeps sessions running with the
     /// app closed.
     #[command(hide = true)]
     Engine,
-    /// Sign this machine in to a Vardoger server with Google, so the
+    /// Sign this machine in to a Commutator server with Google, so the
     /// account's other devices reach it (from the next engine start).
     Login {
         /// The server (`https://…`); defaults to the one signed in to before,
-        /// else `VARDOGER_SERVER_URL`.
+        /// else `COMMUTATOR_SERVER_URL`.
         #[arg(value_name = "SERVER")]
         server: Option<String>,
         /// Show a code to paste instead of a callback to this machine's
@@ -70,7 +70,7 @@ enum Command {
         #[arg(long)]
         paste: bool,
     },
-    /// Sign this machine out of its Vardoger server.
+    /// Sign this machine out of its Commutator server.
     Logout,
     /// Show workspace mode, optional auth, and engine status.
     Status,
@@ -80,11 +80,11 @@ enum Command {
     #[cfg(target_os = "linux")]
     /// Trigger an Appshot in the running headed instance (desktop shortcut fallback).
     Appshot,
-    /// Serve the Vardoger MCP (Model Context Protocol) server on stdin/stdout,
+    /// Serve the Commutator MCP (Model Context Protocol) server on stdin/stdout,
     /// proxying to the running engine's IPC. Agents use it to create, read,
     /// and message chats. Logs go to stderr; stdout is the protocol.
     Mcp,
-    /// Manage `vardoger headless` as a background service (launchd / systemd --user).
+    /// Manage `commutator headless` as a background service (launchd / systemd --user).
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
@@ -103,7 +103,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DaemonCommand {
-    /// Install, enable, and start the service (captures VARDOGER_* env).
+    /// Install, enable, and start the service (captures COMMUTATOR_* env).
     Install,
     /// Stop and remove the service.
     Uninstall,
@@ -132,7 +132,7 @@ pub enum EngineCommand {
 /// Where this binary runs [`EngineCommand`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engines {
-    /// Here: the binary links the engine (`vardoger`, `vardoger-engine`).
+    /// Here: the binary links the engine (`commutator`, `commutator-engine`).
     InProcess,
     /// In the engine helper beside this binary, which replaces this process
     /// with the same arguments (an interface that doesn't link the engine).
@@ -146,7 +146,7 @@ pub enum Launch {
     /// Run this in-process ([`Engines::InProcess`] only); logging is set up.
     Engine(EngineCommand),
     /// No subcommand: open the window, on a conversation URL if one was
-    /// given; `safe_mode` with Vardoger's own interface (`--safe-mode`).
+    /// given; `safe_mode` with Commutator's own interface (`--safe-mode`).
     Window { open_url: Option<String>, safe_mode: bool },
     /// Ask the running headed instance for an Appshot (the interface's own).
     #[cfg(target_os = "linux")]
@@ -175,30 +175,30 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
     if engines == Engines::Helper && cli.command.as_ref().is_some_and(Command::runs_engine) {
         // The helper parses the same arguments and does all of the below
         // itself (logging, the command). Windows' image cleanup is this
-        // executable's, though (the helper isn't the installed vardoger.exe): an
+        // executable's, though (the helper isn't the installed commutator.exe): an
         // install that's only ever run headless must lose the image an update
         // set aside too.
         #[cfg(windows)]
         if matches!(&cli.command, Some(Command::Headless) | Some(Command::Engine)) {
-            vardoger_update::windows::cleanup_previous_image();
+            commutator_update::windows::cleanup_previous_image();
         }
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(error) => return Launch::Done(Err(error.into())),
         };
-        let error = vardoger_launch::exec_helper(&exe, std::env::args_os().skip(1));
+        let error = commutator_launch::exec_helper(&exe, std::env::args_os().skip(1));
         return Launch::Done(Err(anyhow::anyhow!("couldn't start the engine: {error}")));
     }
     #[cfg(windows)]
     if let Some(pid) = cli.wait_for_exit {
-        if let Err(error) = vardoger_update::windows::wait_for_exit(pid) {
+        if let Err(error) = commutator_update::windows::wait_for_exit(pid) {
             return Launch::Done(Err(error));
         }
     } else if matches!(
         &cli.command,
         None | Some(Command::Headless) | Some(Command::Engine)
     ) {
-        vardoger_update::windows::cleanup_previous_image();
+        commutator_update::windows::cleanup_previous_image();
     }
     let long_running = matches!(&cli.command, None | Some(Command::Headless));
     let mode = if cli.command.is_some() {
@@ -206,9 +206,9 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
     } else {
         "headed"
     };
-    // `vardoger mcp` owns stdout for the protocol: a single log line on it
+    // `commutator mcp` owns stdout for the protocol: a single log line on it
     // would corrupt the JSON-RPC stream, so its diagnostics go to stderr.
-    // The background engine logs on its own (`vardoger_app::background`).
+    // The background engine logs on its own (`commutator_app::background`).
     if !matches!(&cli.command, Some(Command::Engine)) {
         init_logging(
             long_running,
@@ -243,7 +243,7 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
                 .map_err(anyhow::Error::from)
                 .and_then(|runtime| runtime.block_on(update_cli::update(check))),
         ),
-        Some(Command::UpdateWatchdog) => Launch::Done(vardoger_update::transaction::run_watchdog()),
+        Some(Command::UpdateWatchdog) => Launch::Done(commutator_update::transaction::run_watchdog()),
         Some(Command::Daemon { command }) => Launch::Done(match command {
             DaemonCommand::Install => daemon::install(&paths::data_dir()),
             DaemonCommand::Uninstall => daemon::uninstall(),
@@ -304,7 +304,7 @@ fn attach_parent_console() {
 
 /// Every subcommand path of the command line (`[]`, `["plugin"]`,
 /// `["plugin", "new"]`, …), hidden ones included: what the parity checks of
-/// each binary that runs it walk (`apps/vardoger/tests/cli.rs`,
+/// each binary that runs it walk (`apps/commutator/tests/cli.rs`,
 /// `apps/zgx/tests/cli.rs`).
 pub fn subcommand_paths(version: &'static str) -> Vec<Vec<String>> {
     fn walk(command: &clap::Command, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
@@ -323,15 +323,15 @@ pub fn subcommand_paths(version: &'static str) -> Vec<Vec<String>> {
     out
 }
 
-/// `vardoger <path…> --help` as a binary named `vardoger` prints it: clap's own
+/// `commutator <path…> --help` as a binary named `commutator` prints it: clap's own
 /// answer to those arguments.
 pub fn help_for(version: &'static str, path: &[String]) -> String {
-    let argv = std::iter::once("vardoger".to_owned())
+    let argv = std::iter::once("commutator".to_owned())
         .chain(path.iter().cloned())
         .chain(std::iter::once("--help".to_owned()));
     match command(version).try_get_matches_from(argv) {
         Err(help) if help.kind() == clap::error::ErrorKind::DisplayHelp => help.render().to_string(),
-        other => panic!("vardoger {} --help didn't print help: {other:?}", path.join(" ")),
+        other => panic!("commutator {} --help didn't print help: {other:?}", path.join(" ")),
     }
 }
 
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn engine_commands_are_the_ones_that_run_the_engine() {
         let parse = |args: &[&str]| {
-            let argv = std::iter::once("vardoger").chain(args.iter().copied());
+            let argv = std::iter::once("commutator").chain(args.iter().copied());
             Cli::from_arg_matches(&command("0.0.0").try_get_matches_from(argv).unwrap())
                 .unwrap()
                 .command
@@ -395,6 +395,6 @@ mod tests {
     #[test]
     fn the_version_is_the_build_s() {
         let version = command("0.2.136-beta.1").render_version();
-        assert_eq!(version.trim(), "vardoger 0.2.136-beta.1");
+        assert_eq!(version.trim(), "commutator 0.2.136-beta.1");
     }
 }

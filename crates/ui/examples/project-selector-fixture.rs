@@ -1,8 +1,8 @@
 //! Native project selector review fixture, with isolated synthetic data.
 //! Run under a desktop/Xvfb, then click the sidebar's "All projects" selector.
-//! VARDOGER_FIXTURE_PROJECT=<space id> starts the new-session canvas on that project.
+//! COMMUTATOR_FIXTURE_PROJECT=<space id> starts the new-session canvas on that project.
 use gpui::{AppContext, Bounds, WindowBounds, WindowOptions, point, px, size};
-use vardoger_ui::*;
+use commutator_ui::*;
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter("warn").init();
@@ -27,8 +27,8 @@ fn main() {
         app_menus::init(cx);
         let state = cx.new(|_| {
             let mut s = state::AppState::new();
-            s.connection = vardoger_proto::view::ConnectionStatus::Ready;
-            s.workspace_scope = Some(vardoger_proto::WorkspaceScope::Local);
+            s.connection = commutator_proto::view::ConnectionStatus::Ready;
+            s.workspace_scope = Some(commutator_proto::WorkspaceScope::Local);
             s.local_device_id = Some("local".into());
             s.devices = serde_json::from_value(serde_json::json!([
                 {"id":"local","name":"Studio Mac","platform":"macos","lastSeenAt":null},
@@ -44,7 +44,7 @@ fn main() {
                 {"id":"c","deviceId":"long","path":"/projects/design-system-with-a-long-project-name","createdAt":"2026-09-15T00:00:00Z"},
                 {"id":"d","deviceId":"unknown","path":"/projects/fieldnotes","createdAt":"2026-09-15T00:00:00Z"}
             ])).unwrap();
-            if let Ok(space) = std::env::var("VARDOGER_FIXTURE_PROJECT") {
+            if let Ok(space) = std::env::var("COMMUTATOR_FIXTURE_PROJECT") {
                 s.selected_space = Some(space);
             }
             s

@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::time::Instant;
-use vardoger_proto::{AgentEvent, ToolCall};
+use commutator_proto::{AgentEvent, ToolCall};
 
 /// How long past its time a wake-up is still waited for.
 pub const WAKE_GRACE: Duration = Duration::from_secs(60);

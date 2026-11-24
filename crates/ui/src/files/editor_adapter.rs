@@ -1,4 +1,4 @@
-//! Vardoger-owned styling and highlighting adapters for `gpui-base`.
+//! Commutator-owned styling and highlighting adapters for `gpui-base`.
 
 use std::{ops::Range, rc::Rc, sync::Arc};
 
@@ -6,17 +6,17 @@ use gpui::{Context, HighlightStyle, SharedString, Window};
 use gpui_base::input::{
     FoldRange, HighlightStyleResolver, InputEdit, InputEditorStyle, InputHighlighter, Rope,
 };
-use vardoger_syntax::{HighlightKind, HighlightedDocument};
+use commutator_syntax::{HighlightKind, HighlightedDocument};
 
 use super::editor::FileEditorState;
 use crate::theme::{SyntaxPalette, Theme};
 
 #[derive(Clone)]
-struct VardogerHighlightStyleResolver {
+struct CommutatorHighlightStyleResolver {
     palette: SyntaxPalette,
 }
 
-impl HighlightStyleResolver for VardogerHighlightStyleResolver {
+impl HighlightStyleResolver for CommutatorHighlightStyleResolver {
     fn style(&self, name: &str) -> Option<HighlightStyle> {
         kind_for_name(name).map(|kind| HighlightStyle {
             color: Some(self.palette.color(kind)),
@@ -26,12 +26,12 @@ impl HighlightStyleResolver for VardogerHighlightStyleResolver {
 }
 
 #[derive(Clone)]
-pub(super) struct VardogerInputHighlighter {
+pub(super) struct CommutatorInputHighlighter {
     language: SharedString,
     spans: Vec<(Range<usize>, HighlightKind)>,
 }
 
-impl VardogerInputHighlighter {
+impl CommutatorInputHighlighter {
     fn new(source: &str, document: &HighlightedDocument) -> Self {
         Self {
             language: format!("{:?}", document.language).into(),
@@ -40,7 +40,7 @@ impl VardogerInputHighlighter {
     }
 }
 
-impl InputHighlighter for VardogerInputHighlighter {
+impl InputHighlighter for CommutatorInputHighlighter {
     fn language(&self) -> SharedString {
         self.language.clone()
     }
@@ -127,7 +127,7 @@ pub(super) fn editor_style(theme: &Theme) -> InputEditorStyle {
         border: theme.border,
         selection: theme.accent.opacity(0.22),
         caret: theme.caret,
-        highlight_styles: Arc::new(VardogerHighlightStyleResolver {
+        highlight_styles: Arc::new(CommutatorHighlightStyleResolver {
             palette: theme.syntax.clone(),
         }),
         editor_active_line: Some(crate::theme::wash(0.025)),
@@ -149,7 +149,7 @@ pub(super) fn install_highlighter(
     editor.update(cx, |state, cx| {
         state.set_highlighter_factory(
             Rc::new(move |_| {
-                Some(Box::new(VardogerInputHighlighter::new(&source, &document)) as Box<_>)
+                Some(Box::new(CommutatorInputHighlighter::new(&source, &document)) as Box<_>)
             }),
             cx,
         );
@@ -268,7 +268,7 @@ fn kind_for_name(name: &str) -> Option<HighlightKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vardoger_syntax::{HighlightSpan, LanguageId};
+    use commutator_syntax::{HighlightSpan, LanguageId};
 
     fn highlighted(source: &str, spans: Vec<HighlightSpan>) -> HighlightedDocument {
         HighlightedDocument::from_absolute_spans(LanguageId::Rust, source, spans).unwrap()
@@ -305,8 +305,8 @@ mod tests {
                 },
             ],
         );
-        let highlighter = VardogerInputHighlighter::new(source, &document);
-        let resolver = VardogerHighlightStyleResolver {
+        let highlighter = CommutatorInputHighlighter::new(source, &document);
+        let resolver = CommutatorHighlightStyleResolver {
             palette: Theme::dark().syntax,
         };
         let runs = highlighter.styles(&(0..source.len()), &resolver);
@@ -325,8 +325,8 @@ mod tests {
                 kind: HighlightKind::Variable,
             }],
         );
-        let highlighter = VardogerInputHighlighter::new(stale_source, &stale_document);
-        let resolver = VardogerHighlightStyleResolver {
+        let highlighter = CommutatorInputHighlighter::new(stale_source, &stale_document);
+        let resolver = CommutatorHighlightStyleResolver {
             palette: Theme::dark().syntax,
         };
         let updated_text = "é";

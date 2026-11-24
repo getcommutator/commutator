@@ -1,11 +1,11 @@
-//! Model catalog + effort mapping for Codex, ported from vardoger's
+//! Model catalog + effort mapping for Codex, ported from commutator's
 //! `packages/harness/src/codex.ts`.
 //!
 //! The live catalog comes from the app server's paginated `model/list`
 //! (experimentalApi). This snapshot is the failure/offline fallback, kept in
 //! newest-first order so a picker remains useful when discovery cannot run.
 
-use vardoger_proto::{Model, ModelOption, ModelOptionChoice, ReasoningLevel, SandboxLevel};
+use commutator_proto::{Model, ModelOption, ModelOptionChoice, ReasoningLevel, SandboxLevel};
 
 /// The unified reasoning ladder Codex accepts (`minimal` is offered but clamped
 /// on the wire — see [`to_effort`]).
@@ -54,7 +54,7 @@ pub(crate) fn sandbox_policy_type(sandbox: SandboxLevel) -> &'static str {
 }
 
 /// `turn/start`'s full `sandboxPolicy` object. Workspace-write (auto-accept
-/// edits) keeps network access: vardoger agents fetch deps and hit APIs, and a
+/// edits) keeps network access: commutator agents fetch deps and hit APIs, and a
 /// network-less sandbox would ask before every one of those commands.
 pub(crate) fn sandbox_policy_value(sandbox: SandboxLevel) -> serde_json::Value {
     let mut policy = serde_json::Map::new();

@@ -1,6 +1,6 @@
-//! vardoger-proto — wire types shared by engine, UI, and RPC.
+//! commutator-proto — wire types shared by engine, UI, and RPC.
 //!
-//! Ported from vardoger's `packages/control/src/wire.ts` + `packages/harness/src/types.ts`.
+//! Ported from commutator's `packages/control/src/wire.ts` + `packages/harness/src/types.ts`.
 //! Context occupancy is replicated per chat; billing `Usage` remains a harness passthrough.
 
 pub mod agent;

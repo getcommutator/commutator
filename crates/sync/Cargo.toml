@@ -1,12 +1,12 @@
 [package]
-name = "vardoger-sync"
+name = "commutator-sync"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vardoger-doc.workspace = true
+commutator-doc.workspace = true
 loro.workspace = true
 reqwest.workspace = true
 sha2.workspace = true
@@ -28,12 +28,12 @@ block2 = "0.6"
 
 [features]
 # In-process registry server speaking the DO's JSON WS protocol — test
-# infrastructure for this crate's tests and vardoger-engine's integration tests.
+# infrastructure for this crate's tests and commutator-engine's integration tests.
 mock-server = []
 
 [dev-dependencies]
 chrono.workspace = true
-vardoger-proto.workspace = true
+commutator-proto.workspace = true
 tempfile.workspace = true
 base64 = "0.22"
 # `start_paused` virtual-clock tests (the 2026-07-30 sync-stall regressions).

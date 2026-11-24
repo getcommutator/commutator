@@ -1,7 +1,7 @@
 //! Account-synced sections; local workspaces keep their settings on this device.
 use super::*;
 use crate::settings::SidebarSection;
-use vardoger_proto::{SidebarPinChange, SidebarSectionChange};
+use commutator_proto::{SidebarPinChange, SidebarSectionChange};
 
 /// The air above each custom section's header.
 const SIDEBAR_SECTION_TOP_PAD: f32 = 12.0;
@@ -451,7 +451,7 @@ impl Shell {
                 && state.engine().is_some_and(|engine| {
                     engine
                         .engine_info()
-                        .supports(vardoger_proto::capabilities::SIDEBAR_SECTION_ORDER_V1)
+                        .supports(commutator_proto::capabilities::SIDEBAR_SECTION_ORDER_V1)
                 }))
     }
 
@@ -943,14 +943,14 @@ mod tests {
                     data_dir: path.into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             )
         })
     }
 
-    fn chat(id: &str) -> vardoger_proto::Chat {
+    fn chat(id: &str) -> commutator_proto::Chat {
         serde_json::from_value(serde_json::json!({"id":id,"title":id,"deviceId":"local","archived":false,"createdAt":"2026-09-20T00:00:00Z"})).unwrap()
     }
     fn prepare(shell: &mut Shell, cx: &mut Context<Shell>) {
@@ -1138,7 +1138,7 @@ mod tests {
         // The item sits in the submenu, outside the menu card: pressing it
         // must copy rather than dismiss the menu first.
         let item = cx
-            .debug_bounds("chat-copy-vardoger")
+            .debug_bounds("chat-copy-commutator")
             .expect("the Copy submenu is open");
         cx.simulate_click(item.center(), gpui::Modifiers::none());
         cx.run_until_parked();
@@ -1370,7 +1370,7 @@ mod tests {
         let (out, mut requests) = tokio::sync::mpsc::channel(16);
         let (replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         let window = test_shell(cx, dir.path());
         window
@@ -1437,7 +1437,7 @@ mod tests {
         let (out, _requests) = tokio::sync::mpsc::channel(16);
         let (_replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         let window = test_shell(cx, dir.path());
         window
@@ -1445,8 +1445,8 @@ mod tests {
                 prepare(shell, cx);
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Synced);
-                    state.auth = Some(vardoger_proto::AuthState::SignedIn {
-                        user: vardoger_proto::UserProfile {
+                    state.auth = Some(commutator_proto::AuthState::SignedIn {
+                        user: commutator_proto::UserProfile {
                             id: "user".into(),
                             email: "test@example.test".into(),
                             name: None,
@@ -1474,7 +1474,7 @@ mod tests {
                     session_ids: vec![],
                     ..section.clone()
                 };
-                let pin = vardoger_proto::SidebarPinChange::Pin {
+                let pin = commutator_proto::SidebarPinChange::Pin {
                     session_id: "regular".into(),
                     after: None,
                     before: None,
@@ -1500,7 +1500,7 @@ mod tests {
                     engine: engine.clone(),
                     queue: std::collections::VecDeque::from([
                         pin.clone(),
-                        vardoger_proto::SidebarPinChange::Section {
+                        commutator_proto::SidebarPinChange::Section {
                             change: SidebarSectionChange::Assign {
                                 session_id: "regular".into(),
                                 section_id: Some("a".into()),
@@ -1513,7 +1513,7 @@ mod tests {
                 });
                 shell.finish_sidebar_pin_write(
                     2,
-                    Ok(vardoger_proto::SidebarPreferencesState {
+                    Ok(commutator_proto::SidebarPreferencesState {
                         sections: vec![empty_section.clone()],
                         revision: 1,
                         synced: true,
@@ -1529,7 +1529,7 @@ mod tests {
                 assert!(shell.active_sidebar_pins(cx).is_empty());
                 shell.finish_sidebar_pin_write(
                     2,
-                    Ok(vardoger_proto::SidebarPreferencesState {
+                    Ok(commutator_proto::SidebarPreferencesState {
                         sections: vec![section.clone()],
                         revision: 2,
                         synced: true,
@@ -1547,7 +1547,7 @@ mod tests {
                 });
                 shell.finish_sidebar_pin_write(
                     3,
-                    Ok(vardoger_proto::SidebarPreferencesState {
+                    Ok(commutator_proto::SidebarPreferencesState {
                         sections: vec![empty_section],
                         revision: 3,
                         synced: true,
@@ -1573,7 +1573,7 @@ mod tests {
         let (out, _requests) = tokio::sync::mpsc::channel(16);
         let (_replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         let window = test_shell(cx, dir.path());
         window
@@ -1581,8 +1581,8 @@ mod tests {
                 prepare(shell, cx);
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Synced);
-                    state.auth = Some(vardoger_proto::AuthState::SignedIn {
-                        user: vardoger_proto::UserProfile {
+                    state.auth = Some(commutator_proto::AuthState::SignedIn {
+                        user: commutator_proto::UserProfile {
                             id: "user".into(),
                             email: "test@example.test".into(),
                             name: None,
@@ -1617,7 +1617,7 @@ mod tests {
                 let id = shell.sidebar_pin_write.as_ref().unwrap().id;
                 shell.finish_sidebar_pin_write(
                     id,
-                    Ok(vardoger_proto::SidebarPreferencesState {
+                    Ok(commutator_proto::SidebarPreferencesState {
                         revision: 1,
                         synced: true,
                         initialized: true,

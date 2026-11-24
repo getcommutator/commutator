@@ -3,7 +3,7 @@
 //! local `gh`, whose calls are delayed on demand so loading states can be
 //! captured.
 //!
-//!   cargo run -p vardoger-ui --example pull-request-fixture \
+//!   cargo run -p commutator-ui --example pull-request-fixture \
 //!     --features pull-request-fixture -- <output-dir> [owner/repo] [number]
 //!
 //! On Linux, run it on its own X display with a window manager; xdotool and
@@ -13,7 +13,7 @@
 //!   WAYLAND_DISPLAY= DISPLAY=:99 cargo run …
 use gpui::{AppContext, AsyncApp, Bounds, WindowBounds, WindowOptions, px, size};
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use vardoger_ui::*;
+use commutator_ui::*;
 
 async fn pause(cx: &mut AsyncApp, ms: u64) {
     cx.background_executor()
@@ -78,7 +78,7 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
     let mut args = std::env::args().skip(1);
     let output = PathBuf::from(args.next().expect("output directory"));
-    let repository = args.next().unwrap_or_else(|| "zeronsh/vardoger".into());
+    let repository = args.next().unwrap_or_else(|| "zeronsh/commutator".into());
     let number = args.next().unwrap_or_else(|| "591".into());
     std::fs::create_dir_all(&output)?;
     let temp = tempfile::tempdir()?;
@@ -108,28 +108,28 @@ fn main() -> anyhow::Result<()> {
     // SAFETY: set before any other thread starts.
     unsafe {
         std::env::set_var("PATH", path);
-        std::env::set_var("VARDOGER_OPEN_ROUTE", "pull-requests");
+        std::env::set_var("COMMUTATOR_OPEN_ROUTE", "pull-requests");
     }
     let set_delay = move |seconds: u64| std::fs::write(&delay, seconds.to_string());
 
     let runtime = tokio::runtime::Runtime::new()?;
     let core = runtime.block_on(async {
-        vardoger_engine::EngineCore::assemble(
+        commutator_engine::EngineCore::assemble(
             &temp.path().join("engine"),
-            Arc::new(vardoger_engine::default_registry()),
-            vardoger_proto::HarnessId::ClaudeCode,
+            Arc::new(commutator_engine::default_registry()),
+            commutator_proto::HarnessId::ClaudeCode,
             None,
         )
     })?;
     let ipc_port = port();
-    let _ipc = runtime.block_on(vardoger_engine::serve_ipc(ipc_port, core.rpc_service()))?;
+    let _ipc = runtime.block_on(commutator_engine::serve_ipc(ipc_port, core.rpc_service()))?;
     let data = temp.path().join("ui");
     std::fs::create_dir(&data)?;
     let boot = EngineBootConfig {
         data_dir: data.clone(),
         ipc_port,
         edge_url: String::new(),
-        default_harness: vardoger_proto::HarnessId::ClaudeCode,
+        default_harness: commutator_proto::HarnessId::ClaudeCode,
     };
     let handle = runtime.block_on(state::EngineHandle::bootstrap(boot.clone()))?;
     let device = core.device_id.clone();
@@ -146,7 +146,7 @@ fn main() -> anyhow::Result<()> {
             settings.last_pull_request_repository = Some(repository.clone());
             settings.pull_request_destination = settings::PullRequestDestination::Native;
             // Match the default desktop look: translucent, frosted surfaces.
-            settings.surface = vardoger_theme::SurfacePreference::Frosted;
+            settings.surface = commutator_theme::SurfacePreference::Frosted;
             settings::init(settings.clone(), data.clone(), cx);
             let fonts = typography::register_fonts(cx);
             typography::init(
@@ -180,8 +180,8 @@ fn main() -> anyhow::Result<()> {
             let state = cx.new(|_| {
                 let mut s = state::AppState::new();
                 s.fixture_attachment_engine(handle);
-                s.connection = vardoger_proto::view::ConnectionStatus::Ready;
-                s.workspace_scope = Some(vardoger_proto::WorkspaceScope::Development);
+                s.connection = commutator_proto::view::ConnectionStatus::Ready;
+                s.workspace_scope = Some(commutator_proto::WorkspaceScope::Development);
                 s.local_device_id = Some(device.clone());
                 s.devices = vec![
                     serde_json::from_value(serde_json::json!({

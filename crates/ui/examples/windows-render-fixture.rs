@@ -5,7 +5,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions, div, img, point, px, rgb, size,
 };
 use std::path::PathBuf;
-use vardoger_ui::edge_fade::edge_faded;
+use commutator_ui::edge_fade::edge_faded;
 
 struct Fixture {
     image: PathBuf,
@@ -159,7 +159,7 @@ fn main() -> anyhow::Result<()> {
                     size(px(680.), px(640.)),
                 ))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Vardoger Windows rendering fixture".into()),
+                    title: Some("Commutator Windows rendering fixture".into()),
                     ..Default::default()
                 }),
                 ..Default::default()

@@ -46,7 +46,7 @@ fn setup(cx: &mut TestAppContext) -> (Entity<Shell>, &mut VisualTestContext) {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             );
@@ -337,7 +337,7 @@ fn rename_refuses_a_row_the_project_filter_hides(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn rename_expands_a_collapsed_custom_section(cx: &mut TestAppContext) {
-    use vardoger_proto::SidebarSectionChange;
+    use commutator_proto::SidebarSectionChange;
 
     let (shell, cx) = setup(cx);
     shell.update(cx, |shell, cx| {

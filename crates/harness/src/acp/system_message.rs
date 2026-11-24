@@ -6,7 +6,7 @@
 
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
-use vardoger_proto::AgentEvent;
+use commutator_proto::AgentEvent;
 
 use crate::HarnessError;
 

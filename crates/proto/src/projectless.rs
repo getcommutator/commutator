@@ -10,7 +10,7 @@
 use chrono::{DateTime, Utc};
 
 /// Home-relative parent of every projectless chat's folder.
-pub const SCRATCH_ROOT: &str = "~/.vardoger/scratch";
+pub const SCRATCH_ROOT: &str = "~/.commutator/scratch";
 
 /// The scratch cwd for a new projectless chat: `<date>-<id>`, the id cut to
 /// its last 8 letters and digits (the random end of a UUID or ULID).
@@ -60,31 +60,31 @@ mod tests {
     fn scratch_cwd_names_the_folder_by_date_and_id_tail() {
         assert_eq!(
             scratch_cwd("9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b", at("2026-10-11")),
-            "~/.vardoger/scratch/2026-10-11-3e4f5a6b"
+            "~/.commutator/scratch/2026-10-11-3e4f5a6b"
         );
         assert_eq!(
             scratch_cwd("Ab-1", at("2026-01-02")),
-            "~/.vardoger/scratch/2026-01-02-ab1"
+            "~/.commutator/scratch/2026-01-02-ab1"
         );
         assert_eq!(
             scratch_cwd("--", at("2026-01-02")),
-            "~/.vardoger/scratch/2026-01-02"
+            "~/.commutator/scratch/2026-01-02"
         );
     }
 
     #[test]
     fn projectless_cwds() {
-        for cwd in ["~", "~/", "", "~/.vardoger/scratch/2026-10-11-3e4f5a6b"] {
+        for cwd in ["~", "~/", "", "~/.commutator/scratch/2026-10-11-3e4f5a6b"] {
             assert!(is_projectless_cwd(Some(cwd)), "{cwd}");
         }
         assert!(is_projectless_cwd(None));
         for cwd in [
-            "/home/w/dev/vardoger",
-            "~/dev/vardoger",
-            "~/.vardoger/scratch",
-            "~/.vardoger/scratch/",
-            "~/.vardoger/scratch/a/b",
-            "~/.vardoger/worktrees/x",
+            "/home/w/dev/commutator",
+            "~/dev/commutator",
+            "~/.commutator/scratch",
+            "~/.commutator/scratch/",
+            "~/.commutator/scratch/a/b",
+            "~/.commutator/worktrees/x",
         ] {
             assert!(!is_projectless_cwd(Some(cwd)), "{cwd}");
         }

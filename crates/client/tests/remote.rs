@@ -1,4 +1,4 @@
-//! Remote mode end to end: the Vardoger server in-process, a real engine
+//! Remote mode end to end: the Commutator server in-process, a real engine
 //! signed in to it (`account.json`) hosting its device room there, and the
 //! client as the account's phone — list the machines, pick the engine, create
 //! a chat on it, send, and see the engine's copy of the message come back.
@@ -6,14 +6,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use vardoger_client::events::NullListener;
-use vardoger_client::{
+use commutator_client::events::NullListener;
+use commutator_client::{
     Client, ClientConfig, Credentials, MessageRole, NewSession, SendOutcome, SendRequest,
     SessionTarget,
 };
-use vardoger_engine::account::Account;
-use vardoger_engine::{Engine, EngineConfig, HarnessId};
-use vardoger_server::{App, Config, Kind};
+use commutator_engine::account::Account;
+use commutator_engine::{Engine, EngineConfig, HarnessId};
+use commutator_server::{App, Config, Kind};
 
 fn wait_for(what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
     let start = Instant::now();
@@ -54,14 +54,14 @@ fn a_chat_round_trips_through_a_remote_engine() {
     let server_url = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(axum::serve(listener, vardoger_server::router(app.clone())).into_future());
+        tokio::spawn(axum::serve(listener, commutator_server::router(app.clone())).into_future());
         url
     });
 
-    // The machine signs in under its own engine device id (what `vardoger
+    // The machine signs in under its own engine device id (what `commutator
     // login` does), the phone as a client.
     let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
-    let machine = vardoger_engine::device_id(engine_dir.path()).unwrap();
+    let machine = commutator_engine::device_id(engine_dir.path()).unwrap();
     let (_, machine_token) = app
         .create_device(&me, "laptop", Kind::Machine, Some(&machine))
         .unwrap();
@@ -94,7 +94,7 @@ fn a_chat_round_trips_through_a_remote_engine() {
         .unwrap();
     wait_for("the machine online on the server", Duration::from_secs(30), || {
         let devices = client_rt
-            .block_on(vardoger_client::server::devices(&server_url, &phone_token))
+            .block_on(commutator_client::server::devices(&server_url, &phone_token))
             .unwrap();
         assert!(devices.iter().any(|d| d.id == phone && d.current));
         devices

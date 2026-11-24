@@ -1,5 +1,5 @@
 //! Terminals — PTY sessions owned by this device (feature-inventory §3.4; port of
-//! vardoger's `terminals.ts` over `portable-pty`).
+//! commutator's `terminals.ts` over `portable-pty`).
 //!
 //! - `open` spawns the user's login shell in the chat's cwd; `subscribe` replays a
 //!   bounded 1MB window (resumable via `afterSeq`) then tails live output — sent
@@ -10,7 +10,7 @@
 //!   Only EXITED sessions expire (30min TTL on their inert replay buffers), and
 //!   [`MAX_TERMINALS`] bounds leakage from renderers that lost their tab state.
 //! - Ownership: M5 is single-user local — every IPC/relay caller is the device
-//!   owner, so the per-user owner re-checks from vardoger's Router land with real
+//!   owner, so the per-user owner re-checks from commutator's Router land with real
 //!   multi-account auth in M6.
 
 use std::collections::{HashMap, VecDeque};
@@ -27,8 +27,8 @@ use portable_pty::{CommandBuilder, native_pty_system};
 mod windows;
 use tokio::sync::{mpsc, watch};
 
-use vardoger_doc::TERMINAL_OUTPUT_BATCH_MS;
-use vardoger_proto::{TerminalActivity, TerminalEvent, TerminalSession, TerminalStatus};
+use commutator_doc::TERMINAL_OUTPUT_BATCH_MS;
+use commutator_proto::{TerminalActivity, TerminalEvent, TerminalSession, TerminalStatus};
 
 pub mod link;
 mod program_status;
@@ -308,7 +308,7 @@ impl Terminals {
 
     /// Seen results no longer compete with new results in other program
     /// records or terminals. Keep the records themselves for app inheritance.
-    pub(crate) fn refresh_seen(&self, chats: &[vardoger_proto::Chat]) {
+    pub(crate) fn refresh_seen(&self, chats: &[commutator_proto::Chat]) {
         let mut changed = false;
         for session in lock(&self.inner.sessions).values() {
             let mut session = lock(session);
@@ -347,7 +347,7 @@ impl Terminals {
 
     /// Terminal id → chat for every terminal opened for a chat, open or
     /// since closed (the newest [`REMEMBERED_TERMINAL_CHATS`]). Everything a
-    /// terminal starts carries its id (see [`vardoger_proto::ORIGIN_ENV`]).
+    /// terminal starts carries its id (see [`commutator_proto::ORIGIN_ENV`]).
     pub fn chats(&self) -> HashMap<String, String> {
         lock(&self.inner.chats).iter().cloned().collect()
     }
@@ -436,8 +436,8 @@ impl Terminals {
         let id = new_id();
         let mut environment = environment.clone();
         environment.insert(
-            vardoger_proto::ORIGIN_ENV.to_owned(),
-            vardoger_proto::terminal_origin(&id),
+            commutator_proto::ORIGIN_ENV.to_owned(),
+            commutator_proto::terminal_origin(&id),
         );
         let environment = &environment;
 
@@ -446,11 +446,11 @@ impl Terminals {
         #[cfg(not(windows))]
         let (initial_script, bootstrap) = if let Some(command) = command {
             let (suffix, source) = match shell_name.as_str() {
-                "fish" => (".fish", "source \"$VARDOGER_ACTION_SCRIPT\"\r"),
-                _ => (".sh", ". \"$VARDOGER_ACTION_SCRIPT\"\r"),
+                "fish" => (".fish", "source \"$COMMUTATOR_ACTION_SCRIPT\"\r"),
+                _ => (".sh", ". \"$COMMUTATOR_ACTION_SCRIPT\"\r"),
             };
             let mut script = tempfile::Builder::new()
-                .prefix("vardoger-action-")
+                .prefix("commutator-action-")
                 .suffix(suffix)
                 .tempfile()?;
             script.write_all(command.as_bytes())?;
@@ -477,12 +477,12 @@ impl Terminals {
             cmd.cwd(cwd);
             cmd.env("TERM", "xterm-256color");
             cmd.env("COLORTERM", "truecolor");
-            cmd.env("TERM_PROGRAM", "Vardoger");
+            cmd.env("TERM_PROGRAM", "Commutator");
             for (name, value) in environment {
                 cmd.env(name, value);
             }
             if let Some(script) = initial_script.as_ref() {
-                cmd.env("VARDOGER_ACTION_SCRIPT", script.path());
+                cmd.env("COMMUTATOR_ACTION_SCRIPT", script.path());
             }
             let child = pair
                 .slave
@@ -970,8 +970,8 @@ async fn reaper_task(inner: Weak<TerminalsInner>) {
     let Some(mut opened) = inner.upgrade().map(|inner| inner.opened_tx.subscribe()) else {
         return;
     };
-    // On the beat grid (`vardoger_sync::wake`): it wakes with the sockets' pings.
-    let mut tick = vardoger_sync::wake::beat_interval(REAPER_INTERVAL);
+    // On the beat grid (`commutator_sync::wake`): it wakes with the sockets' pings.
+    let mut tick = commutator_sync::wake::beat_interval(REAPER_INTERVAL);
     loop {
         // With no terminal, open or exited, there is nothing to sweep and
         // nothing to report: sleep until one opens.
@@ -1007,7 +1007,7 @@ mod windows_tests {
 
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
-    use vardoger_proto::TerminalEvent;
+    use commutator_proto::TerminalEvent;
 
     use super::Terminals;
 
@@ -1684,7 +1684,7 @@ mod initial_command_tests {
                     root.path().to_str().unwrap(),
                     80,
                     24,
-                    Some("/nonexistent/vardoger-test-shell"),
+                    Some("/nonexistent/commutator-test-shell"),
                     &HashMap::new(),
                     Some("echo test"),
                 )

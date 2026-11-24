@@ -1,15 +1,15 @@
 [package]
-name = "vardoger-account"
+name = "commutator-account"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# Signing a device in to a Vardoger server (apps/vardoger-server): the PKCE
-# sign-in URL and the code redeem, shared by the engine (`vardoger login`)
-# and the phone apps (through vardoger-client).
+# Signing a device in to a Commutator server (apps/commutator-server): the PKCE
+# sign-in URL and the code redeem, shared by the engine (`commutator login`)
+# and the phone apps (through commutator-client).
 [dependencies]
-vardoger-rpc.workspace = true
+commutator-rpc.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,9 +1,9 @@
 //! Run the M1 thin rebuild against a REAL whale snapshot (read-only: loads a
 //! snapshot file, rebuilds, reports accounting — writes nothing anywhere).
-//! Usage: cargo run -p vardoger-doc --example rebuild_whale -- <snapshot.bin>
+//! Usage: cargo run -p commutator-doc --example rebuild_whale -- <snapshot.bin>
 use loro::LoroDoc;
-use vardoger_doc::rebuild::{doc_epoch, rebuild_thin_doc};
-use vardoger_doc::schema::SessionDoc;
+use commutator_doc::rebuild::{doc_epoch, rebuild_thin_doc};
+use commutator_doc::schema::SessionDoc;
 
 fn main() {
     let path = std::env::args()

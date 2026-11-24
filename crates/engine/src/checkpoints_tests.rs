@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use vardoger_proto::checkpoints::CheckpointPhase;
+use commutator_proto::checkpoints::CheckpointPhase;
 
 use super::{Checkpoints, Inner};
 use crate::repos::Repos;
@@ -105,7 +105,7 @@ async fn rollback_restores_the_exact_tree_and_leaves_ignored_files() {
     assert_eq!(list[0].phase, CheckpointPhase::TurnStart);
     assert_eq!(list[1].phase, CheckpointPhase::TurnEnd);
     assert_eq!((list[0].turn, list[1].turn), (1, 1));
-    assert!(list[1].git_ref.starts_with("refs/vardoger/checkpoints/chat-1/"));
+    assert!(list[1].git_ref.starts_with("refs/commutator/checkpoints/chat-1/"));
     // a.txt, b.txt, u.txt, new.txt, dir/deep/new2.txt.
     assert_eq!(list[1].files_changed, Some(5));
 

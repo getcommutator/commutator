@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use gpui::{Entity, Subscription, Task};
-use vardoger_proto::{ProjectAction, ProjectActionDraft, ProjectActionIcon, ProjectActionsSnapshot};
+use commutator_proto::{ProjectAction, ProjectActionDraft, ProjectActionIcon, ProjectActionsSnapshot};
 
 use crate::composer::ComposerInput;
 use crate::popover;

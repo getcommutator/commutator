@@ -3,7 +3,7 @@
 //! tweens; content keeps its final width while the outer surface clips it.
 
 use super::*;
-use vardoger_proto::{
+use commutator_proto::{
     HarnessId, HarnessUpdateFailureKind, HarnessUpdatePhase as Phase, HarnessUpdateStatus,
 };
 
@@ -832,7 +832,7 @@ impl Shell {
             .iter()
             .map(|device| device.id.clone())
             .chain(std::iter::once(engine.engine_info().device_id.clone()))
-            .filter(|id| state.device_supports(id, vardoger_proto::capabilities::HARNESS_UPDATES_V1))
+            .filter(|id| state.device_supports(id, commutator_proto::capabilities::HARNESS_UPDATES_V1))
             .map(|id| {
                 let online = state.device_online(&id, Utc::now());
                 (id, online)
@@ -910,7 +910,7 @@ impl Shell {
             .get(&device)
             .is_some_and(|updates| updates.online && updates.connected)
             || !state.device_online(&device, Utc::now())
-            || !state.device_supports(&device, vardoger_proto::capabilities::HARNESS_UPDATES_V1)
+            || !state.device_supports(&device, commutator_proto::capabilities::HARNESS_UPDATES_V1)
         {
             return;
         }
@@ -921,7 +921,7 @@ impl Shell {
             let result = engine.client().call(method, params).await;
             this.update(cx, |shell, cx| {
                 if let Err(error) = result
-                    && !matches!(&error, vardoger_rpc::RpcError::Failed(message)
+                    && !matches!(&error, commutator_rpc::RpcError::Failed(message)
                         if method == methods::APPLY_HARNESS_UPDATE && message == "update cancelled")
                 {
                     shell.show_notice(

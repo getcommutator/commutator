@@ -6,10 +6,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
-use vardoger_engine::{EngineCore, EngineProfile, HarnessRegistry, SteerOutcome};
-use vardoger_harness::ClaudeHarness;
-use vardoger_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
+use commutator_engine::{EngineCore, EngineProfile, HarnessRegistry, SteerOutcome};
+use commutator_harness::ClaudeHarness;
+use commutator_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
 
 const CHAT: &str = "claude-subagents";
 /// The typed fork's chip, named after the command and the fork's task.

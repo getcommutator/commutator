@@ -4,7 +4,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use vardoger_sync::DocsStore;
+use commutator_sync::DocsStore;
 
 const PAGE: u64 = 4096;
 
@@ -112,11 +112,11 @@ fn a_marker_from_a_running_engine_asks_for_a_full_check_and_goes_once_clean() {
     let dir = tempfile::tempdir().unwrap();
     store_with_data(dir.path());
     let path = dir.path().join("docs.sqlite3");
-    vardoger_sync::request_store_check(&path);
-    assert!(vardoger_sync::store_check_marker(&path).exists());
+    commutator_sync::request_store_check(&path);
+    assert!(commutator_sync::store_check_marker(&path).exists());
     let store = DocsStore::open(dir.path()).unwrap();
     assert!(store.recovery().is_none());
-    assert!(!vardoger_sync::store_check_marker(&path).exists());
+    assert!(!commutator_sync::store_check_marker(&path).exists());
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn a_read_that_hits_damage_while_running_is_noticed() {
     }
     failed |= store.pending_chat_updates("filler").is_err();
     assert!(failed, "the damage was read");
-    assert!(vardoger_sync::corruption_seen());
+    assert!(commutator_sync::corruption_seen());
 }
 
 #[test]

@@ -17,12 +17,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use tokio::sync::watch;
-use vardoger_doc::{
+use commutator_doc::{
     CommandBasedOn, MessagePart, MessageRole, MessageStatus, QueueDeliveryGate, QueuedMessage,
     SessionCommandEntry, SessionCommandPayload, SessionCommandStatus, SessionDoc,
     SessionMessageEntry,
 };
-use vardoger_proto::{
+use commutator_proto::{
     ChatIndicator, ContextUsage, RunRequest, SandboxLevel, UserInputAnswer, WorktreeSpec,
 };
 
@@ -297,7 +297,7 @@ impl SessionCore {
     /// Serialized doc write, then an incremental refresh.
     pub(crate) fn write<R>(
         &self,
-        f: impl FnOnce(&SessionDoc) -> std::result::Result<R, vardoger_doc::DocError>,
+        f: impl FnOnce(&SessionDoc) -> std::result::Result<R, commutator_doc::DocError>,
     ) -> Result<R> {
         let result = {
             let _gate = lock(&self.write_gate);
@@ -545,7 +545,7 @@ impl SessionCore {
                 turn_id: Some(turn_id),
                 frontier: None,
             }),
-            expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
+            expires_at: Some(now + commutator_doc::COMMAND_DEFAULT_TTL_MS),
             status: SessionCommandStatus::Pending,
             resolution: None,
         };
@@ -976,7 +976,7 @@ impl SessionHandle {
             && !client.is_demo()
         {
             return Err(ClientError::Unsupported(
-                "the host is too old for image attachments — update Vardoger on it".into(),
+                "the host is too old for image attachments — update Commutator on it".into(),
             ));
         }
         let refs = client.stage_attachments(&chat.device_id, &request.attachments)?;
@@ -1187,7 +1187,7 @@ impl SessionHandle {
         };
         let reply = self
             .queue_rpc(
-                vardoger_rpc::methods::BEGIN_QUEUED_MESSAGE_EDIT,
+                commutator_rpc::methods::BEGIN_QUEUED_MESSAGE_EDIT,
                 serde_json::json!({
                     "chatId": self.core.chat_id,
                     "id": id,
@@ -1226,7 +1226,7 @@ impl SessionHandle {
 
     pub async fn renew_queued_edit(&self, lease: &QueueEditLease) -> bool {
         self.queue_rpc(
-            vardoger_rpc::methods::RENEW_QUEUED_MESSAGE_EDIT,
+            commutator_rpc::methods::RENEW_QUEUED_MESSAGE_EDIT,
             serde_json::json!({
                 "chatId": self.core.chat_id,
                 "id": lease.row_id,
@@ -1254,7 +1254,7 @@ impl SessionHandle {
             params["text"] = serde_json::Value::String(text);
         }
         match self
-            .queue_rpc(vardoger_rpc::methods::FINISH_QUEUED_MESSAGE_EDIT, params)
+            .queue_rpc(commutator_rpc::methods::FINISH_QUEUED_MESSAGE_EDIT, params)
             .await
         {
             Ok(value) => match value.get("outcome").and_then(|o| o.as_str()) {
@@ -1286,9 +1286,9 @@ impl SessionHandle {
             self.core.recompute_composer(&client);
         }
         let method = match action {
-            QueueAction::SendNow => vardoger_rpc::methods::SEND_QUEUED_MESSAGE_NOW,
-            QueueAction::Steer => vardoger_rpc::methods::STEER_QUEUED_MESSAGE_NOW,
-            QueueAction::Remove => vardoger_rpc::methods::REMOVE_QUEUED_MESSAGE,
+            QueueAction::SendNow => commutator_rpc::methods::SEND_QUEUED_MESSAGE_NOW,
+            QueueAction::Steer => commutator_rpc::methods::STEER_QUEUED_MESSAGE_NOW,
+            QueueAction::Remove => commutator_rpc::methods::REMOVE_QUEUED_MESSAGE,
         };
         let result = self
             .queue_rpc(

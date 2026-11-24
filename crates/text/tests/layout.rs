@@ -5,7 +5,7 @@ mod common;
 
 use common::*;
 use unicode_segmentation::UnicodeSegmentation;
-use vardoger_text::*;
+use commutator_text::*;
 
 fn segs(p: &Prepared) -> Vec<(&str, &str)> {
     p.segment_ranges()

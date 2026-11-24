@@ -1,13 +1,13 @@
 [package]
-name = "vardoger-rpc"
+name = "commutator-rpc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vardoger-proto.workspace = true
-vardoger-sync.workspace = true
+commutator-proto.workspace = true
+commutator-sync.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 futures.workspace = true
@@ -22,7 +22,7 @@ uuid.workspace = true
 getrandom = "0.4"
 
 [dev-dependencies]
-vardoger-doc.workspace = true
+commutator-doc.workspace = true
 tempfile.workspace = true
 
 # Deterministic stalled-transport deadlines.

@@ -1,7 +1,7 @@
 //! DocHost — per-chat `SessionDoc` handles: snapshot persistence (debounced), edge room
 //! sync (offline-tolerant), and the HOST-ONLY durable command executor.
 //!
-//! Pragmatic port of vardoger's `session-docs.ts` + the `main.ts` executor (spec:
+//! Pragmatic port of commutator's `session-docs.ts` + the `main.ts` executor (spec:
 //! feature-inventory §3.3, ARCHITECTURE §2 "command plane"):
 //! - the doc IS the outbox: commands and user entries commit locally and sync whenever a
 //!   room connection exists; the engine is fully functional with sync disabled;
@@ -28,14 +28,14 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use vardoger_doc::{
+use commutator_doc::{
     CommandBasedOn, CommandDisposition, DocError, EvaluationContext,
     MessagePart, MessageRole, MessageStatus, QueueDeliveryGate, QueuedMessage, SessionCommandEntry,
     SessionCommandPayload, SessionCommandStatus, SessionDoc, SessionMessageEntry, SubagentStatus,
     evaluate_command,
 };
-use vardoger_proto::{ConversationSourceContext, HarnessId, UserInputAnswer, UserInputQuestion};
-use vardoger_sync::DocsStore;
+use commutator_proto::{ConversationSourceContext, HarnessId, UserInputAnswer, UserInputQuestion};
+use commutator_sync::DocsStore;
 
 use crate::project_actions::{
     ProjectActionSetupHandoff, ProjectActionsStore, launch_project_setup_action,
@@ -58,7 +58,7 @@ pub const QUEUE_EDIT_LEASE_MS: i64 = 60_000;
 const WAKE_BOOT_MARGIN_MS: i64 = 60 * 60 * 1000;
 
 /// Warm-doc LRU: how many unwatched, run-less docs stay fully open. Everything
-/// beyond this (and beyond [`vardoger_doc::DOC_LRU_BYTE_BUDGET`]) is evicted
+/// beyond this (and beyond [`commutator_doc::DOC_LRU_BYTE_BUDGET`]) is evicted
 /// oldest-access-first. A real chat's doc is large (a long one 15-80 MB, 3-24M
 /// ops), and reopening one from its SQLite snapshot reads its whole state:
 /// 45 ms for 15 MB, 280 ms for 80 MB (M5 Max, 2026-11-17), past the 400 ms
@@ -200,7 +200,7 @@ struct DocHostInner {
     uploads: OnceLock<crate::uploads::Uploads>,
     /// Connectivity watch (`WatchConnectivity`): lazily-started monitor
     /// publishes the edge posture on change (see `watch_connectivity`).
-    connectivity: OnceLock<watch::Sender<vardoger_proto::Connectivity>>,
+    connectivity: OnceLock<watch::Sender<commutator_proto::Connectivity>>,
     /// Told as the workspace is wired (`set_workspace`): a connectivity
     /// monitor started before then learns whether there is an edge to watch.
     workspace_wired: tokio::sync::Notify,
@@ -209,7 +209,7 @@ struct DocHostInner {
     /// moving: added when a file's push starts, removed on commit or failure
     /// (a retry re-adds), so consumers can render a real percent while the
     /// relay leg runs and fall back to indeterminate otherwise.
-    transfers: watch::Sender<Vec<vardoger_proto::TransferProgress>>,
+    transfers: watch::Sender<Vec<commutator_proto::TransferProgress>>,
     /// Command ids currently BETWEEN mark-processed and their resolution in a
     /// drain. Distinguishes "executing right now" from "consumed by the
     /// ledger but dead" (a crash between mark and resolve): the drain
@@ -218,7 +218,7 @@ struct DocHostInner {
     executing: Mutex<HashSet<String>>,
     /// Peer links (engine assembly, edge runtimes only) — the transport that
     /// pushes queued attachment bytes to a remote host.
-    links: OnceLock<Arc<vardoger_rpc::LinkCache>>,
+    links: OnceLock<Arc<commutator_rpc::LinkCache>>,
     /// Chats with a worker draining their held sends (doc_host_attachments.rs).
     held_active: Mutex<HashSet<String>>,
     /// Releasing a held send and removing one exclude each other: a removed
@@ -227,7 +227,7 @@ struct DocHostInner {
     /// Cuts a held send's backoff short on the user's retry.
     held_kick: tokio::sync::Notify,
     /// The outbox as the local interface shows it.
-    held_status: watch::Sender<Vec<vardoger_proto::HeldSendStatus>>,
+    held_status: watch::Sender<Vec<commutator_proto::HeldSendStatus>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -405,7 +405,7 @@ pub enum FinishQueueEditOutcome {
 pub struct TranscriptSnapshot {
     /// Shared with the doc's entry cache: a commit copies none of them.
     pub entries: Arc<Vec<Arc<SessionMessageEntry>>>,
-    pub replay_baseline: Arc<vardoger_doc::TranscriptBaseline>,
+    pub replay_baseline: Arc<commutator_doc::TranscriptBaseline>,
 }
 
 /// One open chat doc: the `SessionDoc`, its change plumbing, and the room client.
@@ -454,7 +454,7 @@ pub struct ChatDocHandle {
     /// Sends held for a turn-boundary agent's turn end (rather than queued
     /// by the user), with the run configuration each was sent with: the row
     /// carries only its text and images.
-    held_sends: Mutex<HashMap<String, vardoger_proto::RunRequest>>,
+    held_sends: Mutex<HashMap<String, commutator_proto::RunRequest>>,
     /// The latest Stop command that has acted. A prompt sent before it that
     /// only executes now (a loaded host, a slow agent) was cancelled by it:
     /// running it would start the stopped work again in a fresh runtime.
@@ -489,7 +489,7 @@ pub struct ChatDocHandle {
     retired: AtomicBool,
     /// chat2 relay client (docs/chat2-sync.md C3) — populated once the
     /// registry names roomGen 2 for this chat and the join resolves.
-    chat2: Mutex<Option<vardoger_sync::ChatClient>>,
+    chat2: Mutex<Option<commutator_sync::ChatClient>>,
     sync_started: AtomicBool,
     sync_requested: AtomicBool,
     sync_background: AtomicBool,
@@ -855,7 +855,7 @@ impl ChatDocHandle {
     /// chips in completed parent turns), then stamp abandoned `streaming`
     /// entries `aborted`, appending
     /// `note` as a visible error part so the transcript says WHY the turn
-    /// ended (vardoger folded "Run interrupted by backend restart" the same
+    /// ended (commutator folded "Run interrupted by backend restart" the same
     /// way). Returns the stamped entries' `(id, created_at)` — recovery uses
     /// them for the resume-freshness check.
     pub fn mark_abandoned_streams(&self, note: &str) -> Result<Vec<(String, i64)>, DocError> {
@@ -931,7 +931,7 @@ impl ChatDocHandle {
             Ok(entries) => {
                 let replay_baseline =
                     lock(&self.transcript_history).snapshot(self.doc.doc(), &entries);
-                let joined = vardoger_doc::join_continuation_shared(entries);
+                let joined = commutator_doc::join_continuation_shared(entries);
                 // send_replace: update the watch even with no subscribers yet, so a
                 // late subscriber's first borrow sees the current transcript.
                 self.messages_tx.send_replace(TranscriptSnapshot {
@@ -1142,7 +1142,7 @@ impl DocHost {
     /// see — so watch session status instead and re-drain every warm chat.
     /// `drain_queue` is a cheap no-op for empty queues and busy agents, which
     /// is why this can afford to be indiscriminate.
-    fn spawn_queue_flush_watcher(&self, mut statuses: watch::Receiver<Vec<vardoger_proto::Session>>) {
+    fn spawn_queue_flush_watcher(&self, mut statuses: watch::Receiver<Vec<commutator_proto::Session>>) {
         let host = self.clone();
         self.spawn_worker(async move {
             while statuses.changed().await.is_ok() {
@@ -1203,7 +1203,7 @@ impl DocHost {
     }
 
     /// Wire the repos engine (engine assembly) — worktree materialization for
-    /// Run commands carrying a [`vardoger_proto::WorktreeSpec`].
+    /// Run commands carrying a [`commutator_proto::WorktreeSpec`].
     pub fn set_repos(&self, repos: crate::repos::Repos) {
         let _ = self.inner.repos.set(repos);
     }
@@ -1232,7 +1232,7 @@ impl DocHost {
 
     /// Wire the peer-link cache (engine assembly, edge runtimes only) — the
     /// transport for queued attachment transfers to a remote host.
-    pub fn set_links(&self, links: Arc<vardoger_rpc::LinkCache>) {
+    pub fn set_links(&self, links: Arc<commutator_rpc::LinkCache>) {
         let _ = self.inner.links.set(links);
     }
 
@@ -1279,7 +1279,7 @@ impl DocHost {
     /// the chat2 adopt path. A handle with a LIVE local writer (a running
     /// turn's doc ref) is left alone — the host never flips mid-run, and a
     /// racing writer must never lose its doc out from under it.
-    fn spawn_cutover_watcher(&self, mut chats: watch::Receiver<Vec<vardoger_proto::Chat>>) {
+    fn spawn_cutover_watcher(&self, mut chats: watch::Receiver<Vec<commutator_proto::Chat>>) {
         let host = self.clone();
         self.spawn_worker(async move {
             loop {
@@ -1725,7 +1725,7 @@ impl DocHost {
             // Let boot settle (registry load, room joins) before sweeping.
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             let Some(ws) = host.workspace() else { return };
-            let chats: Vec<vardoger_proto::Chat> = ws.watch_chats().borrow().clone();
+            let chats: Vec<commutator_proto::Chat> = ws.watch_chats().borrow().clone();
             for chat in chats {
                 if chat.device_id != host.inner.config.device_id {
                     continue; // only the host owns its chats' history
@@ -1838,7 +1838,7 @@ impl DocHost {
         let raw = loro::LoroDoc::new();
         raw.import(&bytes).map_err(|e| e.to_string())?;
         let fat = SessionDoc::from_doc(raw);
-        let rebuilt = vardoger_doc::rebuild::rebuild_thin_doc(&fat).map_err(|e| e.to_string())?;
+        let rebuilt = commutator_doc::rebuild::rebuild_thin_doc(&fat).map_err(|e| e.to_string())?;
         let entries = rebuilt.doc.read_entries().map_err(|e| e.to_string())?;
         if entries.is_empty() {
             return Ok(());
@@ -1921,7 +1921,7 @@ impl DocHost {
                         .sum::<usize>(),
                 )
             };
-            if count <= WARM_DOC_CAP && estimate <= vardoger_doc::DOC_LRU_BYTE_BUDGET {
+            if count <= WARM_DOC_CAP && estimate <= commutator_doc::DOC_LRU_BYTE_BUDGET {
                 return false;
             }
             let evicted = {
@@ -1943,7 +1943,7 @@ impl DocHost {
         let handles = lock(&self.inner.handles);
         handles.len() > WARM_DOC_CAP
             || handles.values().map(|h| h.resident_estimate()).sum::<usize>()
-                > vardoger_doc::DOC_LRU_BYTE_BUDGET
+                > commutator_doc::DOC_LRU_BYTE_BUDGET
     }
 
     fn pinned(&self, handle: &Arc<ChatDocHandle>) -> bool {
@@ -1993,7 +1993,7 @@ impl DocHost {
 
     /// The in-flight queued-attachment transfer set: current entries first,
     /// then a fresh snapshot per landed chunk (see `push_attachments`).
-    pub fn watch_transfers(&self) -> watch::Receiver<Vec<vardoger_proto::TransferProgress>> {
+    pub fn watch_transfers(&self) -> watch::Receiver<Vec<commutator_proto::TransferProgress>> {
         self.inner.transfers.subscribe()
     }
 
@@ -2005,7 +2005,7 @@ impl DocHost {
                     t.done = done;
                     t.total = total;
                 }
-                None => list.push(vardoger_proto::TransferProgress {
+                None => list.push(commutator_proto::TransferProgress {
                     upload_id: upload_id.to_string(),
                     file_name: file_name.to_string(),
                     done,
@@ -2025,15 +2025,15 @@ impl DocHost {
 
     /// The connectivity stream: chats live on this device, so it is the
     /// local posture for good.
-    pub fn watch_connectivity(&self) -> watch::Receiver<vardoger_proto::Connectivity> {
+    pub fn watch_connectivity(&self) -> watch::Receiver<commutator_proto::Connectivity> {
         self.inner
             .connectivity
-            .get_or_init(|| watch::channel(vardoger_proto::Connectivity::default()).0)
+            .get_or_init(|| watch::channel(commutator_proto::Connectivity::default()).0)
             .subscribe()
     }
 
-    pub fn chat_sync_state(&self, chat_id: &str) -> vardoger_proto::ChatSyncState {
-        use vardoger_proto::ChatSyncState as S;
+    pub fn chat_sync_state(&self, chat_id: &str) -> commutator_proto::ChatSyncState {
+        use commutator_proto::ChatSyncState as S;
         let handle = lock(&self.inner.handles).get(chat_id).cloned();
         let Some(handle) = handle else {
             return S::Local;
@@ -2082,7 +2082,7 @@ impl DocHost {
         #[cfg(not(unix))]
         let fd_limit: Option<u64> = None;
         serde_json::json!({
-            "budget": vardoger_sync::budget::shared().stats(),
+            "budget": commutator_sync::budget::shared().stats(),
             "activeClientLimit": ACTIVE_SYNC_CAP,
             "openDocuments": handles.len(), "waitingDocuments": waiting,
             "documentLoads": self.inner.document_loads.load(Ordering::Relaxed),
@@ -2092,12 +2092,12 @@ impl DocHost {
         })
     }
 
-    /// Per-open-chat room introspection for SyncStatus / `vardoger sync`.
+    /// Per-open-chat room introspection for SyncStatus / `commutator sync`.
     /// `None` room = still dialing (join retry loop) or edge-less.
-    pub fn sync_statuses(&self) -> Vec<(String, Option<vardoger_sync::ChatStatsSnapshot>)> {
+    pub fn sync_statuses(&self) -> Vec<(String, Option<commutator_sync::ChatStatsSnapshot>)> {
         let handles: Vec<Arc<ChatDocHandle>> =
             lock(&self.inner.handles).values().cloned().collect();
-        let mut rows: Vec<(String, Option<vardoger_sync::ChatStatsSnapshot>)> = handles
+        let mut rows: Vec<(String, Option<commutator_sync::ChatStatsSnapshot>)> = handles
             .iter()
             .map(|h| {
                 (
@@ -2172,7 +2172,7 @@ impl DocHost {
             issued_by: self.inner.config.device_id.clone(),
             issued_at: now,
             based_on,
-            expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
+            expires_at: Some(now + commutator_doc::COMMAND_DEFAULT_TTL_MS),
             status: SessionCommandStatus::Pending,
             resolution: None,
         };
@@ -2267,7 +2267,7 @@ impl DocHost {
         attachments: Vec<String>,
         hold_for_turn_end: bool,
         transfers: Vec<crate::uploads::AttachmentTransfer>,
-        config: Option<vardoger_proto::ChatConfig>,
+        config: Option<commutator_proto::ChatConfig>,
     ) -> Result<String, EngineError> {
         let handle = self.open(chat_id)?;
         let id = new_id();
@@ -3166,7 +3166,7 @@ impl DocHost {
     /// 2. give the normal path (chat2 rows → edge → host's room) a short
     ///    grace to ack;
     /// 3. rows still not at the edge but the peer link alive → relay-forward
-    ///    the entry itself ([`vardoger_rpc::methods::RELAY_COMMAND`]). The
+    ///    the entry itself ([`commutator_rpc::methods::RELAY_COMMAND`]). The
     ///    host's processed ledger claims the client-minted id, so the doc
     ///    row arriving later dedupes to a no-op — exactly-once by
     ///    construction (the 2026-08-18 03:45 incident shape: nudges flowed,
@@ -3191,8 +3191,8 @@ impl DocHost {
             if !transfers.is_empty() && !host.deliver_attachments(&chat, &transfers).await {
                 return; // gave up; the drain's wait cap surfaces the failure
             }
-            let mut wake = vardoger_sync::wake::subscribe();
-            let mut online = vardoger_sync::wake::subscribe_online();
+            let mut wake = commutator_sync::wake::subscribe();
+            let mut online = commutator_sync::wake::subscribe_online();
             let give_up = tokio::time::Instant::now() + RELAY_GIVE_UP;
             let grace_end = tokio::time::Instant::now() + ROWS_GRACE;
             while tokio::time::Instant::now() < grace_end {
@@ -3243,8 +3243,8 @@ impl DocHost {
         chat: &str,
         transfers: &[crate::uploads::AttachmentTransfer],
     ) -> bool {
-        let mut wake = vardoger_sync::wake::subscribe();
-        let mut online = vardoger_sync::wake::subscribe_online();
+        let mut wake = commutator_sync::wake::subscribe();
+        let mut online = commutator_sync::wake::subscribe_online();
         let mut backoff = TRANSFER_BACKOFF_BASE;
         let deadline = tokio::time::Instant::now() + ATTACHMENT_WAIT_MAX;
         loop {
@@ -3314,7 +3314,7 @@ impl DocHost {
             .into_iter()
             .flatten()
             .find(|d| d.id == target)
-            .and_then(|d| d.version.as_deref().and_then(vardoger_proto::version_triple))
+            .and_then(|d| d.version.as_deref().and_then(commutator_proto::version_triple))
             .is_some_and(|v| v >= RELAY_MIN_VERSION);
         if !supported {
             return Err("host does not support relay delivery (version gate)".into());
@@ -3329,13 +3329,13 @@ impl DocHost {
             .await
             .map_err(|e| format!("peer link: {e}"))?;
         let params = serde_json::json!({ "chatId": chat_id, "entry": entry });
-        let call = client.call(vardoger_rpc::methods::RELAY_COMMAND, params);
+        let call = client.call(commutator_rpc::methods::RELAY_COMMAND, params);
         match tokio::time::timeout(RELAY_CALL_TIMEOUT, call).await {
             Err(_) => {
                 links.invalidate(target);
                 Err("relay call timed out; peer link suspect".into())
             }
-            Ok(Err(vardoger_rpc::RpcError::Failed(err))) => Err(format!("host refused: {err}")),
+            Ok(Err(commutator_rpc::RpcError::Failed(err))) => Err(format!("host refused: {err}")),
             Ok(Err(err)) => {
                 links.invalidate(target);
                 Err(format!("relay call failed: {err}"))
@@ -3512,7 +3512,7 @@ impl DocHost {
                     turn_id: Some(m.id.clone()),
                     frontier: None,
                 }),
-                expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
+                expires_at: Some(now + commutator_doc::COMMAND_DEFAULT_TTL_MS),
                 status: SessionCommandStatus::Pending,
                 resolution: None,
             };
@@ -3535,7 +3535,7 @@ impl DocHost {
         Ok(())
     }
 
-    /// Host side of [`vardoger_rpc::methods::RELAY_COMMAND`]: evaluate the
+    /// Host side of [`commutator_rpc::methods::RELAY_COMMAND`]: evaluate the
     /// forwarded entry against OUR doc (dedupe/TTL/supersede rules apply
     /// unchanged), claim its client-minted id in the processed ledger, then
     /// execute. The claim is what makes the doc row arriving later — over
@@ -3656,13 +3656,13 @@ impl DocHost {
                 let params = serde_json::json!({
                     "uploadId": transfer.upload_id, "seq": seq, "data": &b64[start..end],
                 });
-                let call = client.call(vardoger_rpc::methods::UPLOAD_CHUNK, params);
+                let call = client.call(commutator_rpc::methods::UPLOAD_CHUNK, params);
                 match tokio::time::timeout(TRANSFER_CHUNK_TIMEOUT, call).await {
                     Err(_) => {
                         links.invalidate(target);
                         return Err(Transient("chunk push timed out; peer link suspect".into()));
                     }
-                    Ok(Err(vardoger_rpc::RpcError::Failed(err))) => {
+                    Ok(Err(commutator_rpc::RpcError::Failed(err))) => {
                         return Err(Permanent(format!("host refused chunk: {err}")));
                     }
                     Ok(Err(err)) => {
@@ -3684,13 +3684,13 @@ impl DocHost {
             let params = serde_json::json!({
                 "uploadId": transfer.upload_id, "fileName": transfer.file_name,
             });
-            let call = client.call(vardoger_rpc::methods::UPLOAD_COMMIT, params);
+            let call = client.call(commutator_rpc::methods::UPLOAD_COMMIT, params);
             match tokio::time::timeout(TRANSFER_COMMIT_TIMEOUT, call).await {
                 Err(_) => {
                     links.invalidate(target);
                     return Err(Transient("commit timed out; peer link suspect".into()));
                 }
-                Ok(Err(vardoger_rpc::RpcError::Failed(err))) => {
+                Ok(Err(commutator_rpc::RpcError::Failed(err))) => {
                     return Err(Permanent(format!("host refused commit: {err}")));
                 }
                 Ok(Err(err)) => {
@@ -3749,7 +3749,7 @@ impl DocHost {
     pub(crate) fn harness_for_request(
         &self,
         chat_id: &str,
-        request: &vardoger_proto::RunRequest,
+        request: &commutator_proto::RunRequest,
     ) -> HarnessId {
         request.harness.unwrap_or_else(|| self.harness_for(chat_id))
     }
@@ -4024,7 +4024,7 @@ impl DocHost {
     /// paths — in the attachments list AND the prompt text — so the harness
     /// (and the persisted user entry) see ordinary local files, exactly like
     /// the legacy pre-upload flow produced.
-    fn resolve_request_attachments(&self, request: &mut vardoger_proto::RunRequest) {
+    fn resolve_request_attachments(&self, request: &mut commutator_proto::RunRequest) {
         self.resolve_attachment_refs(&mut request.prompt, &mut request.attachments);
     }
 
@@ -4207,17 +4207,17 @@ impl DocHost {
                     ws.claim_chat(chat_id, Some(&request.cwd))?;
                     // Older clients send `~` for a projectless run; a chat
                     // created with a scratch folder runs there instead.
-                    if vardoger_proto::projectless::is_home_cwd(&request.cwd)
+                    if commutator_proto::projectless::is_home_cwd(&request.cwd)
                         && let Ok(Some(chat)) = ws.chat(chat_id)
                         && let Some(cwd) = chat.cwd.filter(|cwd| {
-                            chat.space_id.is_none() && vardoger_proto::projectless::is_scratch_cwd(cwd)
+                            chat.space_id.is_none() && commutator_proto::projectless::is_scratch_cwd(cwd)
                         })
                     {
                         request.cwd = cwd;
                     }
                     // A pre-existing row (the client's createChat raced ahead)
                     // still carries the repo folder — repoint it at the fresh
-                    // worktree, and stamp the actual `vardoger/<name>` branch so
+                    // worktree, and stamp the actual `commutator/<name>` branch so
                     // the footer and the title-rename flow see it.
                     if let Some(wt) = &fresh_worktree {
                         if let Err(err) = ws.set_chat_cwd(chat_id, &wt.path) {
@@ -4247,7 +4247,7 @@ impl DocHost {
                 if let Some(ws) = self.workspace()
                     && ws.chat_config(chat_id).is_none()
                 {
-                    let config = vardoger_proto::ChatConfig {
+                    let config = commutator_proto::ChatConfig {
                         harness,
                         model: request.model.clone(),
                         reasoning: request.reasoning,
@@ -4475,7 +4475,7 @@ impl DocHost {
         prompt: &str,
         issued_at: i64,
         steer: bool,
-        request: Option<&vardoger_proto::RunRequest>,
+        request: Option<&commutator_proto::RunRequest>,
     ) -> Result<(), EngineError> {
         let item = QueuedMessage {
             id: message_id.to_string(),
@@ -4510,7 +4510,7 @@ impl DocHost {
     /// Put a typed prompt in front of a live agent: steer it in, or — with no
     /// live steerable run — deliver the durable command as the next turn.
     /// After an engine restart `last_request` is empty too, so rebuild the run
-    /// config from the chat's workspace row (vardoger derived dispatch config from
+    /// config from the chat's workspace row (commutator derived dispatch config from
     /// the chat row the same way — sessions.ts:601-620); dispatch's engine-owned
     /// resume then reattaches the prior harness conversation.
     ///
@@ -4640,7 +4640,7 @@ impl DocHost {
         sessions: &SessionsEngine,
         chat_id: &str,
         harness: HarnessId,
-        request: vardoger_proto::RunRequest,
+        request: commutator_proto::RunRequest,
         message_id: Option<String>,
     ) -> Result<String, EngineError> {
         // Stamped on a task of its own: the drain resolves the command as
@@ -4667,8 +4667,8 @@ impl DocHost {
     async fn materialize_worktree(
         &self,
         chat_id: &str,
-        spec: &vardoger_proto::WorktreeSpec,
-    ) -> Result<(String, Option<vardoger_proto::Worktree>), EngineError> {
+        spec: &commutator_proto::WorktreeSpec,
+    ) -> Result<(String, Option<commutator_proto::Worktree>), EngineError> {
         if let Some(ws) = self.workspace()
             && let Ok(Some(chat)) = ws.chat(chat_id)
             && let Some(cwd) = chat.cwd
@@ -4700,8 +4700,8 @@ impl DocHost {
         &self,
         command_id: &str,
         chat_id: &str,
-        spec: &vardoger_proto::WorktreeSpec,
-        fresh_worktree: Option<&vardoger_proto::Worktree>,
+        spec: &commutator_proto::WorktreeSpec,
+        fresh_worktree: Option<&commutator_proto::Worktree>,
     ) {
         let Some((project_actions, terminals)) = self.inner.project_action_runtime.get() else {
             return;
@@ -4735,8 +4735,8 @@ impl DocHost {
         project_actions: &ProjectActionsStore,
         terminals: &Terminals,
         space_id: &str,
-        spec: &vardoger_proto::WorktreeSpec,
-        worktree: &vardoger_proto::Worktree,
+        spec: &commutator_proto::WorktreeSpec,
+        worktree: &commutator_proto::Worktree,
     ) -> Result<ProjectActionSetupHandoff, EngineError> {
         let workspace = self
             .workspace()
@@ -4786,7 +4786,7 @@ impl DocHost {
         &self,
         chat_id: &str,
         prompt: &str,
-    ) -> Option<vardoger_proto::RunRequest> {
+    ) -> Option<commutator_proto::RunRequest> {
         let workspace = self.workspace()?;
         let chat = match workspace.chat(chat_id) {
             Ok(chat) => chat?,
@@ -4796,7 +4796,7 @@ impl DocHost {
             }
         };
         let config = chat.config;
-        Some(vardoger_proto::RunRequest {
+        Some(commutator_proto::RunRequest {
             mcp: None,
             prompt: prompt.to_string(),
             harness: config.as_ref().map(|c| c.harness),
@@ -4810,7 +4810,7 @@ impl DocHost {
             sandbox: config
                 .as_ref()
                 .map(|c| c.sandbox)
-                .unwrap_or(vardoger_proto::SandboxLevel::WorkspaceWrite),
+                .unwrap_or(commutator_proto::SandboxLevel::WorkspaceWrite),
             auto_approve: false,
             access: config.as_ref().map(|c| c.access).unwrap_or_default(),
             plan: config.as_ref().is_some_and(|c| c.plan),
@@ -4950,12 +4950,12 @@ mod transfer_progress_tests {
 
     fn host() -> (tempfile::TempDir, DocHost) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Arc::new(vardoger_sync::DocsStore::open(dir.path()).expect("store opens"));
+        let store = Arc::new(commutator_sync::DocsStore::open(dir.path()).expect("store opens"));
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "dev-test".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             },
         );
         (dir, host)
@@ -4968,13 +4968,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn a_commit_in_a_watched_whale_costs_what_it_changed() {
         let (_dir, host) = host();
-        let source = vardoger_doc::SessionDoc::init("watched-whale").unwrap();
+        let source = commutator_doc::SessionDoc::init("watched-whale").unwrap();
         for i in 0..3000 {
             source
-                .push_message(&vardoger_doc::SessionMessageEntry {
+                .push_message(&commutator_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: vardoger_doc::MessageRole::User,
-                    parts: vec![vardoger_doc::MessagePart::Text {
+                    role: commutator_doc::MessageRole::User,
+                    parts: vec![commutator_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -4997,12 +4997,12 @@ mod transfer_progress_tests {
         let attach = start.elapsed();
         assert_eq!(rx.borrow().entries.len(), 3000);
 
-        let mut writer = vardoger_doc::SegmentWriter::begin(handle.doc(), "reply", "dev-test", 1).unwrap();
+        let mut writer = commutator_doc::SegmentWriter::begin(handle.doc(), "reply", "dev-test", 1).unwrap();
         let mut commits = std::time::Duration::ZERO;
         for n in 1..=5 {
             let words = "streamed ".repeat(n);
             writer
-                .sync(&[vardoger_doc::MessagePart::Text { id: "t".into(), text: words.clone() }])
+                .sync(&[commutator_doc::MessagePart::Text { id: "t".into(), text: words.clone() }])
                 .unwrap();
             let start = std::time::Instant::now();
             handle.publish_messages_if_watched();
@@ -5011,7 +5011,7 @@ mod transfer_progress_tests {
             assert_eq!(published.len(), 3001);
             assert_eq!(
                 published.last().unwrap().parts,
-                vec![vardoger_doc::MessagePart::Text { id: "t".into(), text: words }],
+                vec![commutator_doc::MessagePart::Text { id: "t".into(), text: words }],
             );
         }
         let commit = commits / 5;
@@ -5030,13 +5030,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn waiting_messages_in_a_whale_cost_what_waits() {
         let (_dir, host) = host();
-        let source = vardoger_doc::SessionDoc::init("waiting-whale").unwrap();
+        let source = commutator_doc::SessionDoc::init("waiting-whale").unwrap();
         for i in 0..3000 {
             source
-                .push_message(&vardoger_doc::SessionMessageEntry {
+                .push_message(&commutator_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: vardoger_doc::MessageRole::User,
-                    parts: vec![vardoger_doc::MessagePart::Text {
+                    role: commutator_doc::MessageRole::User,
+                    parts: vec![commutator_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -5071,13 +5071,13 @@ mod transfer_progress_tests {
     #[tokio::test]
     async fn whale_snapshot_opens_and_reopens_without_network() {
         let (_dir, host) = host();
-        let source = vardoger_doc::SessionDoc::init("persisted-whale").unwrap();
+        let source = commutator_doc::SessionDoc::init("persisted-whale").unwrap();
         for i in 0..2000 {
             source
-                .push_message(&vardoger_doc::SessionMessageEntry {
+                .push_message(&commutator_doc::SessionMessageEntry {
                     id: format!("row-{i}"),
-                    role: vardoger_doc::MessageRole::User,
-                    parts: vec![vardoger_doc::MessagePart::Text {
+                    role: commutator_doc::MessageRole::User,
+                    parts: vec![commutator_doc::MessagePart::Text {
                         id: "text".into(),
                         text: "x".repeat(2048),
                     }],
@@ -5222,19 +5222,19 @@ mod source_context_tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         git(&repo, &["init", "-b", "feature/captured"]);
-        git(&repo, &["config", "user.name", "Vardoger Test"]);
-        git(&repo, &["config", "user.email", "vardoger@example.com"]);
+        git(&repo, &["config", "user.name", "Commutator Test"]);
+        git(&repo, &["config", "user.email", "commutator@example.com"]);
         std::fs::write(repo.join("README.md"), "capture\n").unwrap();
         git(&repo, &["add", "README.md"]);
         git(&repo, &["commit", "-m", "capture"]);
 
         let store =
-            Arc::new(vardoger_sync::DocsStore::open(dir.path().join("docs")).expect("store opens"));
+            Arc::new(commutator_sync::DocsStore::open(dir.path().join("docs")).expect("store opens"));
         let host = DocHost::new(
             store,
             DocHostConfig {
                 device_id: "device-a".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             },
         );
         host.set_repos(crate::repos::Repos::new(

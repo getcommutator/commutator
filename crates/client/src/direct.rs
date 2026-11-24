@@ -1,6 +1,6 @@
 //! Direct connections from this device to the account's machines
 //! ([`Credentials::Remote`] only): the same WebRTC peers every engine runs
-//! (`vardoger-preview`), with this device a pure viewer, paired through the
+//! (`commutator-preview`), with this device a pure viewer, paired through the
 //! server's signaling (`GET /preview/ws`). Terminals ride them when they can
 //! ([`crate::terminal`]); previews open only over them ([`Client::open_preview`]).
 //! A Local client needs none: its engine pairs for it.
@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
-use vardoger_preview::viewer::{Forward, ViewerPeers};
-use vardoger_proto::PreviewService;
+use commutator_preview::viewer::{Forward, ViewerPeers};
+use commutator_proto::PreviewService;
 
 use crate::client::{Client, ClientInner};
 use crate::config::Credentials;
@@ -19,7 +19,7 @@ use crate::lock;
 struct Token(String);
 
 #[async_trait::async_trait]
-impl vardoger_preview::signaling::TokenSource for Token {
+impl commutator_preview::signaling::TokenSource for Token {
     async fn token(&self) -> anyhow::Result<String> {
         Ok(self.0.clone())
     }
@@ -45,7 +45,7 @@ pub(crate) async fn peers(inner: &Arc<ClientInner>) -> Result<Option<ViewerPeers
         device_id,
         inner.config.device_name.clone(),
         inner.config.data_dir.join("direct-peers.json"),
-        vardoger_preview::signaling::Config {
+        commutator_preview::signaling::Config {
             server_url,
             tokens: Arc::new(Token(token.clone())),
         },

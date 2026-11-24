@@ -1,15 +1,15 @@
 //! Isolated MCP stdio instance for manual discovery/create/converse smoke tests.
-//! Run with `cargo run -p vardoger-engine --example mcp_standalone_smoke`.
+//! Run with `cargo run -p commutator-engine --example mcp_standalone_smoke`.
 //! Uses a temporary profile and scripted harness, never the user's workspace.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls, mock::MockHarness};
-use vardoger_mcp::{Origin, Tools, Vardoger};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls, mock::MockHarness};
+use commutator_mcp::{Origin, Tools, Commutator};
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SteeringMode,
 };
 
@@ -30,15 +30,15 @@ async fn main() -> anyhow::Result<()> {
     core.workspace
         .create_chat("smoke-origin", Some("smoke-project"), None, None, None)?;
     core.workspace.rename_chat("smoke-origin", "Coordinator")?;
-    let tools = Tools::new(Arc::new(Vardoger::with_client(
-        vardoger_rpc::memory_client(core.rpc_service()),
+    let tools = Tools::new(Arc::new(Commutator::with_client(
+        commutator_rpc::memory_client(core.rpc_service()),
         Origin {
             chat_id: Some("smoke-origin".into()),
             device_id: Some("smoke-device".into()),
             ..Default::default()
         },
     )));
-    vardoger_mcp::serve_stdio(Arc::new(tools)).await?;
+    commutator_mcp::serve_stdio(Arc::new(tools)).await?;
     core.shutdown().await;
     Ok(())
 }

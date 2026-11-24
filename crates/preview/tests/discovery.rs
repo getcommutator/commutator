@@ -1,12 +1,12 @@
-//! Real OS process/listener association: only servers a Vardoger agent or
+//! Real OS process/listener association: only servers a Commutator agent or
 //! terminal started (carrying its origin marker), each under the right checkout.
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
-use vardoger_preview::{PreviewService, Scope};
-use vardoger_proto::{ORIGIN_ENV, chat_origin, terminal_origin};
+use commutator_preview::{PreviewService, Scope};
+use commutator_proto::{ORIGIN_ENV, chat_origin, terminal_origin};
 /// Every service binds the proxy port (7331, else one the system picks), so
 /// tests in this binary must not run concurrently: one test holding 7331 to
 /// see its proxy move elsewhere would otherwise race another test's service.
@@ -136,7 +136,7 @@ async fn only_agent_started_http_processes_are_exposed_and_removals_are_live() {
     tokio::time::sleep(Duration::from_secs(5)).await;
     wait(&service, Some(local.0.id())).await;
     let found = &service.catalog().snapshot().services[0];
-    assert!(found.vardoger_owned);
+    assert!(found.commutator_owned);
     assert_eq!(found.chat_id.as_deref(), Some(chat_a.as_str()));
     assert_eq!(std::path::Path::new(&found.cwd), a.canonicalize().unwrap());
     assert!(found.started_at > 0);

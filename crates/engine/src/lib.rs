@@ -1,4 +1,4 @@
-//! vardoger-engine — the headless backend: sessions engine, doc host + command executor,
+//! commutator-engine — the headless backend: sessions engine, doc host + command executor,
 //! run journal + crash recovery, and the IPC RPC server.
 //!
 //! Spec: ARCHITECTURE.md §5 and docs/research/feature-inventory.md §3. M2 surface:
@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-pub use vardoger_proto::{EngineInfo, HarnessId, WorkspaceScope};
-use vardoger_rpc::{RpcError, RpcReply, RpcService, methods};
+pub use commutator_proto::{EngineInfo, HarnessId, WorkspaceScope};
+use commutator_rpc::{RpcError, RpcReply, RpcService, methods};
 
-use vardoger_sync::DocsStore;
+use commutator_sync::DocsStore;
 
 pub mod account;
 pub mod acp_registry;
@@ -23,7 +23,7 @@ pub mod agent_accounts;
 /// built (the file's modification time, in seconds), as
 /// `"<commit>.<seconds>"`. Read once, as the engine starts: a binary replaced
 /// on disk while it runs leaves its id as it was, so a client can compare it
-/// with `vardoger-engine --build-id` of the binary there now.
+/// with `commutator-engine --build-id` of the binary there now.
 pub fn build_id() -> &'static str {
     static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     ID.get_or_init(|| {
@@ -33,7 +33,7 @@ pub fn build_id() -> &'static str {
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs());
-        format!("{}.{built}", env!("VARDOGER_GIT_COMMIT"))
+        format!("{}.{built}", env!("COMMUTATOR_GIT_COMMIT"))
     })
 }
 pub mod auth;
@@ -111,22 +111,22 @@ pub use workspace_host::{
     DEFAULT_ORG_ID, DEFAULT_USER_ID, WORKSPACE_DOC_ID, WorkspaceHost, WorkspaceHostConfig,
 };
 pub use workspace_search::WorkspaceSearch;
-pub use vardoger_preview::Scope as PreviewScope;
+pub use commutator_preview::Scope as PreviewScope;
 
 pub(crate) const LEGACY_UNKNOWN_DEVICE_NAME: &str = "unknown-device";
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error(transparent)]
-    Token(#[from] vardoger_rpc::TokenError),
+    Token(#[from] commutator_rpc::TokenError),
     #[error("doc: {0}")]
-    Doc(#[from] vardoger_doc::DocError),
+    Doc(#[from] commutator_doc::DocError),
     #[error("journal: {0}")]
     Journal(#[from] run_journal::JournalError),
     #[error("store: {0}")]
-    Store(#[from] vardoger_sync::StoreError),
+    Store(#[from] commutator_sync::StoreError),
     #[error("harness: {0}")]
-    Harness(#[from] vardoger_harness::HarnessError),
+    Harness(#[from] commutator_harness::HarnessError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -144,7 +144,7 @@ pub(crate) fn new_id() -> String {
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
-    /// Data directory (default `~/.vardoger`, dev `~/.vardoger-dev`).
+    /// Data directory (default `~/.commutator`, dev `~/.commutator-dev`).
     pub data_dir: PathBuf,
     /// Edge base URL.
     pub edge_url: String,
@@ -169,7 +169,7 @@ pub struct EngineCore {
     /// I/O routing for terminals on other devices (direct link or relay).
     pub remote_terminals: remote_terminals::RemoteTerminals,
     pub project_actions: ProjectActionsStore,
-    pub previews: vardoger_preview::PreviewService,
+    pub previews: commutator_preview::PreviewService,
     pub change_requests: CheckoutChangeRequests,
     pub diff_sync: CheckoutDiffSync,
     /// Per-turn git checkpoints and rollback ([`checkpoints`]).
@@ -186,29 +186,29 @@ pub struct EngineCore {
     /// Auth service (attached by [`Engine::run`]; a lazy dev-mode instance otherwise).
     auth: std::sync::Mutex<Option<Auth>>,
     /// Peer link cache for `targetDeviceId` routing (attached when edge+auth are ready).
-    links: std::sync::Mutex<Option<Arc<vardoger_rpc::LinkCache>>>,
+    links: std::sync::Mutex<Option<Arc<commutator_rpc::LinkCache>>>,
     /// Release checker (attached by [`Engine::assemble_runtime`]) — the
     /// UpdateStatus stream + ApplyUpdate.
-    updater: std::sync::Mutex<Option<vardoger_update::Updater>>,
+    updater: std::sync::Mutex<Option<commutator_update::Updater>>,
     /// Exclusive data-dir lock — held for the engine's lifetime (single-instance).
     /// This process's agents, recorded in the data dir so that whatever
     /// a killed engine leaves running is ended by the next one.
-    _agent_ledger: vardoger_harness::process::registry::Attachment,
+    _agent_ledger: commutator_harness::process::registry::Attachment,
     _instance_lock: InstanceLock,
 }
 
 impl EngineCore {
     /// Open stores under `data_dir`, wire sessions ⇄ doc host ⇄ workspace host, and
     /// recover stale journals from a previous crash. Identity comes from
-    /// `$VARDOGER_ORG_ID` / `$VARDOGER_USER_ID` (dev defaults `dev-org` / `dev-user`);
+    /// `$COMMUTATOR_ORG_ID` / `$COMMUTATOR_USER_ID` (dev defaults `dev-org` / `dev-user`);
     /// use [`Self::assemble_with_profile`] to pass a profile explicitly.
     pub fn assemble(
         data_dir: &Path,
         registry: Arc<HarnessRegistry>,
         default_harness: HarnessId,
     ) -> Result<Self, EngineError> {
-        let org_id = env_or("VARDOGER_ORG_ID", DEFAULT_ORG_ID);
-        let user_id = env_or("VARDOGER_USER_ID", DEFAULT_USER_ID);
+        let org_id = env_or("COMMUTATOR_ORG_ID", DEFAULT_ORG_ID);
+        let user_id = env_or("COMMUTATOR_USER_ID", DEFAULT_USER_ID);
         let profile = EngineProfile::development(data_dir, &org_id, &user_id);
         Self::assemble_with_profile(profile, registry, default_harness)
     }
@@ -243,8 +243,8 @@ impl EngineCore {
         // Agents an engine on this data dir left running when it died (a
         // SIGKILL, a crash) are ended; ours are recorded for the next one
         // to do the same. Only with the data dir's lock held.
-        let agent_ledger = vardoger_harness::process::registry::attach(data_dir);
-        vardoger_harness::process::registry::sweep_in_background(data_dir);
+        let agent_ledger = commutator_harness::process::registry::attach(data_dir);
+        commutator_harness::process::registry::sweep_in_background(data_dir);
         let legacy_uploads_root = profile.claim_legacy_uploads_root()?;
         let device_id = load_or_create_device_id(data_dir)?;
         // This device's harness enablement (Settings → Providers) rides the
@@ -279,7 +279,7 @@ impl EngineCore {
         // A new version on trial may yet be undone, and recovering clears the
         // journals' marks of what to resume, which a rollback doesn't restore.
         // It waits for the commit (`update_trial`), with all other new work.
-        if vardoger_update::transaction::in_trial() {
+        if commutator_update::transaction::in_trial() {
             doc_host.hold_work();
         } else {
             match sessions.recover_stale() {
@@ -302,7 +302,7 @@ impl EngineCore {
         commands.follow_chats(workspace.watch_chats());
         let project_actions = ProjectActionsStore::open(profile.store_root())?;
         doc_host.set_project_action_runtime(project_actions.clone(), terminals.clone());
-        let previews = vardoger_preview::PreviewService::new(
+        let previews = commutator_preview::PreviewService::new(
             profile.store_root().join("previews.json"),
             device_id.clone(),
             local_device_name(&device_id),
@@ -359,8 +359,8 @@ impl EngineCore {
             busy_sessions.session_status(chat_id).is_some_and(|session| {
                 matches!(
                     session.status,
-                    vardoger_proto::SessionStatus::Working
-                        | vardoger_proto::SessionStatus::AwaitingInput
+                    commutator_proto::SessionStatus::Working
+                        | commutator_proto::SessionStatus::AwaitingInput
                 )
             })
         }));
@@ -402,7 +402,7 @@ impl EngineCore {
 
     /// When an update may restart this engine: never under a live run, an open
     /// terminal or a running command.
-    pub fn update_quiescence(&self) -> vardoger_update::QuiescentCheck {
+    pub fn update_quiescence(&self) -> commutator_update::QuiescentCheck {
         let sessions = self.sessions.clone();
         let terminals = self.terminals.clone();
         let commands = self.commands.clone();
@@ -425,13 +425,13 @@ impl EngineCore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // (Tests assemble cores without one: nobody signed in.)
-        slot.get_or_insert_with(|| Auth::new(std::env::temp_dir().join("vardoger-no-account")))
+        slot.get_or_insert_with(|| Auth::new(std::env::temp_dir().join("commutator-no-account")))
         .clone()
     }
 
     /// Attach the peer link cache — enables `targetDeviceId` routing,
     /// [`Self::dial_device`], and the doc host's queued-attachment transfers.
-    pub fn set_links(&self, links: Arc<vardoger_rpc::LinkCache>) {
+    pub fn set_links(&self, links: Arc<commutator_rpc::LinkCache>) {
         self.doc_host.set_links(links.clone());
         *self
             .links
@@ -439,21 +439,21 @@ impl EngineCore {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(links);
     }
 
-    pub fn links(&self) -> Option<Arc<vardoger_rpc::LinkCache>> {
+    pub fn links(&self) -> Option<Arc<commutator_rpc::LinkCache>> {
         self.links
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
-    pub fn set_updater(&self, updater: vardoger_update::Updater) {
+    pub fn set_updater(&self, updater: commutator_update::Updater) {
         *self
             .updater
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(updater);
     }
 
-    pub fn updater(&self) -> Option<vardoger_update::Updater> {
+    pub fn updater(&self) -> Option<commutator_update::Updater> {
         self.updater
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -465,7 +465,7 @@ impl EngineCore {
     pub async fn dial_device(
         &self,
         device_id: &str,
-    ) -> Result<Arc<vardoger_rpc::RpcClient>, EngineError> {
+    ) -> Result<Arc<commutator_rpc::RpcClient>, EngineError> {
         let links = self
             .links()
             .ok_or_else(|| EngineError::Other("peer links unavailable (offline)".into()))?;
@@ -480,14 +480,14 @@ impl EngineCore {
     pub fn start_host_relay(
         &self,
         url: &str,
-        token: Arc<dyn vardoger_rpc::TokenSource>,
-    ) -> vardoger_rpc::HostRelay {
+        token: Arc<dyn commutator_rpc::TokenSource>,
+    ) -> commutator_rpc::HostRelay {
         self.host_relay_to(url, &self.device_id, token)
     }
 
-    /// Host our device room on the Vardoger server this machine signed in
+    /// Host our device room on the Commutator server this machine signed in
     /// to ([`account::Account`]), as the device the server knows it as.
-    pub fn start_account_relay(&self, account: &account::Account) -> vardoger_rpc::HostRelay {
+    pub fn start_account_relay(&self, account: &account::Account) -> commutator_rpc::HostRelay {
         self.host_relay_to(&account.server_url, &account.device_id, account.token_source())
     }
 
@@ -495,11 +495,11 @@ impl EngineCore {
         &self,
         url: &str,
         device_id: &str,
-        token: Arc<dyn vardoger_rpc::TokenSource>,
-    ) -> vardoger_rpc::HostRelay {
-        let config = vardoger_rpc::HostRelayConfig::new(url, device_id, token);
+        token: Arc<dyn commutator_rpc::TokenSource>,
+    ) -> commutator_rpc::HostRelay {
+        let config = commutator_rpc::HostRelayConfig::new(url, device_id, token);
         let doc_host = self.doc_host.clone();
-        let on_nudge: vardoger_rpc::NudgeHandler = Arc::new(move |chat_id: String| {
+        let on_nudge: commutator_rpc::NudgeHandler = Arc::new(move |chat_id: String| {
             match doc_host.enqueue_wakeup(&chat_id) {
                 Ok(()) => true,
                 Err(err) => {
@@ -509,7 +509,7 @@ impl EngineCore {
             }
         });
         let service: Arc<dyn RpcService> = self.rpc_service();
-        vardoger_rpc::HostRelay::spawn(config, service, on_nudge)
+        commutator_rpc::HostRelay::spawn(config, service, on_nudge)
     }
 
     pub fn rpc_service(&self) -> Arc<EngineRpc> {
@@ -607,12 +607,12 @@ pub struct Engine {
 /// in-process engine so their production authentication paths cannot diverge.
 pub struct EngineRuntime {
     core: EngineCore,
-    host_relay: std::sync::Mutex<Option<vardoger_rpc::HostRelay>>,
+    host_relay: std::sync::Mutex<Option<commutator_rpc::HostRelay>>,
     /// Desktop banners for this engine's sessions (desktop engines only).
     notifier: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-/// IPC-only lifecycle control owned by `vardoger headless`. The regular
+/// IPC-only lifecycle control owned by `commutator headless`. The regular
 /// [`EngineRpc`] deliberately does not expose this method, so a viewport
 /// attached to another headed process cannot shut down that process's engine.
 struct HeadlessRpc {
@@ -718,12 +718,12 @@ impl Engine {
         Ok(EngineInfo {
             device_id: load_or_create_device_id(&config.data_dir)?,
             workspace_scope,
-            cursor_sdk_version: Some(vardoger_harness::CursorHarness::sdk_version().into()),
+            cursor_sdk_version: Some(commutator_harness::CursorHarness::sdk_version().into()),
             capabilities: {
-                let mut capabilities = vardoger_proto::capabilities::current();
+                let mut capabilities = commutator_proto::capabilities::current();
                 if desktop_notify::enabled() {
                     capabilities
-                        .push(vardoger_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
+                        .push(commutator_proto::capabilities::DESKTOP_NOTIFICATIONS_V1.to_string());
                 }
                 capabilities
             },
@@ -781,7 +781,7 @@ impl Engine {
         let preview_device = core.device_id.clone();
         let preview_terminals = core.terminals.clone();
         let preview_sessions = core.sessions.clone();
-        let projects = Arc::new(move || vardoger_preview::Scope {
+        let projects = Arc::new(move || commutator_preview::Scope {
             chats: preview_chats
                 .borrow()
                 .iter()
@@ -789,10 +789,10 @@ impl Engine {
                 .filter_map(|chat| Some((chat.id.clone(), std::path::PathBuf::from(chat.cwd.clone()?))))
                 .collect(),
             terminals: preview_terminals.chats(),
-            reserved_ports: vardoger_harness::agent_ports::reserved(),
+            reserved_ports: commutator_harness::agent_ports::reserved(),
             live: preview_sessions.active_count() > 0 || preview_terminals.any_open(),
         });
-        // Discovery parks while nothing Vardoger started is alive. A run
+        // Discovery parks while nothing Commutator started is alive. A run
         // changing state (a turn starting) or a terminal opening is what can
         // start a server: wake it then. It keeps its cadence from there for
         // as long as the run, the terminal, or anything they started lives.
@@ -805,7 +805,7 @@ impl Engine {
             let mut terminals = core.terminals.watch_opened();
             let mut chats = core.workspace.watch_chats();
             let device = core.device_id.clone();
-            let folders = move |chats: &[vardoger_proto::Chat]| -> Vec<(String, Option<String>)> {
+            let folders = move |chats: &[commutator_proto::Chat]| -> Vec<(String, Option<String>)> {
                 chats
                     .iter()
                     .filter(|chat| chat.device_id == device)
@@ -829,23 +829,23 @@ impl Engine {
                 }
             });
         }
-        // Signed in to a Vardoger server: its signaling pairs this machine
+        // Signed in to a Commutator server: its signaling pairs this machine
         // with the account's other devices, for previews and terminals.
         let signaling = auth.account().map(|account| account.preview_signaling());
         core.previews.start(projects, signaling).await;
         // Release checker: polls GitHub releases hourly (wall clock); headless
-        // installs with VARDOGER_AUTO_UPDATE=1 apply + restart themselves — gated
+        // installs with COMMUTATOR_AUTO_UPDATE=1 apply + restart themselves — gated
         // on quiescence so a restart never lands under a live run or open PTY.
         // Spawned for every install: application updates don't depend on
         // workspace sync being enabled.
         let quiescent = core.update_quiescence();
         // The release channel a macOS app install follows lives in the data
         // dir (update-channel.json), so this report follows the app's choice.
-        vardoger_update::channel::set_data_dir(&config.data_dir);
-        let updater = vardoger_update::Updater::spawn(Some(quiescent));
+        commutator_update::channel::set_data_dir(&config.data_dir);
+        let updater = commutator_update::Updater::spawn(Some(quiescent));
         // A check that came due while the machine slept runs as it wakes,
         // so the loop needn't look at the clock each minute.
-        updater.follow_wakes(vardoger_sync::wake::subscribe());
+        updater.follow_wakes(commutator_sync::wake::subscribe());
         // Whatever restarts this engine into another version (an update, a
         // newer install, a channel switch's update), the store it leaves is
         // one every version reads.
@@ -853,7 +853,7 @@ impl Engine {
         // a strong hold kept a shut-down engine's whole graph alive.)
         let version_change_docs = core.doc_host.downgrade();
         let version_change_registry = core.workspace.downgrade();
-        vardoger_update::set_before_restart(move || {
+        commutator_update::set_before_restart(move || {
             // Only this process's live engine restarts it: with its graph
             // gone there is nothing left to prepare.
             let (Some(version_change_docs), Some(version_change_registry)) =
@@ -873,13 +873,13 @@ impl Engine {
         // Managed ACP adapters install in the background at boot (agents
         // whose CLI is present but whose adapter isn't yet), so a first chat
         // never waits on — or dies inside — an npm run.
-        vardoger_harness::acp::prewarm_managed_adapters();
+        commutator_harness::acp::prewarm_managed_adapters();
 
-        // Signed in to a Vardoger server: the account's other devices reach
+        // Signed in to a Commutator server: the account's other devices reach
         // this one through its relay, and it reaches theirs.
         let host_relay = auth.account().map(|account| {
-            vardoger_sync::net_path::spawn_path_monitor();
-            core.set_links(vardoger_rpc::LinkCache::new(vardoger_rpc::LinkCacheConfig::new(
+            commutator_sync::net_path::spawn_path_monitor();
+            core.set_links(commutator_rpc::LinkCache::new(commutator_rpc::LinkCacheConfig::new(
                 account.server_url.clone(),
                 account.token_source(),
             )));
@@ -909,7 +909,7 @@ impl Engine {
         let profile = EngineProfile::local(&config.data_dir)?;
 
         let runtime = Self::assemble_runtime(&config, auth, profile).await?;
-        // The desktop app or `vardoger update` may install a newer binary under
+        // The desktop app or `commutator update` may install a newer binary under
         // a running service; restart into it once no run or terminal is live.
         if let Some(updater) = runtime.core().updater() {
             updater.restart_when_superseded();
@@ -930,8 +930,8 @@ impl Engine {
         runtime
             .core()
             .sessions
-            .set_ipc_token_file(vardoger_rpc::ipc_auth::agent_token_path(&config.data_dir));
-        // Agents' Vardoger tools come from this engine itself (before the port:
+            .set_ipc_token_file(commutator_rpc::ipc_auth::agent_token_path(&config.data_dir));
+        // Agents' Commutator tools come from this engine itself (before the port:
         // a run revived on boot waits on the port, then reads both).
         if let Err(err) = runtime
             .core()
@@ -939,7 +939,7 @@ impl Engine {
             .serve_mcp_endpoint(runtime.core().rpc_service())
             .await
         {
-            tracing::warn!(error = %err, "agent MCP endpoint not served; agents get `vardoger mcp`");
+            tracing::warn!(error = %err, "agent MCP endpoint not served; agents get `commutator mcp`");
         }
         runtime.core().sessions.set_ipc_port(config.ipc_port);
         update_trial::prove_and_commit(runtime.core(), &config);
@@ -951,7 +951,7 @@ impl Engine {
             result = shutdown_signal() => {
                 // Stopped from outside mid-trial (a sleep, a restart): not the
                 // release's fault, and the record should say so.
-                vardoger_update::transaction::note_trial_interrupted();
+                commutator_update::transaction::note_trial_interrupted();
                 result?
             }
             requested = stop_rx.recv() => {
@@ -970,14 +970,14 @@ impl Engine {
 
 /// A docs store that reports corruption while running can't be trusted with
 /// another write, and every chat it holds is stuck behind it. Its next open
-/// checks it in full and rebuilds it ([`vardoger_sync::DocsStore::open`]) on
+/// checks it in full and rebuilds it ([`commutator_sync::DocsStore::open`]) on
 /// the next start.
 fn watch_store_corruption(store: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if vardoger_sync::corruption_seen() {
-                vardoger_sync::request_store_check(&store);
+            if commutator_sync::corruption_seen() {
+                commutator_sync::request_store_check(&store);
                 tracing::error!("the docs store is damaged; it's rebuilt on the next start");
                 return;
             }
@@ -1016,28 +1016,28 @@ async fn shutdown_signal() -> std::io::Result<()> {
 /// port, not who can reach it.
 ///
 /// Every call mints a fresh bearer at `{data_dir}/ipc-token` (0600) that each
-/// handshake must present ([`vardoger_rpc::ipc_auth`]); viewports and the CLI
-/// read it at dial time. Agents' `vardoger mcp` servers get the agent-scoped
+/// handshake must present ([`commutator_rpc::ipc_auth`]); viewports and the CLI
+/// read it at dial time. Agents' `commutator mcp` servers get the agent-scoped
 /// one (`{data_dir}/ipc-token-agent`), which reaches only their tools'
-/// methods ([`vardoger_rpc::agent_allowed`]). The caller owns `data_dir` (it holds the
+/// methods ([`commutator_rpc::agent_allowed`]). The caller owns `data_dir` (it holds the
 /// [`InstanceLock`]), so rotating the file before binding cannot strand
 /// another engine's clients — and a client that sees the port open always
 /// finds the new token already published.
 pub async fn serve_ipc(
     port: u16,
     data_dir: &Path,
-    service: std::sync::Arc<dyn vardoger_rpc::RpcService>,
+    service: std::sync::Arc<dyn commutator_rpc::RpcService>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
-    let tokens = vardoger_rpc::ipc_auth::issue_tokens(data_dir)?;
+    let tokens = commutator_rpc::ipc_auth::issue_tokens(data_dir)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     tracing::info!(port, "IPC server listening");
-    Ok(tokio::spawn(vardoger_rpc::serve_ws_listener_scoped(
+    Ok(tokio::spawn(commutator_rpc::serve_ws_listener_scoped(
         listener, service, tokens,
     )))
 }
 
 /// Best-effort human name for this device's registry row.
-/// What this machine is called (`VARDOGER_DEVICE_NAME`, else its own name).
+/// What this machine is called (`COMMUTATOR_DEVICE_NAME`, else its own name).
 pub fn device_name(device_id: &str) -> String {
     local_device_name(device_id)
 }
@@ -1045,7 +1045,7 @@ pub fn device_name(device_id: &str) -> String {
 fn local_device_name(device_id: &str) -> String {
     select_local_device_name(
         [
-            std::env::var("VARDOGER_DEVICE_NAME").ok(),
+            std::env::var("COMMUTATOR_DEVICE_NAME").ok(),
             native_friendly_device_name(),
             std::env::var("HOSTNAME").ok(),
             gethostname::gethostname().into_string().ok(),

@@ -1,9 +1,9 @@
-//! vardoger-client — the engine-free thin client ("viewer device").
+//! commutator-client — the engine-free thin client ("viewer device").
 //!
 //! A phone (or any frontend without an engine) drives one engine as its
 //! JSON-RPC client: the engine on this machine over IPC
 //! ([`Credentials::Local`]), or one on another of the account's machines
-//! through the relay on the account's Vardoger server
+//! through the relay on the account's Commutator server
 //! ([`Credentials::Remote`], machines listed by [`server::devices`]). It
 //! mirrors that engine's registry and chats into local docs and renders them.
 //! No agent ever runs here.
@@ -53,7 +53,7 @@ pub use config::{
 };
 pub use connectivity::{Connectivity, ConnectivityState, SendState};
 pub use direct::PreviewTunnel;
-pub use vardoger_proto::PreviewService;
+pub use commutator_proto::PreviewService;
 pub use error::ClientError;
 pub use events::{ClientEvent, ClientListener};
 pub use session::{
@@ -68,12 +68,12 @@ pub use workspace::{
     DeviceView, FrontPage, ProjectRef, ProjectView, PullRequestGroups, SearchField, SearchHit,
     SectionView, SessionRow, WorkspaceSnapshot, project_color_index, relative_time_label,
 };
-pub use vardoger_term_link::remote::TerminalPath;
+pub use commutator_term_link::remote::TerminalPath;
 
 /// Re-exported so consumers (the layout engine) name the exact doc types the
-/// transcript carries without a direct `vardoger-doc` dependency.
-pub use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-pub use vardoger_proto::{
+/// transcript carries without a direct `commutator-doc` dependency.
+pub use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+pub use commutator_proto::{
     ChangeRequestState, ChangeRequestSummary, ChatConfig, ChatIndicator, ContextUsage,
     UserInputAnswer, UserInputQuestion, WorktreeSpec,
 };

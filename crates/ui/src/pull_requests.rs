@@ -9,13 +9,13 @@ use gpui::{
     AnyElement, Context, Entity, Focusable, IntoElement, ListOffset, ListState, Render,
     ScrollHandle, SharedString, Subscription, Task, Window, div, list, prelude::*, px,
 };
-use vardoger_proto::{
+use commutator_proto::{
     ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability, ChangeRequestPage,
     ChangeRequestReviewDecision, Device,
 };
-use vardoger_rpc::{RpcError, capability_errors, methods};
+use commutator_rpc::{RpcError, capability_errors, methods};
 
-use vardoger_proto::change_request_assessment::{Blocker, CiState, Facts};
+use commutator_proto::change_request_assessment::{Blocker, CiState, Facts};
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::icons::{self, icon};
@@ -1139,7 +1139,7 @@ impl PullRequestsPage {
             })
             .collect();
             let profile = match &state.auth {
-                Some(vardoger_proto::AuthState::SignedIn { user, org_id }) => {
+                Some(commutator_proto::AuthState::SignedIn { user, org_id }) => {
                     Some(format!("{}:{org_id:?}", user.id))
                 }
                 _ => None,
@@ -3057,7 +3057,7 @@ fn status_description(item: &ChangeRequestListItem) -> String {
             .attention
             .iter()
             .filter(|reason| {
-                **reason != vardoger_proto::change_request_assessment::AttentionReason::FailingCi
+                **reason != commutator_proto::change_request_assessment::AttentionReason::FailingCi
             })
             .map(|reason| reason.label()),
     );
@@ -3084,7 +3084,7 @@ fn row_status(item: &ChangeRequestListItem, tight: bool) -> String {
             .attention
             .iter()
             .filter(|reason| {
-                **reason != vardoger_proto::change_request_assessment::AttentionReason::FailingCi
+                **reason != commutator_proto::change_request_assessment::AttentionReason::FailingCi
             })
             .map(|reason| reason.label()),
     );
@@ -3402,7 +3402,7 @@ fn recent_git_projects(state: &AppState, local: &str) -> Vec<ProjectRef> {
     let mut seen = HashSet::new();
     let (primary, alternatives): (Vec<_>, Vec<_>) = projects
         .into_iter()
-        .partition(|(.., space)| seen.insert(vardoger_proto::view::project_key(space)));
+        .partition(|(.., space)| seen.insert(commutator_proto::view::project_key(space)));
     primary
         .into_iter()
         .chain(alternatives)
@@ -3504,7 +3504,7 @@ fn error_copy(error: &PullRequestsPageError) -> (String, String) {
             "Reconnect the device and try again.".into(),
         ),
         PullRequestsPageError::UpdateRequired(name) => (
-            format!("Update Vardoger on {name}"),
+            format!("Update Commutator on {name}"),
             "This device doesn’t support pull requests yet.".into(),
         ),
     }
@@ -3639,7 +3639,7 @@ mod tests {
             number,
             title: format!("Pull request {number}"),
             url: format!("https://github.com/{repository}/pull/{number}"),
-            state: vardoger_proto::ChangeRequestState::Open,
+            state: commutator_proto::ChangeRequestState::Open,
             is_draft: false,
             review_decision: ChangeRequestReviewDecision::Unknown,
             additions: changes,
@@ -3673,8 +3673,8 @@ mod tests {
         }
     }
 
-    fn space(id: &str, device: &str, git: bool, created_minutes_ago: i64) -> vardoger_proto::Space {
-        vardoger_proto::Space { icon: Default::default(),
+    fn space(id: &str, device: &str, git: bool, created_minutes_ago: i64) -> commutator_proto::Space {
+        commutator_proto::Space { icon: Default::default(),
             github_repo: None,
             id: id.into(),
             device_id: device.into(),
@@ -3688,8 +3688,8 @@ mod tests {
         }
     }
 
-    fn session(space: &str, last_message_at: Option<DateTime<Utc>>) -> vardoger_proto::Chat {
-        vardoger_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
+    fn session(space: &str, last_message_at: Option<DateTime<Utc>>) -> commutator_proto::Chat {
+        commutator_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
             id: "chat".into(),
             device_id: "local".into(),
             title: None,
@@ -3818,7 +3818,7 @@ mod tests {
                 if repository == "slow/repo" {
                     delayed.notified().await;
                 }
-                vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                commutator_rpc::RpcReply::value(&ChangeRequestPage {
                     items: if repository == "authored/repo"
                         || (filter == "all" && repository != "empty/repo")
                     {
@@ -4009,8 +4009,8 @@ mod tests {
         page.update(cx, |page, _| {
             // A cached board, so opening it needs no engine.
             page.snapshots.push((
-                (None, "acme/vardoger".into(), ChangeRequestFilter::Authored),
-                vec![pull_request("acme/vardoger", 10, 1, 1, 1)],
+                (None, "acme/commutator".into(), ChangeRequestFilter::Authored),
+                vec![pull_request("acme/commutator", 10, 1, 1, 1)],
                 Instant::now(),
                 Paging::default(),
             ));
@@ -4023,12 +4023,12 @@ mod tests {
         page.update(cx, |page, cx| {
             assert!(page.repository_menu.is_open());
             page.repository_input
-                .update(cx, |input, cx| input.set_text("acme/vardoger", cx));
+                .update(cx, |input, cx| input.set_text("acme/commutator", cx));
         });
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         page.read_with(cx, |page, _| {
-            assert_eq!(page.repository.as_deref(), Some("acme/vardoger"));
+            assert_eq!(page.repository.as_deref(), Some("acme/commutator"));
             assert!(!page.repository_menu.is_open());
             assert_eq!(page.items[0].number, 10);
         });
@@ -4050,13 +4050,13 @@ mod tests {
             assert_eq!(page.load_state, PullRequestsLoadState::Idle);
             // No engine exists. Any accidental request would produce Network.
             page.snapshots.push((
-                (None, "acme/vardoger".into(), ChangeRequestFilter::Authored),
-                vec![pull_request("acme/vardoger", 10, 1, 1, 1)],
+                (None, "acme/commutator".into(), ChangeRequestFilter::Authored),
+                vec![pull_request("acme/commutator", 10, 1, 1, 1)],
                 Instant::now(),
                 Paging::default(),
             ));
             page.repository_input
-                .update(cx, |input, cx| input.set_text("ACME/VARDOGER", cx));
+                .update(cx, |input, cx| input.set_text("ACME/COMMUTATOR", cx));
             page.select_repository(cx);
             assert_eq!(page.items[0].number, 10);
             assert_eq!(page.load_state, PullRequestsLoadState::Ready);
@@ -4068,7 +4068,7 @@ mod tests {
             page.reset_for_target(None, cx);
             assert_eq!(page.items[0].number, 10);
             page.repository_input.update(cx, |input, cx| {
-                input.set_text("acme/vardoger repo:other/repo", cx)
+                input.set_text("acme/commutator repo:other/repo", cx)
             });
             page.select_repository(cx);
             assert!(
@@ -4076,7 +4076,7 @@ mod tests {
                     .iter()
                     .any(|message| message.contains("owner/name"))
             );
-            assert_eq!(page.repository.as_deref(), Some("acme/vardoger"));
+            assert_eq!(page.repository.as_deref(), Some("acme/commutator"));
         });
     }
 
@@ -4098,12 +4098,12 @@ mod tests {
                         if stalled {
                             return futures::future::pending().await;
                         }
-                        vardoger_rpc::RpcReply::value(&Some("owner/repo"))
+                        commutator_rpc::RpcReply::value(&Some("owner/repo"))
                     }
                     methods::LIST_CHANGE_REQUEST_PAGE => {
                         assert_eq!(params["repository"], "owner/repo");
                         assert_eq!(params["filter"], "authored");
-                        vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                        commutator_rpc::RpcReply::value(&ChangeRequestPage {
                             items: vec![pull_request("owner/canonical", 7, 1, 1, 1)],
                             next_cursor: None,
                             total_count: Some(1),
@@ -4139,12 +4139,12 @@ mod tests {
                             if path == "/slow" {
                                 release.notified().await;
                             }
-                            vardoger_rpc::RpcReply::value(
+                            commutator_rpc::RpcReply::value(
                                 &(path != "/scratch").then(|| format!("owner{}", path)),
                             )
                         }
                         methods::LIST_CHANGE_REQUEST_PAGE => {
-                            vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                            commutator_rpc::RpcReply::value(&ChangeRequestPage {
                                 items: vec![pull_request(
                                     params["repository"].as_str().unwrap(),
                                     7,
@@ -4337,7 +4337,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
+            state.spaces = vec![commutator_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),
@@ -4415,13 +4415,13 @@ mod tests {
                         let cwd = params["cwd"].as_str().unwrap().to_owned();
                         calls.lock().unwrap().push(cwd.clone());
                         let name = cwd.trim_start_matches('/');
-                        vardoger_rpc::RpcReply::value(
+                        commutator_rpc::RpcReply::value(
                             &(name != "scratch").then(|| format!("owner/{name}")),
                         )
                     }
                     methods::LIST_CHANGE_REQUEST_PAGE => {
                         let repository = params["repository"].as_str().unwrap();
-                        vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                        commutator_rpc::RpcReply::value(&ChangeRequestPage {
                             items: vec![pull_request(repository, 7, 1, 1, 1)],
                             next_cursor: None,
                             total_count: Some(1),
@@ -4521,7 +4521,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
+            state.spaces = vec![commutator_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),
@@ -4584,7 +4584,7 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(rpc.client()));
-            state.spaces = vec![vardoger_proto::Space { icon: Default::default(),
+            state.spaces = vec![commutator_proto::Space { icon: Default::default(),
                 github_repo: None,
                 id: "project".into(),
                 device_id: "local".into(),
@@ -4738,7 +4738,7 @@ mod tests {
             let mut page = PullRequestsPage::new(state, cx);
             let mut mine = pull_request("owner/repo", 1, 1, 1, 1);
             mine.head_ref_oid = "a".repeat(40);
-            mine.ci = vardoger_proto::change_request_assessment::ChangeRequestCi {
+            mine.ci = commutator_proto::change_request_assessment::ChangeRequestCi {
                 state: CiState::Failed,
                 total_count: 3,
             };
@@ -4936,10 +4936,10 @@ mod tests {
 
     #[test]
     fn search_matches_all_words_across_title_repo_number_and_status() {
-        let mut item = pull_request("VardogerSH/Vardoger", 181, 1, 1, 1);
+        let mut item = pull_request("CommutatorSH/Commutator", 181, 1, 1, 1);
         item.title = "Add a pull request dashboard".into();
         item.is_draft = true;
-        assert!(matches_query(&item, "VARDOGER dashboard #181 draft"));
+        assert!(matches_query(&item, "COMMUTATOR dashboard #181 draft"));
         assert!(matches_query(&item, "  "));
         assert!(!matches_query(&item, "dashboard approved"));
     }
@@ -5208,7 +5208,7 @@ mod tests {
                     .push((after.clone(), params["refresh"] == true));
                 if params["filter"] == "reviewing" {
                     release.notified().await;
-                    return vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                    return commutator_rpc::RpcReply::value(&ChangeRequestPage {
                         items: vec![pull_request("owner/repo", 99, 1, 1, 1)],
                         next_cursor: None,
                         total_count: Some(1),
@@ -5216,7 +5216,7 @@ mod tests {
                     });
                 }
                 match after.as_deref() {
-                    None => vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                    None => commutator_rpc::RpcReply::value(&ChangeRequestPage {
                         items: (1..=50)
                             .map(|n| pull_request("Owner/Repo", n, 1, 1, 1))
                             .collect(),
@@ -5224,7 +5224,7 @@ mod tests {
                         total_count: Some(52),
                         fetched_at: None,
                     }),
-                    Some("Y3Vyc29yOjUw") => vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                    Some("Y3Vyc29yOjUw") => commutator_rpc::RpcReply::value(&ChangeRequestPage {
                         // #50 moved onto the second page; it must not repeat.
                         items: [50, 51, 52]
                             .map(|n| pull_request("Owner/Repo", n, 1, 1, 1))
@@ -5386,7 +5386,7 @@ mod tests {
                     assert_eq!(method.as_str(), methods::LIST_CHANGE_REQUEST_PAGE);
                     let cached = params["cached"] == true;
                     calls.lock().unwrap().push(cached);
-                    vardoger_rpc::RpcReply::value(&ChangeRequestPage {
+                    commutator_rpc::RpcReply::value(&ChangeRequestPage {
                         items: vec![pull_request(
                             "owner/repo",
                             if cached { 1 } else { 2 },

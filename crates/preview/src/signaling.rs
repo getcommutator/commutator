@@ -1,4 +1,4 @@
-//! The coordinator (the account's Vardoger server, `GET /preview/ws`)
+//! The coordinator (the account's Commutator server, `GET /preview/ws`)
 //! receives presence, catalogs and SDP only. Reconnects obtain fresh
 //! credentials and clear the previous connection's remote routes/peers.
 use crate::{
@@ -11,13 +11,13 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use tokio_util::sync::CancellationToken;
-use vardoger_proto::PreviewService;
+use commutator_proto::PreviewService;
 #[async_trait::async_trait]
 pub trait TokenSource: Send + Sync {
     async fn token(&self) -> anyhow::Result<String>;
 }
 pub struct Config {
-    /// The Vardoger server (`https://…`); signaling dials `/preview/ws` there.
+    /// The Commutator server (`https://…`); signaling dials `/preview/ws` there.
     pub server_url: String,
     pub tokens: Arc<dyn TokenSource>,
 }
@@ -335,21 +335,21 @@ mod tests {
     #[test]
     fn a_sign_in_joins_flagged_so_the_device_limit_lets_it_in() {
         let config = Config {
-            server_url: "https://vardoger.example".into(),
+            server_url: "https://commutator.example".into(),
             tokens: Arc::new(NoToken),
         };
         assert_eq!(
             coordinator_url(&config, "laptop", false).unwrap().as_str(),
-            "wss://vardoger.example/preview/ws?device=laptop"
+            "wss://commutator.example/preview/ws?device=laptop"
         );
         assert_eq!(
             coordinator_url(&config, "laptop", true).unwrap().as_str(),
-            "wss://vardoger.example/preview/ws?device=laptop&signIn=1"
+            "wss://commutator.example/preview/ws?device=laptop&signIn=1"
         );
     }
 }
 
-/// `vardoger_sync::wake::beat_interval`, which this crate doesn't link: ticks on
+/// `commutator_sync::wake::beat_interval`, which this crate doesn't link: ticks on
 /// whole multiples of `period` of wall-clock time, so this ping wakes the
 /// engine at the same instants as its other sockets' pings. The first tick is
 /// the next such instant, not at once (the socket was just proven by its

@@ -5,9 +5,9 @@
 //! tree (tracked + untracked, not ignored) is written as a git tree with the
 //! same bounded temp-index snapshot as the "Latest turn" diff
 //! ([`crate::diff_sync::snapshot_tree_kept`]), wrapped in a commit and kept
-//! under `refs/vardoger/checkpoints/{chat}/{id}`.
+//! under `refs/commutator/checkpoints/{chat}/{id}`.
 //!
-//! Those refs and objects live in a store of Vardoger's, not in the checkout:
+//! Those refs and objects live in a store of Commutator's, not in the checkout:
 //! a bare repository `{data_dir}/checkpoints/stores/{key}.git` per
 //! repository whose `objects/info/alternates` names the checkout's objects.
 //! The checkout's index, HEAD, refs, stash and object database are never
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
-use vardoger_proto::checkpoints::{Checkpoint, CheckpointPhase, RollbackToCheckpointResponse};
+use commutator_proto::checkpoints::{Checkpoint, CheckpointPhase, RollbackToCheckpointResponse};
 
 use crate::EngineError;
 use crate::diff_sync::{DiffSnapshot, TreeSnapshot, capture_tree_diff, snapshot_tree_kept};
@@ -41,7 +41,7 @@ use crate::repos::Repos;
 
 /// Checkpoints kept per chat; older ones (and their refs) are dropped.
 pub const MAX_CHECKPOINTS_PER_CHAT: usize = 100;
-const REF_PREFIX: &str = "refs/vardoger/checkpoints";
+const REF_PREFIX: &str = "refs/commutator/checkpoints";
 /// Unreachable objects younger than this survive a prune: a capture in
 /// flight has written its blobs but not yet its ref.
 const PRUNE_EXPIRE: &str = "1.hour.ago";
@@ -252,7 +252,7 @@ impl Checkpoints {
     /// (a row seen and then gone, as [`crate::SessionsEngine::follow_chat_deletions`]).
     pub fn follow_chat_deletions(
         &self,
-        mut chats: tokio::sync::watch::Receiver<Vec<vardoger_proto::Chat>>,
+        mut chats: tokio::sync::watch::Receiver<Vec<commutator_proto::Chat>>,
     ) {
         let this = self.clone();
         let mut known: std::collections::HashSet<String> =
@@ -352,7 +352,7 @@ async fn record(
 ) -> Result<Stored, EngineError> {
     let id = log.next_id;
     let git_ref = format!("{REF_PREFIX}/{}/{id}", ref_component(chat_id));
-    let message = format!("vardoger checkpoint\n\nchat: {chat_id}\nturn: {turn}\nphase: {phase:?}\n");
+    let message = format!("commutator checkpoint\n\nchat: {chat_id}\nturn: {turn}\nphase: {phase:?}\n");
     let commit = store_git(
         store,
         &["-c", "commit.gpgSign=false", "commit-tree", snapshot.tree(), "-m", &message],
@@ -644,12 +644,12 @@ fn git_command() -> tokio::process::Command {
         cmd.as_std_mut().creation_flags(0x08000000);
         cmd.args(["-c", "core.longpaths=true"]);
     }
-    // Commits in the store are Vardoger's, whoever the checkout's user is.
+    // Commits in the store are Commutator's, whoever the checkout's user is.
     for (key, value) in [
-        ("GIT_AUTHOR_NAME", "Vardoger"),
-        ("GIT_AUTHOR_EMAIL", "checkpoints@vardoger.invalid"),
-        ("GIT_COMMITTER_NAME", "Vardoger"),
-        ("GIT_COMMITTER_EMAIL", "checkpoints@vardoger.invalid"),
+        ("GIT_AUTHOR_NAME", "Commutator"),
+        ("GIT_AUTHOR_EMAIL", "checkpoints@commutator.invalid"),
+        ("GIT_COMMITTER_NAME", "Commutator"),
+        ("GIT_COMMITTER_EMAIL", "checkpoints@commutator.invalid"),
     ] {
         cmd.env(key, value);
     }

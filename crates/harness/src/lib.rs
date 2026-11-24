@@ -1,4 +1,4 @@
-//! vardoger-harness — one interface over coding agents (plus a mock for tests).
+//! commutator-harness — one interface over coding agents (plus a mock for tests).
 //!
 //! NATIVE DRIVERS speak each agent's own wire directly: Claude Code over
 //! stream-json ([`ClaudeHarness`]), Codex over the app-server JSON-RPC
@@ -19,7 +19,7 @@ use futures::stream::BoxStream;
 use tokio::sync::{mpsc, oneshot};
 pub use tokio_util::sync::CancellationToken;
 
-use vardoger_proto::{
+use commutator_proto::{
     AccessMode, AgentEvent, HarnessId, Model, ReasoningLevel, RunRequest, SlashCommand,
     SteeringMode, UserInputAnswer, UserInputQuestion,
 };
@@ -148,7 +148,7 @@ impl TurnControl {
     /// Driver: the background processes the runtime runs now, oldest first —
     /// its whole set, not a delta. (Background agents are subagents, shown as
     /// such; they count in [`Self::set_background`] only.)
-    pub fn set_background_processes(&self, processes: Vec<vardoger_proto::BackgroundTask>) {
+    pub fn set_background_processes(&self, processes: Vec<commutator_proto::BackgroundTask>) {
         self.processes.set(processes);
     }
 
@@ -175,7 +175,7 @@ impl TurnControl {
     /// Host: the runtime's background processes as they change.
     pub fn watch_background_processes(
         &self,
-    ) -> tokio::sync::watch::Receiver<Vec<vardoger_proto::BackgroundTask>> {
+    ) -> tokio::sync::watch::Receiver<Vec<commutator_proto::BackgroundTask>> {
         self.processes.watch()
     }
 
@@ -187,7 +187,7 @@ impl TurnControl {
 
     /// Host: the tail of a listed process's output; `None` when it is not
     /// listed. May read a file: call it off the async runtime.
-    pub fn background_output(&self, id: &str) -> Option<vardoger_proto::BackgroundTaskOutput> {
+    pub fn background_output(&self, id: &str) -> Option<commutator_proto::BackgroundTaskOutput> {
         self.processes.output(id)
     }
 
@@ -200,7 +200,7 @@ impl TurnControl {
 
     /// Driver: the runtime's background agents now, its whole set: each
     /// reports back, so each is waited on.
-    pub fn set_background_agents(&self, agents: Vec<vardoger_proto::WaitingOn>) {
+    pub fn set_background_agents(&self, agents: Vec<commutator_proto::WaitingOn>) {
         self.processes.set_agents(agents);
     }
 
@@ -232,7 +232,7 @@ impl TurnControl {
     }
 
     /// Host: what the agent waits on now, as it changes.
-    pub fn watch_waiting(&self) -> tokio::sync::watch::Receiver<Vec<vardoger_proto::WaitingOn>> {
+    pub fn watch_waiting(&self) -> tokio::sync::watch::Receiver<Vec<commutator_proto::WaitingOn>> {
         self.processes.watch_waiting()
     }
 }
@@ -264,7 +264,7 @@ pub struct RunControls {
     /// detached session task must retain this lease through its cleanup.
     /// Standalone callers without an update coordinator can leave it unset.
     pub execution_lease: Option<std::sync::Arc<tokio::sync::OwnedRwLockReadGuard<()>>>,
-    /// The run sends questions and awaits answers (blocks the agent, mirrors vardoger).
+    /// The run sends questions and awaits answers (blocks the agent, mirrors commutator).
     /// No answers at all — an empty list, or a dropped sender — is a decline:
     /// the person closed the questions, or the run stopped waiting. Drivers
     /// answer it with their protocol's own decline where it has one.
@@ -332,7 +332,7 @@ pub trait Harness: Send + Sync {
     /// work ends (a new turn, unprompted), so a turn that ends on that work
     /// isn't the agent's last: the driver declares it as the run goes
     /// ([`TurnControl::set_wakes_on_background`]), and the host offers the
-    /// agent Vardoger's `wait_on_background` only where this is true.
+    /// agent Commutator's `wait_on_background` only where this is true.
     fn wakes_on_background(&self) -> bool {
         false
     }
@@ -432,7 +432,7 @@ pub trait Harness: Send + Sync {
     async fn skills(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Option<Vec<vardoger_proto::invocation::Skill>>, HarnessError> {
+    ) -> Result<Option<Vec<commutator_proto::invocation::Skill>>, HarnessError> {
         if self.id() == HarnessId::Mock {
             return Ok(None);
         }
@@ -505,7 +505,7 @@ pub mod catalog_env;
 mod catalog_failure;
 pub(crate) mod code_signature;
 /// Secret redaction, shared with the doc fold (command output tails).
-pub use vardoger_proto::redact;
+pub use commutator_proto::redact;
 pub use catalog_failure::{CatalogFailure, CatalogFailureCode};
 pub mod claude;
 pub mod codex;
@@ -712,7 +712,7 @@ fn apply_login_shell_env(cmd: &mut std::process::Command) {
 /// Rolling tail of a child's stderr, shared between the reader task and the
 /// crash-message composer: an unexpected exit surfaces "<name> exited
 /// unexpectedly (<status>): <last stderr lines>" instead of a bare shrug —
-/// the proper background-crash message old vardoger showed (user requirement).
+/// the proper background-crash message old commutator showed (user requirement).
 #[derive(Clone, Default)]
 pub(crate) struct StderrTail(
     std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
@@ -995,7 +995,7 @@ pub fn supports_titles(id: HarnessId) -> bool {
 }
 
 /// Drivers that launch without the provider's own subagent tools when the
-/// run's Vardoger server is side-chats-only ([`vardoger_proto::McpServer::side_chats_only`]),
+/// run's Commutator server is side-chats-only ([`commutator_proto::McpServer::side_chats_only`]),
 /// and get them back on the next launch without it. Not Codex: its driver
 /// starts such a thread, but a thread keeps the multi-agent mode it last ran
 /// with (openai/codex rust-v0.153.4, codex-rs/core/src/session/mod.rs

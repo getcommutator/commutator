@@ -310,7 +310,7 @@ impl ShortcutsPage {
                                             .text_size(px(12.0))
                                             .text_color(theme.text_muted)
                                             .child(
-                                                "Changed a permission? Check again after returning to Vardoger.",
+                                                "Changed a permission? Check again after returning to Commutator.",
                                             ),
                                     )
                                     .child(refresh),

@@ -5,8 +5,8 @@
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, Weak};
 
-use vardoger_visual::TextureData;
-use vardoger_visual::image::{Image, Pixels};
+use commutator_visual::TextureData;
+use commutator_visual::image::{Image, Pixels};
 
 /// What the cache may hold on the GPU before it drops the least recently
 /// used.
@@ -109,7 +109,7 @@ impl Textures {
                 return entry.loaded.clone();
             }
         }
-        let loaded = vardoger_visual::image::decode_texture(data)
+        let loaded = commutator_visual::image::decode_texture(data)
             .and_then(|image| upload(device, queue, &image, space));
         if let Err(error) = &loaded {
             tracing::warn!(%error, "visual texture unusable");

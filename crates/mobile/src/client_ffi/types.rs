@@ -1,4 +1,4 @@
-//! FFI records/enums mirroring `vardoger-client`'s view models, plus the
+//! FFI records/enums mirroring `commutator-client`'s view models, plus the
 //! conversions both ways. Plain data: Swift/Kotlin get value types.
 //!
 //! Wire-string ids (harness `claude-code`, effort `xhigh`) stay strings so a
@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vardoger_client as zc;
+use commutator_client as zc;
 
 // ── errors ────────────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ impl From<DemoOptions> for zc::DemoOptions {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Credentials {
     /// An engine on one of the account's machines, through the relay on the
-    /// account's Vardoger server: its URL, this device's bearer `token` from
+    /// account's Commutator server: its URL, this device's bearer `token` from
     /// its sign-in ([`ServerSignIn`]), and the machine to drive (one of
     /// [`server_devices`]).
     Remote {
@@ -712,9 +712,9 @@ impl From<&zc::ChatConfig> for ChatConfig {
                 })
                 .collect(),
             sandbox: match c.sandbox {
-                vardoger_proto::SandboxLevel::ReadOnly => SandboxLevel::ReadOnly,
-                vardoger_proto::SandboxLevel::WorkspaceWrite => SandboxLevel::WorkspaceWrite,
-                vardoger_proto::SandboxLevel::DangerFullAccess => SandboxLevel::DangerFullAccess,
+                commutator_proto::SandboxLevel::ReadOnly => SandboxLevel::ReadOnly,
+                commutator_proto::SandboxLevel::WorkspaceWrite => SandboxLevel::WorkspaceWrite,
+                commutator_proto::SandboxLevel::DangerFullAccess => SandboxLevel::DangerFullAccess,
             },
         }
     }
@@ -738,9 +738,9 @@ impl TryFrom<ChatConfig> for zc::ChatConfig {
                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                 .collect(),
             sandbox: match c.sandbox {
-                SandboxLevel::ReadOnly => vardoger_proto::SandboxLevel::ReadOnly,
-                SandboxLevel::WorkspaceWrite => vardoger_proto::SandboxLevel::WorkspaceWrite,
-                SandboxLevel::DangerFullAccess => vardoger_proto::SandboxLevel::DangerFullAccess,
+                SandboxLevel::ReadOnly => commutator_proto::SandboxLevel::ReadOnly,
+                SandboxLevel::WorkspaceWrite => commutator_proto::SandboxLevel::WorkspaceWrite,
+                SandboxLevel::DangerFullAccess => commutator_proto::SandboxLevel::DangerFullAccess,
             },
             access: Default::default(),
             plan: false,
@@ -987,8 +987,8 @@ pub struct FileMatch {
     pub is_dir: bool,
 }
 
-/// The canonical mention link the host understands (`[name](vardoger-file:path)`).
+/// The canonical mention link the host understands (`[name](commutator-file:path)`).
 #[uniffi::export]
 pub fn file_mention_link(path: String, is_dir: bool) -> String {
-    vardoger_proto::file_mentions::local_file_link(&path, is_dir)
+    commutator_proto::file_mentions::local_file_link(&path, is_dir)
 }

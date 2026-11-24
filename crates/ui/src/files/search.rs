@@ -6,7 +6,7 @@ use std::{
 use gpui::{
     AnyElement, Context, ListSizingBehavior, SharedString, Task, Window, div, list, prelude::*, px,
 };
-use vardoger_proto::{
+use commutator_proto::{
     ListWorkspaceDirectoryRequest, SearchWorkspaceFilesRequest, WorkspaceEntryKind,
     WorkspaceFileSearchMatch,
 };
@@ -814,7 +814,7 @@ mod reveal_tests {
 
     fn context(checkout: &str) -> FilesRequestContext {
         FilesRequestContext {
-            target: vardoger_proto::WorkspaceTarget {
+            target: commutator_proto::WorkspaceTarget {
                 chat_id: Some("chat".into()),
                 space_id: None,
                 checkout_path: None,

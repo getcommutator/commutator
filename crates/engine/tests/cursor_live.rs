@@ -1,17 +1,17 @@
 //! Opt-in production engine + Cursor SDK checks. Uses real account quota.
-//! VARDOGER_CURSOR_STATE_DIR=$(mktemp -d) cargo test -p vardoger-engine --test cursor_live -- --ignored --nocapture --test-threads=1
+//! COMMUTATOR_CURSOR_STATE_DIR=$(mktemp -d) cargo test -p commutator-engine --test cursor_live -- --ignored --nocapture --test-threads=1
 use std::{sync::Arc, time::Duration};
-use vardoger_doc::{
+use commutator_doc::{
     MessagePart, MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry,
 };
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::CursorHarness;
-use vardoger_proto::{HarnessId, RunRequest, SandboxLevel};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::CursorHarness;
+use commutator_proto::{HarnessId, RunRequest, SandboxLevel};
 
 const CHAT: &str = "cursor-live-audit";
 fn setup(path: &std::path::Path) -> EngineCore {
     assert!(
-        std::env::var_os("VARDOGER_CURSOR_STATE_DIR").is_some(),
+        std::env::var_os("COMMUTATOR_CURSOR_STATE_DIR").is_some(),
         "use isolated Cursor state"
     );
     let registry = HarnessRegistry::new();
@@ -134,11 +134,11 @@ async fn remote_steer_batch_reaches_real_muse_with_every_message() {
         .unwrap()
         .as_millis() as i64;
     for (i, token) in tokens.iter().enumerate().skip(1) {
-        handle.doc().queue_command(&vardoger_doc::SessionCommandEntry {
+        handle.doc().queue_command(&commutator_doc::SessionCommandEntry {
             id: format!("remote-{i}"),
             payload: SessionCommandPayload::Steer {prompt: format!("Remember {token}. Reply with the immediately previous user token and this token. Do not use tools."), message_id: Some(format!("message-{i}"))},
             issued_by: "remote-viewer".into(), issued_at: now + i as i64,
-            based_on: None, expires_at: None, status: vardoger_doc::SessionCommandStatus::Pending, resolution: None,
+            based_on: None, expires_at: None, status: commutator_doc::SessionCommandStatus::Pending, resolution: None,
         }).unwrap();
     }
     core.doc_host.drain_commands(&handle).await;
@@ -194,7 +194,7 @@ async fn send_now_keeps_the_interrupted_user_message() {
 #[tokio::test]
 #[ignore = "real authenticated Muse Spark; consumes quota"]
 async fn send_now_during_startup_keeps_the_interrupted_user_message() {
-    let rounds = std::env::var("VARDOGER_CURSOR_EARLY_ROUNDS")
+    let rounds = std::env::var("COMMUTATOR_CURSOR_EARLY_ROUNDS")
         .ok()
         .map(|v| v.parse::<usize>().unwrap())
         .unwrap_or(1);
@@ -255,7 +255,7 @@ async fn send_now_recall(stage: u8) {
                     .ok()
                     .is_some_and(|(events, _)| {
                         events.iter().any(|e| {
-                            matches!(e.event, vardoger_proto::AgentEvent::SessionStarted { .. })
+                            matches!(e.event, commutator_proto::AgentEvent::SessionStarted { .. })
                         })
                     })
             },
@@ -326,7 +326,7 @@ async fn startup_steering_burst_retains_all_interrupted_messages() {
                     .unwrap()
                     .0
                     .iter()
-                    .filter(|e| matches!(e.event, vardoger_proto::AgentEvent::SessionStarted { .. }))
+                    .filter(|e| matches!(e.event, commutator_proto::AgentEvent::SessionStarted { .. }))
                     .count()
                     == i + 1
             },

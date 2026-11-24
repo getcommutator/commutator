@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::collections::HashMap;
-use vardoger_proto::{AgentEvent, DoneStatus, ToolCall, ToolDiff};
+use commutator_proto::{AgentEvent, DoneStatus, ToolCall, ToolDiff};
 
 #[derive(Default)]
 pub(super) struct Normalizer {
@@ -206,8 +206,8 @@ fn tool(name: &str, args: &Value) -> ToolCall {
         "find" => ToolCall::Glob {
             pattern: string(args, "pattern").into(),
         },
-        name if name.starts_with("vardoger_") => ToolCall::Mcp {
-            server: "vardoger".into(),
+        name if name.starts_with("commutator_") => ToolCall::Mcp {
+            server: "commutator".into(),
             tool: name[6..].into(),
             input: Some(args.clone()),
         },

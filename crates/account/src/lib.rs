@@ -1,9 +1,9 @@
-//! Signing a device in to a Vardoger server (`apps/vardoger-server`).
+//! Signing a device in to a Commutator server (`apps/commutator-server`).
 //!
 //! The server runs Google sign-in with PKCE: a device opens
 //! `{server}/auth/google?challenge&name&kind[&redirect]` in a browser, the
 //! server hands a one-time code to `redirect` (a loopback callback, or the
-//! apps' `vardoger://auth`) or shows it to paste, and only the holder of the
+//! apps' `commutator://auth`) or shows it to paste, and only the holder of the
 //! verifier can trade it (`POST /auth/redeem`) for the device's bearer token.
 
 use std::time::Duration;
@@ -12,8 +12,8 @@ use base64::Engine as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// The apps' callback: `vardoger://auth?code=…`.
-pub const APP_REDIRECT: &str = "vardoger://auth";
+/// The apps' callback: `commutator://auth?code=…`.
+pub const APP_REDIRECT: &str = "commutator://auth";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -76,7 +76,7 @@ impl SignIn {
         redirect: Option<&str>,
     ) -> Result<Self, Error> {
         let server_url = server_url.trim().trim_end_matches('/').to_owned();
-        let verifier = vardoger_rpc::ipc_auth::generate_token()
+        let verifier = commutator_rpc::ipc_auth::generate_token()
             .map_err(|err| Error::Invalid(err.to_string()))?;
         let mut query = vec![
             ("challenge", pkce_challenge(&verifier)),
@@ -148,7 +148,7 @@ impl SignIn {
     }
 }
 
-/// The code of a callback URL (`vardoger://auth?code=…`, or a loopback
+/// The code of a callback URL (`commutator://auth?code=…`, or a loopback
 /// `/callback?code=…`), or the server's `error`.
 pub fn callback_code(url: &str) -> Result<String, Error> {
     let url = reqwest::Url::parse(url).map_err(|err| Error::Invalid(err.to_string()))?;
@@ -202,17 +202,17 @@ mod tests {
         assert_eq!(q["challenge"].len(), 43);
         assert_eq!(q["name"], "Egor's iPhone");
         assert_eq!(q["kind"], "client");
-        assert_eq!(q["redirect"], "vardoger://auth");
+        assert_eq!(q["redirect"], "commutator://auth");
         assert_eq!(sign_in.server_url(), "https://v.example");
     }
 
     #[test]
     fn callbacks_yield_their_code_or_error() {
-        assert_eq!(callback_code("vardoger://auth?code=a%20b").unwrap(), "a b");
+        assert_eq!(callback_code("commutator://auth?code=a%20b").unwrap(), "a b");
         assert_eq!(
-            callback_code("vardoger://auth?error=denied"),
+            callback_code("commutator://auth?error=denied"),
             Err(Error::Refused("denied".into()))
         );
-        assert!(callback_code("vardoger://auth").is_err());
+        assert!(callback_code("commutator://auth").is_err());
     }
 }

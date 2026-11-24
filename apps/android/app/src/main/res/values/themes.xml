@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Vardoger" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Commutator" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/launch_background</item>
     </style>
-    <style name="Theme.Vardoger.Starting" parent="Theme.SplashScreen">
+    <style name="Theme.Commutator.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/launch_background</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <item name="postSplashScreenTheme">@style/Theme.Vardoger</item>
+        <item name="postSplashScreenTheme">@style/Theme.Commutator</item>
     </style>
 </resources>

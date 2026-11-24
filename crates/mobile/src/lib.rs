@@ -1,10 +1,10 @@
-//! Vardoger mobile core — the UniFFI surface shared by the iOS and Android apps.
+//! Commutator mobile core — the UniFFI surface shared by the iOS and Android apps.
 //!
-//! - [`client_ffi`]: account, workspace and session state (wraps `vardoger-client`).
+//! - [`client_ffi`]: account, workspace and session state (wraps `commutator-client`).
 //! - [`layout`]: analytic transcript layout — markdown → measured display lists
-//!   (wraps `vardoger-markdown` + `vardoger-text`).
+//!   (wraps `commutator-markdown` + `commutator-text`).
 
-uniffi::setup_scaffolding!("vardoger_core");
+uniffi::setup_scaffolding!("commutator_core");
 
 mod client_ffi;
 pub mod layout;

@@ -2,7 +2,7 @@
 use super::*;
 use gpui::{AnyElement, Bounds, CursorStyle, DragMoveEvent};
 use std::{cell::RefCell, rc::Rc};
-use vardoger_proto::WorkspaceEntryKind;
+use commutator_proto::WorkspaceEntryKind;
 
 #[derive(Default)]
 pub(super) struct TreeDrag {

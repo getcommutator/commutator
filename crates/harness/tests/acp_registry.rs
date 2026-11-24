@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use vardoger_harness::{AcpHarness, Harness, acp_registry as reg};
-use vardoger_proto::{HarnessId, RegistryAgent};
+use commutator_harness::{AcpHarness, Harness, acp_registry as reg};
+use commutator_proto::{HarnessId, RegistryAgent};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-acp.sh")
@@ -68,8 +68,8 @@ async fn a_registry_agent_installs_launches_and_is_removed() {
     let root = tempfile::tempdir().unwrap();
     // SAFETY: this file's only test; nothing else reads the environment.
     unsafe {
-        std::env::set_var("VARDOGER_AGENTS_DIR", root.path());
-        std::env::set_var("VARDOGER_ACP_REGISTRY_LOOPBACK", "1");
+        std::env::set_var("COMMUTATOR_AGENTS_DIR", root.path());
+        std::env::set_var("COMMUTATOR_ACP_REGISTRY_LOOPBACK", "1");
     }
     let built = archive();
     let sha = format!("{:x}", Sha256::digest(&built));
@@ -91,7 +91,7 @@ async fn a_registry_agent_installs_launches_and_is_removed() {
         "agents": [
             {
                 "id": "fake-agent", "name": "Fake Agent", "version": "1.2.3",
-                "description": "Answers in scripts.", "authors": ["Vardoger tests"], "license": "MIT",
+                "description": "Answers in scripts.", "authors": ["Commutator tests"], "license": "MIT",
                 "icon": format!("{base}/icon.svg"),
                 "distribution": { "binary": { platform: {
                     "archive": format!("{base}/fake.tar.gz"), "cmd": "./fake/agent",

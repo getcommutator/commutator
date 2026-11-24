@@ -14,7 +14,7 @@ use std::{
 };
 
 use gpui::{Context, RenderImage, SharedString, Task};
-use vardoger_proto::ToolCall;
+use commutator_proto::ToolCall;
 
 use crate::state::EngineHandle;
 

@@ -38,7 +38,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use vardoger_proto::Space;
+use commutator_proto::Space;
 
 use crate::fs_watch::{FsWatch, FsWatchHub};
 use crate::repos::Repos;
@@ -491,8 +491,8 @@ async fn spaces_task(
     mut spaces_rx: watch::Receiver<Vec<Space>>,
     cancel: CancellationToken,
 ) {
-    // On the beat grid (`vardoger_sync::wake`): it wakes with the sockets' pings.
-    let mut repair = vardoger_sync::wake::beat_interval(REPAIR_INTERVAL);
+    // On the beat grid (`commutator_sync::wake`): it wakes with the sockets' pings.
+    let mut repair = commutator_sync::wake::beat_interval(REPAIR_INTERVAL);
     {
         let Some(inner) = inner.upgrade() else { return };
         let spaces = spaces_rx.borrow().clone();
@@ -553,7 +553,7 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "one"]);
         let data = tempfile::tempdir().unwrap();
-        let store = Arc::new(vardoger_sync::DocsStore::open(data.path()).unwrap());
+        let store = Arc::new(commutator_sync::DocsStore::open(data.path()).unwrap());
         let workspace = WorkspaceHost::open(
             store,
             crate::workspace_host::WorkspaceHostConfig {
@@ -662,7 +662,7 @@ mod tests {
         let before = GitInputs::read(&root.join("wt"));
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "main moves"]);
         assert_eq!(before, GitInputs::read(&root.join("wt")), "another branch is no input");
-        git(&repo, &["config", "vardoger.test", "1"]);
+        git(&repo, &["config", "commutator.test", "1"]);
         assert_ne!(before, GitInputs::read(&root.join("wt")), "the shared config");
     }
 

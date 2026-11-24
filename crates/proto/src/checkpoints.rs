@@ -25,7 +25,7 @@ pub struct Checkpoint {
     /// The chat's turn it belongs to, from 1.
     pub turn: u32,
     pub phase: CheckpointPhase,
-    /// `refs/vardoger/checkpoints/{chatId}/{id}` in the engine's checkpoint
+    /// `refs/commutator/checkpoints/{chatId}/{id}` in the engine's checkpoint
     /// store for this repository (not the checkout's own refs).
     pub git_ref: String,
     pub commit: String,

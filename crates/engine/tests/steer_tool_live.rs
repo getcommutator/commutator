@@ -3,17 +3,17 @@
 //! tool must still finish and its real result must reach the agent — then
 //! the steer is answered.
 //!
-//! VARDOGER_TEST_HARNESS=claude cargo test -p vardoger-engine --test steer_tool_live -- --ignored --nocapture
+//! COMMUTATOR_TEST_HARNESS=claude cargo test -p commutator-engine --test steer_tool_live -- --ignored --nocapture
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use vardoger_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{
+use commutator_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{
     AcpHarness, ClaudeHarness, CodexHarness, CursorHarness, Harness, OpencodeHarness,
 };
-use vardoger_proto::{ChatConfig, McpServer, RunRequest, SandboxLevel, SessionStatus};
+use commutator_proto::{ChatConfig, McpServer, RunRequest, SandboxLevel, SessionStatus};
 
 const CHAT: &str = "steer-tool";
 
@@ -53,7 +53,7 @@ fn harness(name: &str) -> Arc<dyn Harness> {
         "grok" => Arc::new(AcpHarness::grok()),
         "devin" => Arc::new(AcpHarness::devin()),
         "hermes" => Arc::new(AcpHarness::hermes()),
-        "pi" => Arc::new(vardoger_harness::PiHarness::new()),
+        "pi" => Arc::new(commutator_harness::PiHarness::new()),
         "antigravity" => Arc::new(AcpHarness::antigravity()),
         _ => panic!("unknown harness {name}"),
     }
@@ -88,8 +88,8 @@ fn dump(entries: &[SessionMessageEntry]) -> String {
 #[tokio::test]
 #[ignore = "uses real model quota; select the harness explicitly"]
 async fn steering_never_aborts_a_running_tool() {
-    let name = std::env::var("VARDOGER_TEST_HARNESS").expect("select harness");
-    let model = std::env::var("VARDOGER_TEST_MODEL").ok();
+    let name = std::env::var("COMMUTATOR_TEST_HARNESS").expect("select harness");
+    let model = std::env::var("COMMUTATOR_TEST_MODEL").ok();
     let harness = harness(&name);
     let id = harness.id();
     let dir = tempfile::tempdir().unwrap();

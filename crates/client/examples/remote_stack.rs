@@ -1,19 +1,19 @@
-//! A local Vardoger server and an engine signed in to it, for driving the
+//! A local Commutator server and an engine signed in to it, for driving the
 //! phone apps against (the same setup as tests/remote.rs, kept running).
 //! Google can't sign in a server on localhost, so the server mints the
 //! phone's device token directly here and prints the iOS launch arguments
 //! that use it (`-account … -host …`, DEBUG builds only).
 //!
-//!   cargo run -p vardoger-client --example remote_stack -- <dir> [port]
+//!   cargo run -p commutator-client --example remote_stack -- <dir> [port]
 //!
 //! `<dir>` keeps the server's database and the engine's data across runs.
 //! The engine's default agent is the mock harness: no real agent runs.
 
 use std::path::PathBuf;
 
-use vardoger_engine::account::Account;
-use vardoger_engine::{Engine, EngineConfig, HarnessId};
-use vardoger_server::{App, Config, Kind};
+use commutator_engine::account::Account;
+use commutator_engine::{Engine, EngineConfig, HarnessId};
+use commutator_server::{App, Config, Kind};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,10 +36,10 @@ async fn main() -> anyhow::Result<()> {
         &server_dir.join("db"),
     )?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    tokio::spawn(axum::serve(listener, vardoger_server::router(app.clone())).into_future());
+    tokio::spawn(axum::serve(listener, commutator_server::router(app.clone())).into_future());
 
     let me = app.upsert_user("dev-sub", "dev@localhost", Some("Local dev"))?;
-    let machine = vardoger_engine::device_id(&engine_dir)?;
+    let machine = commutator_engine::device_id(&engine_dir)?;
     let (_, machine_token) =
         app.create_device(&me, "dev-machine", Kind::Machine, Some(&machine))?;
     let (phone, phone_token) = app.create_device(&me, "Simulator", Kind::Client, None)?;

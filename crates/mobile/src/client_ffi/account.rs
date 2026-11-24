@@ -1,18 +1,18 @@
-//! Signing the phone in to the account's Vardoger server, and the account's
-//! machines to pick a host from (`vardoger-account`, `vardoger_client::server`).
+//! Signing the phone in to the account's Commutator server, and the account's
+//! machines to pick a host from (`commutator-account`, `commutator_client::server`).
 
 use std::sync::Arc;
 
-use vardoger_client as zc;
+use commutator_client as zc;
 
 use super::{CoreError, CoreResult, on_runtime};
 
-impl From<vardoger_account::Error> for CoreError {
-    fn from(err: vardoger_account::Error) -> Self {
+impl From<commutator_account::Error> for CoreError {
+    fn from(err: commutator_account::Error) -> Self {
         match err {
-            vardoger_account::Error::Invalid(message) => CoreError::InvalidArgument { message },
-            vardoger_account::Error::Network(message) => CoreError::Network { message },
-            vardoger_account::Error::Refused(message) => CoreError::Auth { message },
+            commutator_account::Error::Invalid(message) => CoreError::InvalidArgument { message },
+            commutator_account::Error::Network(message) => CoreError::Network { message },
+            commutator_account::Error::Refused(message) => CoreError::Auth { message },
         }
     }
 }
@@ -49,7 +49,7 @@ pub struct ServerDevice {
 /// comes back to.
 #[derive(uniffi::Object)]
 pub struct ServerSignIn {
-    inner: vardoger_account::SignIn,
+    inner: commutator_account::SignIn,
 }
 
 #[uniffi::export]
@@ -57,11 +57,11 @@ impl ServerSignIn {
     /// `device_name` is how the account lists this phone.
     #[uniffi::constructor]
     pub fn new(server_url: String, device_name: String) -> CoreResult<Arc<Self>> {
-        let inner = vardoger_account::SignIn::start(
+        let inner = commutator_account::SignIn::start(
             &server_url,
             &device_name,
-            vardoger_account::Kind::Client,
-            Some(vardoger_account::APP_REDIRECT),
+            commutator_account::Kind::Client,
+            Some(commutator_account::APP_REDIRECT),
         )?;
         Ok(Arc::new(Self { inner }))
     }
@@ -70,11 +70,11 @@ impl ServerSignIn {
         self.inner.url().to_owned()
     }
 
-    /// Redeem the code `vardoger://auth?code=…` carries.
+    /// Redeem the code `commutator://auth?code=…` carries.
     pub async fn finish(&self, callback_url: String) -> CoreResult<ServerAccount> {
         let inner = self.inner.clone();
         on_runtime(async move {
-            let code = vardoger_account::callback_code(&callback_url)
+            let code = commutator_account::callback_code(&callback_url)
                 .map_err(|e| zc::ClientError::Auth(e.to_string()))?;
             let redeemed = inner
                 .redeem(&code, None)
@@ -92,10 +92,10 @@ impl ServerSignIn {
     }
 }
 
-/// The web-auth callback scheme (`vardoger`).
+/// The web-auth callback scheme (`commutator`).
 #[uniffi::export]
 pub fn auth_callback_scheme() -> String {
-    vardoger_account::APP_REDIRECT
+    commutator_account::APP_REDIRECT
         .split_once(':')
         .map(|(scheme, _)| scheme.to_owned())
         .unwrap_or_default()
@@ -123,7 +123,7 @@ pub async fn server_devices(server_url: String, token: String) -> CoreResult<Vec
 #[uniffi::export]
 pub async fn server_sign_out(server_url: String, token: String, device_id: String) -> CoreResult<()> {
     on_runtime(async move {
-        vardoger_account::remove_device(&server_url, &token, &device_id)
+        commutator_account::remove_device(&server_url, &token, &device_id)
             .await
             .map_err(|e| zc::ClientError::Network(e.to_string()))
     })

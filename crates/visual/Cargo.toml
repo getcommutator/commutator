@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-visual"
+name = "commutator-visual"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

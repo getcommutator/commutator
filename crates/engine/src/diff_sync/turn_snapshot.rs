@@ -12,7 +12,7 @@
 //!
 //! Two rules keep that from happening again:
 //!
-//! - **Vardoger's objects stay in Vardoger's directory.** Each snapshot writes into
+//! - **Commutator's objects stay in Commutator's directory.** Each snapshot writes into
 //!   its own object directory under the data dir (`GIT_OBJECT_DIRECTORY`) and
 //!   reads the checkout's objects as an alternate. The checkout's database is
 //!   never written to, and the directory is deleted with the snapshot.

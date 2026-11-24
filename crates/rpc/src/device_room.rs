@@ -13,7 +13,7 @@
 //!
 //! The RPC path multiplexes NOTHING new: each distinct client `connId` becomes a virtual
 //! string-frame connection feeding the existing [`serve_connection`] seam, so every RPC
-//! handler works through the relay untouched (the port of vardoger's `device-room-host.ts`).
+//! handler works through the relay untouched (the port of commutator's `device-room-host.ts`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -275,7 +275,7 @@ pub enum TokenError {
     TemporarilyUnavailable(String),
 }
 
-impl From<TokenError> for vardoger_sync::SyncError {
+impl From<TokenError> for commutator_sync::SyncError {
     fn from(error: TokenError) -> Self {
         match error {
             TokenError::SignedOut => Self::Auth("signed out".into()),
@@ -387,7 +387,7 @@ impl RpcService for RelayGuard {
 /// `service` to every client conn through virtual string-frame connections. Immortal
 /// supervisor: quiet while signed out, reconnects with backoff when the socket drops
 /// (including the 4409 "superseded by new host connection" close — the newest host wins,
-/// so the superseded process backs off and retries, mirroring vardoger's DeviceRoomHost).
+/// so the superseded process backs off and retries, mirroring commutator's DeviceRoomHost).
 pub struct HostRelay {
     task: tokio::task::JoinHandle<()>,
 }
@@ -401,8 +401,8 @@ impl HostRelay {
         // Peers never reach what only a local client may call: each
         // virtual conn wraps it in a `RelayGuard` (make_virtual_conn).
         let task = tokio::spawn(async move {
-            let mut wake = vardoger_sync::wake::subscribe();
-            let mut online = vardoger_sync::wake::subscribe_online();
+            let mut wake = commutator_sync::wake::subscribe();
+            let mut online = commutator_sync::wake::subscribe_online();
             let mut token_changes = config.token.subscribe();
             // Fast-rejoin bookkeeping: the edge DO periodically ends healthy
             // host sessions (hibernation/deploys). Every second the host is
@@ -559,7 +559,7 @@ fn reply_frames(conn_id: &str, chunks: bool, text: String) -> Result<Vec<Vec<u8>
         let refusal = serde_json::to_string(&crate::ServerFrame {
             id,
             err: Some(format!(
-                "reply of {} MiB is too large for this device's Vardoger over the relay; update it",
+                "reply of {} MiB is too large for this device's Commutator over the relay; update it",
                 text.len() >> 20
             )),
             ..Default::default()
@@ -606,7 +606,7 @@ async fn host_session(
     on_nudge: &NudgeHandler,
     on_connected: Option<&Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(), RpcError> {
-    let ws = vardoger_sync::dial::connect_ws(url)
+    let ws = commutator_sync::dial::connect_ws(url)
         .await
         .map_err(|e| RpcError::Transport(format!("device room unreachable: {e}")))?;
     tracing::info!("device-room: host connected");
@@ -615,7 +615,7 @@ async fn host_session(
     }
     let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(256);
     let (in_tx, mut in_rx) = mpsc::channel::<Vec<u8>>(1);
-    let transport = vardoger_sync::socket::pump_with_timing(
+    let transport = commutator_sync::socket::pump_with_timing(
         ws,
         out_rx,
         in_tx,
@@ -759,19 +759,19 @@ impl DeviceLink {
     }
 
     /// [`Self::connect`], and the device the room verified this dial as
-    /// (its 101's `x-vardoger-caller-device`), if it did.
+    /// (its 101's `x-commutator-caller-device`), if it did.
     async fn connect_seen(url: &str) -> Result<(Self, Option<String>), RpcError> {
-        let (ws, headers) = vardoger_sync::dial::connect_ws_with_headers(url)
+        let (ws, headers) = commutator_sync::dial::connect_ws_with_headers(url)
             .await
             .map_err(|e| RpcError::Transport(format!("device room unreachable: {e}")))?;
         let stamped = headers
-            .get("x-vardoger-caller-device")
+            .get("x-commutator-caller-device")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         Ok((Self::from_socket(ws), stamped))
     }
 
-    fn from_socket<S>(ws: vardoger_sync::socket::Connection<S>) -> Self
+    fn from_socket<S>(ws: commutator_sync::socket::Connection<S>) -> Self
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
@@ -784,7 +784,7 @@ impl DeviceLink {
         let used = last_used.clone();
 
         let pump = tokio::spawn(async move {
-            let transport = vardoger_sync::socket::pump_with_timing(
+            let transport = commutator_sync::socket::pump_with_timing(
                 ws,
                 wire_rx,
                 wire_in,
@@ -794,8 +794,8 @@ impl DeviceLink {
                 SILENCE_LEASE,
             );
             let protocol = async {
-                // On the beat grid, with the socket pings (`vardoger_sync::wake`).
-                let mut ping = vardoger_sync::wake::beat_interval(client_ping_interval());
+                // On the beat grid, with the socket pings (`commutator_sync::wake`).
+                let mut ping = commutator_sync::wake::beat_interval(client_ping_interval());
                 // End-to-end liveness (see ECHO_DEADLINE): armed only once the
                 // host has echoed at least once, so old hosts keep working.
                 let mut last_echo = tokio::time::Instant::now();
@@ -956,7 +956,7 @@ pub struct LinkCacheConfig {
     pub edge_url: String,
     pub token: Arc<dyn TokenSource>,
     /// Exponential dial cooldown after failures (base, cap) — a dead peer must not be
-    /// redialed at full cadence; callers fail fast in between (vardoger peers.ts behavior).
+    /// redialed at full cadence; callers fail fast in between (commutator peers.ts behavior).
     pub cooldown_base: Duration,
     pub cooldown_max: Duration,
     /// Readiness probe budget: the relay accepts client joins even when the host is
@@ -989,9 +989,9 @@ pub struct CallerProof {
 /// device has a key to prove itself with.
 pub type CallerProofFn = Arc<dyn Fn(&str, &str, i64) -> Option<CallerProof> + Send + Sync>;
 
-/// `"vardoger-device-link:v1:{target}:{connId}:{ts}"`: what a dial's proof signs.
+/// `"commutator-device-link:v1:{target}:{connId}:{ts}"`: what a dial's proof signs.
 pub fn caller_proof_message(target: &str, conn_id: &str, ts: i64) -> String {
-    format!("vardoger-device-link:v1:{target}:{conn_id}:{ts}")
+    format!("commutator-device-link:v1:{target}:{conn_id}:{ts}")
 }
 
 /// `&callerDevice=…&callerKey=…&callerTs=…&callerProof=…`, or nothing when a
@@ -1010,7 +1010,7 @@ fn caller_query(proof: &CallerProof, ts: i64) -> String {
 impl LinkCacheConfig {
     pub fn new(edge_url: impl Into<String>, token: Arc<dyn TokenSource>) -> Self {
         // Interactive remote control (remote folders, terminals, accounts) rides
-        // this cache: one blip must cost seconds, not minutes. The old vardoger
+        // this cache: one blip must cost seconds, not minutes. The old commutator
         // 15s→5min curve punished a single failed dial with a 5-minute refusal;
         // here the first failure backs off 5s and even a dead peer is re-probed
         // within a minute. A generous probe budget keeps a slow-waking laptop
@@ -1043,7 +1043,7 @@ struct DialState {
     cooldown_until: Option<Instant>,
 }
 
-/// Lazily-dialed, cached peer links keyed by device id — the Rust twin of vardoger's
+/// Lazily-dialed, cached peer links keyed by device id — the Rust twin of commutator's
 /// `Peers`. Cache hits never wait behind an in-flight dial; dials to the same device are
 /// serialized per device (a global lock would head-of-line-block healthy peers); links
 /// self-evict when the transport drops; a failed RPC should call [`LinkCache::invalidate`]
@@ -1091,8 +1091,8 @@ impl LinkCache {
         if tokio::runtime::Handle::try_current().is_ok() {
             let weak = Arc::downgrade(&cache);
             tokio::spawn(async move {
-                let mut wake = vardoger_sync::wake::subscribe();
-                let mut online = vardoger_sync::wake::subscribe_online();
+                let mut wake = commutator_sync::wake::subscribe();
+                let mut online = commutator_sync::wake::subscribe_online();
                 let mut token_changes = weak
                     .upgrade()
                     .and_then(|cache| cache.config.token.subscribe());
@@ -1474,8 +1474,8 @@ mod tests {
     async fn blocked_relay_upload_closes_link_and_fails_pending_rpc() {
         use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
         let (client, _peer) = tokio::io::duplex(64);
-        let (client, progress) = vardoger_sync::socket::ProgressIo::new(client);
-        let socket = vardoger_sync::socket::Connection {
+        let (client, progress) = commutator_sync::socket::ProgressIo::new(client);
+        let socket = commutator_sync::socket::Connection {
             socket: WebSocketStream::from_raw_socket(client, Role::Client, None).await,
             progress,
         };
@@ -1497,8 +1497,8 @@ mod tests {
         use tokio::io::AsyncReadExt;
         use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
         let (client, mut peer) = tokio::io::duplex(8);
-        let (client, progress) = vardoger_sync::socket::ProgressIo::new(client);
-        let socket = vardoger_sync::socket::Connection {
+        let (client, progress) = commutator_sync::socket::ProgressIo::new(client);
+        let socket = commutator_sync::socket::Connection {
             socket: WebSocketStream::from_raw_socket(client, Role::Client, None).await,
             progress,
         };
@@ -1650,7 +1650,7 @@ mod tests {
         // Anything that would need escaping isn't sent at all (unstamped).
         let odd = CallerProof { device: "dev a&x=1".into(), ..proof };
         assert_eq!(caller_query(&odd, 1), "");
-        assert_eq!(caller_proof_message("dev-b", "c1", 5), "vardoger-device-link:v1:dev-b:c1:5");
+        assert_eq!(caller_proof_message("dev-b", "c1", 5), "commutator-device-link:v1:dev-b:c1:5");
     }
 
     #[test]

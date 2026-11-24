@@ -1,6 +1,6 @@
 //! chat2 host wiring (docs/chat2-sync.md C3): the engine-side implementations
-//! of [`vardoger_sync::chat_client::ChatDocSink`] and
-//! [`vardoger_sync::chat_client::CheckpointFetcher`], binding a
+//! of [`commutator_sync::chat_client::ChatDocSink`] and
+//! [`commutator_sync::chat_client::CheckpointFetcher`], binding a
 //! [`crate::doc_host::ChatDocHandle`]'s live doc to a chat2 room.
 //!
 //! The C2 rule is enforced by the coalescing persister: doc content AND its
@@ -11,9 +11,9 @@
 use std::sync::Arc;
 
 
-use vardoger_doc::SessionDoc;
-use vardoger_sync::DocsStore;
-use vardoger_sync::chat_client::{ChatDocSink, RowImportOutcome};
+use commutator_doc::SessionDoc;
+use commutator_sync::DocsStore;
+use commutator_sync::chat_client::{ChatDocSink, RowImportOutcome};
 
 
 /// Doc epoch stamped on every chat2-synced snapshot (docs/chat2-sync.md M1:
@@ -123,7 +123,7 @@ impl ChatDocSink for EngineChatSink {
             .map_err(|e| e.to_string())?;
         let mut updates = Vec::new();
         for (id, bytes) in pending {
-            if bytes.len() > vardoger_sync::chat_client::MAX_PUSH_BYTES {
+            if bytes.len() > commutator_sync::chat_client::MAX_PUSH_BYTES {
                 self.store
                     .reject_chat_update(&self.chat_id, &id)
                     .map_err(|e| e.to_string())?;
@@ -254,8 +254,8 @@ impl ChatDocSink for EngineChatSink {
         doc.export(loro::ExportMode::updates(&vv)).ok()
     }
 
-    fn relay_import(&self, bytes: &[u8], history: bool) -> vardoger_sync::chat_relay::RelayImport {
-        use vardoger_sync::chat_relay::RelayImport;
+    fn relay_import(&self, bytes: &[u8], history: bool) -> commutator_sync::chat_relay::RelayImport {
+        use commutator_sync::chat_relay::RelayImport;
         let import = || {
             // An evicted handle: nothing took it in, so it must not count as read.
             let Some(doc) = self.doc.upgrade() else {
@@ -318,7 +318,7 @@ impl ChatDocSink for EngineChatSink {
 mod relay_sink_tests {
     use super::*;
     use std::sync::Arc;
-    use vardoger_sync::chat_relay::RelayImport;
+    use commutator_sync::chat_relay::RelayImport;
 
     fn sink() -> (EngineChatSink, Arc<SessionDoc>, Arc<DocsStore>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();

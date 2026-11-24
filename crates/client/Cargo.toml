@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-client"
+name = "commutator-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,14 +11,14 @@ publish.workspace = true
 # this crate stays usable from any frontend (iOS, Android, tests, CLIs).
 
 [dependencies]
-vardoger-proto.workspace = true
-vardoger-doc.workspace = true
-vardoger-sync.workspace = true
-vardoger-rpc.workspace = true
-vardoger-term-link.workspace = true
+commutator-proto.workspace = true
+commutator-doc.workspace = true
+commutator-sync.workspace = true
+commutator-rpc.workspace = true
+commutator-term-link.workspace = true
 # WebRTC to the account's machines in Remote mode: terminals go direct when
 # they can, previews open over it (src/direct.rs).
-vardoger-preview.workspace = true
+commutator-preview.workspace = true
 anyhow.workspace = true
 loro.workspace = true
 tokio.workspace = true
@@ -37,12 +37,12 @@ async-trait.workspace = true
 tempfile.workspace = true
 anyhow.workspace = true
 # A real engine in-process for the local-mode test (tests/local.rs).
-vardoger-engine.workspace = true
-vardoger-visual.workspace = true
+commutator-engine.workspace = true
+commutator-visual.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 # The account server in-process for the remote-mode test (tests/remote.rs);
 # axum 0.7 is the server's own, already in the lockfile.
-vardoger-server = { path = "../../apps/vardoger-server" }
+commutator-server = { path = "../../apps/commutator-server" }
 axum = "0.7"
 

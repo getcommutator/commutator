@@ -1,5 +1,5 @@
 //! What this device's machine says about itself, for `DeviceStats`: the OS,
-//! CPU, memory, storage, GPU, load, battery and Vardoger's own version.
+//! CPU, memory, storage, GPU, load, battery and Commutator's own version.
 //!
 //! Everything comes from OS APIs (through `sysinfo` and a few small
 //! per-platform readers), never a child process, and a report is reused for
@@ -10,7 +10,7 @@
 //!
 //! Privacy: a report names volumes by their mount points only. It never
 //! carries the data dir's or the home folder's own path, a user name, the
-//! machine's hostname (it often holds a person's name; the device's Vardoger
+//! machine's hostname (it often holds a person's name; the device's Commutator
 //! name says which machine it is), or a serial number.
 
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ pub struct DeviceStats {
     pub load_average: Option<LoadAverage>,
     /// `null` on a machine with no battery.
     pub battery: Option<BatteryStats>,
-    pub vardoger: VardogerStats,
+    pub commutator: CommutatorStats,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -73,8 +73,8 @@ pub struct MemoryStats {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageStats {
-    /// The volume that holds Vardoger's data folder.
-    pub vardoger_data: Option<VolumeStats>,
+    /// The volume that holds Commutator's data folder.
+    pub commutator_data: Option<VolumeStats>,
     /// The volume that holds the user's home folder.
     pub home: Option<VolumeStats>,
     /// Every mounted local volume (system-internal ones left out).
@@ -123,7 +123,7 @@ pub struct BatteryStats {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VardogerStats {
+pub struct CommutatorStats {
     pub engine_version: String,
     /// The engine build (commit and build time) when known.
     pub build: Option<String>,
@@ -148,7 +148,7 @@ pub async fn current(places: Places) -> DeviceStats {
     let fresh = tokio::task::spawn_blocking(move || collect(&places))
         .await
         .unwrap_or_else(|_| DeviceStats {
-            vardoger: vardoger(None),
+            commutator: commutator(None),
             ..DeviceStats::default()
         });
     *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), fresh.clone()));
@@ -163,8 +163,8 @@ fn cached() -> Option<DeviceStats> {
         .map(|(_, stats)| stats.clone())
 }
 
-fn vardoger(build: Option<String>) -> VardogerStats {
-    VardogerStats {
+fn commutator(build: Option<String>) -> CommutatorStats {
+    CommutatorStats {
         engine_version: env!("CARGO_PKG_VERSION").to_string(),
         build,
     }
@@ -257,7 +257,7 @@ pub fn collect(places: &Places) -> DeviceStats {
         uptime_seconds,
         load_average,
         battery: battery(),
-        vardoger: vardoger(places.build.clone()),
+        commutator: commutator(places.build.clone()),
     }
 }
 
@@ -297,7 +297,7 @@ pub(crate) fn storage(mounted: &[Mounted], places: &Places) -> StorageStats {
             .map(Mounted::report)
     };
     StorageStats {
-        vardoger_data: holding(places.data_dir.as_deref()),
+        commutator_data: holding(places.data_dir.as_deref()),
         home: holding(places.home.as_deref()),
         volumes: mounted
             .iter()
@@ -642,7 +642,7 @@ mod tests {
             took < Duration::from_millis(1500),
             "collection took {took:?}"
         );
-        assert_eq!(stats.vardoger.engine_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(stats.commutator.engine_version, env!("CARGO_PKG_VERSION"));
         assert!(stats.collected_at.is_some());
         let os = serde_json::to_value(&stats.os).unwrap();
         assert!(os.get("hostname").is_none(), "no hostname: {os}");
@@ -663,7 +663,7 @@ mod tests {
             assert!(stats.cpu.logical_cores.is_some_and(|n| n > 0), "{stats:?}");
             let data = stats
                 .storage
-                .vardoger_data
+                .commutator_data
                 .as_ref()
                 .expect("the temp dir's volume");
             assert!(data.total_bytes >= data.available_bytes);
@@ -682,7 +682,7 @@ mod tests {
         assert!(value["os"]["name"].is_null());
         assert!(value["cpu"]["model"].is_null());
         assert!(value["memory"]["totalBytes"].is_null());
-        assert!(value["storage"]["vardogerData"].is_null());
+        assert!(value["storage"]["commutatorData"].is_null());
         assert_eq!(value["storage"]["volumes"], serde_json::json!([]));
         assert!(value["gpus"].is_null());
         assert!(value["battery"].is_null());
@@ -690,10 +690,10 @@ mod tests {
         // And it reads back from a report with fields missing (an older or
         // newer engine's).
         let back: DeviceStats = serde_json::from_value(serde_json::json!({
-            "os": {}, "cpu": {}, "memory": {}, "storage": { "volumes": [] }, "vardoger": { "engineVersion": "0.1.0" }
+            "os": {}, "cpu": {}, "memory": {}, "storage": { "volumes": [] }, "commutator": { "engineVersion": "0.1.0" }
         }))
         .unwrap();
-        assert_eq!(back.vardoger.engine_version, "0.1.0");
+        assert_eq!(back.commutator.engine_version, "0.1.0");
     }
 
     #[test]
@@ -743,22 +743,22 @@ mod tests {
         // Paths that don't exist here, so only the prefix rule can answer.
         let mounted = [
             volume("/", "apfs", 100, 50),
-            volume("/vardoger-test-mount", "ext4", 10, 5),
+            volume("/commutator-test-mount", "ext4", 10, 5),
         ];
         let places = Places {
-            data_dir: Some("/vardoger-test-mount/data/vardoger".into()),
+            data_dir: Some("/commutator-test-mount/data/commutator".into()),
             home: None,
             build: None,
         };
         let storage = storage(&mounted, &places);
         // On Unix the nearest existing ancestor is `/`, the same filesystem
         // as the `/` mount: that answer wins.
-        let data = storage.vardoger_data.expect("a volume");
-        assert!(["/", "/vardoger-test-mount"].contains(&data.mount_point.as_str()));
+        let data = storage.commutator_data.expect("a volume");
+        assert!(["/", "/commutator-test-mount"].contains(&data.mount_point.as_str()));
         assert!(storage.home.is_none(), "no home asked about, none answered");
         // No volumes listed at all: nothing to answer with, not a failure.
         let none = super::storage(&[], &places);
-        assert!(none.vardoger_data.is_none() && none.volumes.is_empty());
+        assert!(none.commutator_data.is_none() && none.volumes.is_empty());
     }
 
     // (Unix only: its sysfs fixture names files `0000:01:00.0`, which Windows refuses.)

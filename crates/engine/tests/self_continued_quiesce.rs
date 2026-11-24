@@ -6,7 +6,7 @@
 //! settle, so the quiesce watchdog is that turn shape's ONLY settle path.
 //! With the shared 120s window every background notification ended in ~2min
 //! of phantom Working. Self-continued turns now use a much shorter window
-//! (`VARDOGER_SELF_TURN_QUIESCE_MS`); prompt/steer turns keep the normal one.
+//! (`COMMUTATOR_SELF_TURN_QUIESCE_MS`); prompt/steer turns keep the normal one.
 //!
 //! This file exists separately from `turn_quiesce.rs` because the env knobs
 //! are process-global: here the NORMAL window is set far beyond the test
@@ -20,9 +20,9 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::{Mutex, mpsc};
 
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
@@ -40,8 +40,8 @@ fn init_env() {
         // SAFETY: called before any engine (and thus any reader of the vars)
         // exists in this test process.
         unsafe {
-            std::env::set_var("VARDOGER_TURN_QUIESCE_MS", QUIESCE_MS.to_string());
-            std::env::set_var("VARDOGER_SELF_TURN_QUIESCE_MS", SELF_QUIESCE_MS.to_string());
+            std::env::set_var("COMMUTATOR_TURN_QUIESCE_MS", QUIESCE_MS.to_string());
+            std::env::set_var("COMMUTATOR_SELF_TURN_QUIESCE_MS", SELF_QUIESCE_MS.to_string());
         }
     });
 }

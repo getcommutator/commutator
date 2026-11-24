@@ -48,7 +48,7 @@ impl Shell {
     /// sibling; the picker passes the source itself.
     pub(super) fn fork_chat(
         &mut self,
-        source: vardoger_proto::Chat,
+        source: commutator_proto::Chat,
         parent_id: String,
         cx: &mut Context<Self>,
     ) {
@@ -69,7 +69,7 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call_as::<vardoger_proto::Chat>(methods::FORK_SIDE_CHAT, params)
+                .call_as::<commutator_proto::Chat>(methods::FORK_SIDE_CHAT, params)
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.side_chat_creating = false;
@@ -97,7 +97,7 @@ impl Shell {
     /// A fresh, empty side chat under `parent_id` (the active chat when
     /// None), opened in the right pane ready for its first message. Nothing
     /// is written until that message: the first send mints it with the same
-    /// shape the Vardoger MCP server's `create_chat` does, so agent-spawned and
+    /// shape the Commutator MCP server's `create_chat` does, so agent-spawned and
     /// hand-started side chats list together, and an abandoned one leaves
     /// no row behind.
     pub(super) fn create_child_chat(&mut self, parent_id: Option<String>, cx: &mut Context<Self>) {
@@ -160,7 +160,7 @@ impl Shell {
 
     pub(super) fn open_side_chat(
         &mut self,
-        chat: vardoger_proto::Chat,
+        chat: commutator_proto::Chat,
         key: String,
         cx: &mut Context<Self>,
     ) {
@@ -170,7 +170,7 @@ impl Shell {
     /// `unsaved`: `chat` is only minted here, and its first send creates it.
     fn open_side_chat_tab(
         &mut self,
-        chat: vardoger_proto::Chat,
+        chat: commutator_proto::Chat,
         key: String,
         unsaved: bool,
         cx: &mut Context<Self>,
@@ -390,7 +390,7 @@ mod tests {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             )
@@ -441,7 +441,7 @@ mod tests {
                     data_dir: dir.into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             )
@@ -503,7 +503,7 @@ mod tests {
         window
             .update(cx, |shell, window, cx| {
                 shell.active_chat = "main".into();
-                let main: vardoger_proto::Chat = serde_json::from_value(serde_json::json!({
+                let main: commutator_proto::Chat = serde_json::from_value(serde_json::json!({
                     "id": "main", "deviceId": "local", "cwd": "/tmp/main",
                     "archived": false, "createdAt": Utc::now(),
                 }))
@@ -520,7 +520,7 @@ mod tests {
                 let chat_id = side.read(cx).selected_chat.clone().unwrap();
                 assert!(side.read(cx).side_chat_unsaved());
                 // A model picked before the first send is what gets minted.
-                let config: vardoger_proto::ChatConfig = serde_json::from_value(serde_json::json!({
+                let config: commutator_proto::ChatConfig = serde_json::from_value(serde_json::json!({
                     "harness": "codex", "sandbox": "workspace-write",
                 }))
                 .unwrap();
@@ -533,7 +533,7 @@ mod tests {
                 assert_eq!(create["cwd"], "/tmp/main");
                 assert_eq!(create["config"]["harness"], "codex");
                 let row = side.read(cx).selected_chat_row().cloned().unwrap();
-                assert_eq!(row.config.unwrap().harness, vardoger_proto::HarnessId::Codex);
+                assert_eq!(row.config.unwrap().harness, commutator_proto::HarnessId::Codex);
                 assert_eq!(shell.state.read(cx).chats.len(), 1, "no row yet");
                 // A draft cannot keep it: no row could reopen it.
                 let composer = shell.side_chats[&id].composer.clone();
@@ -567,7 +567,7 @@ mod tests {
                 );
             })
             .unwrap();
-        let chat: vardoger_proto::Chat = serde_json::from_value(serde_json::json!({
+        let chat: commutator_proto::Chat = serde_json::from_value(serde_json::json!({
             "id": "side", "parentChatId": "main", "deviceId": "local", "cwd": "/tmp/other",
             "archived": false, "createdAt": Utc::now(),
         }))
@@ -575,7 +575,7 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 shell.active_chat = "main".into();
-                let main: vardoger_proto::Chat = serde_json::from_value(serde_json::json!({
+                let main: commutator_proto::Chat = serde_json::from_value(serde_json::json!({
                     "id": "main", "deviceId": "local", "cwd": "/tmp/main",
                     "archived": false, "createdAt": Utc::now(),
                 }))

@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use vardoger_proto::Device;
-use vardoger_rpc::{RpcError, RpcReply};
+use commutator_proto::Device;
+use commutator_rpc::{RpcError, RpcReply};
 
 use super::EngineRpc;
 use crate::device_stats::{self, Places};
@@ -45,7 +45,7 @@ impl EngineRpc {
         }
         let asked = tokio::time::timeout(
             REMOTE_DEADLINE,
-            self.forward(target, vardoger_rpc::methods::DEVICE_STATS, params.clone()),
+            self.forward(target, commutator_rpc::methods::DEVICE_STATS, params.clone()),
         )
         .await;
         match asked {
@@ -93,7 +93,7 @@ pub(crate) fn remote_error(device: &Device, error: RpcError, now: DateTime<Utc>)
             .map(|v| format!(" ({v})"))
             .unwrap_or_default();
         return RpcError::Failed(format!(
-            "{}'s Vardoger{version} is too old to report stats. Update Vardoger there.",
+            "{}'s Commutator{version} is too old to report stats. Update Commutator there.",
             device.name
         ));
     }
@@ -163,7 +163,7 @@ mod tests {
             let said = remote_error(&device(Some("0.2.100"), None), error, now).to_string();
             assert_eq!(
                 said,
-                "devbox's Vardoger (0.2.100) is too old to report stats. Update Vardoger there."
+                "devbox's Commutator (0.2.100) is too old to report stats. Update Commutator there."
             );
         }
     }

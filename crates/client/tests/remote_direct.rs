@@ -11,14 +11,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use vardoger_client::events::NullListener;
-use vardoger_client::{
+use commutator_client::events::NullListener;
+use commutator_client::{
     Client, ClientConfig, Credentials, NewSession, SessionTarget, TerminalPath, TerminalSink,
     TerminalUpdate,
 };
-use vardoger_engine::account::Account;
-use vardoger_engine::{Engine, EngineConfig, HarnessId};
-use vardoger_server::{App, Config, Kind};
+use commutator_engine::account::Account;
+use commutator_engine::{Engine, EngineConfig, HarnessId};
+use commutator_server::{App, Config, Kind};
 
 fn wait_for(what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
     let start = Instant::now();
@@ -86,11 +86,11 @@ fn a_remote_terminal_goes_direct_and_falls_back_to_the_relay() {
     let server_url = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(axum::serve(listener, vardoger_server::router(app.clone())).into_future());
+        tokio::spawn(axum::serve(listener, commutator_server::router(app.clone())).into_future());
         url
     });
     let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
-    let machine = vardoger_engine::device_id(engine_dir.path()).unwrap();
+    let machine = commutator_engine::device_id(engine_dir.path()).unwrap();
     let (_, machine_token) = app
         .create_device(&me, "laptop", Kind::Machine, Some(&machine))
         .unwrap();

@@ -79,7 +79,7 @@ mod tests {
     fn beta_needs_an_app_install() {
         let dir = tempfile::tempdir().unwrap();
         let refused = choose_channel(dir.path(), true).unwrap_err();
-        assert!(refused.contains("Vardoger app"), "{refused}");
+        assert!(refused.contains("Commutator app"), "{refused}");
         assert_eq!(channel::read(dir.path()).channel, Channel::Stable);
     }
 }

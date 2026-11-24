@@ -10,14 +10,14 @@ use std::sync::{
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use vardoger_doc::{MessageRole, MessageStatus, SessionDoc};
-use vardoger_engine::{
+use commutator_doc::{MessageRole, MessageStatus, SessionDoc};
+use commutator_engine::{
     EngineCore, EngineProfile, HarnessRegistry, chat2_host::EngineChatSink,
 };
-use vardoger_harness::CodexHarness;
-use vardoger_proto::{HarnessId, ReasoningLevel, RunRequest, SandboxLevel, SessionStatus};
-use vardoger_sync::chat_frames::{decode, encode, frame_type};
-use vardoger_sync::{
+use commutator_harness::CodexHarness;
+use commutator_proto::{HarnessId, ReasoningLevel, RunRequest, SandboxLevel, SessionStatus};
+use commutator_sync::chat_frames::{decode, encode, frame_type};
+use commutator_sync::{
     ChatClient, ChatDocSink, CheckpointFetcher, DocsStore, SyncError, chat_client::RowImportOutcome,
 };
 const CHAT: &str = "publication-regression";
@@ -324,7 +324,7 @@ async fn regression(live: bool) {
         let native_sessions: Vec<_> = events
             .iter()
             .filter_map(|e| match &e.event {
-                vardoger_proto::AgentEvent::SessionStarted { session_id, .. } => Some(session_id),
+                commutator_proto::AgentEvent::SessionStarted { session_id, .. } => Some(session_id),
                 _ => None,
             })
             .collect();

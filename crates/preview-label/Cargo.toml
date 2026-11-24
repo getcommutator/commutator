@@ -1,9 +1,9 @@
 [package]
-name = "vardoger-preview-label"
+name = "commutator-preview-label"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "A preview's process label and its redacted command line, shared by Vardoger's engine and its zgx app"
+description = "A preview's process label and its redacted command line, shared by Commutator's engine and its zgx app"
 
 [dependencies]

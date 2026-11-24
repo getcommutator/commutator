@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use chrono::Utc;
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_mcp::{Origin, Tools, Vardoger};
-use vardoger_proto::{ChatIndicator, HarnessId, Session, SessionStatus, TerminalEvent};
-use vardoger_rpc::memory_client;
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_mcp::{Origin, Tools, Commutator};
+use commutator_proto::{ChatIndicator, HarnessId, Session, SessionStatus, TerminalEvent};
+use commutator_rpc::memory_client;
 
 fn assemble(path: &std::path::Path) -> EngineCore {
     EngineCore::assemble(
@@ -30,7 +30,7 @@ async fn state(
             let snapshot = rows.borrow_and_update().clone();
             let chat = core.workspace.chat("chat").unwrap().unwrap();
             if let Some(row) = snapshot.into_iter().find(|row| row.chat_id == "chat")
-                && vardoger_proto::view::display_status(&chat, Some(&row), Utc::now()) == expected
+                && commutator_proto::view::display_status(&chat, Some(&row), Utc::now()) == expected
             {
                 return row;
             }
@@ -68,11 +68,11 @@ async fn pty_states_match_sidebar_mcp_and_synced_registry_without_a_viewport() {
         .unwrap();
     core.terminals.associate_chat(&terminal.id, "chat").unwrap();
     let mut rows = core.sessions.watch_sessions();
-    let vardoger = Arc::new(Vardoger::with_client(
+    let commutator = Arc::new(Commutator::with_client(
         memory_client(core.rpc_service()),
         Origin::default(),
     ));
-    let tools = Tools::new(vardoger.clone());
+    let tools = Tools::new(commutator.clone());
 
     emit(&core, &terminal.id, "state=working:app=demo");
     let working = state(&mut rows, ChatIndicator::Working, &core).await;
@@ -151,7 +151,7 @@ async fn pty_states_match_sidebar_mcp_and_synced_registry_without_a_viewport() {
     // been accepted but has not started. It needs native completion evidence.
     let chat = core.workspace.chat("chat").unwrap().unwrap();
     let (waited, ()) = tokio::join!(
-        vardoger.wait_for_turn(&chat, Some(&done), true, Duration::from_millis(200)),
+        commutator.wait_for_turn(&chat, Some(&done), true, Duration::from_millis(200)),
         async {
             tokio::time::sleep(Duration::from_millis(25)).await;
             emit(&core, &terminal.id, "state=working:app=demo");

@@ -6,8 +6,8 @@ use gpui::{
     AnyElement, Context, Entity, SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 
-use vardoger_proto::Chat;
-use vardoger_rpc::methods;
+use commutator_proto::Chat;
+use commutator_rpc::methods;
 
 use crate::popover;
 use crate::settings::widgets;
@@ -262,7 +262,7 @@ impl Render for ArchivedPage {
                     .clone()
                     .unwrap_or_else(|| "Untitled session".into())
                     .into();
-                // Unknown device → no fragment at all (vardoger renders the
+                // Unknown device → no fragment at all (commutator renders the
                 // device span only when the name resolves).
                 let device: Option<SharedString> =
                     device_names.get(&chat.device_id).cloned().map(Into::into);
@@ -275,7 +275,7 @@ impl Render for ArchivedPage {
                     crate::state::chat_location(&chat).map(Into::into);
                 let is_busy = busy.as_deref() == Some(chat.id.as_str());
                 let chat_id = chat.id.clone();
-                // vardoger settings.archived.tsx row: archive tile, medium title
+                // commutator settings.archived.tsx row: archive tile, medium title
                 // + tabular time, quiet device · location meta, Unarchive.
                 div()
                     .id(("archived-row", ix))
@@ -334,7 +334,7 @@ impl Render for ArchivedPage {
                             )
                             .child({
                                 // device · location, separator at the line's
-                                // own tone (vardoger: a plain span inheriting
+                                // own tone (commutator: a plain span inheriting
                                 // `text-muted-foreground/55`).
                                 let mut meta = div()
                                     .mt(px(2.0))
@@ -399,7 +399,7 @@ impl Render for ArchivedPage {
             .collect();
 
         let body: AnyElement = if items.is_empty() {
-            // Centered empty state (vardoger settings.archived.tsx).
+            // Centered empty state (commutator settings.archived.tsx).
             div()
                 .mt(px(96.0))
                 .flex()
@@ -409,7 +409,7 @@ impl Render for ArchivedPage {
                 .text_color(theme.text_muted)
                 .child(
                     // `opacity-40` on top of the inherited muted/50 — an
-                    // effectively ~20% glyph (vardoger settings.archived.tsx).
+                    // effectively ~20% glyph (commutator settings.archived.tsx).
                     crate::icons::icon(crate::icons::ARCHIVE_MINIMALISTIC)
                         .size(px(28.0))
                         .text_color(theme.text_muted.opacity(0.2)),
@@ -635,7 +635,7 @@ mod tests {
         let (out, mut requests) = tokio::sync::mpsc::channel(16);
         let (replies, inbound) = tokio::sync::mpsc::channel(16);
         let engine =
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound));
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound));
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| {
             crate::settings::init(Default::default(), dir.path(), cx);

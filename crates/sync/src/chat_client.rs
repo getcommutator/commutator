@@ -493,7 +493,7 @@ fn apply_remote_row(
     }
 }
 
-/// `vardoger sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
+/// `commutator sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChatStatsSnapshot {
     pub connected: bool,

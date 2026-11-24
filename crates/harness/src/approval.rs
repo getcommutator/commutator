@@ -2,7 +2,7 @@
 //! before what its [`AccessMode`] does not cover; every driver asks the same
 //! way — a yes/no question through [`crate::RunControls::request_input`] —
 //! so an approval reads alike whichever agent raised it.
-use vardoger_proto::{AccessMode, UserInputAnswer, UserInputQuestion};
+use commutator_proto::{AccessMode, UserInputAnswer, UserInputQuestion};
 
 pub const ALLOW: &str = "Yes";
 pub const DENY: &str = "No";
@@ -22,7 +22,7 @@ pub fn allowed_without_asking(access: AccessMode, action: Action) -> bool {
         AccessMode::FullAccess => true,
         AccessMode::AutoAcceptEdits => action == Action::Edit,
         // The agent's reviewer already let through what it judged safe:
-        // what reaches Vardoger is what it escalated, so it's asked.
+        // what reaches Commutator is what it escalated, so it's asked.
         AccessMode::Auto | AccessMode::Supervised => false,
     }
 }

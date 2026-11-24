@@ -1,8 +1,8 @@
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_proto::{HarnessId, PreviewService};
-use vardoger_rpc::{RpcReply, RpcService, methods};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_proto::{HarnessId, PreviewService};
+use commutator_rpc::{RpcReply, RpcService, methods};
 
 fn service(device: &str, cwd: &std::path::Path, id: &str) -> PreviewService {
     PreviewService {
@@ -18,7 +18,7 @@ fn service(device: &str, cwd: &std::path::Path, id: &str) -> PreviewService {
         pid: 123,
         cwd: cwd.to_string_lossy().into_owned(),
         started_at: 1,
-        vardoger_owned: true,
+        commutator_owned: true,
         chat_id: None,
         process: String::new(),
     }

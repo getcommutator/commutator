@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use vardoger_engine::{Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
-use vardoger_rpc::{connect_ipc, connect_ws, memory_client, methods};
+use commutator_engine::{Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
+use commutator_rpc::{connect_ipc, connect_ws, memory_client, methods};
 
 fn config(data_dir: &std::path::Path, edge_url: String) -> EngineConfig {
     EngineConfig {
@@ -31,7 +31,7 @@ async fn rejecting_edge() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<
                 let mut request = [0u8; 4096];
                 let n = stream.read(&mut request).await.unwrap_or(0);
                 // A `HEAD /` is preview discovery probing this listener on
-                // localhost (seen from the Vardoger engine already running on a
+                // localhost (seen from the Commutator engine already running on a
                 // developer's Mac), not a request to the edge.
                 if !request[..n].starts_with(b"HEAD / ") {
                     seen.fetch_add(1, Ordering::SeqCst);
@@ -90,7 +90,7 @@ async fn local_runtime_checks_public_releases_without_starting_edge_links() {
     // checks for releases.
     let (releases_url, release_requests, releases_task) = rejecting_edge().await;
     // SAFETY: no other test in this binary reads it.
-    unsafe { std::env::set_var("VARDOGER_RELEASES_API", &releases_url) };
+    unsafe { std::env::set_var("COMMUTATOR_RELEASES_API", &releases_url) };
     let config = config(dir.path(), edge_url);
     let auth = Engine::build_auth(&config);
     let scope = Engine::initial_workspace_scope(&auth);
@@ -153,7 +153,7 @@ async fn headless_stop_rpc_drains_the_daemon_and_releases_ipc() {
     .expect("headless IPC did not start");
 
     // The daemon published an owner-only bearer and refuses dials without it.
-    let token_file = vardoger_rpc::ipc_auth::token_path(dir.path());
+    let token_file = commutator_rpc::ipc_auth::token_path(dir.path());
     assert!(
         token_file.is_file(),
         "headless start must publish its IPC token"

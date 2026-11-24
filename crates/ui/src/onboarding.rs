@@ -18,8 +18,8 @@ use gpui::{
     StyledImage as _, Subscription, Window, div, img, prelude::*, px,
 };
 
-use vardoger_engine::registry::HarnessDescriptor;
-use vardoger_proto::HarnessId;
+use commutator_engine::registry::HarnessDescriptor;
+use commutator_proto::HarnessId;
 
 use crate::appearance::{self, AppearanceMode};
 use crate::icons::{self, icon};
@@ -40,7 +40,7 @@ pub enum Step {
 }
 
 impl Step {
-    /// `VARDOGER_ONBOARDING` values: a step name, or anything else to start at
+    /// `COMMUTATOR_ONBOARDING` values: a step name, or anything else to start at
     /// the beginning.
     pub fn parse(value: &str) -> Step {
         match value {
@@ -746,7 +746,7 @@ impl Onboarding {
             .items_center()
             .text_center()
             .child(
-                icon(icons::VARDOGER_LOGO)
+                icon(icons::COMMUTATOR_LOGO)
                     .w(px(36.6))
                     .h(px(42.0))
                     .text_color(theme.text),
@@ -758,7 +758,7 @@ impl Onboarding {
                     .line_height(px(30.0))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.text)
-                    .child(SharedString::from("Welcome to Vardoger")),
+                    .child(SharedString::from("Welcome to Commutator")),
             )
             .child(
                 div()
@@ -816,8 +816,8 @@ impl Onboarding {
                 cx.notify();
             }))
         });
-        let mut accents = vec![vardoger_theme::AccentSelection::ThemeDefault];
-        accents.extend(vardoger_theme::AccentPreset::ALL.map(vardoger_theme::AccentSelection::Preset));
+        let mut accents = vec![commutator_theme::AccentSelection::ThemeDefault];
+        accents.extend(commutator_theme::AccentPreset::ALL.map(commutator_theme::AccentSelection::Preset));
         let swatches = accents.into_iter().map(|selection| {
             crate::settings::appearance::accent_swatch(
                 theme,
@@ -1060,7 +1060,7 @@ impl Onboarding {
             AgentsSummary::NoneInstalled => (
                 "Install an agent",
                 format!(
-                    "Vardoger runs the coding agents you already use, and none are on {place} yet. Install one to continue."
+                    "Commutator runs the coding agents you already use, and none are on {place} yet. Install one to continue."
                 ),
             ),
             AgentsSummary::Installed(names) => (
@@ -1223,7 +1223,7 @@ impl Onboarding {
                     .map(|el| {
                         if has_projects {
                             el.child(
-                                wide_button(theme, "onboarding-finish", "Start using Vardoger")
+                                wide_button(theme, "onboarding-finish", "Start using Commutator")
                                     .on_click(cx.listener(|this, _, _, cx| this.finish(false, cx))),
                             )
                         } else {
@@ -1299,7 +1299,7 @@ mod tests {
             id,
             name: name.into(),
             supports_steering: false,
-            steering_mode: vardoger_proto::SteeringMode::TurnBoundary,
+            steering_mode: commutator_proto::SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed,
             can_install: true,

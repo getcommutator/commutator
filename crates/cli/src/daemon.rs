@@ -1,39 +1,39 @@
-//! `vardoger daemon …` — install/manage `vardoger headless` as a background service:
+//! `commutator daemon …` — install/manage `commutator headless` as a background service:
 //! a systemd **user** unit on Linux (the VPS deployment target), a launchd
 //! LaunchAgent on macOS. The unit runs the current executable with the
-//! `VARDOGER_*` environment captured at install time, so
-//! `VARDOGER_EDGE_URL=… vardoger daemon install` bakes that override in.
+//! `COMMUTATOR_*` environment captured at install time, so
+//! `COMMUTATOR_EDGE_URL=… commutator daemon install` bakes that override in.
 //!
 //! Auth is decoupled: without a saved session the service remains up on the
-//! local-only profile. `vardoger login` and a service restart opt into sync.
+//! local-only profile. `commutator login` and a service restart opt into sync.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, bail};
 
-const LAUNCHD_LABEL: &str = "sh.vardoger.app";
+const LAUNCHD_LABEL: &str = "sh.commutator.app";
 /// Same unit name the curl|sh installer (`edge/src/install.sh`) writes, so
-/// `vardoger daemon …` manages that installation rather than a competing copy.
-const SYSTEMD_UNIT: &str = "vardoger.service";
+/// `commutator daemon …` manages that installation rather than a competing copy.
+const SYSTEMD_UNIT: &str = "commutator.service";
 
 /// Environment captured into the unit file. `PATH` is always included (the
 /// engine spawns harness CLIs like `claude`, which service managers' minimal
-/// default PATH won't find); the `VARDOGER_*`/logging vars only when set.
+/// default PATH won't find); the `COMMUTATOR_*`/logging vars only when set.
 const CAPTURED_ENV: &[&str] = &[
     "PATH",
-    "VARDOGER_DATA_DIR",
-    "VARDOGER_EDGE_URL",
-    "VARDOGER_ORG_ID",
-    "VARDOGER_IPC_PORT",
-    "VARDOGER_CALLBACK_PORT",
-    "VARDOGER_HARNESS",
-    "VARDOGER_DEVICE_NAME",
+    "COMMUTATOR_DATA_DIR",
+    "COMMUTATOR_EDGE_URL",
+    "COMMUTATOR_ORG_ID",
+    "COMMUTATOR_IPC_PORT",
+    "COMMUTATOR_CALLBACK_PORT",
+    "COMMUTATOR_HARNESS",
+    "COMMUTATOR_DEVICE_NAME",
     "RUST_LOG",
 ];
 
 pub fn install(data_dir: &Path) -> anyhow::Result<()> {
-    let exe = std::env::current_exe().context("resolving the vardoger executable path")?;
+    let exe = std::env::current_exe().context("resolving the commutator executable path")?;
     let env = captured_env();
     if cfg!(target_os = "macos") {
         let plist = launchd_plist_path()?;
@@ -64,7 +64,7 @@ pub fn install(data_dir: &Path) -> anyhow::Result<()> {
             "For start-at-boot without an active login session (VPS): loginctl enable-linger $USER"
         );
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
     println!(
         "Without a saved account the engine stays local-only; sign-in and restart are optional for sync."
@@ -105,7 +105,7 @@ pub fn uninstall() -> anyhow::Result<()> {
             Err(err) => return Err(err.into()),
         }
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
     Ok(())
 }
@@ -114,7 +114,7 @@ pub fn start() -> anyhow::Result<()> {
     if cfg!(target_os = "macos") {
         let plist = launchd_plist_path()?;
         if !plist.exists() {
-            bail!("not installed — run `vardoger daemon install` first");
+            bail!("not installed — run `commutator daemon install` first");
         }
         // `stop` boots the job out of the domain, so start = bootstrap; already
         // loaded is fine, then kickstart guarantees a running process either way.
@@ -126,7 +126,7 @@ pub fn start() -> anyhow::Result<()> {
     } else if cfg!(target_os = "linux") {
         run("systemctl", &["--user", "start", SYSTEMD_UNIT])?;
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
     println!("Started.");
     Ok(())
@@ -139,7 +139,7 @@ pub fn stop() -> anyhow::Result<()> {
     } else if cfg!(target_os = "linux") {
         run("systemctl", &["--user", "stop", SYSTEMD_UNIT])?;
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
     println!("Stopped.");
     Ok(())
@@ -163,7 +163,7 @@ pub fn restart() -> anyhow::Result<()> {
         println!("Restarted.");
         Ok(())
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
 }
 
@@ -177,9 +177,9 @@ pub fn status() -> anyhow::Result<()> {
             println!(
                 "{LAUNCHD_LABEL}: not loaded{}",
                 if launchd_plist_path()?.exists() {
-                    " (installed — `vardoger daemon start`)"
+                    " (installed — `commutator daemon start`)"
                 } else {
-                    " (not installed — `vardoger daemon install`)"
+                    " (not installed — `commutator daemon install`)"
                 }
             );
             return Ok(());
@@ -206,7 +206,7 @@ pub fn status() -> anyhow::Result<()> {
             .context("running systemctl")?;
         Ok(())
     } else {
-        bail!("vardoger daemon is only supported on macOS (launchd) and Linux (systemd)");
+        bail!("commutator daemon is only supported on macOS (launchd) and Linux (systemd)");
     }
 }
 
@@ -223,7 +223,7 @@ fn captured_env() -> Vec<(String, String)> {
 
 fn render_systemd_unit(exe: &Path, env: &[(String, String)]) -> String {
     let mut unit = String::from(
-        "[Unit]\nDescription=Vardoger headless engine\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\n",
+        "[Unit]\nDescription=Commutator headless engine\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\n",
     );
     for (key, value) in env {
         // systemd unquotes the value; escape the characters it treats specially.
@@ -231,13 +231,13 @@ fn render_systemd_unit(exe: &Path, env: &[(String, String)]) -> String {
         unit.push_str(&format!("Environment=\"{key}={value}\"\n"));
     }
     unit.push_str(&format!(
-        "ExecStart={} headless\nRestart=on-failure\nRestartSec=5\nEnvironmentFile=-%h/.vardoger/env\n\n[Install]\nWantedBy=default.target\n",
+        "ExecStart={} headless\nRestart=on-failure\nRestartSec=5\nEnvironmentFile=-%h/.commutator/env\n\n[Install]\nWantedBy=default.target\n",
         systemd_exec_path(exe)
     ));
     unit
 }
 
-/// The ExecStart binary path. An exe under `~/.vardoger/app/` came from the
+/// The ExecStart binary path. An exe under `~/.commutator/app/` came from the
 /// curl|sh installer, whose upgrades relink `app/current` — point the unit at
 /// the symlink (as the installer's own unit does) so it never pins one version.
 /// (`current_exe` resolves symlinks, so the versioned dir is what we see here.)
@@ -247,10 +247,10 @@ fn systemd_exec_path(exe: &Path) -> String {
 
 fn exec_path_for(exe: &Path, home: Option<&Path>) -> String {
     let installed = home
-        .map(|home| home.join(".vardoger/app"))
+        .map(|home| home.join(".commutator/app"))
         .is_some_and(|app_root| exe.starts_with(app_root));
     if installed {
-        "%h/.vardoger/app/current/vardoger".to_string()
+        "%h/.commutator/app/current/commutator".to_string()
     } else {
         format!("{}", exe.display())
     }
@@ -377,24 +377,24 @@ mod tests {
     #[test]
     fn systemd_unit_shape() {
         let unit = render_systemd_unit(
-            Path::new("/usr/local/bin/vardoger"),
+            Path::new("/usr/local/bin/commutator"),
             &[
                 ("PATH".into(), "/usr/bin:/bin".into()),
-                ("VARDOGER_EDGE_URL".into(), "https://edge.example".into()),
-                ("RUST_LOG".into(), "info,vardoger=\"debug\"".into()),
+                ("COMMUTATOR_EDGE_URL".into(), "https://edge.example".into()),
+                ("RUST_LOG".into(), "info,commutator=\"debug\"".into()),
             ],
         );
-        assert!(unit.contains("ExecStart=/usr/local/bin/vardoger headless\n"));
+        assert!(unit.contains("ExecStart=/usr/local/bin/commutator headless\n"));
         assert!(unit.contains("Environment=\"PATH=/usr/bin:/bin\"\n"));
-        assert!(unit.contains("Environment=\"VARDOGER_EDGE_URL=https://edge.example\"\n"));
+        assert!(unit.contains("Environment=\"COMMUTATOR_EDGE_URL=https://edge.example\"\n"));
         // Inner quotes escaped so systemd re-parses the value verbatim.
-        assert!(unit.contains("Environment=\"RUST_LOG=info,vardoger=\\\"debug\\\"\"\n"));
+        assert!(unit.contains("Environment=\"RUST_LOG=info,commutator=\\\"debug\\\"\"\n"));
         assert!(unit.contains("StartLimitIntervalSec=60\n"));
         assert!(unit.contains("StartLimitBurst=5\n"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(!unit.contains("session.json"));
         assert!(!unit.contains("ConditionPathExists"));
-        assert!(unit.contains("EnvironmentFile=-%h/.vardoger/env"));
+        assert!(unit.contains("EnvironmentFile=-%h/.commutator/env"));
         assert!(unit.contains("WantedBy=default.target"));
     }
 
@@ -406,8 +406,8 @@ mod tests {
         assert!(!installer.contains("session.json"));
         assert!(installer.contains("StartLimitIntervalSec=60\n"));
         assert!(installer.contains("StartLimitBurst=5\n"));
-        assert!(installer.contains("systemctl --user enable vardoger"));
-        assert!(installer.contains("systemctl --user restart vardoger"));
+        assert!(installer.contains("systemctl --user enable commutator"));
+        assert!(installer.contains("systemctl --user restart commutator"));
     }
 
     #[test]
@@ -416,36 +416,36 @@ mod tests {
         // the versioned dir): the unit must point back at the symlink.
         assert_eq!(
             exec_path_for(
-                Path::new("/home/u/.vardoger/app/0.3.0/vardoger"),
+                Path::new("/home/u/.commutator/app/0.3.0/commutator"),
                 Some(Path::new("/home/u")),
             ),
-            "%h/.vardoger/app/current/vardoger"
+            "%h/.commutator/app/current/commutator"
         );
         // Source build: literal path.
         assert_eq!(
             exec_path_for(
-                Path::new("/src/target/debug/vardoger"),
+                Path::new("/src/target/debug/commutator"),
                 Some(Path::new("/home/u"))
             ),
-            "/src/target/debug/vardoger"
+            "/src/target/debug/commutator"
         );
     }
 
     #[test]
     fn launchd_plist_shape() {
         let plist = render_launchd_plist(
-            Path::new("/Users/x/vardoger & co/vardoger"),
-            &[("VARDOGER_EDGE_URL".into(), "https://e?a=1&b=2".into())],
-            Path::new("/Users/x/.vardoger/daemon.log"),
+            Path::new("/Users/x/commutator & co/commutator"),
+            &[("COMMUTATOR_EDGE_URL".into(), "https://e?a=1&b=2".into())],
+            Path::new("/Users/x/.commutator/daemon.log"),
         );
-        assert!(plist.contains("<key>Label</key><string>sh.vardoger.app</string>"));
+        assert!(plist.contains("<key>Label</key><string>sh.commutator.app</string>"));
         // XML-escaped exe path and env value.
-        assert!(plist.contains("<string>/Users/x/vardoger &amp; co/vardoger</string>"));
+        assert!(plist.contains("<string>/Users/x/commutator &amp; co/commutator</string>"));
         assert!(plist.contains("<string>https://e?a=1&amp;b=2</string>"));
         assert!(plist.contains("<string>headless</string>"));
         assert!(plist.contains("<key>SuccessfulExit</key><false/>"));
         assert!(
-            plist.contains("<key>StandardOutPath</key><string>/Users/x/.vardoger/daemon.log</string>")
+            plist.contains("<key>StandardOutPath</key><string>/Users/x/.commutator/daemon.log</string>")
         );
     }
 }

@@ -81,7 +81,7 @@ fn setup(cx: &mut TestAppContext) -> (Entity<Shell>, &mut VisualTestContext) {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             );
@@ -591,7 +591,7 @@ fn pull_requests_from_a_chat_open_as_tabs_beside_the_focused_session(cx: &mut Te
         settings::update(SavePolicy::Immediate, cx, |settings| {
             settings.pull_request_destination = settings::PullRequestDestination::External;
             // Keep the link out of an embedded browser, which a test can't host.
-            settings.open_web_links_in_vardoger = false;
+            settings.open_web_links_in_commutator = false;
         });
         shell.update(cx, |shell, cx| {
             let before = shell.chat_pull_requests.len();

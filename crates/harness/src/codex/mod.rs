@@ -79,7 +79,7 @@ use futures::stream::BoxStream;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use vardoger_proto::{
+use commutator_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice,
     ReasoningLevel, RunRequest, SandboxLevel, SlashCommand, SteeringMode, UserInputAnswer,
     UserInputQuestion,
@@ -149,9 +149,9 @@ fn agent_tools_off() -> [(String, Value); 3] {
 
 /// Dotted `thread/start` config overrides that add an injected MCP server
 /// to the user's `mcp_servers` table.
-fn codex_mcp_overrides(mcp: &vardoger_proto::McpServer) -> Vec<(String, Value)> {
+fn codex_mcp_overrides(mcp: &commutator_proto::McpServer) -> Vec<(String, Value)> {
     let key = |field: &str| format!("mcp_servers.{}.{field}", mcp.name);
-    // The engine serves Vardoger's tools itself over Streamable HTTP, which
+    // The engine serves Commutator's tools itself over Streamable HTTP, which
     // Codex speaks: no server process. These overrides ride `thread/start`
     // on the app-server's stdin, never the command line.
     let transport = match &mcp.http {
@@ -166,14 +166,14 @@ fn codex_mcp_overrides(mcp: &vardoger_proto::McpServer) -> Vec<(String, Value)> 
         ],
     };
     transport.into_iter().chain([
-        // Our injected server's tools are Vardoger's own: approve them in every
+        // Our injected server's tools are Commutator's own: approve them in every
         // access mode, so Codex neither rejects a call under `never` nor
         // asks about one under the others.
         (key("default_tools_approval_mode"), "approve".into()),
-        // Codex gives up on a tool call after 60 s by default, and a Vardoger
+        // Codex gives up on a tool call after 60 s by default, and a Commutator
         // `wait_for_turn` (or a send that waits) may block for up to an hour
         // while another chat works: past the longest wait, plus margin.
-        (key("tool_timeout_sec"), VARDOGER_TOOL_TIMEOUT_SECS.into()),
+        (key("tool_timeout_sec"), COMMUTATOR_TOOL_TIMEOUT_SECS.into()),
         // A cold start (a fresh machine paging the binary in) can outlast
         // the 10 s default before the server answers `initialize`.
         (key("startup_timeout_sec"), 30.into()),
@@ -182,10 +182,10 @@ fn codex_mcp_overrides(mcp: &vardoger_proto::McpServer) -> Vec<(String, Value)> 
 }
 
 /// Dotted `thread/start` config overrides for the plugins' native MCP
-/// servers ([`RunRequest::extra_mcp`]). Unlike Vardoger's own server they get no
+/// servers ([`RunRequest::extra_mcp`]). Unlike Commutator's own server they get no
 /// `default_tools_approval_mode`: their tools are a plugin's, so Codex asks
 /// (or refuses) under the chat's access mode like any user-configured server.
-fn codex_extra_mcp_overrides(extras: &[vardoger_proto::McpServer]) -> Vec<(String, Value)> {
+fn codex_extra_mcp_overrides(extras: &[commutator_proto::McpServer]) -> Vec<(String, Value)> {
     extras
         .iter()
         .flat_map(|mcp| {
@@ -199,9 +199,9 @@ fn codex_extra_mcp_overrides(extras: &[vardoger_proto::McpServer]) -> Vec<(Strin
         .collect()
 }
 
-/// The longest a Vardoger MCP tool may take: its longest wait (an hour) plus
+/// The longest a Commutator MCP tool may take: its longest wait (an hour) plus
 /// margin for the reply.
-const VARDOGER_TOOL_TIMEOUT_SECS: u64 = 3600 + 120;
+const COMMUTATOR_TOOL_TIMEOUT_SECS: u64 = 3600 + 120;
 
 /// A ready-to-spawn `codex login` command for the engine's account flow.
 ///
@@ -348,8 +348,8 @@ impl CodexHarness {
                     "initialize",
                     json!({
                         "clientInfo": {
-                            "name": "vardoger-native",
-                            "title": "Vardoger",
+                            "name": "commutator-native",
+                            "title": "Commutator",
                             "version": env!("CARGO_PKG_VERSION"),
                         },
                         "capabilities": { "experimentalApi": true },
@@ -399,8 +399,8 @@ impl CodexHarness {
                     "initialize",
                     json!({
                         "clientInfo": {
-                            "name": "vardoger-native",
-                            "title": "Vardoger",
+                            "name": "commutator-native",
+                            "title": "Commutator",
                             "version": env!("CARGO_PKG_VERSION"),
                         },
                         "capabilities": { "experimentalApi": true },
@@ -547,7 +547,7 @@ fn reasoning_level(value: &str) -> Option<ReasoningLevel> {
     })
 }
 
-/// Codex accepts both names, but Vardoger has historically persisted `fast`.
+/// Codex accepts both names, but Commutator has historically persisted `fast`.
 /// Normalize the app server's `priority` id so live and fallback catalogs do
 /// not produce two different settings for the same tier.
 fn normalized_service_tier(value: &str) -> &str {
@@ -719,7 +719,7 @@ fn parse_model_list_page(result: &Value) -> (Vec<(Model, bool)>, Option<String>)
 /// `skills/list` result → typed skills. Keep distinct paths for duplicate names.
 /// Identical name/path pairs are deduplicated across cwd groups. The interface's
 /// shortDescription is picker-sized; the model-facing description is a fallback.
-fn parse_skills(result: &Value) -> Vec<vardoger_proto::invocation::Skill> {
+fn parse_skills(result: &Value) -> Vec<commutator_proto::invocation::Skill> {
     let mut seen = HashSet::new();
     result
         .get("data")
@@ -736,13 +736,13 @@ fn parse_skills(result: &Value) -> Vec<vardoger_proto::invocation::Skill> {
         .filter_map(|skill| {
             let name = skill.get("name")?.as_str()?;
             let path = skill.get("path")?.as_str()?;
-            if !vardoger_proto::invocation::valid_invocation_name(name)
-                || !vardoger_proto::invocation::valid_skill_path(path)
+            if !commutator_proto::invocation::valid_invocation_name(name)
+                || !commutator_proto::invocation::valid_skill_path(path)
                 || !seen.insert((name.to_owned(), path.to_owned()))
             {
                 return None;
             }
-            Some(vardoger_proto::invocation::Skill {
+            Some(commutator_proto::invocation::Skill {
                 command: None,
                 name: name.to_owned(),
                 path: path.to_owned(),
@@ -868,7 +868,7 @@ impl Harness for CodexHarness {
     async fn skills(
         &self,
         cwd: &std::path::Path,
-    ) -> Result<Option<Vec<vardoger_proto::invocation::Skill>>, HarnessError> {
+    ) -> Result<Option<Vec<commutator_proto::invocation::Skill>>, HarnessError> {
         self.discover_skills(Some(cwd))
             .await
             .map(|value| Some(parse_skills(&value)))
@@ -964,7 +964,7 @@ impl Harness for CodexHarness {
                 Some(w.server)
             }
             Some(w) => {
-                tracing::info!(target: "vardoger_harness::codex", key, "warm start not used; starting afresh");
+                tracing::info!(target: "commutator_harness::codex", key, "warm start not used; starting afresh");
                 spawn_retire(w, self.kill_grace);
                 None
             }
@@ -1127,7 +1127,7 @@ fn spawn_app_server(exe: &Path, request: &RunRequest) -> Result<AppServer, Harne
         tokio::spawn(async move {
             let mut lines = crate::lossy_lines::lossy_lines(stderr);
             while let Ok(Some(line)) = lines.next_line().await {
-                tracing::debug!(target: "vardoger_harness::codex", "stderr: {line}");
+                tracing::debug!(target: "commutator_harness::codex", "stderr: {line}");
                 tail.push(&line);
             }
             // The tail is complete: a crash report need not wait it out.
@@ -1188,8 +1188,8 @@ fn initialize_params(opt_out: bool) -> Value {
     }
     json!({
         "clientInfo": {
-            "name": "vardoger-native",
-            "title": "Vardoger",
+            "name": "commutator-native",
+            "title": "Commutator",
             "version": env!("CARGO_PKG_VERSION"),
         },
         "capabilities": capabilities,
@@ -1288,7 +1288,7 @@ async fn resume_thread(client: &RpcClient, params: Value) -> Result<Value, Harne
     match client.request("thread/resume", params.clone()).await {
         Err(HarnessError::Protocol(message)) if message.contains("is archived") => {
             tracing::info!(
-                target: "vardoger_harness::codex",
+                target: "commutator_harness::codex",
                 "thread/resume: thread archived; unarchiving it"
             );
             client
@@ -1416,12 +1416,12 @@ async fn send(tx: &mpsc::Sender<Result<AgentEvent, HarnessError>>, ev: AgentEven
 /// Preserve the selected path in the app-server's native skill input. Text
 /// stays first for command routing; repeated selections do not load a skill twice.
 fn prompt_input(text: &str) -> Value {
-    use vardoger_proto::invocation::{Invocation, invocation_links, invocation_prompt};
+    use commutator_proto::invocation::{Invocation, invocation_links, invocation_prompt};
     let mut input = vec![json!({"type": "text", "text": invocation_prompt(text)})];
     let mut seen = std::collections::HashSet::new();
     for (_, invocation) in invocation_links(text) {
         if let Invocation::Skill { name, path, .. } = invocation {
-            if !vardoger_proto::invocation::native_skill_identity(&path)
+            if !commutator_proto::invocation::native_skill_identity(&path)
                 && seen.insert((name.clone(), path.clone()))
             {
                 input.push(json!({"type": "skill", "name": name, "path": path}));
@@ -1436,17 +1436,17 @@ fn command_request(
     text: &str,
     thread_id: &str,
 ) -> Result<Option<(&'static str, Value)>, HarnessError> {
-    let decoded = vardoger_proto::invocation::invocation_prompt(text);
-    let Some((name, args)) = vardoger_proto::invocation::leading_command(&decoded) else {
+    let decoded = commutator_proto::invocation::invocation_prompt(text);
+    let Some((name, args)) = commutator_proto::invocation::leading_command(&decoded) else {
         return Ok(None);
     };
     if matches!(name, "compact" | "review")
-        && vardoger_proto::invocation::invocation_links(text)
+        && commutator_proto::invocation::invocation_links(text)
             .iter()
             .any(|(_, invocation)| {
                 matches!(
                     invocation,
-                    vardoger_proto::invocation::Invocation::Skill { .. }
+                    commutator_proto::invocation::Invocation::Skill { .. }
                 )
             })
     {
@@ -1476,7 +1476,7 @@ fn command_request(
         | "diff" | "mention" | "mcp" | "skills" | "plan" | "fast" | "logout" | "quit" | "exit"
         | "init" | "rename" | "feedback" | "ps" | "stop" | "clean" | "archive" | "delete" => {
             Err(HarnessError::Protocol(format!(
-                "/{name} is not mapped in Vardoger's Codex integration. Available commands: /compact and /review."
+                "/{name} is not mapped in Commutator's Codex integration. Available commands: /compact and /review."
             )))
         }
         _ => Ok(None),
@@ -1577,7 +1577,7 @@ async fn run_session(session: Session) {
         }
         p.insert("cwd".into(), Value::String(request.cwd.clone()));
         if let Some(mcp) = request.mcp.as_ref().filter(|_| !title_only) {
-            // Vardoger's own MCP server as dotted config overrides on top of the
+            // Commutator's own MCP server as dotted config overrides on top of the
             // user's `mcp_servers` table (the same layer the title run uses
             // to switch servers off).
             let overrides = p
@@ -1656,7 +1656,7 @@ async fn run_session(session: Session) {
         // without it.
         if !exited && std::mem::take(&mut opt_out) {
             tracing::debug!(
-                target: "vardoger_harness::codex",
+                target: "commutator_harness::codex",
                 "initialize refused ({failed}); retrying without notification opt-outs"
             );
             continue;
@@ -1664,7 +1664,7 @@ async fn run_session(session: Session) {
         if exited && attempt < STARTUP_RETRY_DELAYS.len() {
             let status = child.try_wait().ok().flatten();
             tracing::warn!(
-                target: "vardoger_harness::codex",
+                target: "commutator_harness::codex",
                 attempt = attempt + 1,
                 error = %crate::crash_message("codex app-server", status, &stderr_tail),
                 "app-server died before initialize; relaunching"
@@ -1773,7 +1773,7 @@ async fn run_session(session: Session) {
                         return Err(e);
                     }
                     tracing::warn!(
-                        target: "vardoger_harness::codex",
+                        target: "commutator_harness::codex",
                         "thread/resume failed (starting fresh): {e}"
                     );
                     restore_notice = Some(format!(
@@ -1875,7 +1875,7 @@ async fn run_session(session: Session) {
             let effort = to_effort(live.reasoning).or(thread_mode.effort.as_deref());
             if model.is_empty() {
                 tracing::warn!(
-                    target: "vardoger_harness::codex",
+                    target: "commutator_harness::codex",
                     "no model to name the collaboration mode with; leaving it unchanged"
                 );
             } else {
@@ -2227,7 +2227,7 @@ async fn run_session(session: Session) {
                         let id = turn_id(&params);
                         if !router.settles(&id) {
                             tracing::debug!(
-                                target: "vardoger_harness::codex",
+                                target: "commutator_harness::codex",
                                 turn = %id,
                                 "stale turn/completed ignored (not the turn in flight)"
                             );
@@ -2431,7 +2431,7 @@ async fn run_session(session: Session) {
                             // outcome, so not a permanent error in the
                             // transcript (nor a sign-in prompt).
                             tracing::info!(
-                                target: "vardoger_harness::codex",
+                                target: "commutator_harness::codex",
                                 "codex retrying: {}", notice.message
                             );
                         } else if !done_current {
@@ -2509,7 +2509,7 @@ async fn run_session(session: Session) {
                             // fallback for older Codex without steering).
                             Err(e) => {
                                 tracing::debug!(
-                                    target: "vardoger_harness::codex",
+                                    target: "commutator_harness::codex",
                                     "turn/steer rejected (queued as next turn): {e}"
                                 );
                                 if router.active.as_deref() == Some(expected.as_str())
@@ -2580,7 +2580,7 @@ async fn run_session(session: Session) {
             item = turn.background_stop_requested(), if !interrupted => {
                 if let Some(open) = open_commands.get(&item) {
                     let Some(process) = open.process.clone() else {
-                        tracing::debug!(target: "vardoger_harness::codex", item = %item, "no process id to terminate");
+                        tracing::debug!(target: "commutator_harness::codex", item = %item, "no process id to terminate");
                         continue 'main;
                     };
                     let client = client.clone();
@@ -2588,7 +2588,7 @@ async fn run_session(session: Session) {
                     tokio::spawn(async move {
                         let params = json!({ "threadId": thread, "processId": process });
                         if let Err(e) = client.request("thread/backgroundTerminals/terminate", params).await {
-                            tracing::debug!(target: "vardoger_harness::codex", "terminate failed: {e}");
+                            tracing::debug!(target: "commutator_harness::codex", "terminate failed: {e}");
                         }
                     });
                     if prune_at.is_none() && prune_query.is_none()
@@ -2616,7 +2616,7 @@ async fn run_session(session: Session) {
                             .await
                         {
                             tracing::debug!(
-                                target: "vardoger_harness::codex",
+                                target: "commutator_harness::codex",
                                 "turn/interrupt failed (escalation will reap): {e}"
                             );
                         }
@@ -2754,7 +2754,7 @@ fn publish_background(
                 .as_deref()
                 .is_none_or(|t| Some(t) != active && Some(t) != pruning)
         })
-        .map(|(id, c)| vardoger_proto::BackgroundTask {
+        .map(|(id, c)| commutator_proto::BackgroundTask {
             id: id.clone(),
             command: c.command.clone(),
             description: None,
@@ -2820,7 +2820,7 @@ async fn background_terminals(client: &RpcClient, thread: &str) -> Option<HashSe
         {
             Ok(Ok(page)) => page,
             Ok(Err(e)) => {
-                tracing::debug!(target: "vardoger_harness::codex", "background terminals unavailable: {e}");
+                tracing::debug!(target: "commutator_harness::codex", "background terminals unavailable: {e}");
                 return None;
             }
             Err(_) => return None,
@@ -2894,7 +2894,7 @@ fn send_turn_interrupt(client: &RpcClient, thread_id: &str, turn: String) {
             )
             .await
         {
-            tracing::warn!(target: "vardoger_harness::codex", "turn/interrupt failed: {e}");
+            tracing::warn!(target: "commutator_harness::codex", "turn/interrupt failed: {e}");
         }
     });
 }
@@ -2938,7 +2938,7 @@ async fn steer_as_new_turn(
 }
 
 // ---------------------------------------------------------------------------
-// Approvals (approval-as-input parity with vardoger's UX)
+// Approvals (approval-as-input parity with commutator's UX)
 // ---------------------------------------------------------------------------
 
 type RequestInputFn = Box<
@@ -2978,7 +2978,7 @@ fn handle_server_request(
         let permit = Arc::clone(slots).try_acquire_owned().ok();
         if permit.is_none() {
             tracing::warn!(
-                target: "vardoger_harness::codex",
+                target: "commutator_harness::codex",
                 "too many pending server requests; refusing {method}"
             );
             client.respond_error(&id, -32000, "client overloaded: too many pending requests");
@@ -3021,8 +3021,8 @@ fn handle_server_request(
         let Some(form) = elicitation::form(params) else {
             let mode = params["mode"].as_str().unwrap_or_default();
             tracing::info!(
-                target: "vardoger_harness::codex",
-                mode, "declining an MCP elicitation Vardoger can't ask"
+                target: "commutator_harness::codex",
+                mode, "declining an MCP elicitation Commutator can't ask"
             );
             client.respond(&id, elicitation::decline());
             return;
@@ -3054,7 +3054,7 @@ fn handle_server_request(
         },
         _ => {
             tracing::debug!(
-                target: "vardoger_harness::codex",
+                target: "commutator_harness::codex",
                 "unhandled server request: {method}"
             );
             client.respond_error(&id, -32601, &format!("unsupported method: {method}"));
@@ -3595,16 +3595,16 @@ mod tests {
 mod mcp_injection_tests {
     use super::*;
 
-    /// The engine serves Vardoger's tools itself: Codex gets its URL and
+    /// The engine serves Commutator's tools itself: Codex gets its URL and
     /// header (over the app-server's stdin), no command to start.
     #[test]
-    fn an_engine_served_vardoger_server_is_codex_http() {
-        let mcp = vardoger_proto::McpServer {
-            name: "vardoger".into(),
-            command: "/opt/vardoger/vardoger-engine".into(),
+    fn an_engine_served_commutator_server_is_codex_http() {
+        let mcp = commutator_proto::McpServer {
+            name: "commutator".into(),
+            command: "/opt/commutator/commutator-engine".into(),
             args: vec!["mcp-proxy".into()],
             env: Default::default(),
-            http: Some(vardoger_proto::McpHttp {
+            http: Some(commutator_proto::McpHttp {
                 url: "http://127.0.0.1:4321/mcp".into(),
                 headers: [("Authorization".to_owned(), "Bearer t".to_owned())]
                     .into_iter()
@@ -3613,44 +3613,44 @@ mod mcp_injection_tests {
         };
         let overrides: std::collections::HashMap<String, Value> =
             codex_mcp_overrides(&mcp).into_iter().collect();
-        assert_eq!(overrides["mcp_servers.vardoger.url"], "http://127.0.0.1:4321/mcp");
-        assert_eq!(overrides["mcp_servers.vardoger.http_headers"]["Authorization"], "Bearer t");
-        assert!(!overrides.contains_key("mcp_servers.vardoger.command"));
-        assert!(!overrides.contains_key("mcp_servers.vardoger.env"));
-        assert_eq!(overrides["mcp_servers.vardoger.default_tools_approval_mode"], "approve");
-        assert_eq!(overrides["mcp_servers.vardoger.tool_timeout_sec"], VARDOGER_TOOL_TIMEOUT_SECS);
+        assert_eq!(overrides["mcp_servers.commutator.url"], "http://127.0.0.1:4321/mcp");
+        assert_eq!(overrides["mcp_servers.commutator.http_headers"]["Authorization"], "Bearer t");
+        assert!(!overrides.contains_key("mcp_servers.commutator.command"));
+        assert!(!overrides.contains_key("mcp_servers.commutator.env"));
+        assert_eq!(overrides["mcp_servers.commutator.default_tools_approval_mode"], "approve");
+        assert_eq!(overrides["mcp_servers.commutator.tool_timeout_sec"], COMMUTATOR_TOOL_TIMEOUT_SECS);
     }
 
     #[test]
     fn codex_mcp_overrides_use_the_dotted_mcp_servers_keys() {
-        let mcp = vardoger_proto::McpServer {
-            name: "vardoger".into(),
-            command: "/opt/vardoger/vardoger".into(),
+        let mcp = commutator_proto::McpServer {
+            name: "commutator".into(),
+            command: "/opt/commutator/commutator".into(),
             args: vec!["mcp".into()],
-            env: [("VARDOGER_CHAT_ID".to_owned(), "chat-1".to_owned())]
+            env: [("COMMUTATOR_CHAT_ID".to_owned(), "chat-1".to_owned())]
                 .into_iter()
                 .collect(),
             http: None,
         };
         let overrides: serde_json::Map<String, Value> =
             codex_mcp_overrides(&mcp).into_iter().collect();
-        assert_eq!(overrides["mcp_servers.vardoger.command"], "/opt/vardoger/vardoger");
-        assert_eq!(overrides["mcp_servers.vardoger.args"], json!(["mcp"]));
+        assert_eq!(overrides["mcp_servers.commutator.command"], "/opt/commutator/commutator");
+        assert_eq!(overrides["mcp_servers.commutator.args"], json!(["mcp"]));
         assert_eq!(
-            overrides["mcp_servers.vardoger.env"],
-            json!({ "VARDOGER_CHAT_ID": "chat-1" })
+            overrides["mcp_servers.commutator.env"],
+            json!({ "COMMUTATOR_CHAT_ID": "chat-1" })
         );
         assert_eq!(
-            overrides["mcp_servers.vardoger.default_tools_approval_mode"],
+            overrides["mcp_servers.commutator.default_tools_approval_mode"],
             "approve"
         );
-        // Long Vardoger waits must outlive Codex's 60 s default tool timeout.
-        assert!(overrides["mcp_servers.vardoger.tool_timeout_sec"].as_u64().unwrap() > 3600);
-        assert_eq!(overrides["mcp_servers.vardoger.startup_timeout_sec"], 30);
+        // Long Commutator waits must outlive Codex's 60 s default tool timeout.
+        assert!(overrides["mcp_servers.commutator.tool_timeout_sec"].as_u64().unwrap() > 3600);
+        assert_eq!(overrides["mcp_servers.commutator.startup_timeout_sec"], 30);
     }
     #[test]
     fn codex_extra_mcp_overrides_leave_approval_to_the_access_mode() {
-        let extra = vardoger_proto::McpServer {
+        let extra = commutator_proto::McpServer {
             name: "plugin-focus".into(),
             command: "/data/plugins/.loaded/focus/0123/bin/server".into(),
             args: vec!["--stdio".into()],
@@ -3686,7 +3686,7 @@ mod skill_discovery_tests {
     use super::*;
     #[test]
     fn selected_skills_use_native_identity_for_initial_and_steered_inputs() {
-        use vardoger_proto::invocation::Invocation;
+        use commutator_proto::invocation::Invocation;
         let a = Invocation::Skill {
             command: None,
             name: "review".into(),
@@ -3705,7 +3705,7 @@ mod skill_discovery_tests {
             json!({"type":"skill","name":"review","path":"/repo/a b/SKILL.md"})
         );
         assert_eq!(input[2]["path"], "/repo/other/SKILL.md");
-        assert!(!input[0]["text"].as_str().unwrap().contains("vardoger-invoke:"));
+        assert!(!input[0]["text"].as_str().unwrap().contains("commutator-invoke:"));
         for raw in [
             "$review".into(),
             format!("`{}`", a.link()),
@@ -3732,13 +3732,13 @@ mod skill_discovery_tests {
 
     #[test]
     fn backtick_labels_keep_native_skill_identity_with_repeated_selections() {
-        use vardoger_proto::invocation::{Invocation, harness_prompt};
+        use commutator_proto::invocation::{Invocation, harness_prompt};
         let skill = Invocation::Skill {
             command: None,
             name: "review`ui".into(),
             path: "/repo/é skill/SKILL.md".into(),
         };
-        let file = vardoger_proto::file_mentions::local_file_link("src/a`b.rs", false);
+        let file = commutator_proto::file_mentions::local_file_link("src/a`b.rs", false);
         let raw = format!("{} on {file} and {}", skill.link(), skill.link());
         let input = prompt_input(&harness_prompt(&raw, HarnessId::Codex));
         assert_eq!(input.as_array().unwrap().len(), 2);
@@ -3747,8 +3747,8 @@ mod skill_discovery_tests {
             json!({"type":"skill", "name":"review`ui", "path":"/repo/é skill/SKILL.md"})
         );
         let text = input[0]["text"].as_str().unwrap();
-        assert!(!text.contains("vardoger-invoke:"));
-        assert!(!text.contains("vardoger-file:"));
+        assert!(!text.contains("commutator-invoke:"));
+        assert!(!text.contains("commutator-file:"));
         assert_eq!(text.matches("/repo/%C3%A9%20skill/SKILL.md").count(), 2);
     }
 
@@ -3786,7 +3786,7 @@ mod skill_discovery_tests {
 
     #[test]
     fn catalog_rejects_invalid_identities_without_changing_valid_names() {
-        use vardoger_proto::invocation::{Invocation, invocation_links};
+        use commutator_proto::invocation::{Invocation, invocation_links};
         let mut entries = vec![];
         for name in [
             "",

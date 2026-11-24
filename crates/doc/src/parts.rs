@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use vardoger_proto::{
+use commutator_proto::{
     AgentEvent, SUBAGENT_INPUT_KEEP, ToolCall, ToolDiff, ToolReview, UserInputAnswer,
     UserInputQuestion,
 };
@@ -93,10 +93,10 @@ pub struct CommandTail {
 /// the one tool output the doc keeps (see the `ToolResult` fold), and the
 /// doc syncs to the person's other devices and the cloud. So:
 /// - a command that prints secrets by nature (`env`, `cat .env`, `gh auth
-///   token`, … — [`vardoger_proto::redact::command_prints_secrets`]) keeps
+///   token`, … — [`commutator_proto::redact::command_prints_secrets`]) keeps
 ///   none of it, only a note saying so;
 /// - any other output is redacted
-///   ([`vardoger_proto::redact::redact_command_output`]: private key blocks,
+///   ([`commutator_proto::redact::redact_command_output`]: private key blocks,
 ///   env-style assignments, secret-named keys, url credentials and webhook
 ///   paths, tokens, terminal escapes) BEFORE it is cut, so a secret the cut
 ///   would split can't survive as an unrecognisable half.
@@ -123,15 +123,15 @@ pub fn command_output_end(
     if text.trim().is_empty() {
         return None;
     }
-    if vardoger_proto::redact::command_prints_secrets(command) {
+    if commutator_proto::redact::command_prints_secrets(command) {
         return Some(CommandTail {
-            text: vardoger_proto::redact::SECRET_OUTPUT_WITHHELD.to_owned(),
+            text: commutator_proto::redact::SECRET_OUTPUT_WITHHELD.to_owned(),
             bytes,
             lines: 1,
             truncated: false,
         });
     }
-    let redacted = vardoger_proto::redact::redact_command_output(text);
+    let redacted = commutator_proto::redact::redact_command_output(text);
     let body = redacted.trim_end();
     if body.trim().is_empty() {
         return None;
@@ -446,7 +446,7 @@ impl MessagePart {
 /// In place because the fold runs once per streamed event: rebuilding the
 /// accumulator each time made long turns O(n²) in allocations.
 ///
-/// Semantics from vardoger `foldEventIntoParts`:
+/// Semantics from commutator `foldEventIntoParts`:
 /// - `SessionStarted` / `Steered` reset the accumulator (turn boundary — makes replay safe).
 /// - `TextDelta` appends to the trailing text part, or starts a new one if the trail is not text
 ///   (a tool call in between breaks the text block).
@@ -712,7 +712,7 @@ pub fn fold_event_into_parts(out: &mut Vec<MessagePart>, event: &AgentEvent) {
         } => {
             let status = match event.as_ref() {
                 AgentEvent::Done { status, .. } => Some(match status {
-                    vardoger_proto::DoneStatus::Errored => SubagentStatus::Failed,
+                    commutator_proto::DoneStatus::Errored => SubagentStatus::Failed,
                     _ => SubagentStatus::Done,
                 }),
                 // A new assignment reopens a settled chip. Providers may
@@ -891,7 +891,7 @@ pub fn continuation_id(root: &str, index: usize) -> String {
 ///
 /// Splitting happens at part boundaries; an oversized text part is itself chunked at char
 /// boundaries. Returns one Vec per resulting entry — the first keeps the root id, the rest are
-/// continuations (`continuation_id(root, i)`), matching `splitMessageEntry` in vardoger.
+/// continuations (`continuation_id(root, i)`), matching `splitMessageEntry` in commutator.
 pub fn split_parts(parts: &[MessagePart]) -> Vec<Vec<MessagePart>> {
     let mut chunks: Vec<Vec<MessagePart>> = vec![Vec::new()];
     let mut current_bytes = 0usize;
@@ -965,7 +965,7 @@ mod tests {
 
     #[test]
     fn a_review_folds_onto_its_call_and_a_later_one_replaces_it() {
-        use vardoger_proto::ToolReviewStatus;
+        use commutator_proto::ToolReviewStatus;
         let mut parts = Vec::new();
         fold_event_into_parts(
             &mut parts,
@@ -1196,7 +1196,7 @@ mod tests {
         fold_event_into_parts(
             &mut parts,
             &AgentEvent::SessionStarted {
-                harness: vardoger_proto::HarnessId::Mock,
+                harness: commutator_proto::HarnessId::Mock,
                 model: "m".into(),
                 tools: vec![],
                 cwd: "/".into(),
@@ -1656,7 +1656,7 @@ mod tests {
             };
             assert_eq!(
                 output,
-                vardoger_proto::redact::SECRET_OUTPUT_WITHHELD,
+                commutator_proto::redact::SECRET_OUTPUT_WITHHELD,
                 "{command}"
             );
             assert_eq!(*exit_code, Some(0));
@@ -1844,7 +1844,7 @@ mod tests {
 
     #[test]
     fn subagent_events_refresh_the_spawn_chip_in_place() {
-        use vardoger_proto::DoneStatus;
+        use commutator_proto::DoneStatus;
         let mut parts = Vec::new();
         fold_event_into_parts(
             &mut parts,
@@ -1933,7 +1933,7 @@ mod tests {
         // Mis-keyed tagged traffic (claude's background shells settled
         // through the subagent subtype, 2026-08-20) must not stamp lifecycle
         // onto an ordinary tool chip — the genus gate is the CALL.
-        use vardoger_proto::DoneStatus;
+        use commutator_proto::DoneStatus;
         let mut parts = Vec::new();
         fold_event_into_parts(
             &mut parts,

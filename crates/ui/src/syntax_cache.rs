@@ -9,7 +9,7 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use vardoger_syntax::{HighlightedDocument, LanguageId};
+use commutator_syntax::{HighlightedDocument, LanguageId};
 
 pub const QUERY_GENERATION: u32 = 1;
 const MAX_DOCUMENTS: usize = 96;
@@ -129,12 +129,12 @@ fn estimated_document_bytes(document: &HighlightedDocument) -> usize {
             document
                 .lines
                 .capacity()
-                .saturating_mul(std::mem::size_of::<Vec<vardoger_syntax::HighlightSpan>>()),
+                .saturating_mul(std::mem::size_of::<Vec<commutator_syntax::HighlightSpan>>()),
         )
         .saturating_add(document.lines.iter().fold(0usize, |total, line| {
             total.saturating_add(
                 line.capacity()
-                    .saturating_mul(std::mem::size_of::<vardoger_syntax::HighlightSpan>()),
+                    .saturating_mul(std::mem::size_of::<commutator_syntax::HighlightSpan>()),
             )
         }))
 }
@@ -165,7 +165,7 @@ mod tests {
         let source = "fn main() {}";
         let key = DocumentHighlightKey::new(LanguageId::Rust, source);
         let document = Arc::new(
-            vardoger_syntax::highlight(vardoger_syntax::HighlightRequest {
+            commutator_syntax::highlight(commutator_syntax::HighlightRequest {
                 source,
                 path: None,
                 fence_tag: Some("rust"),
@@ -185,7 +185,7 @@ mod tests {
         let source = "let x = 1;";
         let key = DocumentHighlightKey::new(LanguageId::Rust, source);
         let document = Arc::new(
-            vardoger_syntax::highlight(vardoger_syntax::HighlightRequest {
+            commutator_syntax::highlight(commutator_syntax::HighlightRequest {
                 source,
                 path: None,
                 fence_tag: Some("rust"),

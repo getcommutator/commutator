@@ -27,10 +27,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use chrono::Utc;
 use tokio::sync::watch;
 
-use vardoger_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
-use vardoger_proto::projectless;
-use vardoger_proto::{Chat, ChatConfig, Device, HarnessId, Session, SidebarPreferencesState, Space};
-use vardoger_sync::{DocsStore, RegistryClient};
+use commutator_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
+use commutator_proto::projectless;
+use commutator_proto::{Chat, ChatConfig, Device, HarnessId, Session, SidebarPreferencesState, Space};
+use commutator_sync::{DocsStore, RegistryClient};
 
 use crate::{EngineError, now_ms};
 
@@ -107,7 +107,7 @@ fn new_projectless_cwd(
 
 /// This device's advertised capabilities.
 fn device_capabilities() -> Vec<String> {
-    vardoger_proto::capabilities::current()
+    commutator_proto::capabilities::current()
 }
 
 #[derive(Debug, Clone)]
@@ -341,7 +341,7 @@ impl WorkspaceHost {
             // Every boot restamps the running binary's version (fleet staleness
             // on the Devices page; workspace version — same for every crate).
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            cursor_sdk_version: Some(vardoger_harness::CursorHarness::sdk_version().into()),
+            cursor_sdk_version: Some(commutator_harness::CursorHarness::sdk_version().into()),
             capabilities: device_capabilities(),
         })?;
 
@@ -438,8 +438,8 @@ impl WorkspaceHost {
     /// A deleted device row is positive evidence too: nothing answers there
     /// (a deleted Cloud session's machine was still dialed every few seconds
     /// by everything that targets its chat).
-    pub fn peer_liveness(&self, device_id: &str) -> vardoger_rpc::PeerLiveness {
-        use vardoger_rpc::PeerLiveness::{Dark, Live, Unknown};
+    pub fn peer_liveness(&self, device_id: &str) -> commutator_rpc::PeerLiveness {
+        use commutator_rpc::PeerLiveness::{Dark, Live, Unknown};
         if device_id == self.inner.config.device_id {
             return Live;
         }
@@ -529,15 +529,15 @@ impl WorkspaceHost {
         }
     }
 
-    /// Registry room introspection for SyncStatus / `vardoger sync`.
+    /// Registry room introspection for SyncStatus / `commutator sync`.
     /// `None` = no room yet (edge-less, or the initial join is still retrying).
-    pub fn sync_status(&self) -> Option<vardoger_sync::RoomStatsSnapshot> {
+    pub fn sync_status(&self) -> Option<commutator_sync::RoomStatsSnapshot> {
         lock(&self.inner.room).as_ref().map(|room| room.stats())
     }
 
     /// The registry room's reconnect posture (next-dial deadline + sticky
     /// last failure) for the connectivity stream. `None` = no room yet.
-    pub fn reconnect_state(&self) -> Option<vardoger_sync::ReconnectState> {
+    pub fn reconnect_state(&self) -> Option<commutator_sync::ReconnectState> {
         lock(&self.inner.room)
             .as_ref()
             .map(|room| room.reconnect_state())
@@ -604,7 +604,7 @@ impl WorkspaceHost {
 
     pub fn change_sidebar_pin(
         &self,
-        change: &vardoger_proto::SidebarPinChange,
+        change: &commutator_proto::SidebarPinChange,
     ) -> Result<(), EngineError> {
         let synced = self.sync_status().is_some_and(|status| status.synced);
         self.mutate(|doc| {
@@ -615,8 +615,8 @@ impl WorkspaceHost {
         })?;
         if matches!(
             change,
-            vardoger_proto::SidebarPinChange::Section {
-                change: vardoger_proto::SidebarSectionChange::Import { .. }
+            commutator_proto::SidebarPinChange::Section {
+                change: commutator_proto::SidebarSectionChange::Import { .. }
             }
         ) {
             // The UI removes its legacy copy only after this acknowledgement:
@@ -801,7 +801,7 @@ impl WorkspaceHost {
     /// message's text. Claims the row first so a pre-workspace chat gains one.
     pub fn note_message(&self, chat_id: &str, text: &str) {
         // Annotation tokens carry their element as hex; previews read the label.
-        let text = vardoger_proto::annotation::annotation_display(text);
+        let text = commutator_proto::annotation::annotation_display(text);
         let preview: String = text.chars().take(120).collect();
         let result = self.claim_chat(chat_id, None).and_then(|_| {
             self.mutate(|doc| doc.set_chat_last_message(chat_id, &preview, Utc::now()))
@@ -890,7 +890,7 @@ impl WorkspaceHost {
     }
 
     /// [`create_chat`](Self::create_chat) recording the creating chat
-    /// (`parentChatId`) — the Vardoger MCP's orchestration link.
+    /// (`parentChatId`) — the Commutator MCP's orchestration link.
     pub fn create_chat_with_parent(
         &self,
         chat_id: &str,
@@ -927,7 +927,7 @@ impl WorkspaceHost {
         config: Option<ChatConfig>,
         cwd: Option<String>,
         parent_chat_id: Option<String>,
-        child_kind: Option<vardoger_proto::ChildKind>,
+        child_kind: Option<commutator_proto::ChildKind>,
     ) -> Result<(), EngineError> {
         if self.read(|doc| doc.chat(chat_id))?.is_some() {
             return Ok(()); // idempotent: optimistic client retries never duplicate
@@ -1007,7 +1007,7 @@ impl WorkspaceHost {
                 && device
                     .capabilities
                     .iter()
-                    .any(|c| c == vardoger_proto::capabilities::PROJECTLESS_SCRATCH_V1)
+                    .any(|c| c == commutator_proto::capabilities::PROJECTLESS_SCRATCH_V1)
         }))
     }
 
@@ -1054,7 +1054,7 @@ impl WorkspaceHost {
         Ok(self.mutate(|doc| doc.rename_space(space_id, name))?)
     }
 
-    pub fn set_space_icon(&self, space_id: &str, icon: Option<&vardoger_proto::SpaceIcon>) -> Result<bool, EngineError> {
+    pub fn set_space_icon(&self, space_id: &str, icon: Option<&commutator_proto::SpaceIcon>) -> Result<bool, EngineError> {
         Ok(self.mutate(|doc| doc.set_space_icon(space_id, icon))?)
     }
 
@@ -1173,7 +1173,7 @@ impl WorkspaceHost {
         Ok(self.mutate(|doc| doc.set_chat_archived(chat_id, archived))?)
     }
 
-    /// LWW full-config replace on the chat row (vardoger `SetChatConfig` — the
+    /// LWW full-config replace on the chat row (commutator `SetChatConfig` — the
     /// composer's mid-session model/reasoning/options changes). Returns false
     /// when the chat doesn't exist.
     pub fn set_chat_config(&self, chat_id: &str, config: &ChatConfig) -> Result<bool, EngineError> {
@@ -1207,7 +1207,7 @@ impl WorkspaceHost {
     pub fn set_chat_source_context(
         &self,
         chat_id: &str,
-        context: &vardoger_proto::ConversationSourceContext,
+        context: &commutator_proto::ConversationSourceContext,
     ) -> Result<bool, EngineError> {
         Ok(self.mutate(|doc| doc.set_chat_source_context(chat_id, context))?)
     }
@@ -1267,11 +1267,11 @@ impl WorkspaceHostInner {
         // registry changes ~twice a second, mostly session rows: a full read
         // of every list for each change was most of the engine's CPU.
         let now = PublishedVersions {
-            chats: doc.kind_version(vardoger_doc::KIND_CHATS),
-            sessions: doc.kind_version(vardoger_doc::KIND_SESSIONS),
-            devices: doc.kind_version(vardoger_doc::KIND_DEVICES),
-            spaces: doc.kind_version(vardoger_doc::KIND_SPACES)
-                .wrapping_add(doc.kind_version(vardoger_doc::KIND_REPOSITORY_LOOKS)),
+            chats: doc.kind_version(commutator_doc::KIND_CHATS),
+            sessions: doc.kind_version(commutator_doc::KIND_SESSIONS),
+            devices: doc.kind_version(commutator_doc::KIND_DEVICES),
+            spaces: doc.kind_version(commutator_doc::KIND_SPACES)
+                .wrapping_add(doc.kind_version(commutator_doc::KIND_REPOSITORY_LOOKS)),
         };
         let last = *published;
         let changed = |pick: fn(&PublishedVersions) -> u64| last.is_none_or(|last| pick(&last) != pick(&now));
@@ -1532,7 +1532,7 @@ impl WorkspaceHostInner {
         // Cleared before the export: a write after this point is a new one.
         let had_local = self.local_unsaved.swap(false, Ordering::AcqRel);
         let mut base = lock(&self.registry_base);
-        let failed = |error: vardoger_sync::StoreError| {
+        let failed = |error: commutator_sync::StoreError| {
             EngineError::Other(format!("registry snapshot save failed: {error}"))
         };
         let saved = (|| -> Result<usize, EngineError> {
@@ -1641,9 +1641,9 @@ async fn workspace_task(weak: Weak<WorkspaceHostInner>, mut changed_rx: watch::R
     // Presence is other devices' and ours to them, through the edge: a
     // local profile (no edge, this device alone) has none to refresh.
     let synced = false;
-    // On the beat grid, with the sockets' pings (`vardoger_sync::wake`).
+    // On the beat grid, with the sockets' pings (`commutator_sync::wake`).
     let mut presence =
-        vardoger_sync::wake::beat_interval(std::time::Duration::from_millis(PRESENCE_INTERVAL_MS));
+        commutator_sync::wake::beat_interval(std::time::Duration::from_millis(PRESENCE_INTERVAL_MS));
     let mut save_deadline: Option<tokio::time::Instant> = None;
     let mut last_change = tokio::time::Instant::now();
     // When the oldest row delta not yet in a whole save was written.
@@ -1830,7 +1830,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_session_status_stream_saves_and_publishes_only_what_changed() {
         use super::*;
-        use vardoger_proto::SessionStatus;
+        use commutator_proto::SessionStatus;
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(DocsStore::open(dir.path()).unwrap());
         let host = WorkspaceHost::open(
@@ -2027,14 +2027,14 @@ mod tests {
         // Unknown and room-less: ambiguous, never parked.
         assert_eq!(
             host.peer_liveness("cloud-1"),
-            vardoger_rpc::PeerLiveness::Unknown
+            commutator_rpc::PeerLiveness::Unknown
         );
         // The edge tombstones a deleted Cloud session's device: positive
         // evidence that nothing answers, whatever the room's state.
         let _ = lock(&host.inner.reg).apply_rows(
             1,
-            vec![vardoger_doc::RegistryRow {
-                kind: vardoger_doc::KIND_DEVICES.into(),
+            vec![commutator_doc::RegistryRow {
+                kind: commutator_doc::KIND_DEVICES.into(),
                 id: "cloud-1".into(),
                 seq: 1,
                 deleted: true,
@@ -2043,8 +2043,8 @@ mod tests {
                 clocks: Default::default(),
             }],
         );
-        assert_eq!(host.peer_liveness("cloud-1"), vardoger_rpc::PeerLiveness::Dark);
-        assert_eq!(host.peer_liveness("laptop"), vardoger_rpc::PeerLiveness::Live);
+        assert_eq!(host.peer_liveness("cloud-1"), commutator_rpc::PeerLiveness::Dark);
+        assert_eq!(host.peer_liveness("laptop"), commutator_rpc::PeerLiveness::Live);
     }
 
     /// A claimed row doesn't know its parent until the chat's `createChat`
@@ -2099,7 +2099,7 @@ mod tests {
         let mut preferences = host.watch_sidebar_preferences();
         assert!(!preferences.borrow().initialized);
 
-        host.change_sidebar_pin(&vardoger_proto::SidebarPinChange::Unpin {
+        host.change_sidebar_pin(&commutator_proto::SidebarPinChange::Unpin {
             session_id: "absent".into(),
         })
         .unwrap();
@@ -2119,7 +2119,7 @@ mod tests {
         );
         host.create_chat("cached", None, Some("test-device"), None, None)
             .unwrap();
-        host.change_sidebar_pin(&vardoger_proto::SidebarPinChange::Pin {
+        host.change_sidebar_pin(&commutator_proto::SidebarPinChange::Pin {
             session_id: "cached".into(),
             after: None,
             before: None,
@@ -2128,8 +2128,8 @@ mod tests {
         let acknowledgement = host.sidebar_preferences_snapshot();
         assert!(acknowledgement.revision > first_revision);
         assert_eq!(*preferences.borrow(), acknowledgement);
-        host.change_sidebar_pin(&vardoger_proto::SidebarPinChange::Section {
-            change: vardoger_proto::SidebarSectionChange::Create {
+        host.change_sidebar_pin(&commutator_proto::SidebarPinChange::Section {
+            change: commutator_proto::SidebarSectionChange::Create {
                 id: "focus".into(),
                 name: "Focus".into(),
             },
@@ -2139,8 +2139,8 @@ mod tests {
         assert!(sections.revision > acknowledgement.revision);
         assert_eq!(sections.sections[0].name, "Focus");
         assert_eq!(*preferences.borrow(), sections);
-        host.change_sidebar_pin(&vardoger_proto::SidebarPinChange::Section {
-            change: vardoger_proto::SidebarSectionChange::Collapse {
+        host.change_sidebar_pin(&commutator_proto::SidebarPinChange::Section {
+            change: commutator_proto::SidebarSectionChange::Collapse {
                 id: "focus".into(),
                 collapsed: true,
             },
@@ -2155,7 +2155,7 @@ mod tests {
     /// A pre-fix `registry1` snapshot: one never-acked batch per session-row
     /// touch. Marking each batch in flight as it is written stops the doc
     /// coalescing; `in_flight` is not persisted, so it reloads all-unsent.
-    fn save_bloated_registry(store: &vardoger_sync::DocsStore, touches: usize) -> usize {
+    fn save_bloated_registry(store: &commutator_sync::DocsStore, touches: usize) -> usize {
         use super::*;
 
         let mut doc = RegistryDoc::new("test-device");
@@ -2172,11 +2172,11 @@ mod tests {
         bytes.len()
     }
 
-    fn running_session(at: chrono::DateTime<chrono::Utc>) -> vardoger_proto::Session {
-        vardoger_proto::Session {
+    fn running_session(at: chrono::DateTime<chrono::Utc>) -> commutator_proto::Session {
+        commutator_proto::Session {
             chat_id: "chat-1".into(),
             device_id: "test-device".into(),
-            status: vardoger_proto::SessionStatus::Working,
+            status: commutator_proto::SessionStatus::Working,
             last_completed_turn: None,
             started_at: None,
             updated_at: at,

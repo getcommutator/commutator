@@ -39,8 +39,8 @@ use gpui::{
     TextRun, Window, canvas, div, img, list, point, prelude::*, px, size,
 };
 
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
-use vardoger_proto::{HarnessId, ToolCall};
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
+use commutator_proto::{HarnessId, ToolCall};
 
 use crate::markdown::mermaid_cache::{self, MermaidCache};
 use crate::markdown::parser::{
@@ -53,7 +53,7 @@ use crate::notice::{NoticeChipIcon::Tile, notice_chip_with_action};
 use crate::state::AppState;
 use crate::syntax_cache::{DocumentHighlightKey, SyntaxHighlightCache};
 use crate::theme::Theme;
-use vardoger_syntax::LanguageId as Lang;
+use commutator_syntax::LanguageId as Lang;
 
 // ---------------------------------------------------------------------------
 // Constants (mugen ports)
@@ -795,7 +795,7 @@ pub enum ToolDetail {
     /// (chat2-sync A1). The full diff upgrades this to [`ToolDetail::Diff`]
     /// via the sidecar fetch.
     Stats {
-        stats: Arc<Vec<vardoger_doc::ToolDiffStat>>,
+        stats: Arc<Vec<commutator_doc::ToolDiffStat>>,
     },
 }
 
@@ -822,8 +822,8 @@ const DETAIL_SEPARATOR: f32 = 1.0;
 /// STATS instead of inline diff text, which win the same way.
 pub fn tool_detail(
     output: Option<&str>,
-    diff: Option<&vardoger_proto::ToolDiff>,
-    diff_stats: Option<&[vardoger_doc::ToolDiffStat]>,
+    diff: Option<&commutator_proto::ToolDiff>,
+    diff_stats: Option<&[commutator_doc::ToolDiffStat]>,
 ) -> Option<ToolDetail> {
     if let Some(diff) = diff {
         let mut file = diff_to_file(diff);
@@ -921,9 +921,9 @@ pub fn call_block(call: &ToolCall) -> Option<ToolDetail> {
             .iter()
             .map(|i| {
                 let mark = match i.status() {
-                    vardoger_proto::TodoStatus::Completed => "[x]",
-                    vardoger_proto::TodoStatus::InProgress => "[~]",
-                    vardoger_proto::TodoStatus::Pending => "[ ]",
+                    commutator_proto::TodoStatus::Completed => "[x]",
+                    commutator_proto::TodoStatus::InProgress => "[~]",
+                    commutator_proto::TodoStatus::Pending => "[ ]",
                 };
                 format!("{mark} {}", i.text)
             })
@@ -966,10 +966,10 @@ pub fn call_block(call: &ToolCall) -> Option<ToolDetail> {
     })
 }
 
-/// Reduce an inline [`vardoger_proto::ToolDiff`] to the changes pane's
+/// Reduce an inline [`commutator_proto::ToolDiff`] to the changes pane's
 /// [`crate::changes::FileDiff`]: hunks grouped with 3 context lines, dual
 /// 1-based line numbers, unified-diff hunk headers, and add/del counts.
-pub fn diff_to_file(diff: &vardoger_proto::ToolDiff) -> crate::changes::FileDiff {
+pub fn diff_to_file(diff: &commutator_proto::ToolDiff) -> crate::changes::FileDiff {
     use crate::changes::{DiffLine, FileDiff, FileStatus, Hunk, LineKind};
     let old = diff.old_text.as_deref().unwrap_or("");
     let text_diff = similar::TextDiff::from_lines(old, &diff.new_text);
@@ -1133,7 +1133,7 @@ pub struct Row {
     pub turn_start: bool,
     pub kind: RowKind,
     /// The owning message entry — hover anywhere on the entry's rows reveals
-    /// its timestamp strip (vardoger chat-view.tsx `group`/`group-hover`).
+    /// its timestamp strip (commutator chat-view.tsx `group`/`group-hover`).
     pub entry_id: SharedString,
     /// Epoch-ms for the 16px hover-timestamp strip UNDER this row: set on the
     /// LAST row of a completed entry (user rows always; assistant rows only
@@ -1371,7 +1371,7 @@ pub fn rows_for_entry(
         // Chips stand in for their attachments: those leave the strip, and a
         // chip carries its upload's path for its progress and, for an image,
         // a click opening it.
-        let chips = vardoger_proto::attachment_mentions::attachment_mentions(&body);
+        let chips = commutator_proto::attachment_mentions::attachment_mentions(&body);
         let mut attachments = parsed.attachments;
         let (text, mut mentions) = match crate::composer::sent_mention_display(&body) {
             Some((display, spans)) => (display, spans),
@@ -1877,13 +1877,13 @@ fn is_compact_work_part(ix: usize, part: &MessagePart, reply_start: Option<usize
     }
 }
 
-/// `VARDOGER_FRAME_STATS=1` logs live-row render-cost percentiles (p50/p95 µs
+/// `COMMUTATOR_FRAME_STATS=1` logs live-row render-cost percentiles (p50/p95 µs
 /// over rolling windows of [`FRAME_STATS_WINDOW`] samples) at `warn` level —
 /// the smoothness measurement knob. Off by default; zero cost when off.
 fn frame_stats_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED
-        .get_or_init(|| std::env::var("VARDOGER_FRAME_STATS").is_ok_and(|v| !v.is_empty() && v != "0"))
+        .get_or_init(|| std::env::var("COMMUTATOR_FRAME_STATS").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 const FRAME_STATS_WINDOW: usize = 240;
@@ -1916,12 +1916,12 @@ pub(crate) fn record_view_frame(view: &'static str) -> bool {
     })
 }
 
-/// `VARDOGER_NO_RENDER_CACHE=1` bypasses the cross-frame flatten cache — the
+/// `COMMUTATOR_NO_RENDER_CACHE=1` bypasses the cross-frame flatten cache — the
 /// A/B knob for the frame-cost measurement above.
 fn render_cache_disabled() -> bool {
     static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *DISABLED.get_or_init(|| {
-        std::env::var("VARDOGER_NO_RENDER_CACHE").is_ok_and(|v| !v.is_empty() && v != "0")
+        std::env::var("COMMUTATOR_NO_RENDER_CACHE").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -2071,7 +2071,7 @@ pub fn diff_rows(old: &[Row], new: &[Row]) -> Option<(Range<usize>, usize)> {
 
 /// The ToolGroup summary line — "Ran 3 commands · edited 2 files".
 ///
-/// The rule lives in `vardoger_proto::view` so the terminal viewport reports the
+/// The rule lives in `commutator_proto::view` so the terminal viewport reports the
 /// same summary; this only adapts the row model's [`ToolItem`] to it.
 pub fn tool_group_summary(tools: &[ToolItem]) -> String {
     #[cfg(test)]
@@ -2095,7 +2095,7 @@ pub fn tool_group_summary(tools: &[ToolItem]) -> String {
     let base = if pairs.is_empty() {
         String::new()
     } else {
-        vardoger_proto::view::tool_group_summary(&pairs)
+        commutator_proto::view::tool_group_summary(&pairs)
     };
     // Thought and note chips ride the group (they are UI-synthesized, so the
     // shared view summary never sees them): name them on the collapsed line.
@@ -2216,11 +2216,11 @@ fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Them
 }
 
 // `single_line` and the per-kind chip label/detail are shared with the terminal
-// viewport (`vardoger_proto::view`): a tool must be named identically on every
+// viewport (`commutator_proto::view`): a tool must be named identically on every
 // surface, and the one-line collapse is needed for the same reason in both (a
 // literal newline breaks gpui's ellipsis logic and would be a cursor move in a
 // cell grid).
-pub use vardoger_proto::view::{single_line, tool_chip_content};
+pub use commutator_proto::view::{single_line, tool_chip_content};
 
 /// Analytic expanded-chips height — no measurement needed for the fold tween.
 pub fn chips_height(count: usize) -> f32 {
@@ -2298,7 +2298,7 @@ const FULL_OUTPUT_MAX_LINES: usize = 400;
 /// blobs render (near-)uncapped — fetching past the summary was the point.
 fn blob_detail(text: &str, is_diff: bool) -> Option<ToolDetail> {
     if is_diff {
-        let diff: vardoger_proto::ToolDiff = serde_json::from_str(text).ok()?;
+        let diff: commutator_proto::ToolDiff = serde_json::from_str(text).ok()?;
         return tool_detail(None, Some(&diff), None);
     }
     let mut lines: Vec<SharedString> = text.lines().map(output_line).collect();
@@ -2331,7 +2331,7 @@ fn format_kb(bytes: u64) -> String {
 
 /// Rotating flavour vocabulary (21 words / 7s, seeded per chat).
 pub const FLAVOUR_WORDS: [&str; 21] = [
-    "Vardogering",
+    "Commutatoring",
     "Thinking",
     "Pondering",
     "Scheming",
@@ -2452,7 +2452,7 @@ fn compact_work_title(
 
 struct HighlightEntry {
     key: DocumentHighlightKey,
-    document: Option<Weak<vardoger_syntax::HighlightedDocument>>,
+    document: Option<Weak<commutator_syntax::HighlightedDocument>>,
     _task: Option<Task<()>>,
 }
 
@@ -2474,7 +2474,7 @@ impl HighlightStore {
         lang: Lang,
         code: &str,
         cx: &mut Context<Transcript>,
-    ) -> Option<Arc<vardoger_syntax::HighlightedDocument>> {
+    ) -> Option<Arc<commutator_syntax::HighlightedDocument>> {
         let slot_key = (row_id.clone(), block_ix);
         let document_key = DocumentHighlightKey::new(lang, code);
         if let Some(entry) = self.entries.get(&slot_key)
@@ -2503,7 +2503,7 @@ impl HighlightStore {
             let document = cx
                 .background_executor()
                 .spawn(async move {
-                    vardoger_syntax::highlight(vardoger_syntax::HighlightRequest {
+                    commutator_syntax::highlight(commutator_syntax::HighlightRequest {
                         source: &code,
                         path: None,
                         fence_tag: Some(match lang {
@@ -2589,29 +2589,29 @@ pub(crate) struct TranscriptPreparation {
     cache: HashMap<String, Arc<Vec<Row>>>,
     live_parsers: HashMap<String, IncrementalParser>,
     tree_cache: HashMap<String, (usize, Arc<BlockTree>)>,
-    baseline: Option<vardoger_doc::TranscriptBaseline>,
+    baseline: Option<commutator_doc::TranscriptBaseline>,
 }
 
 pub(crate) struct PreparedTranscript {
     pub(crate) rows: HashMap<String, Arc<Vec<Row>>>,
     pub(crate) historical: HashMap<String, Vec<Row>>,
     fully_historical: HashSet<String>,
-    pub(crate) navigation_baseline: Arc<vardoger_doc::TranscriptBaseline>,
+    pub(crate) navigation_baseline: Arc<commutator_doc::TranscriptBaseline>,
     pub(crate) bytes: usize,
 }
 
 impl TranscriptPreparation {
     pub(crate) fn prepare(
         &mut self,
-        update: &vardoger_doc::TranscriptUpdate,
-    ) -> Result<Arc<PreparedTranscript>, vardoger_doc::TranscriptDesync> {
+        update: &commutator_doc::TranscriptUpdate,
+    ) -> Result<Arc<PreparedTranscript>, commutator_doc::TranscriptDesync> {
         match &update.frame {
-            vardoger_doc::TranscriptFrame::Reset { .. } => {
+            commutator_doc::TranscriptFrame::Reset { .. } => {
                 self.cache.clear();
                 self.tree_cache.clear();
                 self.live_parsers.clear();
             }
-            vardoger_doc::TranscriptFrame::Delta {
+            commutator_doc::TranscriptFrame::Delta {
                 upsert,
                 append,
                 remove,
@@ -2630,7 +2630,7 @@ impl TranscriptPreparation {
                 }
             }
         }
-        vardoger_doc::apply_transcript_frame(&mut self.entries, update.frame.clone())?;
+        commutator_doc::apply_transcript_frame(&mut self.entries, update.frame.clone())?;
         if let Some(baseline) = &update.replay_baseline {
             self.baseline = Some(baseline.clone());
         }
@@ -2685,7 +2685,7 @@ impl TranscriptPreparation {
             historical,
             fully_historical,
             bytes,
-            navigation_baseline: Arc::new(vardoger_doc::TranscriptBaseline::capture(&self.entries)),
+            navigation_baseline: Arc::new(commutator_doc::TranscriptBaseline::capture(&self.entries)),
         }))
     }
 }
@@ -3244,7 +3244,7 @@ pub struct Transcript {
     /// Entrance state follows stable groups through completion so fast calls
     /// finish revealing. Replay rows have no entrance timestamps.
     tool_group_reveals: HashMap<SharedString, ToolGroupReveal>,
-    last_replay_baseline: Option<Arc<vardoger_doc::TranscriptBaseline>>,
+    last_replay_baseline: Option<Arc<commutator_doc::TranscriptBaseline>>,
     /// Parsed historical prefixes, used to seed text before a coalesced live
     /// suffix is painted. The wire watermark contains lengths, not text.
     historical_markdown: HashMap<SharedString, Row>,
@@ -3385,7 +3385,7 @@ pub struct Transcript {
     /// Hovered rail tick (grows + shows the preview card).
     rail_hover: Option<usize>,
     /// `(row id, entry id)` under the pointer — reveals the entry's timestamp
-    /// strip (vardoger chat-view.tsx `group-hover`; the rows report hover
+    /// strip (commutator chat-view.tsx `group-hover`; the rows report hover
     /// themselves). Keyed by ROW so a row→row move within one entry can't
     /// clear the reveal when the old row's leave event arrives after the new
     /// row's enter (enter/leave order across rows is not guaranteed).
@@ -5381,7 +5381,7 @@ impl Transcript {
             let reply = crate::attachments::call_with_timeout(
                 &engine,
                 cx.background_executor(),
-                vardoger_rpc::methods::FETCH_TOOL_BLOB,
+                commutator_rpc::methods::FETCH_TOOL_BLOB,
                 serde_json::json!({ "blobRef": ref_key.as_ref() }),
                 Duration::from_secs(20),
             )
@@ -5683,7 +5683,7 @@ impl Transcript {
     }
 
     /// Devices that may own a user message's attachment files: the chat's host
-    /// device (uploads targeted it) plus this device (vardoger's
+    /// device (uploads targeted it) plus this device (commutator's
     /// `uniqueIds([attachmentDeviceId, m.device_id])`).
     fn attachment_device_ids(&self, cx: &Context<Self>) -> Vec<String> {
         // `selected_chat_row` belongs to the PRIMARY transcript's chat — an
@@ -7059,7 +7059,7 @@ impl Transcript {
                             // so the overlay stays live even once the trailer's
                             // 30s pending-send bridge has lapsed.
                             let pulse = motion::pulse_wave(motion::pulse_delta(
-                                &motion::VARDOGER_PULSE,
+                                &motion::COMMUTATOR_PULSE,
                                 cx.entity_id(),
                                 cx,
                             ));
@@ -7103,7 +7103,7 @@ impl Transcript {
                     .opacity(
                         0.35 + 0.4
                             * motion::pulse_wave(motion::pulse_delta(
-                                &motion::VARDOGER_PULSE,
+                                &motion::COMMUTATOR_PULSE,
                                 cx.entity_id(),
                                 cx,
                             )),
@@ -7140,7 +7140,7 @@ impl Transcript {
                 let params = serde_json::json!({ "chatId": chat_id });
                 if let Err(err) = engine
                     .client()
-                    .call(vardoger_rpc::methods::RETRY_DELIVERY, params)
+                    .call(commutator_rpc::methods::RETRY_DELIVERY, params)
                     .await
                 {
                     tracing::warn!(error = %err, "delivery retry RPC failed");
@@ -7612,7 +7612,7 @@ impl Transcript {
                 self.render_visual(&row.id, owner, path, title, cx)
             }
             RowKind::ErrorChip { message } => {
-                let problem = vardoger_proto::run_errors::provider_problem(message);
+                let problem = commutator_proto::run_errors::provider_problem(message);
                 let sign_in = self
                     .chat_id
                     .clone()
@@ -7934,7 +7934,7 @@ impl Transcript {
         tree: &Arc<BlockTree>,
         only: Option<usize>,
         cx: &mut Context<Self>,
-    ) -> HashMap<usize, Option<Arc<vardoger_syntax::HighlightedDocument>>> {
+    ) -> HashMap<usize, Option<Arc<commutator_syntax::HighlightedDocument>>> {
         let mut out = HashMap::new();
         for (ix, top) in tree.blocks.iter().enumerate() {
             if only.is_some_and(|o| o != ix) {
@@ -7943,7 +7943,7 @@ impl Transcript {
             if let Block::CodeBlock { language, code } = &top.block
                 && let Some(lang) = language
                     .as_deref()
-                    .and_then(vardoger_syntax::language_for_alias)
+                    .and_then(commutator_syntax::language_for_alias)
             {
                 out.insert(
                     ix,
@@ -7973,7 +7973,7 @@ impl Transcript {
         let old = match old_text {
             Some(source) => {
                 let path = file.old_path.as_deref().unwrap_or(&file.path);
-                let lang = vardoger_syntax::language_for_path(path)?;
+                let lang = commutator_syntax::language_for_path(path)?;
                 Some(
                     self.highlights
                         .request(cache_row.clone(), 0, lang, source, cx)?,
@@ -7983,7 +7983,7 @@ impl Transcript {
         };
         let new = match new_text {
             Some(source) => {
-                let lang = vardoger_syntax::language_for_path(&file.path)?;
+                let lang = commutator_syntax::language_for_path(&file.path)?;
                 Some(self.highlights.request(cache_row, 1, lang, source, cx)?)
             }
             None => None,
@@ -8354,7 +8354,7 @@ impl Transcript {
             // Quiet even when children failed: agents routinely have failed
             // probes mid-work, and a red HEADER read as "this whole step
             // broke" (user report). Failures still show on the individual
-            // chips (destructive tint, vardoger tool-chip.tsx) and in the
+            // chips (destructive tint, commutator tool-chip.tsx) and in the
             // summary's "· N failed" count.
             .text_color(theme.text_muted)
             .hover(|s| s.text_color(theme.text))
@@ -8732,14 +8732,14 @@ impl Transcript {
 /// Keep routing instructions in the stored prompt for agents, but show a
 /// concise attribution in the human transcript (including existing messages).
 fn agent_message_display(text: &str) -> String {
-    let Some(rest) = text.strip_prefix("[Message from Vardoger chat ") else {
+    let Some(rest) = text.strip_prefix("[Message from Commutator chat ") else {
         return text.to_owned();
     };
     let Some((header, body)) = rest.split_once("]\n\n") else {
         return text.to_owned();
     };
     let Some((label, id)) =
-        header.rsplit_once(". Reply to it with the Vardoger `send_message` tool, chat ")
+        header.rsplit_once(". Reply to it with the Commutator `send_message` tool, chat ")
     else {
         return text.to_owned();
     };
@@ -9111,7 +9111,7 @@ fn user_file_pill(name: &str, theme: &Theme) -> AnyElement {
 }
 
 /// The transcript ErrorChip — the shared [`notice_chip_with_action`] in its tile
-/// treatment (a port of vardoger chat-view.tsx `ErrorChip`, restacked for long
+/// treatment (a port of commutator chat-view.tsx `ErrorChip`, restacked for long
 /// payloads: header row with the red-washed tile and the medium "Error"
 /// label, then the human message below). Unlike the web port, the message
 /// WRAPS instead of truncating: startup-crash errors carry the agent's exit
@@ -9122,11 +9122,11 @@ fn user_file_pill(name: &str, theme: &Theme) -> AnyElement {
 /// label and carries a "Log in" button for that chat's provider.
 fn error_chip(
     message: SharedString,
-    problem: Option<vardoger_proto::run_errors::ProviderProblem>,
+    problem: Option<commutator_proto::run_errors::ProviderProblem>,
     sign_in: Option<impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static>,
     theme: &Theme,
 ) -> AnyElement {
-    use vardoger_proto::run_errors::ProviderProblem;
+    use commutator_proto::run_errors::ProviderProblem;
     let label = match problem {
         Some(ProviderProblem::SignedOut) => "Signed out",
         Some(ProviderProblem::LimitReached) => "Limit reached",
@@ -9362,9 +9362,9 @@ fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement
         .into_any_element()
 }
 
-/// A small glyph standing in for the tool's icon (vardoger uses an icon set; a
+/// A small glyph standing in for the tool's icon (commutator uses an icon set; a
 /// quiet monochrome character keeps the tile without shipping SVGs).
-/// The glyph for a tool call (vardoger tool-chip.tsx `toolIcon`, Solar set).
+/// The glyph for a tool call (commutator tool-chip.tsx `toolIcon`, Solar set).
 fn tool_icon_path(call: &ToolCall) -> &'static str {
     match call {
         ToolCall::Exec { .. } => crate::icons::TERMINAL,
@@ -10032,7 +10032,7 @@ fn reveal_tool_row(row: AnyElement, height: f32, progress: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// BoardUI-style task tree with Vardoger's tool glyph restored at each branch tip.
+/// BoardUI-style task tree with Commutator's tool glyph restored at each branch tip.
 /// The previous row draws the first leg of a new arrival to its lower boundary;
 /// this row then continues down, rounds the elbow, and finally reveals the icon.
 /// One paint owns every segment in a row, avoiding alpha-darkened joints.
@@ -10647,7 +10647,7 @@ mod tests {
             });
         });
     }
-    use vardoger_doc::MessagePart;
+    use commutator_doc::MessagePart;
 
     fn with_tool_group_navigation(
         cx: &mut gpui::TestAppContext,
@@ -10775,14 +10775,14 @@ mod tests {
     fn tool_group_revisit_skips_batched_history_but_animates_live_arrivals(
         cx: &mut gpui::TestAppContext,
     ) {
-        use vardoger_doc::transcript_delta::{TranscriptFrame, diff_transcript};
+        use commutator_doc::transcript_delta::{TranscriptFrame, diff_transcript};
 
         with_tool_group_navigation(cx, |state, transcript, cx| {
             let apply_frame = |frame, replay_baseline, cx: &mut gpui::App| {
                 state.update(cx, |state, cx| {
                     state
                         .receive_transcript_update(
-                            vardoger_doc::TranscriptUpdate {
+                            commutator_doc::TranscriptUpdate {
                                 frame,
                                 replay_baseline,
                                 context_usage: None,
@@ -10800,7 +10800,7 @@ mod tests {
             )];
             apply_frame(
                 TranscriptFrame::reset(&cached),
-                Some(vardoger_doc::TranscriptBaseline::capture(&cached)),
+                Some(commutator_doc::TranscriptBaseline::capture(&cached)),
                 cx,
             );
             state.update(cx, |state, cx| state.select_chat(Some("chat-b".into()), cx));
@@ -10829,7 +10829,7 @@ mod tests {
             );
             apply_frame(
                 TranscriptFrame::reset(&cached),
-                Some(vardoger_doc::TranscriptBaseline::capture(&cached)),
+                Some(commutator_doc::TranscriptBaseline::capture(&cached)),
                 cx,
             );
             let row_id: SharedString = "tools#g0".into();
@@ -10850,7 +10850,7 @@ mod tests {
                 assert!(matches!(&frame, TranscriptFrame::Delta { .. }));
                 apply_frame(
                     frame,
-                    Some(vardoger_doc::TranscriptBaseline::capture(next)),
+                    Some(commutator_doc::TranscriptBaseline::capture(next)),
                     cx,
                 );
                 let reveal = &transcript.read(cx).tool_group_reveals[&row_id];
@@ -10895,10 +10895,10 @@ mod tests {
             assistant("b", MessageStatus::Complete, vec![tool_part("t", "pwd")]),
         ];
         let first = worker
-            .prepare(&vardoger_doc::TranscriptUpdate {
-                frame: vardoger_doc::TranscriptFrame::reset(&original),
+            .prepare(&commutator_doc::TranscriptUpdate {
+                frame: commutator_doc::TranscriptFrame::reset(&original),
                 context_usage: None,
-                replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&original)),
+                replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&original)),
             })
             .unwrap();
         let mut changed = original.clone();
@@ -10907,8 +10907,8 @@ mod tests {
             text: "omega".into(),
         }];
         let next = worker
-            .prepare(&vardoger_doc::TranscriptUpdate {
-                frame: vardoger_doc::diff_transcript(&original, &changed),
+            .prepare(&commutator_doc::TranscriptUpdate {
+                frame: commutator_doc::diff_transcript(&original, &changed),
                 context_usage: None,
                 replay_baseline: None,
             })
@@ -10921,18 +10921,18 @@ mod tests {
     #[gpui::test]
     fn prepared_whale_open_and_revisit_do_not_build_rows_on_ui(cx: &mut gpui::TestAppContext) {
         let (update, prepared, preparation_ms) = std::thread::spawn(|| {
-            let entries = if let Ok(path) = std::env::var("VARDOGER_WHALE_SNAPSHOT") {
-                let doc = vardoger_doc::SessionDoc::init("fixture").unwrap();
+            let entries = if let Ok(path) = std::env::var("COMMUTATOR_WHALE_SNAPSHOT") {
+                let doc = commutator_doc::SessionDoc::init("fixture").unwrap();
                 doc.doc().import(&std::fs::read(path).unwrap()).unwrap();
-                vardoger_doc::join_continuation_entries(doc.read_entries().unwrap())
+                commutator_doc::join_continuation_entries(doc.read_entries().unwrap())
             } else {
                 vec![assistant("whale-turn", MessageStatus::Complete, (0..5000).map(|i| {
                     MessagePart::Text { id: format!("part-{i}"), text: format!("## Result {i}\n\n**Markdown** with `code` and [links](https://example.com).\n") }
                 }).collect())]
             };
-            let update = vardoger_doc::TranscriptUpdate {
-                replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&entries)),
-                frame: vardoger_doc::TranscriptFrame::Reset { reset: entries },
+            let update = commutator_doc::TranscriptUpdate {
+                replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&entries)),
+                frame: commutator_doc::TranscriptFrame::Reset { reset: entries },
                 context_usage: None,
             };
             let start = Instant::now();
@@ -11014,9 +11014,9 @@ mod tests {
                 state.update(cx, |state, cx| {
                     state
                         .receive_opening_transcript_update(
-                            vardoger_doc::TranscriptUpdate {
-                                frame: vardoger_doc::TranscriptFrame::reset(entries),
-                                replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(
+                            commutator_doc::TranscriptUpdate {
+                                frame: commutator_doc::TranscriptFrame::reset(entries),
+                                replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
                                     entries,
                                 )),
                                 context_usage: None,
@@ -11070,8 +11070,8 @@ mod tests {
             state.update(cx, |state, cx| {
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
-                            frame: vardoger_doc::diff_transcript(&full, &live),
+                        commutator_doc::TranscriptUpdate {
+                            frame: commutator_doc::diff_transcript(&full, &live),
                             replay_baseline: None,
                             context_usage: None,
                         },
@@ -11107,13 +11107,13 @@ mod tests {
                 vec![tool_part("new", "git status")],
             ));
             state.update(cx, |state, cx| {
-                let frame = vardoger_doc::diff_transcript(&state.transcript, &history);
+                let frame = commutator_doc::diff_transcript(&state.transcript, &history);
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
+                        commutator_doc::TranscriptUpdate {
                             frame,
                             context_usage: None,
-                            replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(&history)),
+                            replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&history)),
                         },
                         cx,
                     )
@@ -11121,8 +11121,8 @@ mod tests {
                 // Both updates land before the transcript observes/render them.
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
-                            frame: vardoger_doc::diff_transcript(&history, &live),
+                        commutator_doc::TranscriptUpdate {
+                            frame: commutator_doc::diff_transcript(&history, &live),
                             context_usage: None,
                             replay_baseline: None,
                         },
@@ -11153,10 +11153,10 @@ mod tests {
         with_tool_group_navigation(cx, |state, transcript, cx| {
             let apply = |entries: &[SessionMessageEntry], baseline, cx: &mut gpui::App| {
                 state.update(cx, |state, cx| {
-                    let frame = vardoger_doc::diff_transcript(&state.transcript, entries);
+                    let frame = commutator_doc::diff_transcript(&state.transcript, entries);
                     state
                         .receive_transcript_update(
-                            vardoger_doc::TranscriptUpdate {
+                            commutator_doc::TranscriptUpdate {
                                 frame,
                                 replay_baseline: baseline,
                                 context_usage: None,
@@ -11185,7 +11185,7 @@ mod tests {
             historical[0].parts.retain(|p| p.id().starts_with("old"));
             apply(
                 &entries,
-                Some(vardoger_doc::TranscriptBaseline::capture(&historical)),
+                Some(commutator_doc::TranscriptBaseline::capture(&historical)),
                 cx,
             );
             let reveal = &transcript.read(cx).tool_group_reveals[&row];
@@ -11197,7 +11197,7 @@ mod tests {
             entries[0].parts.push(tool_part("live-c", "pwd"));
             apply(
                 &entries,
-                Some(vardoger_doc::TranscriptBaseline::capture(&historical)),
+                Some(commutator_doc::TranscriptBaseline::capture(&historical)),
                 cx,
             );
             let reveal = &transcript.read(cx).tool_group_reveals[&row];
@@ -11213,8 +11213,8 @@ mod tests {
                 state.select_chat(Some("new-chat".into()), cx);
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
-                            frame: vardoger_doc::TranscriptFrame::reset::<vardoger_doc::SessionMessageEntry>(&[]),
+                        commutator_doc::TranscriptUpdate {
+                            frame: commutator_doc::TranscriptFrame::reset::<commutator_doc::SessionMessageEntry>(&[]),
                             context_usage: None,
                             replay_baseline: Some(Default::default()),
                         },
@@ -11231,8 +11231,8 @@ mod tests {
             state.update(cx, |state, cx| {
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
-                            frame: vardoger_doc::diff_transcript(&[], &live),
+                        commutator_doc::TranscriptUpdate {
+                            frame: commutator_doc::diff_transcript(&[], &live),
                             context_usage: None,
                             replay_baseline: None,
                         },
@@ -11261,11 +11261,11 @@ mod tests {
                 ));
             }
             state.update(cx, |state, cx| {
-                let frame = vardoger_doc::diff_transcript(&state.transcript, &live);
-                assert!(matches!(&frame, vardoger_doc::TranscriptFrame::Reset { .. }));
+                let frame = commutator_doc::diff_transcript(&state.transcript, &live);
+                assert!(matches!(&frame, commutator_doc::TranscriptFrame::Reset { .. }));
                 state
                     .receive_transcript_update(
-                        vardoger_doc::TranscriptUpdate {
+                        commutator_doc::TranscriptUpdate {
                             frame,
                             context_usage: None,
                             replay_baseline: None,
@@ -11421,7 +11421,7 @@ mod tests {
             (Theme::dark(), crate::theme::grey(48)),
             (Theme::light(), crate::theme::grey(230)),
         ] {
-            theme.surface_treatment = vardoger_theme::SurfaceTreatment::Opaque;
+            theme.surface_treatment = commutator_theme::SurfaceTreatment::Opaque;
             let badge = crate::theme::flatten(theme.ink(0.06), base);
             let icon_well = crate::theme::flatten(crate::file_icons::well_bg(&theme), badge);
             let contrast = crate::theme::contrast_ratio(icon_well, badge);
@@ -11442,9 +11442,9 @@ mod tests {
     #[test]
     fn file_badge_icon_well_uses_more_coverage_on_frost() {
         for mut theme in [Theme::dark(), Theme::light()] {
-            theme.surface_treatment = vardoger_theme::SurfaceTreatment::Opaque;
+            theme.surface_treatment = commutator_theme::SurfaceTreatment::Opaque;
             let opaque_alpha = crate::file_icons::well_bg(&theme).a;
-            theme.surface_treatment = vardoger_theme::SurfaceTreatment::Frosted;
+            theme.surface_treatment = commutator_theme::SurfaceTreatment::Frosted;
             let frosted = crate::file_icons::well_bg(&theme);
             let badge = crate::theme::flatten(theme.ink(0.06), theme.bg);
             let icon_well = crate::theme::flatten(frosted, badge);
@@ -13502,10 +13502,10 @@ mod tests {
                         state.select_chat(Some("chat".into()), cx);
                         state
                             .receive_transcript_update(
-                                vardoger_doc::TranscriptUpdate {
-                                    frame: vardoger_doc::TranscriptFrame::reset(&history),
+                                commutator_doc::TranscriptUpdate {
+                                    frame: commutator_doc::TranscriptFrame::reset(&history),
                                     context_usage: None,
-                                    replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(
+                                    replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
                                         &history,
                                     )),
                                 },
@@ -13530,12 +13530,12 @@ mod tests {
                     this.state.update(cx, |state, cx| {
                         state
                             .receive_transcript_update(
-                                vardoger_doc::TranscriptUpdate {
-                                    frame: vardoger_doc::diff_transcript(&history, &next),
+                                commutator_doc::TranscriptUpdate {
+                                    frame: commutator_doc::diff_transcript(&history, &next),
                                     context_usage: None,
                                     // The RPC must retain its opening cutoff when
                                     // publishing subsequent changed-part history.
-                                    replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(
+                                    replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
                                         &cutoff,
                                     )),
                                 },
@@ -13585,10 +13585,10 @@ mod tests {
                         state.select_chat(Some("chat".into()), cx);
                         state
                             .receive_transcript_update(
-                                vardoger_doc::TranscriptUpdate {
-                                    frame: vardoger_doc::TranscriptFrame::reset(&history),
+                                commutator_doc::TranscriptUpdate {
+                                    frame: commutator_doc::TranscriptFrame::reset(&history),
                                     context_usage: None,
-                                    replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(
+                                    replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
                                         &history,
                                     )),
                                 },
@@ -13597,8 +13597,8 @@ mod tests {
                             .unwrap();
                         state
                             .receive_transcript_update(
-                                vardoger_doc::TranscriptUpdate {
-                                    frame: vardoger_doc::diff_transcript(&history, &live),
+                                commutator_doc::TranscriptUpdate {
+                                    frame: commutator_doc::diff_transcript(&history, &live),
                                     context_usage: None,
                                     replay_baseline: None,
                                 },
@@ -13647,10 +13647,10 @@ mod tests {
                     this.state.update(cx, |state, cx| {
                         state
                             .receive_transcript_update(
-                                vardoger_doc::TranscriptUpdate {
-                                    frame: vardoger_doc::diff_transcript(&live, &next),
+                                commutator_doc::TranscriptUpdate {
+                                    frame: commutator_doc::diff_transcript(&live, &next),
                                     context_usage: None,
-                                    replay_baseline: Some(vardoger_doc::TranscriptBaseline::capture(
+                                    replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
                                         &next_history,
                                     )),
                                 },
@@ -13751,14 +13751,14 @@ mod tests {
                         this.spring_kick = true;
                         updated.push(prompt(&format!("history-{}", updated.len())));
                         this.state.update(cx, |state, cx| {
-                            let frame = vardoger_doc::diff_transcript(&state.transcript, &updated);
+                            let frame = commutator_doc::diff_transcript(&state.transcript, &updated);
                             state
                                 .receive_transcript_update(
-                                    vardoger_doc::TranscriptUpdate {
+                                    commutator_doc::TranscriptUpdate {
                                         frame,
                                         context_usage: None,
                                         replay_baseline: Some(
-                                            vardoger_doc::TranscriptBaseline::capture(&updated),
+                                            commutator_doc::TranscriptBaseline::capture(&updated),
                                         ),
                                     },
                                     cx,
@@ -13995,14 +13995,14 @@ mod tests {
                     feed(this, vec![prompt("prompt")], cx);
                     this.rail_enabled = false;
                     this.state.update(cx, |state, _| {
-                        state.sessions.push(vardoger_proto::Session {
+                        state.sessions.push(commutator_proto::Session {
                             last_completed_turn: None,
                             last_turn_outcome: None,
                             terminal_activity: None,
                             running_subagents: 0,
                             chat_id: "chat".into(),
                             device_id: "test".into(),
-                            status: vardoger_proto::SessionStatus::Working,
+                            status: commutator_proto::SessionStatus::Working,
                             started_at: Some(chrono::Utc::now()),
                             updated_at: chrono::Utc::now(),
                         })
@@ -15417,8 +15417,8 @@ mod tests {
     fn bubble_chip_padding_is_shaped_in_geist() {
         let raw = format!(
             "open {} and {}",
-            vardoger_proto::attachment_mentions::attachment_mention_link(1, None),
-            vardoger_proto::attachment_mentions::attachment_mention_link(2, Some("notes.md")),
+            commutator_proto::attachment_mentions::attachment_mention_link(1, None),
+            commutator_proto::attachment_mentions::attachment_mention_link(2, Some("notes.md")),
         );
         let (text, spans) = crate::composer::sent_mention_display(&raw).expect("chips project");
         let mut theme = Theme::dark();
@@ -15452,7 +15452,7 @@ mod tests {
     /// land (the ref is rewritten to a local path) the icon comes back.
     #[gpui::test]
     fn sent_chips_show_upload_progress_until_their_bytes_land(cx: &mut gpui::TestAppContext) {
-        use vardoger_proto::attachment_mentions::attachment_mention_link;
+        use commutator_proto::attachment_mentions::attachment_mention_link;
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| {
             gpui_base::init(cx);
@@ -15461,7 +15461,7 @@ mod tests {
         });
         let state = cx.new(|_| AppState::new());
         state.update(cx, |state, _| {
-            state.apply_transfers(vec![vardoger_proto::TransferProgress {
+            state.apply_transfers(vec![commutator_proto::TransferProgress {
                 upload_id: "att-1".into(),
                 file_name: "Image 1.png".into(),
                 done: 430,
@@ -15529,12 +15529,12 @@ mod tests {
     #[test]
     fn user_bubbles_project_attachment_chips_in_place_of_the_strip() {
         use crate::composer::ChipKind;
-        use vardoger_proto::attachment_mentions::attachment_mention_link;
+        use commutator_proto::attachment_mentions::attachment_mention_link;
         let body = format!(
             "compare {} with {} and {}",
             attachment_mention_link(1, None),
             attachment_mention_link(2, Some("notes.md")),
-            "[composer.rs](vardoger-file:crates/ui/src/composer.rs)",
+            "[composer.rs](commutator-file:crates/ui/src/composer.rs)",
         );
         let raw = crate::attachments::with_attachments(
             &body,
@@ -15558,7 +15558,7 @@ mod tests {
         else {
             panic!("expected a user row");
         };
-        assert!(!text.contains("vardoger-") && !text.contains("Attached images"));
+        assert!(!text.contains("commutator-") && !text.contains("Attached images"));
         assert_eq!(
             mentions.iter().map(|m| m.kind).collect::<Vec<_>>(),
             [ChipKind::Image, ChipKind::File, ChipKind::File]
@@ -15609,7 +15609,7 @@ mod tests {
 
     #[test]
     fn user_rows_project_file_mentions_into_chips() {
-        let raw = "look at [composer.rs](vardoger-file:crates/ui/src/composer.rs) please";
+        let raw = "look at [composer.rs](commutator-file:crates/ui/src/composer.rs) please";
         let mut entry = assistant("u3", MessageStatus::Complete, vec![]);
         entry.role = MessageRole::User;
         entry.status = None;
@@ -15619,7 +15619,7 @@ mod tests {
             panic!("expected a user row");
         };
         assert!(
-            !text.contains("vardoger-file:"),
+            !text.contains("commutator-file:"),
             "raw link left visible: {text}"
         );
         assert!(text.contains("composer.rs"));
@@ -15685,7 +15685,7 @@ mod tests {
         let old = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>();
         let mut new = old.clone();
         new[9] = "LINE 10".into();
-        let diff = vardoger_proto::ToolDiff {
+        let diff = commutator_proto::ToolDiff {
             path: "/w/a.rs".into(),
             old_text: Some(old.join("\n") + "\n"),
             new_text: new.join("\n") + "\n",
@@ -15722,7 +15722,7 @@ mod tests {
         assert_eq!(old_text.as_deref(), diff.old_text.as_deref());
         assert_eq!(new_text.as_deref(), Some(diff.new_text.as_str()));
         // New files carry Added status (and no old numbers).
-        let created = vardoger_proto::ToolDiff {
+        let created = commutator_proto::ToolDiff {
             path: "/w/new.txt".into(),
             old_text: None,
             new_text: "only\n".into(),
@@ -15966,8 +15966,8 @@ mod tests {
         );
         let todo = ToolCall::Todo {
             items: vec![
-                vardoger_proto::TodoItem::new("a", vardoger_proto::TodoStatus::Completed),
-                vardoger_proto::TodoItem::new("b", vardoger_proto::TodoStatus::Pending),
+                commutator_proto::TodoItem::new("a", commutator_proto::TodoStatus::Completed),
+                commutator_proto::TodoItem::new("b", commutator_proto::TodoStatus::Pending),
             ],
         };
         assert_eq!(tool_chip_content(&todo), ("Todo", "1/2 done".to_string()));
@@ -16162,19 +16162,19 @@ mod tests {
         let Some(ToolDetail::Output { lines, .. }) = call_block(&ToolCall::Mcp {
             server: "gh".into(),
             tool: "issues".into(),
-            input: Some(serde_json::json!({"repo": "vardoger"})),
+            input: Some(serde_json::json!({"repo": "commutator"})),
         }) else {
             panic!("expected an output block")
         };
         assert_eq!(lines[0].as_ref(), "gh · issues");
-        assert!(lines.iter().any(|l| l.contains("\"repo\": \"vardoger\"")));
+        assert!(lines.iter().any(|l| l.contains("\"repo\": \"commutator\"")));
 
         // Todos list one item per line with checkbox state.
         let Some(ToolDetail::Output { lines, .. }) = call_block(&ToolCall::Todo {
             items: vec![
-                vardoger_proto::TodoItem::new("a", vardoger_proto::TodoStatus::Completed),
-                vardoger_proto::TodoItem::new("b", vardoger_proto::TodoStatus::InProgress),
-                vardoger_proto::TodoItem::new("c", vardoger_proto::TodoStatus::Pending),
+                commutator_proto::TodoItem::new("a", commutator_proto::TodoStatus::Completed),
+                commutator_proto::TodoItem::new("b", commutator_proto::TodoStatus::InProgress),
+                commutator_proto::TodoItem::new("c", commutator_proto::TodoStatus::Pending),
             ],
         }) else {
             panic!("expected an output block")

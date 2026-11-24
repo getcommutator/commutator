@@ -11,10 +11,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use vardoger_harness::{
+use commutator_harness::{
     CancellationToken, ClaudeHarness, Harness, HarnessError, RunControls, SteerMessage,
 };
-use vardoger_proto::{
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel, ToolCall, UserInputAnswer,
     UserInputQuestion,
 };
@@ -233,14 +233,14 @@ async fn happy_path_normalizes_events_and_tags_subagents() {
     );
 }
 
-/// A run whose Vardoger server is side-chats-only launches the CLI without its
+/// A run whose Commutator server is side-chats-only launches the CLI without its
 /// subagent tools (`Agent`, which the init frame lists as `Task`, and
 /// `Workflow`); any other run keeps them.
 #[tokio::test]
 async fn a_side_chats_only_run_launches_without_subagent_tools() {
-    let mut server = vardoger_proto::McpServer {
-        name: "vardoger".into(),
-        command: "vardoger".into(),
+    let mut server = commutator_proto::McpServer {
+        name: "commutator".into(),
+        command: "commutator".into(),
         args: vec!["mcp".into()],
         env: Default::default(),
         http: None,
@@ -249,7 +249,7 @@ async fn a_side_chats_only_run_launches_without_subagent_tools() {
     for side_chats_only in [false, true] {
         if side_chats_only {
             server.env.insert(
-                vardoger_proto::McpServer::SIDE_CHATS_ONLY_ENV.into(),
+                commutator_proto::McpServer::SIDE_CHATS_ONLY_ENV.into(),
                 "1".into(),
             );
         }
@@ -333,7 +333,7 @@ async fn eager_done_forwards_wake_turn_as_second_done() {
 #[tokio::test]
 async fn a_background_wake_is_signalled_and_what_the_agent_waits_on_follows_the_roster() {
     let (mut controls, _steer, _token) = controls("A");
-    let turn = vardoger_harness::TurnControl::default();
+    let turn = commutator_harness::TurnControl::default();
     controls.turn = turn.clone();
     let mut waiting = turn.watch_waiting();
     let woke = {
@@ -465,8 +465,8 @@ async fn questions_closed_unanswered_deny_the_tool() {
 
 #[tokio::test]
 async fn ultrathink_preserves_selected_commands_on_initial_and_steered_sends() {
-    use vardoger_proto::ReasoningLevel;
-    use vardoger_proto::invocation::{Invocation, SkillCommand, harness_prompt};
+    use commutator_proto::ReasoningLevel;
+    use commutator_proto::invocation::{Invocation, SkillCommand, harness_prompt};
 
     let invocations = [
         Invocation::Command {
@@ -931,7 +931,7 @@ async fn captured_live_forwarded_foreground_subagent_replays_in_order() {
 
 #[tokio::test]
 async fn captured_live_typed_forked_command_replays_into_its_chip() {
-    // Frames from claude 2.1.310 run with Vardoger's launch flags and
+    // Frames from claude 2.1.310 run with Commutator's launch flags and
     // CLAUDE_CODE_FORWARD_SUBAGENT_TEXT=1 (2026-10-25): `/fanout` typed as the
     // prompt, a `context: fork` skill whose two foreground agents sleep, then
     // reply alpha and bravo. The fork starts with no tool id, and its
@@ -1026,7 +1026,7 @@ async fn captured_live_typed_forked_command_replays_into_its_chip() {
 
 /// Live smoke against the REAL claude CLI (2.1.x, must be installed + authed):
 /// one trivial turn through the stdio permission channel, ending on the
-/// result frame. `cargo test -p vardoger-harness --test claude -- --ignored`.
+/// result frame. `cargo test -p commutator-harness --test claude -- --ignored`.
 #[tokio::test]
 #[ignore = "spawns the real claude CLI; needs install + auth + network"]
 async fn live_real_cli_single_turn() {
@@ -1081,7 +1081,7 @@ async fn live_plan_mode_asks_before_implementing() {
     req.model = Some("haiku".into());
     req.cwd = dir.path().display().to_string();
     req.auto_approve = false;
-    req.access = vardoger_proto::AccessMode::Supervised;
+    req.access = commutator_proto::AccessMode::Supervised;
     req.plan = true;
     let (controls, _steer, asked) = approving(&["Approve plan", "Approve command"]);
     let mut stream = ClaudeHarness::new()
@@ -1141,14 +1141,14 @@ async fn commands_come_from_the_initialize_control_request() {
     assert_eq!(again, commands);
 }
 
-/// Live smoke against the real CLI: `cargo test -p vardoger-harness --test
+/// Live smoke against the real CLI: `cargo test -p commutator-harness --test
 /// claude -- --ignored live_commands`. No model turn, no API cost.
 /// A real background shell is listed with its command, its output file is
 /// read while it runs, and a host stop ends it through `stop_task`.
 #[tokio::test]
 #[ignore = "spawns the real claude CLI; needs install + auth + network"]
 async fn live_background_shell_is_listed_read_and_stopped() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let dir = tempfile::tempdir().unwrap();
     let mut req = request(
         "Use the Bash tool with run_in_background set to true to run exactly: \
@@ -1260,7 +1260,7 @@ async fn command_discovery_tracks_project_changes() {
 
 #[tokio::test]
 async fn shared_skill_colliding_with_builtin_keeps_file_delivery() {
-    use vardoger_proto::invocation::{Invocation, harness_prompt};
+    use commutator_proto::invocation::{Invocation, harness_prompt};
     let cwd = tempfile::tempdir().unwrap();
     std::fs::create_dir(cwd.path().join(".git")).unwrap();
     let directory = cwd.path().join(".agents/skills/compact");
@@ -1296,7 +1296,7 @@ async fn shared_skill_colliding_with_builtin_keeps_file_delivery() {
 
 #[tokio::test]
 async fn claude_skills_follow_native_availability_and_dollar_selection_keeps_arguments() {
-    use vardoger_proto::{
+    use commutator_proto::{
         HarnessId,
         invocation::{Invocation, harness_prompt},
     };
@@ -1561,7 +1561,7 @@ async fn a_typed_fork_settles_before_a_message_waiting_on_it_splits_the_turn() {
 /// stopped turn's late result.
 #[tokio::test]
 async fn send_now_over_a_held_turn_end_never_settles_the_replacement() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -1635,7 +1635,7 @@ async fn send_now_over_a_held_turn_end_never_settles_the_replacement() {
 /// stopped turn reporting late (which left the chat Working).
 #[tokio::test]
 async fn a_quick_unconfirmed_replacement_after_a_stop_still_completes() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -1695,7 +1695,7 @@ async fn a_quick_unconfirmed_replacement_after_a_stop_still_completes() {
 /// the parked session), and none of its usage.
 #[tokio::test]
 async fn a_stopped_turns_delayed_duplicate_result_is_dropped() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, _steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -1747,7 +1747,7 @@ async fn a_stopped_turns_delayed_duplicate_result_is_dropped() {
 /// the next message waiting for it (`next`).
 #[tokio::test]
 async fn a_stop_the_cli_never_reports_settles_its_typed_fork() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -1835,7 +1835,7 @@ async fn a_cancelled_queued_message_releases_the_turn_end_immediately() {
 /// instead of replacing it (which killed its background agents and shells).
 #[tokio::test]
 async fn a_changed_model_and_effort_apply_to_the_live_process() {
-    use vardoger_proto::ReasoningLevel;
+    use commutator_proto::ReasoningLevel;
     assert!(harness().reconfigures_in_place(&request("a"), &{
         let mut next = request("b");
         next.model = Some("claude-haiku-4-5".into());
@@ -1929,7 +1929,7 @@ fn done_result(events: &[AgentEvent]) -> Option<String> {
 
 #[tokio::test]
 async fn access_modes_decide_what_is_asked() {
-    use vardoger_proto::AccessMode;
+    use commutator_proto::AccessMode;
 
     // Full access asks nothing, and launches as every run did before modes.
     let (controls, _steer, asked) = approving(&[]);
@@ -1995,7 +1995,7 @@ async fn access_modes_decide_what_is_asked() {
 
 #[tokio::test]
 async fn plan_and_access_modes_switch_on_the_live_process() {
-    use vardoger_proto::AccessMode;
+    use commutator_proto::AccessMode;
 
     let (controls, steer, asked) = approving(&["Approve plan"]);
     let mut launch = request("scenario:mode-switch");
@@ -2128,7 +2128,7 @@ async fn an_unreplayed_steer_releases_the_turn_end() {
 /// `stop_task` — after which the roster drops it.
 #[tokio::test]
 async fn background_shells_are_listed_read_and_stopped() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, _steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -2172,7 +2172,7 @@ async fn background_shells_are_listed_read_and_stopped() {
 
 #[tokio::test]
 async fn a_stopped_turn_keeps_the_process_and_its_background_work() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let (mut controls, steer, _token) = controls("A");
     let turn = TurnControl::default();
     controls.turn = turn.clone();
@@ -2512,7 +2512,7 @@ async fn processes_the_cli_started_end_with_the_run() {
     let pidfile = dir.path().join("grandchild.pid");
     let mut req = request("scenario:grandchild");
     req.env.insert(
-        "VARDOGER_TEST_PIDFILE".into(),
+        "COMMUTATOR_TEST_PIDFILE".into(),
         pidfile.to_string_lossy().into_owned(),
     );
     let (controls, _steer, _token) = controls("A");
@@ -2589,7 +2589,7 @@ async fn a_failed_discovery_probe_reports_exit_and_stderr() {
 /// The real CLI, resuming a session it has never seen: it refuses, and the
 /// run continues in a fresh session. An invalid key keeps it free — the
 /// fresh session fails its API call and ends errored, which is the point:
-/// it ran. Run with `cargo test -p vardoger-harness --test claude -- --ignored
+/// it ran. Run with `cargo test -p commutator-harness --test claude -- --ignored
 /// live_unrestorable`.
 #[tokio::test]
 #[ignore = "spawns the real claude CLI"]
@@ -2753,7 +2753,7 @@ async fn a_warm_start_launched_otherwise_is_never_used() {
     type Change = fn(&mut RunRequest);
     let changes: [(&str, Change); 9] = [
         ("model", |r| r.model = Some("claude-other".into())),
-        ("effort", |r| r.reasoning = Some(vardoger_proto::ReasoningLevel::High)),
+        ("effort", |r| r.reasoning = Some(commutator_proto::ReasoningLevel::High)),
         ("context window", |r| {
             r.model_options.insert("contextWindow".into(), "200k".into());
         }),
@@ -2764,7 +2764,7 @@ async fn a_warm_start_launched_otherwise_is_never_used() {
         ("plan", |r| r.plan = true),
         ("folder", |r| r.cwd = std::env::temp_dir().to_string_lossy().into_owned()),
         ("mcp", |r| {
-            r.extra_mcp.push(vardoger_proto::McpServer {
+            r.extra_mcp.push(commutator_proto::McpServer {
                 name: "plugin".into(),
                 command: "/bin/true".into(),
                 ..Default::default()

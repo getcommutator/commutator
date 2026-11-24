@@ -8,9 +8,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AccessMode, AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
@@ -280,7 +280,7 @@ impl Rig {
     }
 
     async fn rpc(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
-        let client = vardoger_rpc::memory_client(self.core.rpc_service());
+        let client = commutator_rpc::memory_client(self.core.rpc_service());
         client.call(method, params).await.expect(method)
     }
 
@@ -744,7 +744,7 @@ async fn a_cli_update_refuses_and_retires_warm_starts() {
 async fn a_changed_credential_is_never_run_on_the_old_one() {
     struct Switchable(Mutex<String>);
     #[async_trait]
-    impl vardoger_engine::registry::RunEnvironment for Switchable {
+    impl commutator_engine::registry::RunEnvironment for Switchable {
         async fn prepare(
             &self,
             _: HarnessId,

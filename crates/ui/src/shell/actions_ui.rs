@@ -1,6 +1,6 @@
 use super::*;
 
-use vardoger_proto::{
+use commutator_proto::{
     ProjectAction, ProjectActionDraft, ProjectActionIcon, ProjectActionRun, ProjectActionsSnapshot,
 };
 

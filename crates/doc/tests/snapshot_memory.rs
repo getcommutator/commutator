@@ -2,8 +2,8 @@
 //! Measuring retained allocations avoids platform-dependent RSS/GC thresholds.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-use vardoger_doc::{MessagePart, SegmentWriter, SessionDoc, fold_event_into_parts};
-use vardoger_proto::AgentEvent;
+use commutator_doc::{MessagePart, SegmentWriter, SessionDoc, fold_event_into_parts};
+use commutator_proto::AgentEvent;
 
 struct CountingAllocator;
 static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);

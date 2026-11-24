@@ -391,7 +391,7 @@ mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext, VisualTestContext};
 
-    fn test_chat(id: &str) -> vardoger_proto::Chat {
+    fn test_chat(id: &str) -> commutator_proto::Chat {
         serde_json::from_value(serde_json::json!({
             "id": id, "title": id, "deviceId": "local", "archived": false,
             "createdAt": Utc::now(),
@@ -413,7 +413,7 @@ mod tests {
                 data_dir: data_dir.into(),
                 ipc_port: 0,
                 edge_url: "http://127.0.0.1:1".into(),
-                default_harness: vardoger_proto::HarnessId::Mock,
+                default_harness: commutator_proto::HarnessId::Mock,
             },
             cx,
         );
@@ -458,17 +458,17 @@ mod tests {
                     "now".into(),
                     "Project".into(),
                     None,
-                    Some(vardoger_proto::ChangeRequestSummary { signals: Default::default(),
+                    Some(commutator_proto::ChangeRequestSummary { signals: Default::default(),
                         provider: "github".into(),
                         number: 90,
                         title: "Pull request title".into(),
-                        url: "https://github.com/acme/vardoger/pull/90".into(),
-                        state: vardoger_proto::ChangeRequestState::Open,
+                        url: "https://github.com/acme/commutator/pull/90".into(),
+                        state: commutator_proto::ChangeRequestState::Open,
                         base_ref: "main".into(),
                         head_ref: "feature/pr".into(),
                     }),
                     None,
-                    vardoger_proto::ChatIndicator::Idle,
+                    commutator_proto::ChatIndicator::Idle,
                     false,
                     false,
                     false,

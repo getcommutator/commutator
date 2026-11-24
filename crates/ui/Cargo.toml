@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-ui"
+name = "commutator-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -63,20 +63,20 @@ name = "compact-picker-fixture"
 required-features = ["compact-picker-fixture"]
 
 [dependencies]
-vardoger-veil.workspace = true
+commutator-veil.workspace = true
 url = "2"
-vardoger-proto.workspace = true
+commutator-proto.workspace = true
 similar.workspace = true
-vardoger-doc.workspace = true
-vardoger-engine.workspace = true
-vardoger-harness.workspace = true
-vardoger-rpc.workspace = true
-vardoger-update.workspace = true
-vardoger-notify.workspace = true
-vardoger-syntax.workspace = true
-vardoger-theme.workspace = true
-vardoger-visual.workspace = true
-vardoger-visual-gpu.workspace = true
+commutator-doc.workspace = true
+commutator-engine.workspace = true
+commutator-harness.workspace = true
+commutator-rpc.workspace = true
+commutator-update.workspace = true
+commutator-notify.workspace = true
+commutator-syntax.workspace = true
+commutator-theme.workspace = true
+commutator-visual.workspace = true
+commutator-visual-gpu.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
@@ -89,11 +89,11 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 pulldown-cmark.workspace = true
-vardoger-markdown.workspace = true
+commutator-markdown.workspace = true
 zatex = { workspace = true, features = ["bundled"] }
 html5ever = "0.39"
 alacritty_terminal.workspace = true
-vardoger-term.workspace = true
+commutator-term.workspace = true
 base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
 usvg = "0.46"

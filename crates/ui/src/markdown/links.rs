@@ -19,7 +19,7 @@ pub enum LinkAction {
     /// Normal click or keyboard activation; the user's persisted preference
     /// decides whether this routes internally or externally.
     Primary,
-    /// Explicit "Open in Vardoger" context-menu action.
+    /// Explicit "Open in Commutator" context-menu action.
     Internal,
     External,
     Copy,

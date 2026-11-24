@@ -5,12 +5,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use vardoger_client::events::NullListener;
-use vardoger_client::{
+use commutator_client::events::NullListener;
+use commutator_client::{
     Client, ClientConfig, Credentials, MessageRole, NewSession, SendOutcome, SendRequest,
     SessionTarget,
 };
-use vardoger_engine::{Engine, EngineConfig, HarnessId};
+use commutator_engine::{Engine, EngineConfig, HarnessId};
 
 fn wait_for(what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
     let start = Instant::now();

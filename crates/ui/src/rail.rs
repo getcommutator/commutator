@@ -10,7 +10,7 @@
 use gpui::{AnyElement, Context, ListOffset, SharedString, div, prelude::*, px};
 use std::time::{Duration, Instant};
 
-use vardoger_doc::{MessagePart, MessageRole, SessionMessageEntry};
+use commutator_doc::{MessagePart, MessageRole, SessionMessageEntry};
 
 use crate::motion;
 use crate::popover;
@@ -218,12 +218,12 @@ impl GlideTimeline {
     }
 }
 
-/// `VARDOGER_SCROLL_TRACE=1` logs per-frame glide positions at `warn` level —
-/// the smoothness measurement knob (same family as `VARDOGER_FRAME_STATS`).
+/// `COMMUTATOR_SCROLL_TRACE=1` logs per-frame glide positions at `warn` level —
+/// the smoothness measurement knob (same family as `COMMUTATOR_FRAME_STATS`).
 fn scroll_trace_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("VARDOGER_SCROLL_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
+        std::env::var("COMMUTATOR_SCROLL_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -576,7 +576,7 @@ impl Transcript {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vardoger_doc::MessageStatus;
+    use commutator_doc::MessageStatus;
 
     fn entry(id: &str, role: MessageRole, text: &str) -> SessionMessageEntry {
         SessionMessageEntry {

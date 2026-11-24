@@ -107,11 +107,11 @@ impl ViewerPeers {
 
     /// The account's other devices' preview services; changes arrive on
     /// [`Self::watch_services`].
-    pub fn services(&self) -> Vec<vardoger_proto::PreviewService> {
+    pub fn services(&self) -> Vec<commutator_proto::PreviewService> {
         self.catalog.snapshot().services
     }
 
-    pub fn watch_services(&self) -> watch::Receiver<vardoger_proto::PreviewSnapshot> {
+    pub fn watch_services(&self) -> watch::Receiver<commutator_proto::PreviewSnapshot> {
         self.catalog.subscribe()
     }
 

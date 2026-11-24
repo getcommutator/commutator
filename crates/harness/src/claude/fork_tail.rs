@@ -64,7 +64,7 @@ impl ForkTail {
             self.reader = self.locate().map(TailReader::new);
             if self.reader.is_none() && self.next > self.give_up {
                 tracing::info!(
-                    target: "vardoger_harness::claude",
+                    target: "commutator_harness::claude",
                     chip = %self.chip,
                     "no transcript on disk for the typed fork: its tab fills when it ends"
                 );

@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use vardoger_doc::parts::{MessagePart, SubagentStatus};
-use vardoger_markdown::parser::{Block, BlockTree, IncrementalParser, InlineRun, InlineStyle};
-use vardoger_proto::ToolCall;
-use vardoger_text::WhiteSpace;
+use commutator_doc::parts::{MessagePart, SubagentStatus};
+use commutator_markdown::parser::{Block, BlockTree, IncrementalParser, InlineRun, InlineStyle};
+use commutator_proto::ToolCall;
+use commutator_text::WhiteSpace;
 
 use super::display::{ColorRole, Decoration, DisplayBuilder, FadeEdge, WidgetKind};
 use super::file_icons::{basename, file_icon_asset};
@@ -120,7 +120,7 @@ fn group_summary(thoughts: usize, calls: &[(ToolCall, bool)]) -> String {
         n => segments.push(format!("thought {n} times")),
     }
     if !calls.is_empty() {
-        let s = vardoger_proto::view::tool_group_summary(calls);
+        let s = commutator_proto::view::tool_group_summary(calls);
         let mut c = s.chars();
         let lowered = c.next().map(|f| f.to_lowercase().collect::<String>() + c.as_str()).unwrap_or_default();
         segments.push(lowered);
@@ -163,7 +163,7 @@ fn spawn_model_label(model: &str) -> String {
     } else {
         ""
     };
-    let label = vardoger_client::catalog::model_label(harness, model);
+    let label = commutator_client::catalog::model_label(harness, model);
     match lower.strip_prefix("claude-") {
         // An id the catalog doesn't know yet: `claude-haiku-5` → "Haiku 5".
         Some(rest) if label == model => {
@@ -264,7 +264,7 @@ fn lines_block(ctx: &mut Ctx, st: &Styles, text: &str, wrap: Option<usize>) -> O
     Some(DetailBlock::Lines { lines, more })
 }
 
-fn diff_block(ctx: &mut Ctx, st: &Styles, diff: &vardoger_proto::ToolDiff) -> Option<DetailBlock> {
+fn diff_block(ctx: &mut Ctx, st: &Styles, diff: &commutator_proto::ToolDiff) -> Option<DetailBlock> {
     let old = diff.old_text.as_deref().unwrap_or("");
     // Bounded: a huge rewrite falls back to a coarser diff instead of
     // stalling the layout worker (the transcript would stop updating).
@@ -636,7 +636,7 @@ fn prepare_thought(ctx: &mut Ctx, st: &Styles, lines: &[Vec<InlineRun>], more: b
             continue;
         }
         let mut text = String::new();
-        let mut spans: Vec<vardoger_text::Span> = Vec::with_capacity(runs.len());
+        let mut spans: Vec<commutator_text::Span> = Vec::with_capacity(runs.len());
         let mut paints = Vec::with_capacity(runs.len());
         for run in runs {
             if run.text.is_empty() {
@@ -661,7 +661,7 @@ fn prepare_thought(ctx: &mut Ctx, st: &Styles, lines: &[Vec<InlineRun>], more: b
             } else {
                 text.push_str(&run.text);
             }
-            spans.push(vardoger_text::Span {
+            spans.push(commutator_text::Span {
                 range: start..text.len(),
                 style: style.id,
                 pad_start: 0.0,
@@ -685,14 +685,14 @@ fn prepare_thought(ctx: &mut Ctx, st: &Styles, lines: &[Vec<InlineRun>], more: b
         // Code lines are verbatim (indentation, aligned spaces); prose
         // collapses whitespace like the transcript's markdown does.
         let verbatim = runs.iter().all(|r| r.style.code);
-        let p = vardoger_text::prepare(
+        let p = commutator_text::prepare(
             &ctx.typo.book,
             ctx.cache,
             &text,
             &spans,
-            &vardoger_text::PrepareOptions {
+            &commutator_text::PrepareOptions {
                 white_space: if verbatim { WhiteSpace::PreWrap } else { WhiteSpace::PreLine },
-                overflow_wrap: vardoger_text::OverflowWrap::Anywhere,
+                overflow_wrap: commutator_text::OverflowWrap::Anywhere,
                 ..Default::default()
             },
         );
@@ -837,7 +837,7 @@ impl RowBuilder {
                 let dkey = row_key(&format!("{id}/{}", part.id()));
                 match part {
                     MessagePart::Tool { call, is_error, resolved, subagent_ref, subagent_status, .. } => {
-                        let (label, detail) = vardoger_proto::view::tool_chip_content(call);
+                        let (label, detail) = commutator_proto::view::tool_chip_content(call);
                         let agent_title = detail.clone();
                         // Subagent lifecycle is distinct from `resolved`: under
                         // eager-done the spawn call resolves while the subagent
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn thought_lines_stop_at_the_visible_cap() {
-        use vardoger_markdown::parser::parse_full;
+        use commutator_markdown::parser::parse_full;
         let long: String = (0..100).map(|i| format!("para {i}\n\n")).collect();
         let (lines, more) = thought_lines(&parse_full(&long), MAX_LINES);
         assert!(more && lines.len() <= MAX_LINES && lines.len() >= MAX_LINES - 1, "{}", lines.len());
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[test]
     fn thought_lines_clip_one_huge_paragraph_to_the_byte_budget() {
-        use vardoger_markdown::parser::parse_full;
+        use commutator_markdown::parser::parse_full;
         let bytes = |lines: &[Vec<InlineRun>]| lines.iter().flatten().map(|r| r.text.len()).sum::<usize>();
         let (lines, more) = thought_lines(&parse_full(&"word ".repeat(20_000)), MAX_LINES);
         assert!(more && bytes(&lines) <= THOUGHT_BYTES && bytes(&lines) > THOUGHT_BYTES - 8, "{}", bytes(&lines));

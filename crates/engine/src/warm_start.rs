@@ -7,7 +7,7 @@
 //! the chat exists yet: no row, no doc, no title, no transcript. Only a new
 //! chat gets one: an id the workspace knows already, or one with a run, is
 //! refused. The harness launches the runtime the chat's first run would
-//! launch — its model, effort, folder, access and MCP servers, the Vardoger
+//! launch — its model, effort, folder, access and MCP servers, the Commutator
 //! server with a token for this chat id alone — and parks it before any
 //! prompt, so it asks no model anything ([`Harness::prewarm`]). The first run
 //! of that chat id takes it ([`Harness::run_warm`]) when it launches
@@ -34,7 +34,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use tokio::sync::watch;
-use vardoger_proto::{HarnessId, RunRequest};
+use commutator_proto::{HarnessId, RunRequest};
 
 use super::{Inner, SessionsEngine, lock};
 use crate::EngineError;
@@ -44,7 +44,7 @@ pub(crate) const OPEN_LEASE: Duration = Duration::from_secs(60);
 
 /// Its lease: [`OPEN_LEASE`] until something is typed, then the idle stop
 /// a parked session gets, from the last keystroke heard of.
-/// `VARDOGER_WARM_OPEN_MS` and `VARDOGER_WARM_TYPED_MS` override them (the
+/// `COMMUTATOR_WARM_OPEN_MS` and `COMMUTATOR_WARM_TYPED_MS` override them (the
 /// measurement rig), and [`SessionsEngine::set_warm_leases`] (tests).
 fn lease(inner: &Inner, typed: bool) -> Duration {
     if let Some((open, on_typed)) = *lock(&inner.warm_leases) {
@@ -57,9 +57,9 @@ fn lease(inner: &Inner, typed: bool) -> Duration {
             .map(Duration::from_millis)
     };
     if typed {
-        ms("VARDOGER_WARM_TYPED_MS").unwrap_or(super::AGENT_IDLE_STOP)
+        ms("COMMUTATOR_WARM_TYPED_MS").unwrap_or(super::AGENT_IDLE_STOP)
     } else {
-        ms("VARDOGER_WARM_OPEN_MS").unwrap_or(OPEN_LEASE)
+        ms("COMMUTATOR_WARM_OPEN_MS").unwrap_or(OPEN_LEASE)
     }
 }
 
@@ -100,8 +100,8 @@ pub(super) struct WarmStart {
 /// What a parked warm start hands its run.
 pub(super) struct Parked {
     /// The runtime's MCP server and its token's grant (dead once dropped).
-    pub(super) mcp: Option<vardoger_proto::McpServer>,
-    pub(super) grant: Option<vardoger_mcp::http::Grant>,
+    pub(super) mcp: Option<commutator_proto::McpServer>,
+    pub(super) grant: Option<commutator_mcp::http::Grant>,
     /// Held from before the launch: no CLI update under it.
     pub(super) execution_lease: Arc<tokio::sync::OwnedRwLockReadGuard<()>>,
     /// The credential and binary it launched with (see
@@ -175,8 +175,8 @@ impl SessionsEngine {
                 "a warm start needs the chat's id".into(),
             ));
         }
-        // Off on this device (`VARDOGER_WARM_START=0`), or shutting down.
-        if std::env::var("VARDOGER_WARM_START").is_ok_and(|v| v == "0")
+        // Off on this device (`COMMUTATOR_WARM_START=0`), or shutting down.
+        if std::env::var("COMMUTATOR_WARM_START").is_ok_and(|v| v == "0")
             || self
                 .inner
                 .shutting_down
@@ -205,8 +205,8 @@ impl SessionsEngine {
         request.resume = None;
         // The folder the run will have: a projectless chat's own scratch
         // folder, named for its id as `createChat` names it.
-        if vardoger_proto::projectless::is_home_cwd(&request.cwd) {
-            request.cwd = vardoger_proto::projectless::scratch_cwd(chat_id, chrono::Utc::now());
+        if commutator_proto::projectless::is_home_cwd(&request.cwd) {
+            request.cwd = commutator_proto::projectless::scratch_cwd(chat_id, chrono::Utc::now());
         }
         // The same ask again (launching or parked): renewed.
         {
@@ -316,7 +316,7 @@ impl SessionsEngine {
         .await
         .map_err(|_| "its CLI is being updated".to_owned())?;
         let scratch_root = self.scratch_root();
-        let made_folder = vardoger_proto::projectless::is_scratch_cwd(&request.cwd)
+        let made_folder = commutator_proto::projectless::is_scratch_cwd(&request.cwd)
             .then(|| {
                 let name = request.cwd.trim().rsplit('/').next().unwrap_or_default();
                 scratch_root.join(name)
@@ -325,13 +325,13 @@ impl SessionsEngine {
         let launched = async {
             request.cwd = crate::repos::resolve_chat_cwd(&request.cwd, &scratch_root)?;
             // What the chat's first run hands its harness (`drive_run`): the
-            // Vardoger server with a token for this chat alone, the plugins'
+            // Commutator server with a token for this chat alone, the plugins'
             // servers, the chat's origin and the host's credentials.
             let side_chats_only = self.inner.side_chats_only(chat_id, harness_id);
             let (mcp, grant) =
                 match self
                     .inner
-                    .vardoger_mcp(chat_id, side_chats_only, harness.wakes_on_background())
+                    .commutator_mcp(chat_id, side_chats_only, harness.wakes_on_background())
                 {
                     Some((server, grant)) => (Some(server), grant),
                     None => (None, None),
@@ -339,8 +339,8 @@ impl SessionsEngine {
             request.mcp = mcp.clone();
             request.extra_mcp = Vec::new();
             request.env.insert(
-                vardoger_proto::ORIGIN_ENV.into(),
-                vardoger_proto::chat_origin(chat_id),
+                commutator_proto::ORIGIN_ENV.into(),
+                commutator_proto::chat_origin(chat_id),
             );
             self.inner
                 .registry
@@ -450,7 +450,7 @@ impl SessionsEngine {
             .scratch_root
             .get()
             .cloned()
-            .unwrap_or_else(|| crate::repos::home_dir().join(".vardoger").join("scratch"))
+            .unwrap_or_else(|| crate::repos::home_dir().join(".commutator").join("scratch"))
     }
 
     /// Stops the warm start once its lease runs out unrenewed.
@@ -531,7 +531,7 @@ impl Inner {
     /// End a warm start its run took but won't use.
     pub(super) async fn discard_taken(
         &self,
-        harness: &dyn vardoger_harness::Harness,
+        harness: &dyn commutator_harness::Harness,
         chat_id: &str,
         taken: Taken,
         why: &str,

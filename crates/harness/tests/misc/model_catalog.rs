@@ -1,13 +1,13 @@
 #![cfg(unix)]
 use std::{path::Path, sync::Arc};
-use vardoger_harness::{AcpHarness, CodexHarness, Harness};
+use commutator_harness::{AcpHarness, CodexHarness, Harness};
 
 fn harnesses(binary: &Path) -> Vec<Arc<dyn Harness>> {
     vec![
         Arc::new(CodexHarness::new().with_executable(binary)),
         Arc::new(AcpHarness::grok().with_executable(binary)),
         Arc::new(AcpHarness::hermes().with_executable(binary)),
-        Arc::new(vardoger_harness::PiHarness::new().with_executable(binary)),
+        Arc::new(commutator_harness::PiHarness::new().with_executable(binary)),
         Arc::new(AcpHarness::antigravity().with_executable(binary)),
         Arc::new(AcpHarness::devin().with_executable(binary)),
     ]
@@ -64,7 +64,7 @@ async fn every_native_catalog_retains_last_good_and_cold_failure_stays_an_error(
         assert_eq!(first.source, "live", "{:?}", harness.id());
         assert_eq!(
             first.models[0].id,
-            if harness.id() == vardoger_proto::HarnessId::Pi {
+            if harness.id() == commutator_proto::HarnessId::Pi {
                 "fixture/account-model"
             } else {
                 "account-model"
@@ -90,8 +90,8 @@ async fn every_native_catalog_retains_last_good_and_cold_failure_stays_an_error(
         .unwrap();
         let error = harness.model_catalog(true).await.unwrap_err();
         assert_eq!(
-            vardoger_harness::CatalogFailure::classify(&error),
-            vardoger_harness::CatalogFailureCode::AuthRequired
+            commutator_harness::CatalogFailure::classify(&error),
+            commutator_harness::CatalogFailureCode::AuthRequired
         );
         assert!(
             harness.models().await.is_err(),
@@ -110,8 +110,8 @@ async fn codex_empty_catalogs_retire_children_and_next_request_spawns_fresh() {
     std::fs::write(&state, r#"{"fail":false,"empty":true,"id":"ignored"}"#).unwrap();
     let error = harness.model_catalog(true).await.unwrap_err();
     assert_eq!(
-        vardoger_harness::CatalogFailure::classify(&error),
-        vardoger_harness::CatalogFailureCode::Failed
+        commutator_harness::CatalogFailure::classify(&error),
+        commutator_harness::CatalogFailureCode::Failed
     );
     let reaped = |expected: usize| {
         let ids: Vec<i32> = std::fs::read_to_string(dir.path().join("pids"))
@@ -146,7 +146,7 @@ async fn codex_empty_catalogs_retire_children_and_next_request_spawns_fresh() {
 
 #[test]
 fn auth_context_child() {
-    let Some(root) = std::env::var_os("VARDOGER_MODEL_CONTEXT_TEST_ROOT") else {
+    let Some(root) = std::env::var_os("COMMUTATOR_MODEL_CONTEXT_TEST_ROOT") else {
         return;
     };
     let root = std::path::PathBuf::from(root);
@@ -172,8 +172,8 @@ fn auth_context_child() {
             "{auth}"
         );
     }
-    let claude = vardoger_harness::ClaudeHarness::new().with_executable(&binary);
-    let opencode = vardoger_harness::OpencodeHarness::new().with_executable(&binary);
+    let claude = commutator_harness::ClaudeHarness::new().with_executable(&binary);
+    let opencode = commutator_harness::OpencodeHarness::new().with_executable(&binary);
     for (harness, file) in [
         (&claude as &dyn Harness, ".claude/settings.json"),
         (&opencode as &dyn Harness, ".local/share/opencode/auth.json"),
@@ -198,7 +198,7 @@ fn each_spec_hashes_its_auth_file_contents() {
         .args(["--exact", "auth_context_child", "--nocapture"])
         .current_dir(dir.path())
         .env("HOME", dir.path())
-        .env("VARDOGER_MODEL_CONTEXT_TEST_ROOT", dir.path());
+        .env("COMMUTATOR_MODEL_CONTEXT_TEST_ROOT", dir.path());
     for key in [
         "CLAUDE_CONFIG_DIR",
         "XDG_CONFIG_HOME",
@@ -257,7 +257,7 @@ async fn pi_discovery_skips_a_listed_model_that_set_model_refuses() {
     let catalog = |json: &str| {
         std::fs::write(&state, json).unwrap();
         // A fresh harness each time: no catalog cached from a previous case.
-        vardoger_harness::PiHarness::new().with_executable(&binary)
+        commutator_harness::PiHarness::new().with_executable(&binary)
     };
 
     let harness = catalog(r#"{"models":["first","gone","last"],"refuse":["gone"]}"#);

@@ -2,15 +2,15 @@
 //! go.
 
 use gpui::{AnyElement, Context, Entity, Render, Task, Window, div, prelude::*, px};
-use vardoger_proto::{FolderListing, WorktreeSettings, WorktreeSettingsStatus};
-use vardoger_rpc::methods;
+use commutator_proto::{FolderListing, WorktreeSettings, WorktreeSettingsStatus};
+use commutator_rpc::methods;
 
 use super::widgets;
 use crate::icons;
 use crate::popover::Loadable;
 use crate::state::AppState;
 use crate::theme::Theme;
-use vardoger_proto::device_paths::{child_folder as child_path, parent_folder as folder_parent};
+use commutator_proto::device_paths::{child_folder as child_path, parent_folder as folder_parent};
 
 pub(super) struct WorktreeSettingsCard {
     state: Entity<AppState>,
@@ -163,8 +163,8 @@ impl WorktreeSettingsCard {
                 .call(method, params)
                 .await
                 .map_err(|error| match error {
-                    vardoger_rpc::RpcError::UnknownMethod(_) => {
-                        "Update Vardoger on the selected device to configure worktree locations."
+                    commutator_rpc::RpcError::UnknownMethod(_) => {
+                        "Update Commutator on the selected device to configure worktree locations."
                             .to_string()
                     }
                     _ => error.to_string(),
@@ -508,7 +508,7 @@ impl Render for WorktreeSettingsCard {
             None => "Loading…".into(),
         }];
         if overridden {
-            meta.push("Set by VARDOGER_WORKTREES_DIR".into());
+            meta.push("Set by COMMUTATOR_WORKTREES_DIR".into());
         }
         let meta = meta
             .into_iter()

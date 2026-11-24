@@ -417,7 +417,7 @@ pub fn sweep_in_background(data_dir: &Path) {
     {
         let dir = data_dir.to_path_buf();
         let started = std::thread::Builder::new()
-            .name("vardoger-agent-sweep".into())
+            .name("commutator-agent-sweep".into())
             .spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -579,7 +579,7 @@ mod linux {
             .get_or_init(|| {
                 let (sender, jobs) = mpsc::channel::<Job>();
                 std::thread::Builder::new()
-                    .name("vardoger-agent-spawner".into())
+                    .name("commutator-agent-spawner".into())
                     .spawn(move || {
                         // Never returns: the sender lives in a static.
                         for mut job in jobs {
@@ -810,7 +810,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_agents_get_the_engines_death_signal() {
-        if std::env::var_os("VARDOGER_PDEATHSIG_CHILD").is_some() {
+        if std::env::var_os("COMMUTATOR_PDEATHSIG_CHILD").is_some() {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -837,7 +837,7 @@ mod tests {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env("VARDOGER_PDEATHSIG_CHILD", "1")
+            .env("COMMUTATOR_PDEATHSIG_CHILD", "1")
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();

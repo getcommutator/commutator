@@ -1,4 +1,4 @@
-//! Per-session on-disk event journal (port of vardoger's `run-journal.ts`, JSONL-shaped).
+//! Per-session on-disk event journal (port of commutator's `run-journal.ts`, JSONL-shaped).
 //!
 //! One append-only JSONL file per chat under `{data_dir}/journals/{chat_id}.jsonl`; each
 //! line is `{"seq": n, "event": AgentEvent}` with a monotonically increasing `seq`. The
@@ -32,7 +32,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use vardoger_proto::{AgentEvent, ToolCall};
+use commutator_proto::{AgentEvent, ToolCall};
 
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
@@ -246,7 +246,7 @@ impl RunJournal {
         self.dir.join(format!("{}.stopped", sanitize_id(chat_id)))
     }
 
-    /// Auto-resume revival budget (vardoger `resumeAttempt`/`MAX_AUTO_RESUME`):
+    /// Auto-resume revival budget (commutator `resumeAttempt`/`MAX_AUTO_RESUME`):
     /// persisted beside the journal so a run that CRASHES THE ENGINE cannot
     /// revive itself in an infinite boot loop. Stored as `{count} {last_ms}`;
     /// a ledger whose last revival is older than `since_ms` has expired (a
@@ -415,7 +415,7 @@ impl RunJournal {
     }
 
     /// Events with `seq > after_seq`, in order. A cursor ahead of the last issued seq is
-    /// from a previous era (file replaced) — falls back to a full replay, mirroring vardoger.
+    /// from a previous era (file replaced) — falls back to a full replay, mirroring commutator.
     pub fn replay(
         &self,
         chat_id: &str,
@@ -766,7 +766,7 @@ fn sanitize_id(chat_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vardoger_proto::DoneStatus;
+    use commutator_proto::DoneStatus;
 
     fn text(s: &str) -> AgentEvent {
         AgentEvent::TextDelta { text: s.into() }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use vardoger_proto::{WorktreeSettings, WorktreeSettingsStatus};
+use commutator_proto::{WorktreeSettings, WorktreeSettingsStatus};
 
 use crate::EngineError;
 
@@ -83,7 +83,7 @@ impl WorktreePreferences {
     ) -> Result<WorktreeSettingsStatus, EngineError> {
         if self.environment_override.is_some() {
             return Err(EngineError::Other(
-                "Worktree location is controlled by VARDOGER_WORKTREES_DIR on this device".into(),
+                "Worktree location is controlled by COMMUTATOR_WORKTREES_DIR on this device".into(),
             ));
         }
         if next.use_custom_directory {
@@ -131,7 +131,7 @@ impl WorktreePreferences {
 fn validate_directory(value: &str) -> Result<PathBuf, EngineError> {
     let value = value.trim();
     let home = crate::repos::home_dir();
-    let path = vardoger_proto::device_paths::expand_home(value, &home.to_string_lossy())
+    let path = commutator_proto::device_paths::expand_home(value, &home.to_string_lossy())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(value));
     if !path.is_absolute() {
@@ -165,7 +165,7 @@ fn validate_directory(value: &str) -> Result<PathBuf, EngineError> {
     }
     // Test actual write access instead of relying on permission bits/ACLs.
     let _probe = tempfile::Builder::new()
-        .prefix(".vardoger-write-check-")
+        .prefix(".commutator-write-check-")
         .tempfile_in(&path)?;
     Ok(path)
 }

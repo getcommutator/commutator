@@ -1,11 +1,11 @@
 //! Live account catalog and optional ACP run (requires authenticated Devin).
 //!
-//!     cargo run -p vardoger-harness --example devin_models_probe
-//!     cargo run -p vardoger-harness --example devin_models_probe -- gpt-6-astra-medium
+//!     cargo run -p commutator-harness --example devin_models_probe
+//!     cargo run -p commutator-harness --example devin_models_probe -- gpt-6-astra-medium
 
 use futures::StreamExt;
-use vardoger_harness::{AcpHarness, CancellationToken, Harness, RunControls};
-use vardoger_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
+use commutator_harness::{AcpHarness, CancellationToken, Harness, RunControls};
+use commutator_proto::{AgentEvent, DoneStatus, RunRequest, SandboxLevel};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

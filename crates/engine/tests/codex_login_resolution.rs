@@ -8,8 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
-use vardoger_engine::{AgentAccounts, AgentAccountsConfig};
-use vardoger_proto::{AgentLoginMode, AgentLoginStatus, HarnessId};
+use commutator_engine::{AgentAccounts, AgentAccountsConfig};
+use commutator_proto::{AgentLoginMode, AgentLoginStatus, HarnessId};
 
 fn test_accounts(root: &Path) -> AgentAccounts {
     let config = AgentAccountsConfig {
@@ -65,7 +65,7 @@ async fn login_child() {
     let Ok(expected) = std::env::var("CODEX_LOGIN_EXPECTED") else {
         return;
     };
-    let root = std::env::temp_dir().join(format!("vardoger-codex-login-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("commutator-codex-login-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let accounts = test_accounts(&root);
     if expected == "true" {
@@ -77,7 +77,7 @@ async fn login_child() {
         // No CLI anywhere: the sign-in installs Codex first (as Settings'
         // Install does). One that can't be installed (offline here) fails the
         // sign-in, naming what's missing.
-        accounts.override_installer(vardoger_engine::agent_accounts::SignInInstaller {
+        accounts.override_installer(commutator_engine::agent_accounts::SignInInstaller {
             installed: std::sync::Arc::new(|_| false),
             install: std::sync::Arc::new(|_| Box::pin(async { Err("offline".to_string()) })),
         });
@@ -117,7 +117,7 @@ fn probe(path: &Path, override_path: Option<&Path>, expected: bool) {
     command
         .env("PATH", path)
         .env("CODEX_LOGIN_EXPECTED", expected.to_string())
-        .env("VARDOGER_NO_LOGIN_SHELL", "1");
+        .env("COMMUTATOR_NO_LOGIN_SHELL", "1");
     if let Some(path) = override_path {
         command.env("CODEX_EXECUTABLE", path);
     }

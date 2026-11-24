@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake ACP agent for vardoger-harness tests.
+# Fake ACP agent for commutator-harness tests.
 #
 # Speaks scripted JSON-RPC 2.0 over stdio: initialize handshake, session
 # new/load, then a scenario picked from the session/prompt text. Driven by
@@ -28,7 +28,7 @@ xnotify() { # $1 = update json object body — grok's extension channel (the
 read -r line || exit 1 # initialize
 has "$line" '"method":"initialize"' || exit 1
 has "$line" '"protocolVersion":1' || exit 1
-has "$line" '"name":"vardoger"' || exit 1
+has "$line" '"name":"commutator"' || exit 1
 has "$line" '"readTextFile":false' || exit 1
 INIT_LINE="$line"
 # FAKE_RESUME_ONLY=<session id>: advertise session/resume instead of session/load.
@@ -99,7 +99,7 @@ if has "$line" '"method":"session/load"' || has "$line" '"method":"session/resum
     fi
   fi
 elif has "$line" '"method":"session/new"'; then
-  has "$line" '"mcpServers":[]' || has "$line" '"name":"vardoger"' || exit 1
+  has "$line" '"mcpServers":[]' || has "$line" '"name":"commutator"' || exit 1
   # Advertise config options: model (current differs from the tests' request,
   # forcing a set) and thought_level (current high). The model config option
   # feeds discovery first; the first-class `models` state (SessionModelState)
@@ -167,10 +167,10 @@ case "$promptline" in
   ;;
 
 *scenario:mcp*)
-  has "$line" '"command":"/path with spaces/vardoger"' || exit 1
+  has "$line" '"command":"/path with spaces/commutator"' || exit 1
   has "$line" '"args":["mcp"]' || exit 1
-  has "$line" '"name":"VARDOGER_CHAT_ID","value":"origin-chat"' || exit 1
-  has "$line" '"name":"VARDOGER_IPC_PORT","value":"27699"' || exit 1
+  has "$line" '"name":"COMMUTATOR_CHAT_ID","value":"origin-chat"' || exit 1
+  has "$line" '"name":"COMMUTATOR_IPC_PORT","value":"27699"' || exit 1
   update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"mcp configured"}}'
   emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
   ;;
@@ -224,7 +224,7 @@ case "$promptline" in
   # prompt) must not settle the live turn; the real response follows.
   emit "{\"method\":\"_x.ai/session/prompt_complete\",\"params\":{\"sessionId\":\"$SID\",\"promptId\":\"stale-p0\",\"stopReason\":\"cancelled\",\"agentResult\":null}}"
   # A completion for ANOTHER session is equally inert.
-  emit "{\"method\":\"_x.ai/session/prompt_complete\",\"params\":{\"sessionId\":\"other\",\"promptId\":\"vardoger-p1\",\"stopReason\":\"cancelled\",\"agentResult\":null}}"
+  emit "{\"method\":\"_x.ai/session/prompt_complete\",\"params\":{\"sessionId\":\"other\",\"promptId\":\"commutator-p1\",\"stopReason\":\"cancelled\",\"agentResult\":null}}"
   sleep 1
   update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"real answer"}}'
   emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\",\"_meta\":{\"inputTokens\":9,\"outputTokens\":4}}}"
@@ -308,8 +308,8 @@ case "$promptline" in
   # Non-text content chunks map to nothing.
   update '{"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"x","mimeType":"image/png"}}'
   # Execute tool: pending call, then completed update with output content.
-  update '{"sessionUpdate":"tool_call","toolCallId":"t1","title":"cargo test -p vardoger-harness","kind":"execute","status":"pending","rawInput":{"command":"cargo test -p vardoger-harness"}}'
-  update '{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"   Compiling vardoger-harness v0.1.21\n    Finished `dev` profile [unoptimized] in 2.41s\n     Running tests/acp.rs\n\nrunning 13 tests\ntest result: ok. 13 passed; 0 failed; 0 ignored"}}]}'
+  update '{"sessionUpdate":"tool_call","toolCallId":"t1","title":"cargo test -p commutator-harness","kind":"execute","status":"pending","rawInput":{"command":"cargo test -p commutator-harness"}}'
+  update '{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"   Compiling commutator-harness v0.1.21\n    Finished `dev` profile [unoptimized] in 2.41s\n     Running tests/acp.rs\n\nrunning 13 tests\ntest result: ok. 13 passed; 0 failed; 0 ignored"}}]}'
   # Edit tool resolved in one shot with an inline diff (real hunk: context,
   # line numbers, rust syntax for the transcript's diff component).
   update '{"sessionUpdate":"tool_call","toolCallId":"t2","title":"edit resolve.rs","kind":"edit","status":"completed","content":[{"type":"diff","path":"/w/src/resolve.rs","oldText":"use std::path::PathBuf;\n\n/// Locate the agent binary.\nfn resolve(exe: &str) -> Option<PathBuf> {\n    std::env::var_os(\"PATH\")\n        .map(PathBuf::from)\n        .filter(|p| p.exists())\n}\n","newText":"use std::path::PathBuf;\n\n/// Locate the agent binary.\nfn resolve(exe: &str) -> Option<PathBuf> {\n    let dirs = std::env::split_paths(&std::env::var_os(\"PATH\")?);\n    dirs.map(|d| d.join(exe)).find(|p| p.exists())\n}\n"}]}'

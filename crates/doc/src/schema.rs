@@ -694,7 +694,7 @@ impl SessionDoc {
     }
 
     /// A single atomic value prevents tokens and capacity from tearing on sync.
-    pub fn context_usage(&self) -> Option<vardoger_proto::ContextUsage> {
+    pub fn context_usage(&self) -> Option<commutator_proto::ContextUsage> {
         let loro::ValueOrContainer::Value(LoroValue::String(value)) =
             self.doc.get_map("meta").get("contextUsage")?
         else {
@@ -709,7 +709,7 @@ impl SessionDoc {
         window: Option<u64>,
     ) -> Result<(), DocError> {
         let previous = self.context_usage().unwrap_or_default();
-        let next = vardoger_proto::ContextUsage {
+        let next = commutator_proto::ContextUsage {
             tokens: tokens.or(previous.tokens),
             window: window.filter(|n| *n > 0).or(previous.window),
         };
@@ -1419,7 +1419,7 @@ impl SessionDoc {
     pub fn resolve_input(
         &self,
         request_id: &str,
-        answers: &[vardoger_proto::UserInputAnswer],
+        answers: &[commutator_proto::UserInputAnswer],
     ) -> Result<bool, DocError> {
         let messages = self.doc.get_list("messages");
         for i in 0..messages.len() {
@@ -1551,14 +1551,14 @@ impl SessionDoc {
     }
 }
 
-/// A tool part whose call is a subagent spawn ([`vardoger_proto::ToolCall::is_subagent_spawn`]).
+/// A tool part whose call is a subagent spawn ([`commutator_proto::ToolCall::is_subagent_spawn`]).
 fn is_spawn_part(part: &LoroMap) -> bool {
     part.get("call")
         .and_then(|v| match v {
             loro::ValueOrContainer::Value(v) => serde_json::to_value(v).ok(),
             _ => None,
         })
-        .and_then(|j| serde_json::from_value::<vardoger_proto::ToolCall>(j).ok())
+        .and_then(|j| serde_json::from_value::<commutator_proto::ToolCall>(j).ok())
         .is_some_and(|c| c.is_subagent_spawn())
 }
 
@@ -1958,7 +1958,7 @@ pub fn join_continuation_entries(entries: Vec<SessionMessageEntry>) -> Vec<Sessi
 
 /// Incremental streaming writer for one assistant entry.
 ///
-/// Port of vardoger's `DocSegmentWriter` diff discipline: called with the *folded* parts of the
+/// Port of commutator's `DocSegmentWriter` diff discipline: called with the *folded* parts of the
 /// live segment (from `fold_event_into_parts`) at each commit tick, it diffs against what's in
 /// the doc and writes only the delta:
 /// - trailing text growth → `LoroText` append (RLE-merged),
@@ -2793,7 +2793,7 @@ mod tests {
         assert_eq!(doc.read_entries().unwrap()[0].parts, vec![seam]);
         assert!(doc.provider_switched());
     }
-    use vardoger_proto::{AgentEvent, ToolCall};
+    use commutator_proto::{AgentEvent, ToolCall};
 
     #[test]
     fn opening_tail_bounds_parts_and_preserves_continuation_ids() {
@@ -3012,10 +3012,10 @@ mod tests {
 
     #[test]
     fn todo_status_survives_the_doc_and_refreshes_in_place() {
-        use vardoger_proto::{TodoItem, TodoStatus};
+        use commutator_proto::{TodoItem, TodoStatus};
         let todo = |items: Vec<TodoItem>| MessagePart::Tool {
             // The ACP/Codex plan reuses one id for every update.
-            id: vardoger_proto::LIVE_PLAN_TOOL_ID.into(),
+            id: commutator_proto::LIVE_PLAN_TOOL_ID.into(),
             call: ToolCall::Todo { items },
             is_error: false,
             resolved: true,
@@ -3069,8 +3069,8 @@ mod tests {
         else {
             panic!("a legacy todo part must still decode");
         };
-        assert_eq!(items[0].status(), vardoger_proto::TodoStatus::Completed);
-        assert_eq!(items[1].status(), vardoger_proto::TodoStatus::Pending);
+        assert_eq!(items[0].status(), commutator_proto::TodoStatus::Completed);
+        assert_eq!(items[1].status(), commutator_proto::TodoStatus::Pending);
     }
 
     #[test]
@@ -3082,7 +3082,7 @@ mod tests {
         let mut w = SegmentWriter::begin(&doc, "e1", "dev", 1).unwrap();
         let mut part = MessagePart::Tool {
             id: "call_alpha".into(),
-            call: vardoger_proto::ToolCall::Unknown {
+            call: commutator_proto::ToolCall::Unknown {
                 name: "Agent: alpha".into(),
                 input: None,
             },
@@ -3140,7 +3140,7 @@ mod tests {
         // subtype and turned Run chips into dead spawn links, 2026-08-20).
         let doc = SessionDoc::init("c1").unwrap();
         let mut w = SegmentWriter::begin(&doc, "e1", "dev", 1).unwrap();
-        let tool = |id: &str, call: vardoger_proto::ToolCall| MessagePart::Tool {
+        let tool = |id: &str, call: commutator_proto::ToolCall| MessagePart::Tool {
             id: id.into(),
             call,
             is_error: false,
@@ -3163,13 +3163,13 @@ mod tests {
         let parts = vec![
             tool(
                 "toolu_bash",
-                vardoger_proto::ToolCall::Exec {
+                commutator_proto::ToolCall::Exec {
                     command: "git clone …".into(),
                 },
             ),
             tool(
                 "toolu_spawn",
-                vardoger_proto::ToolCall::Unknown {
+                commutator_proto::ToolCall::Unknown {
                     name: "Agent: scan".into(),
                     input: None,
                 },
@@ -3240,7 +3240,7 @@ mod tests {
             duration_ms: None,
         })
         .unwrap();
-        let picked = vec![vardoger_proto::UserInputAnswer {
+        let picked = vec![commutator_proto::UserInputAnswer {
             question_id: "q".into(),
             labels: vec!["B".into()],
         }];
@@ -3266,7 +3266,7 @@ mod tests {
             request_id: "r1".into(),
             questions: vec![],
             resolved: true,
-            answers: Some(vec![vardoger_proto::UserInputAnswer {
+            answers: Some(vec![commutator_proto::UserInputAnswer {
                 question_id: "q".into(),
                 labels: vec!["Deep dive".into()],
             }]),
@@ -3521,7 +3521,7 @@ mod tests {
                 id: "t1".into(),
                 is_error: false,
                 output: Some("total 0\nmore lines".into()),
-                diff: Some(vardoger_proto::ToolDiff {
+                diff: Some(commutator_proto::ToolDiff {
                     path: "/w/a.rs".into(),
                     old_text: Some("old\n".into()),
                     new_text: "new\n".into(),
@@ -3638,7 +3638,7 @@ mod tests {
     /// entry takes it in place, and a later verdict replaces the first.
     #[test]
     fn a_review_round_trips_through_the_doc() {
-        use vardoger_proto::{ToolReview, ToolReviewStatus};
+        use commutator_proto::{ToolReview, ToolReviewStatus};
         let doc = SessionDoc::init("chat-5").unwrap();
         let mut writer = SegmentWriter::begin(&doc, "a1", "dev-a", 5).unwrap();
         let mut folded = Vec::new();
@@ -3704,7 +3704,7 @@ mod tests {
                 is_error: false,
                 resolved: true,
                 output: Some("full inline output\nline 2".into()),
-                diff: Some(vardoger_proto::ToolDiff {
+                diff: Some(commutator_proto::ToolDiff {
                     path: "/w/a.rs".into(),
                     old_text: Some("old".into()),
                     new_text: "new".into(),
@@ -3885,7 +3885,7 @@ mod context_usage_tests {
             .unwrap();
         assert_eq!(
             replica.context_usage(),
-            Some(vardoger_proto::ContextUsage {
+            Some(commutator_proto::ContextUsage {
                 tokens: Some(0),
                 window: Some(200_000)
             })

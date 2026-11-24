@@ -29,9 +29,9 @@ fn main() {
             json!({
                 "argv": args.iter().skip(2).collect::<Vec<_>>(),
                 "cwd": std::env::current_dir().unwrap(),
-                "marker": std::env::var("VARDOGER_LAUNCH_MARKER").ok(),
-                "removed": std::env::var("VARDOGER_LAUNCH_REMOVED").ok(),
-                "unicode": std::env::var("VARDOGER_Ä_KEY").ok(),
+                "marker": std::env::var("COMMUTATOR_LAUNCH_MARKER").ok(),
+                "removed": std::env::var("COMMUTATOR_LAUNCH_REMOVED").ok(),
+                "unicode": std::env::var("COMMUTATOR_Ä_KEY").ok(),
                 "path": std::env::var("PATH").ok(),
             })
         );
@@ -49,13 +49,13 @@ fn main() {
         let path = std::env::current_dir()
             .unwrap()
             .join("descendant-pids.json");
-        let mut command = vardoger_harness::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = commutator_harness::process::Command::new(std::env::current_exe().unwrap());
         command
             .arg("--tree-child")
             .arg(&path)
-            .stdin(vardoger_harness::process::Stdio::null())
-            .stdout(vardoger_harness::process::Stdio::null())
-            .stderr(vardoger_harness::process::Stdio::null());
+            .stdin(commutator_harness::process::Stdio::null())
+            .stdout(commutator_harness::process::Stdio::null())
+            .stderr(commutator_harness::process::Stdio::null());
         let _owned = command.spawn().unwrap();
         let pids = await_tree(&path);
         println!("{}", serde_json::to_string(&pids).unwrap());

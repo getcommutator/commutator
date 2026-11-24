@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use vardoger_proto::{
+use commutator_proto::{
     WorkspaceDirectoryPage, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileSearchMatch,
 };
 

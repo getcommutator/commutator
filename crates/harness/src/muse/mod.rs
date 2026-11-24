@@ -2,7 +2,7 @@
 //! (MSP): `muse serve` speaking newline-delimited JSON-RPC 2.0 on stdio —
 //! the protocol Muse's own SDK drives, with no adapter in between.
 //!
-//! - One host process per Vardoger runtime, one session in it ([`session`]).
+//! - One host process per Commutator runtime, one session in it ([`session`]).
 //!   The session is resumed by id on the next runtime; one the host no
 //!   longer has starts fresh with a visible notice.
 //! - Turns end on the host's `turn/completed`, including the turns Muse
@@ -33,7 +33,7 @@ use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
 use serde_json::json;
 use tokio::sync::mpsc;
-use vardoger_proto::{
+use commutator_proto::{
     AccessMode, AgentEvent, HarnessId, Model, ReasoningLevel, RunRequest, SteeringMode,
 };
 
@@ -147,7 +147,7 @@ impl MuseHarness {
         } else {
             Mode::Session {
                 sandbox: !full_access(&request)
-                    && request.sandbox != vardoger_proto::SandboxLevel::DangerFullAccess,
+                    && request.sandbox != commutator_proto::SandboxLevel::DangerFullAccess,
                 code_mode: request.code_mode,
             }
         };

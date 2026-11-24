@@ -5,10 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
-use vardoger_engine::{EngineCore, EngineProfile, HarnessRegistry};
-use vardoger_harness::CodexHarness;
-use vardoger_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
+use commutator_engine::{EngineCore, EngineProfile, HarnessRegistry};
+use commutator_harness::CodexHarness;
+use commutator_proto::{HarnessId, RunRequest, SandboxLevel, SessionStatus};
 
 const CHAT: &str = "codex-subagents";
 

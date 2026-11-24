@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use vardoger_rpc::{RpcClient, connect_ipc, methods};
+use commutator_rpc::{RpcClient, connect_ipc, methods};
 
 fn fail(message: &str) -> ! {
     eprintln!("FAIL: {message}");
@@ -36,12 +36,12 @@ async fn watch<T>(
     }
 }
 
-async fn transcript(client: &RpcClient, chat: &str) -> Vec<vardoger_doc::SessionMessageEntry> {
+async fn transcript(client: &RpcClient, chat: &str) -> Vec<commutator_doc::SessionMessageEntry> {
     let mut entries = Vec::new();
     let params = serde_json::json!({ "chatId": chat });
     watch(client, methods::WATCH_DOC_MESSAGES, params, |item| {
-        let frame: vardoger_doc::TranscriptFrame = serde_json::from_value(item.clone()).ok()?;
-        vardoger_doc::apply_transcript_frame(&mut entries, frame).ok()?;
+        let frame: commutator_doc::TranscriptFrame = serde_json::from_value(item.clone()).ok()?;
+        commutator_doc::apply_transcript_frame(&mut entries, frame).ok()?;
         Some(())
     })
     .await;
@@ -146,8 +146,8 @@ async fn main() {
             let done = entries
                 .iter()
                 .filter(|entry| {
-                    entry.role == vardoger_doc::MessageRole::Assistant
-                        && entry.status == Some(vardoger_doc::MessageStatus::Complete)
+                    entry.role == commutator_doc::MessageRole::Assistant
+                        && entry.status == Some(commutator_doc::MessageStatus::Complete)
                 })
                 .count();
             println!("{done}");

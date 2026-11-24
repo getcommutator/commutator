@@ -1,5 +1,5 @@
-module vardoger_coreFFI {
-    header "vardoger_coreFFI.h"
+module commutator_coreFFI {
+    header "commutator_coreFFI.h"
     export *
     use "Darwin"
     use "_Builtin_stdbool"

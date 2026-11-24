@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-term-link"
+name = "commutator-term-link"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,9 +11,9 @@ publish.workspace = true
 # each other and the relay when they can't — switching mid-session with no
 # gap, no repeat and no lost keystroke.
 [dependencies]
-vardoger-proto.workspace = true
-vardoger-rpc.workspace = true
-vardoger-preview.workspace = true
+commutator-proto.workspace = true
+commutator-rpc.workspace = true
+commutator-preview.workspace = true
 tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true

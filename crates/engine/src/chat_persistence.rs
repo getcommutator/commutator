@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use vardoger_doc::SessionDoc;
-use vardoger_sync::DocsStore;
+use commutator_doc::SessionDoc;
+use commutator_sync::DocsStore;
 
 const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -499,9 +499,9 @@ mod tests {
     /// Runs only on an explicitly supplied local snapshot; never writes back
     /// to it or connects to an edge/production room.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires VARDOGER_WHALE_SNAPSHOT; reads privately supplied snapshot into a temporary store"]
+    #[ignore = "requires COMMUTATOR_WHALE_SNAPSHOT; reads privately supplied snapshot into a temporary store"]
     async fn real_whale_replay_keeps_146_heartbeats_running_on_two_workers() {
-        let bytes = std::fs::read(std::env::var("VARDOGER_WHALE_SNAPSHOT").unwrap()).unwrap();
+        let bytes = std::fs::read(std::env::var("COMMUTATOR_WHALE_SNAPSHOT").unwrap()).unwrap();
         let raw = loro::LoroDoc::new();
         raw.import(&bytes).unwrap();
         let doc = Arc::new(SessionDoc::from_doc(raw));
@@ -848,7 +848,7 @@ mod tests {
     /// whenever a budget is reached), until it is killed.
     #[test]
     fn delta_crash_child() {
-        let Some(dir) = std::env::var_os("VARDOGER_DELTA_CRASH_DIR") else {
+        let Some(dir) = std::env::var_os("COMMUTATOR_DELTA_CRASH_DIR") else {
             return;
         };
         let store = Arc::new(DocsStore::open(&dir).unwrap());
@@ -873,7 +873,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let mut child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "chat_persistence::tests::delta_crash_child", "--nocapture"])
-                .env("VARDOGER_DELTA_CRASH_DIR", dir.path())
+                .env("COMMUTATOR_DELTA_CRASH_DIR", dir.path())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
@@ -963,9 +963,9 @@ mod tests {
     /// written back). Streams realistic edits through deltas and a
     /// compaction; after every step, a reload equals the doc in memory.
     #[test]
-    #[ignore = "requires VARDOGER_DELTA_WHALE: a local chat snapshot, read into a temporary store"]
+    #[ignore = "requires COMMUTATOR_DELTA_WHALE: a local chat snapshot, read into a temporary store"]
     fn real_whale_reloads_equal_to_before_through_deltas() {
-        let path = std::env::var("VARDOGER_DELTA_WHALE").unwrap();
+        let path = std::env::var("COMMUTATOR_DELTA_WHALE").unwrap();
         let raw = loro::LoroDoc::new();
         raw.import(&std::fs::read(&path).unwrap()).unwrap();
         let doc = Arc::new(SessionDoc::from_doc(raw));
@@ -1010,12 +1010,12 @@ mod tests {
 
     /// Child of [`dying_between_export_and_commit_keeps_the_last_commit`]:
     /// streams ops 1.. and aborts the process inside save number
-    /// VARDOGER_DELTA_ABORT_AT, after its export and before its store write.
+    /// COMMUTATOR_DELTA_ABORT_AT, after its export and before its store write.
     #[test]
     fn delta_abort_child() {
         let (Some(dir), Some(at)) = (
-            std::env::var_os("VARDOGER_DELTA_CRASH_DIR"),
-            std::env::var("VARDOGER_DELTA_ABORT_AT").ok().and_then(|v| v.parse::<u64>().ok()),
+            std::env::var_os("COMMUTATOR_DELTA_CRASH_DIR"),
+            std::env::var("COMMUTATOR_DELTA_ABORT_AT").ok().and_then(|v| v.parse::<u64>().ok()),
         ) else {
             return;
         };
@@ -1044,8 +1044,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let status = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "chat_persistence::tests::delta_abort_child", "--nocapture"])
-                .env("VARDOGER_DELTA_CRASH_DIR", dir.path())
-                .env("VARDOGER_DELTA_ABORT_AT", at.to_string())
+                .env("COMMUTATOR_DELTA_CRASH_DIR", dir.path())
+                .env("COMMUTATOR_DELTA_ABORT_AT", at.to_string())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
@@ -1150,9 +1150,9 @@ mod tests {
     // (Unix only: it reads CPU time with getrusage.)
     #[cfg(unix)]
     #[test]
-    #[ignore = "requires VARDOGER_DELTA_WHALE; 2 minutes; prints bytes/min and CPU"]
+    #[ignore = "requires COMMUTATOR_DELTA_WHALE; 2 minutes; prints bytes/min and CPU"]
     fn live_like_bytes_and_cpu_before_and_after() {
-        let path = std::env::var("VARDOGER_DELTA_WHALE").unwrap();
+        let path = std::env::var("COMMUTATOR_DELTA_WHALE").unwrap();
         let whale = std::fs::read(&path).unwrap();
         let cpu = || {
             let mut usage: libc::rusage = unsafe { std::mem::zeroed() };

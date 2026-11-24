@@ -1,14 +1,14 @@
 #!/bin/bash
 # Build the Rust mobile core (crates/mobile) for the active Xcode platform and
-# generate its Swift bindings. Run by the Vardoger target's "Rust core" build
+# generate its Swift bindings. Run by the Commutator target's "Rust core" build
 # phase; also runnable by hand (defaults to the simulator, dev profile).
 #
 #   scripts/ios/build-core.sh [iphonesimulator|iphoneos]
 #
 # Outputs (target/ios-core/<platform>/):
-#   libvardoger_mobile.a            linked via LIBRARY_SEARCH_PATHS
-#   include/module.modulemap     `import vardoger_coreFFI` (SWIFT_INCLUDE_PATHS)
-# and refreshes apps/ios/Vardoger/Core/Generated/vardoger_core.swift — committed so
+#   libcommutator_mobile.a            linked via LIBRARY_SEARCH_PATHS
+#   include/module.modulemap     `import commutator_coreFFI` (SWIFT_INCLUDE_PATHS)
+# and refreshes apps/ios/Commutator/Core/Generated/commutator_core.swift — committed so
 # Xcode's synchronized folder always sees it — and apps/ios/CoreFFI/ (the C
 # header and module map, committed so CI's simulator tests need no bindings
 # build; outside the synchronized folders, so Xcode compiles nothing from it).
@@ -25,7 +25,7 @@ esac
 PROFILE=mobile
 if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then PROFILE=mobile-dist; fi
 # A published core (mobile-dist: TestFlight, the App Store) runs Luau
-# (vardoger-visual's) without its asserts, a fifth of script time; a development
+# (commutator-visual's) without its asserts, a fifth of script time; a development
 # one keeps them. The library's build alone: the bindings tool is the host's.
 LUAU_ENV=""
 if [[ "$PROFILE" == "mobile-dist" ]]; then LUAU_ENV="LUAU_CXXFLAGS=-DNDEBUG"; fi
@@ -34,8 +34,8 @@ OUT="$ROOT/target/ios-core/$PLATFORM"
 mkdir -p "$OUT/include"
 
 # Iterating on Swift while the core is mid-edit: reuse the last good build.
-if [[ "${VARDOGER_SKIP_CORE:-}" == "1" && -f "$OUT/libvardoger_mobile.a" ]]; then
-  echo "note: VARDOGER_SKIP_CORE=1 — reusing $OUT/libvardoger_mobile.a"
+if [[ "${COMMUTATOR_SKIP_CORE:-}" == "1" && -f "$OUT/libcommutator_mobile.a" ]]; then
+  echo "note: COMMUTATOR_SKIP_CORE=1 — reusing $OUT/libcommutator_mobile.a"
   exit 0
 fi
 
@@ -61,26 +61,26 @@ run_cargo() {
 }
 
 cd "$ROOT"
-CORE_ENV="$LUAU_ENV" run_cargo build --locked -p vardoger-mobile --lib --profile "$PROFILE" --target "$TARGET"
+CORE_ENV="$LUAU_ENV" run_cargo build --locked -p commutator-mobile --lib --profile "$PROFILE" --target "$TARGET"
 # The generator alone (crates/mobile-bindgen): it reads the bindings out of
 # the built library, so the core is never compiled for the host too.
-run_cargo build --locked -p vardoger-mobile-bindgen --bin uniffi-bindgen --profile mobile
+run_cargo build --locked -p commutator-mobile-bindgen --bin uniffi-bindgen --profile mobile
 
-LIB="$ROOT/target/$TARGET/$PROFILE/libvardoger_mobile.a"
+LIB="$ROOT/target/$TARGET/$PROFILE/libcommutator_mobile.a"
 # With its asserts, each LUAU_ASSERT keeps its Luau source file's path
 # (Luau/Common.h's __FILE__), VM/src/l*.cpp; with NDEBUG, none.
 if [[ "$PROFILE" == "mobile-dist" ]] && LC_ALL=C grep -aqE 'VM[\\/]src[\\/]l[a-z]+\.cpp' "$LIB"; then
   echo "error: $LIB was built with Luau's asserts: build it with LUAU_CXXFLAGS=-DNDEBUG" >&2
   exit 1
 fi
-cp -p "$LIB" "$OUT/libvardoger_mobile.a"
+cp -p "$LIB" "$OUT/libcommutator_mobile.a"
 
 GEN="$OUT/gen"
 "$ROOT/target/mobile/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
-cp "$GEN/vardoger_coreFFI.h" "$OUT/include/vardoger_coreFFI.h"
-cp "$GEN/vardoger_coreFFI.modulemap" "$OUT/include/module.modulemap"
+cp "$GEN/commutator_coreFFI.h" "$OUT/include/commutator_coreFFI.h"
+cp "$GEN/commutator_coreFFI.modulemap" "$OUT/include/module.modulemap"
 # Only touch the committed files when they changed so Xcode doesn't recompile them.
 refresh() { mkdir -p "$(dirname "$2")"; cmp -s "$1" "$2" || cp "$1" "$2"; }
-refresh "$GEN/vardoger_core.swift" "$ROOT/apps/ios/Vardoger/Core/Generated/vardoger_core.swift"
-refresh "$GEN/vardoger_coreFFI.h" "$ROOT/apps/ios/CoreFFI/vardoger_coreFFI.h"
-refresh "$GEN/vardoger_coreFFI.modulemap" "$ROOT/apps/ios/CoreFFI/module.modulemap"
+refresh "$GEN/commutator_core.swift" "$ROOT/apps/ios/Commutator/Core/Generated/commutator_core.swift"
+refresh "$GEN/commutator_coreFFI.h" "$ROOT/apps/ios/CoreFFI/commutator_coreFFI.h"
+refresh "$GEN/commutator_coreFFI.modulemap" "$ROOT/apps/ios/CoreFFI/module.modulemap"

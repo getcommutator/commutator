@@ -1,11 +1,11 @@
-//! The engine's side of an update ([`vardoger_update::transaction`]): settle what an
+//! The engine's side of an update ([`commutator_update::transaction`]): settle what an
 //! earlier start left before anything opens the data directory, and as a new
 //! version on trial, prove it's ready before it's allowed to stay.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use vardoger_update::transaction;
+use commutator_update::transaction;
 
 use crate::{EngineConfig, EngineCore, InstanceLock};
 
@@ -46,7 +46,7 @@ pub(crate) fn refuse_mid_update(data_dir: &Path) -> Result<(), crate::EngineErro
         .is_some_and(|update| matches!(update.phase, Phase::Trial | Phase::Restoring));
     if mid_update && !transaction::in_trial() {
         return Err(crate::EngineError::Other(
-            "Vardoger is finishing an update. Try again in a moment.".into(),
+            "Commutator is finishing an update. Try again in a moment.".into(),
         ));
     }
     Ok(())
@@ -62,10 +62,10 @@ fn fail(data_dir: &Path, why: &str) -> ! {
 /// Answering on the port with the data calls open, through the same front door
 /// clients use.
 async fn answers_on_its_port(port: u16, data_dir: &Path) -> Result<(), String> {
-    let client = vardoger_rpc::connect_ipc(port, Some(data_dir))
+    let client = commutator_rpc::connect_ipc(port, Some(data_dir))
         .await
         .map_err(|err| format!("it isn't answering on its port ({err})"))?;
-    for method in [vardoger_rpc::methods::ENGINE_INFO, vardoger_rpc::methods::ENGINE_READY] {
+    for method in [commutator_rpc::methods::ENGINE_INFO, commutator_rpc::methods::ENGINE_READY] {
         client
             .call(method, serde_json::json!({}))
             .await

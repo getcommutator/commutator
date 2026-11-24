@@ -4,42 +4,42 @@ plugins {
 }
 
 // The Rust mobile core (crates/mobile) — the library the iOS app links —
-// built for Android with its generated Kotlin bindings. `-PvardogerSkipCore`
+// built for Android with its generated Kotlin bindings. `-PcommutatorSkipCore`
 // reuses the last build while iterating on Kotlin only.
 val NDK_VERSION = "29.0.14206865"
 val repoRoot = rootProject.projectDir.resolve("../..").canonicalFile
 val coreOut = repoRoot.resolve("target/android-core")
-val iconsOut = layout.buildDirectory.dir("generated/vardoger-icons")
-val skipCore = providers.gradleProperty("vardogerSkipCore").isPresent
+val iconsOut = layout.buildDirectory.dir("generated/commutator-icons")
+val skipCore = providers.gradleProperty("commutatorSkipCore").isPresent
 
 // The app ships the workspace's version (Cargo.toml), like the desktop apps;
-// CI passes a build number that only grows (`-PvardogerVersionCode=<n>`).
+// CI passes a build number that only grows (`-PcommutatorVersionCode=<n>`).
 val workspaceVersion = Regex("(?m)^version = \"([^\"]+)\"")
     .find(repoRoot.resolve("Cargo.toml").readText())?.groupValues?.get(1) ?: "0.0.0"
-val buildNumber = providers.gradleProperty("vardogerVersionCode").orNull?.toInt() ?: 1
+val buildNumber = providers.gradleProperty("commutatorVersionCode").orNull?.toInt() ?: 1
 
-// Release signing: Vardoger's upload key from the environment (CI decodes it from
+// Release signing: Commutator's upload key from the environment (CI decodes it from
 // secrets), so each build installs over the last. Without it, the debug key.
-val releaseKeystore = System.getenv("VARDOGER_ANDROID_KEYSTORE")?.takeIf { file(it).exists() }
+val releaseKeystore = System.getenv("COMMUTATOR_ANDROID_KEYSTORE")?.takeIf { file(it).exists() }
 
 val buildCore by tasks.registering(Exec::class) {
     description = "Builds crates/mobile for Android and generates Kotlin bindings."
     val ndk = System.getenv("ANDROID_NDK_HOME")
         ?: androidComponents.sdkComponents.sdkDirectory.get().dir("ndk/$NDK_VERSION").asFile.path
-    // Any ABI will do when skipping (`VARDOGER_ANDROID_ABIS=x86_64` builds only that one).
+    // Any ABI will do when skipping (`COMMUTATOR_ANDROID_ABIS=x86_64` builds only that one).
     val libs = coreOut.resolve("jniLibs")
     val skip = skipCore
     workingDir = repoRoot
     commandLine("bash", "scripts/android/build-core.sh", coreOut.path)
     environment("ANDROID_NDK_HOME", ndk)
-    onlyIf { !skip || libs.walkTopDown().none { it.name == "libvardoger_mobile.so" } }
+    onlyIf { !skip || libs.walkTopDown().none { it.name == "libcommutator_mobile.so" } }
 }
 
 // Tool and file icons: the iOS asset catalog's SVGs, rasterized.
 val genIcons by tasks.registering(Exec::class) {
     description = "Rasterizes the shared transcript icons."
     val out = iconsOut.get().asFile
-    inputs.dir(repoRoot.resolve("apps/ios/Vardoger/Assets.xcassets"))
+    inputs.dir(repoRoot.resolve("apps/ios/Commutator/Assets.xcassets"))
     inputs.dir(repoRoot.resolve("assets/icons"))
     inputs.dir(repoRoot.resolve("apps/android/icons"))
     inputs.file(repoRoot.resolve("scripts/android/svg2vd.py"))
@@ -48,28 +48,28 @@ val genIcons by tasks.registering(Exec::class) {
 }
 
 android {
-    namespace = "dev.freethinkel.vardoger.android"
+    namespace = "dev.freethinkel.commutator.android"
     compileSdk = 37
     ndkVersion = NDK_VERSION
 
     defaultConfig {
-        applicationId = "dev.freethinkel.vardoger.android"
+        applicationId = "dev.freethinkel.commutator.android"
         minSdk = 29
         targetSdk = 37
         versionCode = buildNumber
         versionName = workspaceVersion
-        // The ABIs the core was built for (`VARDOGER_ANDROID_ABIS`): a dependency's
+        // The ABIs the core was built for (`COMMUTATOR_ANDROID_ABIS`): a dependency's
         // native libraries for others would only add weight.
-        ndk { abiFilters += (System.getenv("VARDOGER_ANDROID_ABIS") ?: "arm64-v8a x86_64").split(" ").filter { it.isNotBlank() } }
+        ndk { abiFilters += (System.getenv("COMMUTATOR_ANDROID_ABIS") ?: "arm64-v8a x86_64").split(" ").filter { it.isNotBlank() } }
     }
 
     signingConfigs {
         if (releaseKeystore != null) {
-            create("vardoger") {
+            create("commutator") {
                 storeFile = file(releaseKeystore)
-                storePassword = System.getenv("VARDOGER_ANDROID_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("VARDOGER_ANDROID_KEY_ALIAS")
-                keyPassword = System.getenv("VARDOGER_ANDROID_KEY_PASSWORD")
+                storePassword = System.getenv("COMMUTATOR_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("COMMUTATOR_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("COMMUTATOR_ANDROID_KEY_PASSWORD")
             }
         }
     }
@@ -77,7 +77,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("vardoger") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("commutator") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -92,7 +92,7 @@ android {
         kotlin.directories.add(coreOut.resolve("kotlin").path)
         jniLibs.directories.add(coreOut.resolve("jniLibs").path)
         // The exact font bytes the Rust layout engine measures.
-        assets.directories.add(repoRoot.resolve("apps/ios/Vardoger/Fonts").path)
+        assets.directories.add(repoRoot.resolve("apps/ios/Commutator/Fonts").path)
         assets.directories.add(iconsOut.get().asFile.resolve("assets").path)
         res.directories.add(iconsOut.get().asFile.resolve("res").path)
     }

@@ -5,8 +5,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-use vardoger_proto::{ChatIndicator, ContextUsage, UserInputQuestion};
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+use commutator_proto::{ChatIndicator, ContextUsage, UserInputQuestion};
 
 use crate::connectivity::SendState;
 

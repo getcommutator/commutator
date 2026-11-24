@@ -25,14 +25,14 @@ use tokio_tungstenite::tungstenite::handshake::server::{
     Request as WsRequest, Response as WsResponse,
 };
 
-use vardoger_doc::{MessageRole, MessageStatus, SessionCommandPayload};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_doc::{MessageRole, MessageStatus, SessionCommandPayload};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AgentEvent, Device, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
-use vardoger_rpc::{
+use commutator_rpc::{
     DeviceFrameHeader, LinkCache, LinkCacheConfig, StaticToken, decode_device_frame,
     encode_device_frame, methods,
 };
@@ -205,7 +205,7 @@ async fn rows_dark_command_delivers_over_the_peer_relay_exactly_once() {
 
     // Engine B hosts its device room on the fake relay.
     let core_b = assemble(&dirs.path().join("b"), "device-b");
-    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(vardoger_rpc::StaticToken("test-user".into())));
+    let _host = core_b.start_host_relay(&relay_url, std::sync::Arc::new(commutator_rpc::StaticToken("test-user".into())));
 
     // Engine A dials peers through the same relay — and has NO edge, so its
     // chat2 rows can never flush (the rows-dark half of the incident shape).
@@ -225,9 +225,9 @@ async fn rows_dark_command_delivers_over_the_peer_relay_exactly_once() {
         created_at: None,
         version: Some("0.2.12".into()),
         cursor_sdk_version: None,
-        capabilities: vardoger_proto::capabilities::current(),
+        capabilities: commutator_proto::capabilities::current(),
     });
-    let client_a = vardoger_rpc::memory_client(core_a.rpc_service());
+    let client_a = commutator_rpc::memory_client(core_a.rpc_service());
     client_a
         .call(
             methods::MUTATE,

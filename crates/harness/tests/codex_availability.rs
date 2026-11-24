@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use vardoger_harness::{CodexHarness, Harness};
+use commutator_harness::{CodexHarness, Harness};
 
 #[test]
 fn availability_child() {

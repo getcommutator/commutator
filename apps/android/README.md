@@ -1,8 +1,8 @@
-# Vardoger for Android
+# Commutator for Android
 
 A Jetpack Compose viewport onto one of your machines, built on the same Rust
 mobile core as the iOS app (`crates/mobile`). As on iOS, it signs in to your
-Vardoger server (Google, PKCE, back to `vardoger://auth`), lists the account's
+Commutator server (Google, PKCE, back to `commutator://auth`), lists the account's
 machines and drives the picked one's engine through the server's relay. Cut
 from Zeron's app, with no backend here: Cloud, Providers/agent accounts,
 onboarding, voice, direct terminals and the local-network permission. **Rust decides what to paint and
@@ -12,7 +12,7 @@ the exact code iOS runs — see [`docs/mobile-rewrite.md`](../../docs/mobile-rew
 
 The UI is Material 3 Expressive (`MaterialExpressiveTheme`, expressive motion,
 flexible app bars, shape-morphing loading indicators, connected button groups,
-segmented lists) themed with Vardoger's own palette and Geist type.
+segmented lists) themed with Commutator's own palette and Geist type.
 
 ## Build & run
 
@@ -27,8 +27,8 @@ cd apps/android
 
 The `buildCore` task runs `scripts/android/build-core.sh`, which builds
 `crates/mobile` for Android (`jniLibs`) and generates its Kotlin bindings into
-`target/android-core/`. `-PvardogerSkipCore` reuses the last build while
-iterating on Kotlin; `VARDOGER_ANDROID_ABIS=arm64-v8a` builds one ABI.
+`target/android-core/`. `-PcommutatorSkipCore` reuses the last build while
+iterating on Kotlin; `COMMUTATOR_ANDROID_ABIS=arm64-v8a` builds one ABI.
 `scripts/android/gen-icons.sh` rasterizes the shared tool/file SVG icons
 (needs `rsvg-convert`). The Geist fonts are read straight from the iOS app's
 `Fonts/` folder, so both platforms measure and draw the same bytes.
@@ -43,7 +43,7 @@ Zeron's release workflow (APK on zeron.sh, Play uploads) was not ported.
 core/        AppModel (owns CoreClient, republishes snapshots as flows),
              CredentialStore, Fonts + AndroidMeasurer (Minikin fallback
              measurement for glyphs Geist lacks)
-design/      VardogerTheme (Material 3 Expressive), transcript palette
+design/      CommutatorTheme (Material 3 Expressive), transcript palette
 transcript/  TranscriptState (layout engine + viewport: anchoring, follow the
              tail), Transcript (virtualized rows over LayoutFrame), RowModel
              (canvas painter for Rust display lists, streaming veil, fades),
@@ -69,7 +69,7 @@ The core links C++ (`libc++_shared.so` ships beside it: `build-core.sh` passes
 Mirrors the iOS launch arguments:
 
 ```sh
-adb shell am start -n dev.freethinkel.vardoger.android/.MainActivity \
+adb shell am start -n dev.freethinkel.commutator.android/.MainActivity \
   --ez demo true --es route chat:chat-veil
 ```
 
@@ -82,6 +82,6 @@ adb shell am start -n dev.freethinkel.vardoger.android/.MainActivity \
 | `--es companion companions` / `terminal` / `side-chat:<id>` / `subagent:<tool id>` / `model-picker` | With `route chat:<id>`, open the companions sheet, a terminal, a side chat, a subagent or the model picker over it (`model-picker` also works with `route new`) |
 | `--ez terminal-demo true` | The opened terminal types a short script (screenshots) |
 | `--ez signedout true` | Clear stored credentials |
-| `--es account "<server url>,<token>,<device id>"` `[--es host <machine id>]` | A device token minted on a local server (`cargo run -p vardoger-client --example remote_stack`; `adb reverse tcp:<port> tcp:<port>` and use `http://127.0.0.1:<port>`), as if signed in (debuggable builds) |
-| `--es wallpaper <path>` / `none` | Set (or clear) the wallpaper from a file the app can read, e.g. `adb push art.jpg /data/local/tmp/ && adb shell run-as dev.freethinkel.vardoger.android cp /data/local/tmp/art.jpg files/` then `--es wallpaper /data/user/0/dev.freethinkel.vardoger.android/files/art.jpg` |
+| `--es account "<server url>,<token>,<device id>"` `[--es host <machine id>]` | A device token minted on a local server (`cargo run -p commutator-client --example remote_stack`; `adb reverse tcp:<port> tcp:<port>` and use `http://127.0.0.1:<port>`), as if signed in (debuggable builds) |
+| `--es wallpaper <path>` / `none` | Set (or clear) the wallpaper from a file the app can read, e.g. `adb push art.jpg /data/local/tmp/ && adb shell run-as dev.freethinkel.commutator.android cp /data/local/tmp/art.jpg files/` then `--es wallpaper /data/user/0/dev.freethinkel.commutator.android/files/art.jpg` |
 | `--es wallpaper-effect <none\|dither\|ascii\|halftone\|scanlines>` | Wallpaper effect |

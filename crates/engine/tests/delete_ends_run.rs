@@ -18,13 +18,13 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls, TurnControl};
-use vardoger_proto::{
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls, TurnControl};
+use commutator_proto::{
     AgentEvent, ChildKind, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use vardoger_rpc::{memory_client, methods};
+use commutator_rpc::{memory_client, methods};
 
 const CHAT: &str = "chat-delete-ends-run";
 

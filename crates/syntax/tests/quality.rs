@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use vardoger_syntax::{HighlightKind, HighlightRequest, HighlightedDocument, highlight};
+use commutator_syntax::{HighlightKind, HighlightRequest, HighlightedDocument, highlight};
 
 fn document(source: &str, path: &str) -> HighlightedDocument {
     highlight(HighlightRequest {

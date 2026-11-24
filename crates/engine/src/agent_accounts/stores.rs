@@ -1,5 +1,5 @@
 //! Credential stores of the agents beyond Claude Code / Codex / Cursor /
-//! Antigravity: where each CLI keeps its login, how vardoger reads (and, where
+//! Antigravity: where each CLI keeps its login, how commutator reads (and, where
 //! it's safe, swaps) it, and the sign-ins that run through the CLI itself.
 //!
 //! - **Grok** — `$GROK_HOME/auth.json` (default `~/.grok`, 0600, guarded by
@@ -22,12 +22,12 @@
 //! - **OpenCode** — `$XDG_DATA_HOME/opencode/auth.json` (default
 //!   `~/.local/share/opencode/`): one entry PER model provider (`{type:
 //!   "oauth", access, refresh, expires, accountId?}` or `{type: "api",
-//!   key}`), re-read on every request. vardoger manages the OAuth entries of
+//!   key}`), re-read on every request. commutator manages the OAuth entries of
 //!   `openai` (ChatGPT) and `github-copilot`; a swap rewrites that one entry
 //!   and leaves every other provider byte-for-byte. OpenCode has no lock of
 //!   its own. API keys are `{type: "api", key}` entries ([`super::api_keys`]),
 //!   listed and switched like any login (OpenCode 2.x keeps its logins in
-//!   its own database instead: vardoger says so and adds none there).
+//!   its own database instead: commutator says so and adds none there).
 //!   Anthropic OAuth was removed from OpenCode upstream and is not offered.
 //! - **Pi** — `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent`,
 //!   0600, guarded by proper-lockfile's `auth.json.lock` DIRECTORY): the
@@ -35,18 +35,18 @@
 //!   hot-reloaded by running agents. Swap = rewrite one entry under that
 //!   lock (Pi refreshes under the same lock; a switch saves the login it
 //!   replaces with the tokens it has then, and refuses over one it can't
-//!   identify). Add account = ChatGPT and Claude (vardoger's own loopback,
+//!   identify). Add account = ChatGPT and Claude (commutator's own loopback,
 //!   Claude being Pi's own Claude Pro/Max sign-in, a grant of its own) and
 //!   GitHub Copilot (device code, then pi's own Copilot exchange) — see
 //!   [`super::oauth`]; API keys as `{type: "api_key", key}` entries (see
 //!   [`super::api_keys`]). Pi's other OAuth logins (xAI, Kimi, Meta,
-//!   OpenRouter, ChatGPT-direct `openai`) aren't listed: vardoger can't tell
+//!   OpenRouter, ChatGPT-direct `openai`) aren't listed: commutator can't tell
 //!   their accounts apart yet.
 //! - **Hermes** — `$HERMES_HOME/auth.json` (default `~/.hermes`): Hermes
 //!   keeps EVERY account itself, in `credential_pool[provider]`, and picks
 //!   (fill-first by `priority`, or round-robin) and refreshes them on its
 //!   own. A running Hermes writes its in-memory pool back over the file, so
-//!   a vardoger reorder would be silently undone — vardoger lists the pool (each
+//!   a commutator reorder would be silently undone — commutator lists the pool (each
 //!   provider's first entry by priority is that provider's "in use": a run
 //!   on one of its models fills from it first), probes usage, and adds
 //!   accounts through `hermes auth add` (device code, or an API key on its
@@ -58,7 +58,7 @@
 //! Opaque tokens (Pi's Claude login, Copilot tokens) carry no identity: a
 //! live entry is matched to its slot by token, else identified ONCE per token
 //! with a read-only profile call (`/api/oauth/profile`, GitHub `/user`). A
-//! Copilot login on a self-hosted GitHub Enterprise Server (a host vardoger
+//! Copilot login on a self-hosted GitHub Enterprise Server (a host commutator
 //! never sends the token to) gets a local identity instead — its host and a
 //! SHA-256 fingerprint of the token — so it still switches; its usage is
 //! skipped.
@@ -182,7 +182,7 @@ pub(super) fn unsupported_login(harness: HarnessId, provider: &str) -> EngineErr
                 .to_string()
         }
         _ => format!(
-            "vardoger can't add a {provider} login for {} — sign in with `{}` itself.",
+            "commutator can't add a {provider} login for {} — sign in with `{}` itself.",
             cli_name(harness),
             cli_name(harness)
         ),
@@ -343,7 +343,7 @@ pub(super) enum Upstream {
     Copilot,
 }
 
-/// The store keys vardoger manages per agent.
+/// The store keys commutator manages per agent.
 pub(super) fn keyed_accounts(harness: HarnessId) -> &'static [(&'static str, Upstream)] {
     match harness {
         HarnessId::Opencode => &[
@@ -366,7 +366,7 @@ pub(super) fn upstream_of(harness: HarnessId, store_key: &str) -> Option<Upstrea
         .map(|(_, upstream)| *upstream)
 }
 
-/// An OAuth entry vardoger can use: `type: "oauth"` with an access token.
+/// An OAuth entry commutator can use: `type: "oauth"` with an access token.
 fn oauth_entry(entry: &serde_json::Value) -> bool {
     entry.get("type").and_then(|v| v.as_str()) == Some("oauth")
         && str_field(entry, "access").is_some()
@@ -417,7 +417,7 @@ fn opaque_secret(entry: &serde_json::Value) -> Option<String> {
     str_field(entry, "refresh").or_else(|| str_field(entry, "access"))
 }
 
-/// A Copilot login on a GitHub Enterprise host vardoger doesn't send tokens
+/// A Copilot login on a GitHub Enterprise host commutator doesn't send tokens
 /// to (self-hosted GHES): identified without the network — labelled by its
 /// host, keyed by a SHA-256 fingerprint of its GitHub token (never the token
 /// itself) — so it snapshots into a slot, switches and restores like any
@@ -483,7 +483,7 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// An exclusive lock on a sidecar lock file — `flock` on unix,
 /// `LockFileEx` on Windows (std's `File::try_lock`), the primitives the
 /// Rust CLIs' own lock crates use. Grok's `auth.json.lock` is the CLI's
-/// convention; OpenCode has none, so it gets a vardoger-side one. Released
+/// convention; OpenCode has none, so it gets a commutator-side one. Released
 /// when dropped (the handle closes).
 pub(super) struct FileLock(#[allow(dead_code)] std::fs::File);
 
@@ -569,7 +569,7 @@ fn lock_path(file: &Path) -> PathBuf {
     file.with_file_name(name)
 }
 
-/// How a JSON credential store is guarded while vardoger rewrites one entry.
+/// How a JSON credential store is guarded while commutator rewrites one entry.
 pub(super) enum StoreLock {
     /// A `flock`/`LockFileEx` on this sidecar file.
     File(PathBuf),
@@ -676,14 +676,14 @@ pub(super) fn merge_json_entry_with(
         return Ok(());
     }
     Err(EngineError::Other(format!(
-        "{} kept changing while vardoger was switching — try again in a moment.",
+        "{} kept changing while commutator was switching — try again in a moment.",
         file.display()
     )))
 }
 
 // ── credential-defined endpoints ────────────────────────────────────────────
 
-/// Which hosts a credential-supplied endpoint may name before vardoger sends
+/// Which hosts a credential-supplied endpoint may name before commutator sends
 /// that credential's secret there. A tampered or misconfigured store must
 /// never route a refresh token or API key to an arbitrary server.
 #[derive(Debug, Clone, Copy)]
@@ -780,7 +780,7 @@ pub(super) fn trusted_page(url: &str, domains: &[&str]) -> bool {
 /// The REST root for a Copilot login: GitHub's, or `https://api.<tenant>.ghe.com`
 /// for a GitHub Enterprise Cloud (`*.ghe.com`) `enterpriseUrl`. Any other
 /// enterprise host — self-hosted GHES included, whose REST root would be
-/// `https://<host>/api/v3` — is `None`: vardoger skips identity/usage probes
+/// `https://<host>/api/v3` — is `None`: commutator skips identity/usage probes
 /// rather than send the token to a host the credential file alone names
 /// (the login gets a local identity, [`local_enterprise_identity`]).
 pub(super) fn copilot_api_base(
@@ -898,13 +898,13 @@ impl AgentAccounts {
         let file = self.keyed_file(harness);
         match harness {
             HarnessId::Pi => StoreLock::Dir(lock_path(&file)),
-            _ => StoreLock::File(file.with_file_name("auth.json.vardoger-lock")),
+            _ => StoreLock::File(file.with_file_name("auth.json.commutator-lock")),
         }
     }
 
     /// Replace ONE provider's entry in OpenCode's / Pi's store, keeping every
     /// other key as it is (see [`merge_json_entry`]). Pi: under its own
-    /// proper-lockfile lock. OpenCode takes no lock of its own, so vardoger
+    /// proper-lockfile lock. OpenCode takes no lock of its own, so commutator
     /// serialises its writers on a sidecar lock and relies on
     /// compare-before-write against OpenCode itself.
     pub(super) fn write_keyed_entry(
@@ -1003,7 +1003,7 @@ impl AgentAccounts {
                 Detected::known(slot.account_key, slot.profile, entry.clone()).keyed(store_key),
             );
         }
-        // A GitHub Enterprise host vardoger won't send the token to (self-hosted
+        // A GitHub Enterprise host commutator won't send the token to (self-hosted
         // GHES): no profile call — a local identity keeps it switchable.
         if upstream == Upstream::Copilot
             && copilot_api_base(
@@ -1109,7 +1109,7 @@ impl AgentAccounts {
             .get(format!("{base}/user"))
             .header("Authorization", format!("token {github_token}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "vardoger")
+            .header("User-Agent", "commutator")
             .send()
             .await
             .ok()
@@ -1259,13 +1259,13 @@ impl AgentAccounts {
         &self,
         harness: HarnessId,
         args: &[&str],
-    ) -> Result<vardoger_harness::process::Command, EngineError> {
+    ) -> Result<commutator_harness::process::Command, EngineError> {
         let acp = self
             .acp_harness(harness)
             .ok_or_else(|| EngineError::Other(format!("{harness:?} has no CLI sign-in")))?;
         acp.cli_command(args).await.map_err(|err| {
             EngineError::Other(match err {
-                vardoger_harness::HarnessError::NotInstalled(hint) => format!(
+                commutator_harness::HarnessError::NotInstalled(hint) => format!(
                     "The `{}` CLI was not found on this device — install it first. ({hint})",
                     cli_name(harness)
                 ),
@@ -1380,14 +1380,14 @@ impl AgentAccounts {
         let browser = ensure_recording_browser(&self.inner.config.root_dir());
         #[cfg(not(unix))]
         let browser = None;
-        let options = vardoger_harness::acp::SignInOptions {
+        let options = commutator_harness::acp::SignInOptions {
             browser,
             method: Some("devin-browser".into()),
             env: vec![
                 ("XDG_DATA_HOME".into(), data.clone().into()),
                 ("XDG_CONFIG_HOME".into(), config.into()),
                 ("XDG_CACHE_HOME".into(), cache.into()),
-                ("VARDOGER_LOGIN_URL_FILE".into(), url_file.clone().into()),
+                ("COMMUTATOR_LOGIN_URL_FILE".into(), url_file.clone().into()),
             ],
             url_filter: Some(devin_login_url),
         };
@@ -1418,7 +1418,7 @@ impl AgentAccounts {
             let progress_state = task_state.clone();
             let signed_in = acp
                 .sign_in_with(options, move |progress| {
-                    if let vardoger_harness::acp::SignInProgress::OpenBrowser(url) = progress {
+                    if let commutator_harness::acp::SignInProgress::OpenBrowser(url) = progress {
                         let mut state = lock(&progress_state);
                         if state.url.is_none() {
                             state.url = Some(url);
@@ -1515,7 +1515,7 @@ fn hermes_env_secret(var: &str, hermes_home: &Path) -> bool {
     // while the accounts are listed; checked on the open file, so one
     // swapped in after a check of the path is refused too.)
     let env_file = hermes_home.join(".env");
-    if let Ok(text) = vardoger_harness::bounded_file::read_to_string(&env_file, 1 << 20) {
+    if let Ok(text) = commutator_harness::bounded_file::read_to_string(&env_file, 1 << 20) {
         for line in text.lines() {
             let line = line.trim();
             let line = line.strip_prefix("export ").unwrap_or(line);
@@ -1558,7 +1558,7 @@ fn hermes_profile(provider: &str, entry: &serde_json::Value, ix: usize) -> SlotP
         other => title_words(other),
     };
     let api_key = str_field(entry, "auth_type").as_deref() == Some("api_key");
-    // A key reads as Vardoger's own do ([`api_keys::key_rows`]): its label
+    // A key reads as Commutator's own do ([`api_keys::key_rows`]): its label
     // only when someone named it — never Hermes' "api-key-N", never the
     // variable an env-seeded one came from.
     let (label, plan) = if api_key {
@@ -1568,7 +1568,7 @@ fn hermes_profile(provider: &str, entry: &serde_json::Value, ix: usize) -> SlotP
             .filter(|label| !from_env && !is_hermes_default_key_label(label));
         let key = access_key(entry).filter(|key| api_keys::valid_key(key));
         let (title, line) = api_keys::key_rows(
-            &vardoger_proto::providers::account_group_label(HarnessId::Hermes, provider),
+            &commutator_proto::providers::account_group_label(HarnessId::Hermes, provider),
             key.as_deref(),
             named.as_deref(),
             from_env,

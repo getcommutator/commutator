@@ -1,14 +1,14 @@
 [package]
-name = "vardoger-mcp"
+name = "commutator-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vardoger-proto.workspace = true
-vardoger-doc.workspace = true
-vardoger-rpc.workspace = true
+commutator-proto.workspace = true
+commutator-doc.workspace = true
+commutator-rpc.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,6 +25,6 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 
 [dev-dependencies]
-vardoger-visual.workspace = true
+commutator-visual.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

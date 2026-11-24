@@ -4,7 +4,7 @@
 //! reconnect with exponential backoff.
 //!
 //! The client owns no row semantics: everything applies through the shared
-//! [`vardoger_doc::RegistryDoc`] under a lock. Wire frames are JSON text —
+//! [`commutator_doc::RegistryDoc`] under a lock. Wire frames are JSON text —
 //! byte-compatible with `edge/src/registry-room.ts`.
 //!
 //! Liveness discipline is inherited from `room.rs` and its incidents: the
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use vardoger_doc::{PendingBatch, RegistryDoc, RegistryRow, StateOutcome};
+use commutator_doc::{PendingBatch, RegistryDoc, RegistryRow, StateOutcome};
 
 use crate::types::{RoomStatsSnapshot, StaticUrl, SyncError, UrlProvider};
 
@@ -99,7 +99,7 @@ enum ClientFrame<'a> {
     },
     Push {
         batch: &'a str,
-        ops: &'a [vardoger_doc::RowOp],
+        ops: &'a [commutator_doc::RowOp],
     },
     Presence {
         at: i64,
@@ -196,7 +196,7 @@ impl TextConnector for WsTextConnector {
     }
 }
 
-// ── stats (RoomStatsSnapshot-compatible so SyncStatus/`vardoger sync` render it) ─
+// ── stats (RoomStatsSnapshot-compatible so SyncStatus/`commutator sync` render it) ─
 
 #[derive(Default)]
 struct Stats {

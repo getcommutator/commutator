@@ -9,8 +9,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use vardoger_harness::{CancellationToken, CursorHarness, Harness, RunControls, SteerMessage};
-use vardoger_proto::{AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel, ToolCall};
+use commutator_harness::{CancellationToken, CursorHarness, Harness, RunControls, SteerMessage};
+use commutator_proto::{AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel, ToolCall};
 
 fn fixture_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -697,11 +697,11 @@ async fn mcp_injection_reaches_shim_on_new_and_resumed_runs() {
     for resume in [None, Some("agent-1")] {
         let mut req = request("scenario:mcp");
         req.resume = resume.map(str::to_owned);
-        req.mcp = Some(vardoger_proto::McpServer {
-            name: "vardoger".into(),
-            command: "/path with spaces/vardoger".into(),
+        req.mcp = Some(commutator_proto::McpServer {
+            name: "commutator".into(),
+            command: "/path with spaces/commutator".into(),
             args: vec!["mcp".into()],
-            env: [("VARDOGER_CHAT_ID".into(), "origin-chat".into())].into(),
+            env: [("COMMUTATOR_CHAT_ID".into(), "origin-chat".into())].into(),
             http: None,
         });
         let (controls, _steer, _token) = controls();
@@ -716,7 +716,7 @@ async fn mcp_injection_reaches_shim_on_new_and_resumed_runs() {
 /// deadline and retires the shim.
 #[tokio::test]
 async fn a_stop_the_shim_never_settles_closes_the_turn_at_its_deadline() {
-    use vardoger_harness::TurnControl;
+    use commutator_harness::TurnControl;
     let harness = harness().with_stop_timeout(Duration::from_millis(500));
     let (mut controls, _steer, _token) = controls();
     let turn = TurnControl::default();

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake vardoger cursor shim for vardoger-harness tests: speaks the shim's JSONL
+# Fake commutator cursor shim for commutator-harness tests: speaks the shim's JSONL
 # protocol (see crates/harness/src/cursor/shim.mjs) without node or the SDK.
 # Driven by crates/harness/tests/cursor.rs.
 
@@ -76,7 +76,7 @@ case "$first" in
 
 *scenario:mcp*)
   case "$first" in
-    *'"mcp":{"args":["mcp"],"command":"/path with spaces/vardoger","env":{"VARDOGER_CHAT_ID":"origin-chat"},"name":"vardoger"}'*) ;;
+    *'"mcp":{"args":["mcp"],"command":"/path with spaces/commutator","env":{"COMMUTATOR_CHAT_ID":"origin-chat"},"name":"commutator"}'*) ;;
     *) exit 1 ;;
   esac
   emit '{"ev":"ready","agentId":"agent-1","model":"auto"}'

@@ -9,10 +9,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use vardoger_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
@@ -142,10 +142,10 @@ async fn sending_a_message_unarchives_the_chat() {
     )
     .expect("engine core assembles");
 
-    let client = vardoger_rpc::memory_client(core.rpc_service());
+    let client = commutator_rpc::memory_client(core.rpc_service());
     client
         .call(
-            vardoger_rpc::methods::MUTATE,
+            commutator_rpc::methods::MUTATE,
             serde_json::json!({
                 "op": "createChat",
                 "chatId": CHAT,

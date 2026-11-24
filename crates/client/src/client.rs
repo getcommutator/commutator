@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use tokio_util::sync::CancellationToken;
-use vardoger_doc::RegistryDoc;
-use vardoger_proto::{Chat, ChatConfig, SidebarPinChange, SidebarSectionChange};
+use commutator_doc::RegistryDoc;
+use commutator_proto::{Chat, ChatConfig, SidebarPinChange, SidebarSectionChange};
 
 use crate::attachments::{self, AttachmentCache};
 use crate::catalog::{self, HarnessInfo, ModelInfo};
@@ -80,11 +80,11 @@ pub(crate) struct ClientInner {
     synced: AtomicBool,
     pub(crate) harness_catalogs: Mutex<HashMap<String, Vec<HarnessInfo>>>,
     /// Terminals on the host, over its RPC connection.
-    pub(crate) remote_terminals: vardoger_term_link::remote::RemoteTerminals,
+    pub(crate) remote_terminals: commutator_term_link::remote::RemoteTerminals,
     /// Wakes terminal streams waiting to reconnect (foreground, network back).
     pub(crate) terminals_wake: Arc<tokio::sync::Notify>,
     /// Remote mode: WebRTC to the account's devices, once started ([`crate::direct`]).
-    pub(crate) direct: Mutex<Option<vardoger_preview::viewer::ViewerPeers>>,
+    pub(crate) direct: Mutex<Option<commutator_preview::viewer::ViewerPeers>>,
 }
 
 impl Drop for ClientInner {
@@ -165,7 +165,7 @@ impl ClientInner {
 
     pub(crate) fn registry_write<R>(
         self: &Arc<Self>,
-        f: impl FnOnce(&mut RegistryDoc) -> std::result::Result<R, vardoger_doc::DocError>,
+        f: impl FnOnce(&mut RegistryDoc) -> std::result::Result<R, commutator_doc::DocError>,
     ) -> Result<R> {
         let result = self.workspace.mutate(f)?;
         self.after_registry_write();
@@ -270,7 +270,7 @@ impl ClientInner {
             queued_attachments: device
                 .version
                 .as_deref()
-                .and_then(vardoger_proto::version_triple)
+                .and_then(commutator_proto::version_triple)
                 .is_some_and(|v| v >= QUEUED_ATTACHMENTS_MIN),
             mid_turn_steering,
             provider_switch: has(capability::PROVIDER_SWITCH_V1),
@@ -458,9 +458,9 @@ impl Client {
             } => {
                 let links = {
                     let _runtime = crate::runtime::handle().enter();
-                    vardoger_rpc::LinkCache::new(vardoger_rpc::LinkCacheConfig::new(
+                    commutator_rpc::LinkCache::new(commutator_rpc::LinkCacheConfig::new(
                         server_url.trim_end_matches('/'),
-                        Arc::new(vardoger_rpc::StaticToken(token.clone())),
+                        Arc::new(commutator_rpc::StaticToken(token.clone())),
                     ))
                 };
                 Backend::Local(LocalHost::new(
@@ -484,7 +484,7 @@ impl Client {
         }
         // A previous account may have left the process at rest.
         if !inner.is_demo() {
-            vardoger_sync::wake::set_resting(false);
+            commutator_sync::wake::set_resting(false);
         }
         let ticker = Arc::downgrade(&inner);
         let cancel = inner.cancel.clone();
@@ -597,7 +597,7 @@ impl Client {
                     .iter()
                     .any(|c| c == crate::rpc::capability::PROJECTLESS_SCRATCH_V1)
                 {
-                    vardoger_proto::projectless::scratch_cwd(&id, now)
+                    commutator_proto::projectless::scratch_cwd(&id, now)
                 } else {
                     "~".to_owned()
                 };
@@ -682,7 +682,7 @@ impl Client {
             .inner
             .host_rpc(
                 &source.device_id,
-                vardoger_rpc::methods::FORK_SIDE_CHAT,
+                commutator_rpc::methods::FORK_SIDE_CHAT,
                 serde_json::json!({
                     "chatId": chat_id,
                     "sourceChatId": source.id,
@@ -707,7 +707,7 @@ impl Client {
     fn chat_write(
         &self,
         chat_id: &str,
-        f: impl FnOnce(&mut RegistryDoc) -> std::result::Result<bool, vardoger_doc::DocError>,
+        f: impl FnOnce(&mut RegistryDoc) -> std::result::Result<bool, commutator_doc::DocError>,
     ) -> Result<()> {
         if self.inner.registry_write(f)? {
             Ok(())
@@ -768,7 +768,7 @@ impl Client {
             .inner
             .host_rpc(
                 &chat.device_id,
-                vardoger_rpc::methods::STOP_WAITING,
+                commutator_rpc::methods::STOP_WAITING,
                 serde_json::json!({ "chatId": chat_id }),
             )
             .await?;
@@ -801,7 +801,7 @@ impl Client {
                 .provider_switch
         {
             return Err(ClientError::Unsupported(
-                "This chat's computer needs a newer Vardoger to switch provider.".into(),
+                "This chat's computer needs a newer Commutator to switch provider.".into(),
             ));
         }
         self.chat_write(chat_id, |doc| doc.set_chat_config(chat_id, config))?;
@@ -982,7 +982,7 @@ impl Client {
         {
             return Ok(existing.id.clone());
         }
-        let space = vardoger_proto::Space {
+        let space = commutator_proto::Space {
             id: crate::new_id(),
             device_id: device_id.to_owned(),
             path: path.to_owned(),
@@ -1004,7 +1004,7 @@ impl Client {
                 .inner
                 .host_rpc(
                     device_id,
-                    vardoger_rpc::methods::MUTATE,
+                    commutator_rpc::methods::MUTATE,
                     serde_json::json!({
                         "op": "createSpace",
                         "spaceId": id,
@@ -1135,7 +1135,7 @@ impl Client {
                     .inner
                     .host_rpc(
                         device_id,
-                        vardoger_rpc::methods::LIST_HARNESSES,
+                        commutator_rpc::methods::LIST_HARNESSES,
                         serde_json::json!({}),
                     )
                     .await
@@ -1178,7 +1178,7 @@ impl Client {
                     .inner
                     .host_rpc(
                         device_id,
-                        vardoger_rpc::methods::LIST_MODELS,
+                        commutator_rpc::methods::LIST_MODELS,
                         serde_json::json!({ "harness": harness }),
                     )
                     .await
@@ -1214,7 +1214,7 @@ impl Client {
                     .inner
                     .host_rpc(
                         device_id,
-                        vardoger_rpc::methods::LIST_REFS,
+                        commutator_rpc::methods::LIST_REFS,
                         serde_json::json!({ "repoPath": repo_path }),
                     )
                     .await?;
@@ -1231,7 +1231,7 @@ impl Client {
         chat_id: Option<String>,
         space_id: Option<String>,
         query: &str,
-    ) -> Result<Vec<vardoger_proto::FileSearchMatch>> {
+    ) -> Result<Vec<commutator_proto::FileSearchMatch>> {
         match self.inner.backend() {
             Backend::Demo(_) => {
                 const FILES: &[&str] = &[
@@ -1241,8 +1241,8 @@ impl Client {
                     "crates/text/src/layout.rs",
                     "crates/text/src/prepare.rs",
                     "crates/markdown/src/parser.rs",
-                    "apps/ios/Vardoger/Transcript/TranscriptListView.swift",
-                    "apps/ios/Vardoger/Composer/ComposerBar.swift",
+                    "apps/ios/Commutator/Transcript/TranscriptListView.swift",
+                    "apps/ios/Commutator/Composer/ComposerBar.swift",
                     "docs/mobile-rewrite.md",
                     "README.md",
                 ];
@@ -1250,7 +1250,7 @@ impl Client {
                 Ok(FILES
                     .iter()
                     .filter(|p| q.is_empty() || p.to_lowercase().contains(&q))
-                    .map(|p| vardoger_proto::FileSearchMatch {
+                    .map(|p| commutator_proto::FileSearchMatch {
                         path: (*p).to_owned(),
                         is_dir: false,
                     })
@@ -1261,7 +1261,7 @@ impl Client {
                     .inner
                     .host_rpc(
                         device_id,
-                        vardoger_rpc::methods::SEARCH_FILES,
+                        commutator_rpc::methods::SEARCH_FILES,
                         serde_json::json!({ "query": query, "chatId": chat_id, "spaceId": space_id }),
                     )
                     .await?;
@@ -1285,7 +1285,7 @@ impl Client {
                 };
                 let value = self
                     .inner
-                    .host_rpc(device_id, vardoger_rpc::methods::LIST_FOLDERS, params)
+                    .host_rpc(device_id, commutator_rpc::methods::LIST_FOLDERS, params)
                     .await?;
                 serde_json::from_value(value).map_err(|e| ClientError::HostError(e.to_string()))
             }
@@ -1300,7 +1300,7 @@ impl Client {
                 .inner
                 .host_rpc(
                     device_id,
-                    vardoger_rpc::methods::SWITCH_REF,
+                    commutator_rpc::methods::SWITCH_REF,
                     serde_json::json!({ "repoPath": repo_path, "refName": ref_name }),
                 )
                 .await
@@ -1325,7 +1325,7 @@ impl Client {
                 }
                 let value = self
                     .inner
-                    .host_rpc(device_id, vardoger_rpc::methods::CREATE_WORKTREE, params)
+                    .host_rpc(device_id, commutator_rpc::methods::CREATE_WORKTREE, params)
                     .await?;
                 value
                     .get("path")
@@ -1389,8 +1389,8 @@ impl Client {
     pub fn set_network_online(&self, online: bool) {
         let was = self.inner.path_online.swap(online, Ordering::AcqRel);
         if !self.inner.is_demo() {
-            // Parks/un-parks every sync backoff in the process (vardoger-sync).
-            vardoger_sync::wake::set_path_online(online);
+            // Parks/un-parks every sync backoff in the process (commutator-sync).
+            commutator_sync::wake::set_path_online(online);
         }
         if was != online {
             self.inner.recompute_connectivity();
@@ -1413,7 +1413,7 @@ impl Client {
     pub fn on_foreground(&self) {
         self.inner.foreground.store(true, Ordering::Release);
         if !self.inner.is_demo() {
-            vardoger_sync::wake::set_resting(false);
+            commutator_sync::wake::set_resting(false);
         }
         self.inner.terminals_wake.notify_waiters();
         if let Some(direct) = lock(&self.inner.direct).as_ref() {
@@ -1435,7 +1435,7 @@ impl Client {
         if self.inner.is_demo() || self.inner.foreground.load(Ordering::Acquire) {
             return;
         }
-        vardoger_sync::wake::set_resting(true);
+        commutator_sync::wake::set_resting(true);
     }
 
     /// Warm the most relevant sessions (front page order: pinned, sections,

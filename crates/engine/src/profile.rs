@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use vardoger_proto::WorkspaceScope;
+use commutator_proto::WorkspaceScope;
 
 use crate::EngineError;
 
@@ -358,7 +358,7 @@ mod tests {
         let core = crate::EngineCore::assemble_with_profile(
             profile,
             std::sync::Arc::new(crate::default_registry()),
-            vardoger_proto::HarnessId::Mock,
+            commutator_proto::HarnessId::Mock,
         )
         .unwrap();
 
@@ -375,20 +375,20 @@ mod tests {
     #[tokio::test]
     async fn development_constructor_uses_account_scoped_uploads() {
         let dir = tempfile::tempdir().unwrap();
-        let org_id = crate::env_or("VARDOGER_ORG_ID", crate::DEFAULT_ORG_ID);
-        let user_id = crate::env_or("VARDOGER_USER_ID", crate::DEFAULT_USER_ID);
+        let org_id = crate::env_or("COMMUTATOR_ORG_ID", crate::DEFAULT_ORG_ID);
+        let user_id = crate::env_or("COMMUTATOR_USER_ID", crate::DEFAULT_USER_ID);
         let expected = EngineProfile::development(dir.path(), &org_id, &user_id);
         let core = crate::EngineCore::assemble(
             dir.path(),
             std::sync::Arc::new(crate::default_registry()),
-            vardoger_proto::HarnessId::Mock,
+            commutator_proto::HarnessId::Mock,
         )
         .unwrap();
 
         assert_eq!(core.workspace_scope(), WorkspaceScope::Development);
         assert_eq!(core.uploads.dir(), expected.store_root().join("uploads"));
         assert!(expected.store_root().is_dir());
-        if std::env::var("VARDOGER_ORG_ID").is_err() && std::env::var("VARDOGER_USER_ID").is_err() {
+        if std::env::var("COMMUTATOR_ORG_ID").is_err() && std::env::var("COMMUTATOR_USER_ID").is_err() {
             assert_eq!(
                 expected.store_root(),
                 dir.path().join("orgs/dev-org/dev-user")

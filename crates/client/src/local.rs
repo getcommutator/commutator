@@ -1,7 +1,7 @@
 //! The client against one engine, as its JSON-RPC client: on this machine
 //! over its IPC (`ws://127.0.0.1:{port}`, the bearer from
 //! `{data_dir}/ipc-token`), or on another of the account's machines through
-//! the Vardoger server's relay ([`EngineLink`]). Same logic either way.
+//! the Commutator server's relay ([`EngineLink`]). Same logic either way.
 //!
 //! Shaped like the demo host: the registry is a local-only replica and every
 //! open chat a local [`SessionDoc`], so the same session pipeline (snapshot,
@@ -11,7 +11,7 @@
 //!   (whole lists) folded into the replica; the engine's device beats presence
 //!   while the socket is up;
 //! - transcript: `WatchDocMessages` frames applied with
-//!   [`vardoger_doc::transcript_delta::apply_transcript_frame`], then written
+//!   [`commutator_doc::transcript_delta::apply_transcript_frame`], then written
 //!   into the chat's doc; the queue mirrors `WatchQueue`;
 //! - writes: commands the session writes into its doc go out as `QueueCommand`,
 //!   queue rows as `QueueMessage`, a new chat as `Mutate createChat` — through
@@ -29,10 +29,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
-use vardoger_doc::transcript_delta::{TranscriptUpdate, apply_transcript_frame};
-use vardoger_doc::{QueuedMessage, SessionCommandStatus, SessionDoc, SessionMessageEntry};
-use vardoger_proto::{Chat, Device, Session, Space};
-use vardoger_rpc::{LinkCache, RpcClient, RpcError, methods};
+use commutator_doc::transcript_delta::{TranscriptUpdate, apply_transcript_frame};
+use commutator_doc::{QueuedMessage, SessionCommandStatus, SessionDoc, SessionMessageEntry};
+use commutator_proto::{Chat, Device, Session, Space};
+use commutator_rpc::{LinkCache, RpcClient, RpcError, methods};
 
 use crate::client::ClientInner;
 use crate::error::{ClientError, Result};
@@ -67,7 +67,7 @@ pub(crate) enum EngineLink {
 impl EngineLink {
     async fn dial(&self) -> std::result::Result<Arc<RpcClient>, RpcError> {
         match self {
-            EngineLink::Ipc { port, data_dir } => vardoger_rpc::connect_ipc(*port, Some(data_dir))
+            EngineLink::Ipc { port, data_dir } => commutator_rpc::connect_ipc(*port, Some(data_dir))
                 .await
                 .map(Arc::new),
             EngineLink::Relay { links, device_id } => links.client(device_id).await,
@@ -587,7 +587,7 @@ impl LocalHost {
                     Err(_) => continue,
                 };
                 match rpc.call(out.method, out.params.clone()).await {
-                    Err(vardoger_rpc::RpcError::Closed | vardoger_rpc::RpcError::Transport(_)) => {
+                    Err(commutator_rpc::RpcError::Closed | commutator_rpc::RpcError::Transport(_)) => {
                         tokio::time::sleep(RETRY_BASE).await;
                     }
                     reply => break reply,
@@ -653,7 +653,7 @@ fn write_entries(
     doc: &SessionDoc,
     before: &[SessionMessageEntry],
     next: &[SessionMessageEntry],
-) -> std::result::Result<(), vardoger_doc::DocError> {
+) -> std::result::Result<(), commutator_doc::DocError> {
     let same = before.iter().zip(next).take_while(|(a, b)| a == b).count();
     let list = doc.doc().get_list("messages");
     if list.len() > same {
@@ -668,7 +668,7 @@ fn write_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vardoger_doc::{MessagePart, MessageRole};
+    use commutator_doc::{MessagePart, MessageRole};
 
     fn entry(id: &str, text: &str) -> SessionMessageEntry {
         SessionMessageEntry {

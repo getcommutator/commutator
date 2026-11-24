@@ -8,14 +8,14 @@ use futures::{StreamExt, stream::BoxStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
-use vardoger_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
-use vardoger_engine::{EngineCore, HarnessRegistry};
-use vardoger_harness::{Harness, HarnessError, RunControls};
-use vardoger_proto::{
+use commutator_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+use commutator_engine::{EngineCore, HarnessRegistry};
+use commutator_harness::{Harness, HarnessError, RunControls};
+use commutator_proto::{
     AgentEvent, ChatConfig, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SessionStatus, SteeringMode,
 };
-use vardoger_rpc::methods;
+use commutator_rpc::methods;
 
 type Seen = Arc<Mutex<Vec<(HarnessId, RunRequest)>>>;
 
@@ -239,7 +239,7 @@ impl Rig {
         self.turn(harness, prompt, message_id).await
     }
 
-    fn row(&self) -> vardoger_proto::Chat {
+    fn row(&self) -> commutator_proto::Chat {
         self.core.workspace.chat("main").unwrap().unwrap()
     }
 
@@ -696,7 +696,7 @@ async fn provider_cannot_change_while_a_turn_is_running() {
     .await
     .unwrap();
 
-    let client = vardoger_rpc::memory_client(rig.core.rpc_service());
+    let client = commutator_rpc::memory_client(rig.core.rpc_service());
     let to = |harness: HarnessId| {
         serde_json::json!({
             "op": "setChatConfig",

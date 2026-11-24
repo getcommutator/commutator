@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-update"
+name = "commutator-update"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

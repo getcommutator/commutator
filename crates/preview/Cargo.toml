@@ -1,13 +1,13 @@
 [package]
-name = "vardoger-preview"
+name = "commutator-preview"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vardoger-proto.workspace = true
-vardoger-preview-label.workspace = true
+commutator-proto.workspace = true
+commutator-preview-label.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 futures.workspace = true

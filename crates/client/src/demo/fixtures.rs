@@ -2,8 +2,8 @@
 //! projectless, child, archived), live statuses, and PRs in every state.
 
 use chrono::Utc;
-use vardoger_doc::RegistryDoc;
-use vardoger_proto::{
+use commutator_doc::RegistryDoc;
+use commutator_proto::{
     ChangeRequestState, ChangeRequestSummary, Chat, ChatConfig, CheckoutChangeRequestStatus,
     ConversationSourceContext, Device, HarnessId, ReasoningLevel, SandboxLevel, Session,
     SessionStatus, SessionWaiting, SidebarPinChange, SidebarSectionChange, Space, WaitingKind,
@@ -80,7 +80,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             created_ago_ms: HOUR,
             ..chat(
                 "chat-veil",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "Streaming veil on transcript rows",
                 "Opening the PR now. Running the checks first:",
@@ -96,7 +96,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             model: "claude-opus-5",
             ..chat(
                 "chat-picker",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "Model picker catalog sync",
                 "Before I wire the RPC, two decisions:",
@@ -112,7 +112,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             seen: false,
             ..chat(
                 "chat-tabs",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "Tool group header colors",
                 "Done — failed children stay quiet.",
@@ -165,7 +165,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
         DemoChat {
             last_ago_ms: 5 * HOUR,
             status: Some(SessionStatus::Idle),
-            waiting_on: Some("xcodebuild test -scheme Vardoger"),
+            waiting_on: Some("xcodebuild test -scheme Commutator"),
             ..chat(
                 "chat-ios-keyboard",
                 Some("space-mobile"),
@@ -200,7 +200,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             last_ago_ms: 10 * MIN,
             ..chat(
                 "chat-cjk",
-                Some("space-vardoger-vps"),
+                Some("space-commutator-vps"),
                 VPS,
                 "多言語テキストのレイアウト 🌏",
                 "日本語の長い段落です。",
@@ -225,7 +225,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             last_ago_ms: 30 * MIN,
             ..chat(
                 "chat-side",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "Side chat: veil timing",
                 "α = 0.2 over inter-append gaps",
@@ -239,7 +239,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             last_ago_ms: 6 * MIN,
             ..chat(
                 "chat-side-easing",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "Spring vs. power curve for the veil",
                 "Keep the curve; use the spring only for the follow scroll.",
@@ -251,7 +251,7 @@ pub(crate) fn chats() -> Vec<DemoChat> {
             created_ago_ms: 4 * DAY,
             ..chat(
                 "chat-oklch",
-                Some("space-vardoger"),
+                Some("space-commutator"),
                 MAC,
                 "OKLCH conversion drift",
                 "Gamma encode matches now.",
@@ -290,8 +290,8 @@ pub(crate) fn spaces(now: i64) -> Vec<Space> {
             icon: None,
             created_at: ms(now - ago),
         };
-    let vardoger = |mut space: Space| {
-        space.repository_id = Some("github.com/vardogersh/vardoger".into());
+    let commutator = |mut space: Space| {
+        space.repository_id = Some("github.com/commutatorsh/commutator".into());
         // Cloud reaches it in the demo (its fixture repositories).
         space.github_repo = Some("acme/web".into());
         space
@@ -305,19 +305,19 @@ pub(crate) fn spaces(now: i64) -> Vec<Space> {
             false,
             20 * DAY,
         ),
-        vardoger(space(
-            "space-vardoger",
+        commutator(space(
+            "space-commutator",
             MAC,
-            "/Users/dev/vardoger",
+            "/Users/dev/commutator",
             None,
             true,
             9 * DAY,
         )),
         // A second clone of the same repository on the VPS.
-        vardoger(space(
-            "space-vardoger-vps",
+        commutator(space(
+            "space-commutator-vps",
             VPS,
-            "/srv/src/vardoger",
+            "/srv/src/commutator",
             None,
             true,
             6 * DAY,
@@ -326,8 +326,8 @@ pub(crate) fn spaces(now: i64) -> Vec<Space> {
         space(
             "space-mobile",
             MAC,
-            "/Users/dev/vardoger-ios",
-            Some("Vardoger iOS"),
+            "/Users/dev/commutator-ios",
+            Some("Commutator iOS"),
             true,
             2 * DAY,
         ),
@@ -404,7 +404,7 @@ pub(crate) fn seed(
     fixture: DemoFixture,
     self_id: &str,
     self_name: &str,
-) -> Result<Seeded, vardoger_doc::DocError> {
+) -> Result<Seeded, commutator_doc::DocError> {
     let now = crate::now_ms();
     let all_devices = devices(self_id, self_name, now);
     let mut change_requests = Vec::new();
@@ -516,7 +516,7 @@ pub(crate) fn seed(
                     provider: "github".into(),
                     number,
                     title: title.into(),
-                    url: format!("https://github.com/vardoger-sh/vardoger/pull/{number}"),
+                    url: format!("https://github.com/commutator-sh/commutator/pull/{number}"),
                     state,
                     base_ref: "main".into(),
                     head_ref: source.branch.clone(),

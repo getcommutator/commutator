@@ -1,5 +1,5 @@
 //! A viewer that answers terminal queries itself (zgx's terminal, through
-//! `vardoger-zgx terminal-bridge`) writes each answer as its own WriteTerminal
+//! `commutator-zgx terminal-bridge`) writes each answer as its own WriteTerminal
 //! call, in the order the program asked. The program must read them in that
 //! order: termenv (gh, glamour, lipgloss) asks for the background (OSC 11)
 //! and then the cursor (CSI 6n), and takes a cursor report first as "no
@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};
-use vardoger_engine::EngineCore;
-use vardoger_rpc::methods;
+use commutator_engine::EngineCore;
+use commutator_rpc::methods;
 
 const ROUNDS: usize = 300;
 const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[6n";
@@ -102,8 +102,8 @@ async fn a_self_answering_viewer_s_answers_reach_the_program_in_order() {
     std::fs::create_dir_all(&data).expect("data dir");
     let core = EngineCore::assemble(
         &data,
-        Arc::new(vardoger_engine::HarnessRegistry::new()),
-        vardoger_proto::HarnessId::Mock,
+        Arc::new(commutator_engine::HarnessRegistry::new()),
+        commutator_proto::HarnessId::Mock,
     )
     .expect("engine assembles");
     let probe = tmp.path().join("probe.pl");
@@ -113,7 +113,7 @@ async fn a_self_answering_viewer_s_answers_reach_the_program_in_order() {
         .open_with_shell(&tmp.path().to_string_lossy(), 80, 24, Some("/bin/sh"))
         .expect("open sh");
     // Closed however the test ends: its reader would keep the test running.
-    struct Close<'a>(&'a vardoger_engine::Terminals, String);
+    struct Close<'a>(&'a commutator_engine::Terminals, String);
     impl Drop for Close<'_> {
         fn drop(&mut self) {
             let _ = self.0.close(&self.1);
@@ -124,7 +124,7 @@ async fn a_self_answering_viewer_s_answers_reach_the_program_in_order() {
     // The bridge's connection: raw frames, as it sends them.
     let (to_server, server_in) = tokio::sync::mpsc::channel::<String>(1024);
     let (server_out, mut from_server) = tokio::sync::mpsc::channel::<String>(1024);
-    tokio::spawn(vardoger_rpc::serve_connection(
+    tokio::spawn(commutator_rpc::serve_connection(
         core.rpc_service(),
         server_out,
         server_in,

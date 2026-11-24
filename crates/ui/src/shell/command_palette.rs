@@ -4,7 +4,7 @@
 use super::*;
 use crate::appearance::AppearanceMode;
 use crate::files::client::{FilesClientError, FilesRequestContext, WorkspaceFilesClient};
-use vardoger_proto::{
+use commutator_proto::{
     SearchWorkspaceContentRequest, SearchWorkspaceFilesRequest, WorkspaceContentMatch,
     WorkspaceEntryKind, WorkspaceFileSearchMatch, WorkspaceSearchIndexState, WorkspaceTarget,
 };
@@ -157,7 +157,7 @@ fn search_error_message(error: &FilesClientError, what: &str) -> SharedString {
             } else {
                 "files"
             };
-            format!("The session's device runs an older vardoger — update it to search its {subject}")
+            format!("The session's device runs an older commutator — update it to search its {subject}")
                 .into()
         }
         FilesClientError::Transport(_) => "The session's device is unreachable".into(),
@@ -1513,7 +1513,7 @@ mod tests {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
                     edge_url: "http://127.0.0.1:1".into(),
-                    default_harness: vardoger_proto::HarnessId::Mock,
+                    default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
             )
@@ -1521,7 +1521,7 @@ mod tests {
         (window, dir)
     }
 
-    fn chat(id: &str, parent: Option<&str>, archived: bool, age: i64) -> vardoger_proto::Chat {
+    fn chat(id: &str, parent: Option<&str>, archived: bool, age: i64) -> commutator_proto::Chat {
         serde_json::from_value(serde_json::json!({
             "id": id, "title": id, "deviceId": "local", "archived": archived,
             "parentChatId": parent,
@@ -1633,7 +1633,7 @@ mod tests {
             .collect()
     }
 
-    fn titled(id: &str, title: &str, archived: bool, age: i64) -> vardoger_proto::Chat {
+    fn titled(id: &str, title: &str, archived: bool, age: i64) -> commutator_proto::Chat {
         let mut chat = chat(id, None, archived, age);
         chat.title = Some(title.into());
         chat
@@ -1846,7 +1846,7 @@ mod tests {
         let (replies, inbound) = tokio::sync::mpsc::channel(64);
         let engine = {
             let _guard = runtime.enter();
-            crate::state::EngineHandle::from_test_client(vardoger_rpc::RpcClient::new(out, inbound))
+            crate::state::EngineHandle::from_test_client(commutator_rpc::RpcClient::new(out, inbound))
         };
         let (window, dir) = palette_window(cx);
         window
@@ -2639,7 +2639,7 @@ mod tests {
             .update(cx, |shell, _, cx| {
                 shell.settings.sidebar_organization = SidebarOrganization::InOneList;
                 shell.state.update(cx, |state, _| {
-                    state.connection = vardoger_proto::view::ConnectionStatus::Ready;
+                    state.connection = commutator_proto::view::ConnectionStatus::Ready;
                     state.workspace_scope = Some(WorkspaceScope::Local);
                     state.local_device_id = Some("local".into());
                     state.apply_chats(vec![
@@ -2825,9 +2825,9 @@ mod tests {
     fn search_matches_words_across_chat_metadata() {
         assert!(matches_query(
             "mac auth",
-            "Fix authentication Vardoger @ MacBook main"
+            "Fix authentication Commutator @ MacBook main"
         ));
         assert!(matches_query("  ", "Any chat"));
-        assert!(!matches_query("mac windows", "Vardoger @ MacBook"));
+        assert!(!matches_query("mac windows", "Commutator @ MacBook"));
     }
 }

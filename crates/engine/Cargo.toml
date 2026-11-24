@@ -1,32 +1,32 @@
 [package]
-name = "vardoger-engine"
+name = "commutator-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vardoger-launch.workspace = true
+commutator-launch.workspace = true
 # Host-side answers to terminal queries (terminals/replies.rs).
 alacritty_terminal.workspace = true
-vardoger-preview.workspace = true
-vardoger-proto.workspace = true
-vardoger-doc.workspace = true
-vardoger-sync.workspace = true
-vardoger-harness.workspace = true
+commutator-preview.workspace = true
+commutator-proto.workspace = true
+commutator-doc.workspace = true
+commutator-sync.workspace = true
+commutator-harness.workspace = true
 semver = "1"
-vardoger-rpc.workspace = true
-vardoger-account.workspace = true
-vardoger-update.workspace = true
-vardoger-notify.workspace = true
-vardoger-visual.workspace = true
+commutator-rpc.workspace = true
+commutator-account.workspace = true
+commutator-update.workspace = true
+commutator-notify.workspace = true
+commutator-visual.workspace = true
 loro.workspace = true
 tokio.workspace = true
 futures.workspace = true
-vardoger-term-link.workspace = true
+commutator-term-link.workspace = true
 async-trait.workspace = true
-# Agents' Vardoger MCP tools, served by the engine itself (`vardoger_mcp::http`).
-vardoger-mcp.workspace = true
+# Agents' Commutator MCP tools, served by the engine itself (`commutator_mcp::http`).
+commutator-mcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
@@ -54,7 +54,7 @@ fff-search.workspace = true
 same-file = "1"
 tempfile.workspace = true
 # `show_image` reads a shown image's size from its header (already in the
-# tree with these decoders via vardoger-ui).
+# tree with these decoders via commutator-ui).
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # `DeviceStats` (device_stats.rs): OS, CPU, memory and volumes from OS APIs.
 # Already in the tree (zed-scap, through the app); only its system and disk
@@ -71,7 +71,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
-vardoger-harness = { workspace = true, features = ["installer-fixture"] }
+commutator-harness = { workspace = true, features = ["installer-fixture"] }
 # Paused-clock tests (the 30-minute idle reaper).
 tokio = { workspace = true, features = ["test-util"] }
 zip.workspace = true
@@ -80,4 +80,4 @@ tokio-tungstenite.workspace = true
 tar = "0.4"
 flate2 = "1"
 # In-process registry server for the two-engine workspace integration tests.
-vardoger-sync = { workspace = true, features = ["mock-server"] }
+commutator-sync = { workspace = true, features = ["mock-server"] }

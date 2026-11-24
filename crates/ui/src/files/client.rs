@@ -4,14 +4,14 @@ use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tokio::sync::mpsc;
-use vardoger_proto::{
+use commutator_proto::{
     ListWorkspaceDirectoryRequest, ReadWorkspaceFileRequest, SearchWorkspaceContentRequest,
     SearchWorkspaceFilesRequest, WarmWorkspaceSearchRequest, WarmWorkspaceSearchResult,
     WatchWorkspaceFilesRequest, WorkspaceContentSearchResult, WorkspaceDirectoryPage,
     WorkspaceFileSearchMatch, WorkspaceFileText, WorkspaceTarget, WriteWorkspaceFileOutcome,
     WriteWorkspaceFileRequest,
 };
-use vardoger_rpc::{RpcError, methods};
+use commutator_rpc::{RpcError, methods};
 
 use crate::state::{AppState, EngineHandle};
 
@@ -227,7 +227,7 @@ impl WorkspaceFilesClient {
         checkout_id: String,
     ) -> Result<(String, Vec<u8>), FilesClientError> {
         use base64::Engine as _;
-        use vardoger_proto::{MAX_WORKSPACE_IMAGE_BYTES, WORKSPACE_IMAGE_CHUNK_BYTES};
+        use commutator_proto::{MAX_WORKSPACE_IMAGE_BYTES, WORKSPACE_IMAGE_CHUNK_BYTES};
         // Outside files carry no checkout identity — the device resolves
         // them by absolute path.
         if checkout_id.is_empty() && !path.starts_with('/') {
@@ -235,7 +235,7 @@ impl WorkspaceFilesClient {
                 "Workspace checkout identity unavailable".into(),
             ));
         }
-        let mut request = vardoger_proto::ReadWorkspaceImageRequest {
+        let mut request = commutator_proto::ReadWorkspaceImageRequest {
             target: self.context.target.clone(),
             path,
             expected_checkout_id: checkout_id,
@@ -246,7 +246,7 @@ impl WorkspaceFilesClient {
         let mut mime = None;
         let mut size = None;
         for _ in 0..=MAX_WORKSPACE_IMAGE_BYTES / WORKSPACE_IMAGE_CHUNK_BYTES {
-            let chunk: vardoger_proto::WorkspaceImageChunk =
+            let chunk: commutator_proto::WorkspaceImageChunk =
                 self.call(methods::READ_WORKSPACE_IMAGE, &request).await?;
             if chunk.checkout_id != request.expected_checkout_id
                 || chunk.content_hash.is_empty()
@@ -298,15 +298,15 @@ impl WorkspaceFilesClient {
 
     pub async fn move_entry(
         &self,
-        request: vardoger_proto::MoveWorkspaceEntryRequest,
-    ) -> Result<vardoger_proto::WorkspaceMutationOutcome, FilesClientError> {
+        request: commutator_proto::MoveWorkspaceEntryRequest,
+    ) -> Result<commutator_proto::WorkspaceMutationOutcome, FilesClientError> {
         self.call(methods::MOVE_WORKSPACE_ENTRY, &request).await
     }
 
     pub async fn delete_entry(
         &self,
-        request: vardoger_proto::DeleteWorkspaceEntryRequest,
-    ) -> Result<vardoger_proto::WorkspaceMutationOutcome, FilesClientError> {
+        request: commutator_proto::DeleteWorkspaceEntryRequest,
+    ) -> Result<commutator_proto::WorkspaceMutationOutcome, FilesClientError> {
         self.call(methods::DELETE_WORKSPACE_ENTRY, &request).await
     }
 
@@ -426,14 +426,14 @@ mod tests {
             },
         );
         let result = client
-            .move_entry(vardoger_proto::MoveWorkspaceEntryRequest {
+            .move_entry(commutator_proto::MoveWorkspaceEntryRequest {
                 target: target(),
                 operation_id: "op".into(),
                 expected_checkout_id: "checkout".into(),
                 source_path: "a".into(),
                 destination_path: "folder/a".into(),
                 expected_source_revision: "rev".into(),
-                expected_kind: vardoger_proto::WorkspaceEntryKind::File,
+                expected_kind: commutator_proto::WorkspaceEntryKind::File,
             })
             .await;
         assert!(result.is_err());
@@ -749,8 +749,8 @@ mod tests {
                 path: "src/lib.rs".into(),
                 text: "fn main() {}".into(),
                 expected_content_hash: "hash".into(),
-                encoding: vardoger_proto::WorkspaceWritableEncoding::Utf8,
-                line_ending: vardoger_proto::WorkspaceWritableLineEnding::Lf,
+                encoding: commutator_proto::WorkspaceWritableEncoding::Utf8,
+                line_ending: commutator_proto::WorkspaceWritableLineEnding::Lf,
             })
             .await
             .unwrap();
@@ -799,8 +799,8 @@ mod tests {
                 path: "src/lib.rs".into(),
                 text: "changed".into(),
                 expected_content_hash: "hash".into(),
-                encoding: vardoger_proto::WorkspaceWritableEncoding::Utf8,
-                line_ending: vardoger_proto::WorkspaceWritableLineEnding::Lf,
+                encoding: commutator_proto::WorkspaceWritableEncoding::Utf8,
+                line_ending: commutator_proto::WorkspaceWritableLineEnding::Lf,
             })
             .await
             .unwrap();
@@ -857,7 +857,7 @@ mod tests {
     }
     fn image_chunk(data: &[u8], end: usize, done: bool) -> Value {
         use base64::Engine as _;
-        serde_json::to_value(vardoger_proto::WorkspaceImageChunk {
+        serde_json::to_value(commutator_proto::WorkspaceImageChunk {
             checkout_id: "checkout".into(),
             content_hash: "hash".into(),
             mime_type: "image/png".into(),
@@ -927,7 +927,7 @@ mod tests {
     }
     #[tokio::test]
     async fn image_reads_reject_malformed_repeated_and_oversized_chunks() {
-        use vardoger_proto::{MAX_WORKSPACE_IMAGE_BYTES, WORKSPACE_IMAGE_CHUNK_BYTES};
+        use commutator_proto::{MAX_WORKSPACE_IMAGE_BYTES, WORKSPACE_IMAGE_CHUNK_BYTES};
         let cases = [
             ("data", serde_json::json!("%%%")),
             (

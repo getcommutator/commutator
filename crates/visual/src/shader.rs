@@ -1,13 +1,13 @@
 //! `ui.shader`: a fragment shader the desktop runs on the GPU, in the
 //! convention agents already know from Shadertoy. The script supplies
-//! `void mainImage(out vec4 fragColor, in vec2 fragCoord)`; Vardoger wraps it in
+//! `void mainImage(out vec4 fragColor, in vec2 fragCoord)`; Commutator wraps it in
 //! a complete GLSL program with the usual inputs and validates it here, so a
 //! compile error reaches the agent (with its line) before the reader sees it.
 //!
 //! Inputs, as in Shadertoy: `iResolution` (vec3, pixels), `iTime` and
 //! `iTimeDelta` (seconds), `iFrame` (int), `iMouse` (vec4: xy while the
 //! button is down, zw where it went down, negative z/w once released;
-//! origin bottom-left). Vardoger adds `iCamera` (vec4: yaw, pitch, zoom, 0),
+//! origin bottom-left). Commutator adds `iCamera` (vec4: yaw, pitch, zoom, 0),
 //! which the reader orbits by dragging when `orbit = true`, and named number
 //! inputs the script binds to its state (`inputs = { speed = s.speed }`
 //! makes `speed` a float in the shader).
@@ -94,44 +94,44 @@ impl ShaderUniforms {
 pub fn program(code: &str, inputs: &[String]) -> (String, usize) {
     let mut header = String::from(
         "#version 450\n\
-         layout(set = 0, binding = 0) uniform VardogerShader {\n\
-         \x20   vec4 vardoger_resolution;\n\
+         layout(set = 0, binding = 0) uniform CommutatorShader {\n\
+         \x20   vec4 commutator_resolution;\n\
          \x20   vec4 iMouse;\n\
          \x20   vec4 iCamera;\n\
-         \x20   vec4 vardoger_time;\n\
-         \x20   vec4 vardoger_inputs[4];\n\
+         \x20   vec4 commutator_time;\n\
+         \x20   vec4 commutator_inputs[4];\n\
          \x20   vec4 iChannelResolution[4];\n\
          };\n\
-         layout(set = 0, binding = 1) uniform texture2D vardoger_channel0;\n\
-         layout(set = 0, binding = 2) uniform texture2D vardoger_channel1;\n\
-         layout(set = 0, binding = 3) uniform texture2D vardoger_channel2;\n\
-         layout(set = 0, binding = 4) uniform texture2D vardoger_channel3;\n\
-         layout(set = 0, binding = 5) uniform texture2D vardoger_noise;\n\
-         layout(set = 0, binding = 6) uniform sampler vardoger_clamp;\n\
-         layout(set = 0, binding = 7) uniform sampler vardoger_repeat;\n\
-         layout(set = 0, binding = 8) uniform texture2D vardoger_texture0;\n\
-         layout(set = 0, binding = 9) uniform texture2D vardoger_texture1;\n\
-         layout(set = 0, binding = 10) uniform texture2D vardoger_texture2;\n\
-         layout(set = 0, binding = 11) uniform texture2D vardoger_texture3;\n\
-         layout(location = 0) out vec4 vardoger_color;\n\
-         #define iChannel0 sampler2D(vardoger_channel0, vardoger_clamp)\n\
-         #define iChannel1 sampler2D(vardoger_channel1, vardoger_clamp)\n\
-         #define iChannel2 sampler2D(vardoger_channel2, vardoger_clamp)\n\
-         #define iChannel3 sampler2D(vardoger_channel3, vardoger_clamp)\n\
-         #define iNoise sampler2D(vardoger_noise, vardoger_repeat)\n\
-         #define iTexture0 sampler2D(vardoger_texture0, vardoger_repeat)\n\
-         #define iTexture1 sampler2D(vardoger_texture1, vardoger_repeat)\n\
-         #define iTexture2 sampler2D(vardoger_texture2, vardoger_repeat)\n\
-         #define iTexture3 sampler2D(vardoger_texture3, vardoger_repeat)\n\
-         #define iResolution (vardoger_resolution.xyz)\n\
-         #define iTime (vardoger_time.x)\n\
-         #define iTimeDelta (vardoger_time.y)\n\
-         #define iFrame (int(vardoger_time.z))\n",
+         layout(set = 0, binding = 1) uniform texture2D commutator_channel0;\n\
+         layout(set = 0, binding = 2) uniform texture2D commutator_channel1;\n\
+         layout(set = 0, binding = 3) uniform texture2D commutator_channel2;\n\
+         layout(set = 0, binding = 4) uniform texture2D commutator_channel3;\n\
+         layout(set = 0, binding = 5) uniform texture2D commutator_noise;\n\
+         layout(set = 0, binding = 6) uniform sampler commutator_clamp;\n\
+         layout(set = 0, binding = 7) uniform sampler commutator_repeat;\n\
+         layout(set = 0, binding = 8) uniform texture2D commutator_texture0;\n\
+         layout(set = 0, binding = 9) uniform texture2D commutator_texture1;\n\
+         layout(set = 0, binding = 10) uniform texture2D commutator_texture2;\n\
+         layout(set = 0, binding = 11) uniform texture2D commutator_texture3;\n\
+         layout(location = 0) out vec4 commutator_color;\n\
+         #define iChannel0 sampler2D(commutator_channel0, commutator_clamp)\n\
+         #define iChannel1 sampler2D(commutator_channel1, commutator_clamp)\n\
+         #define iChannel2 sampler2D(commutator_channel2, commutator_clamp)\n\
+         #define iChannel3 sampler2D(commutator_channel3, commutator_clamp)\n\
+         #define iNoise sampler2D(commutator_noise, commutator_repeat)\n\
+         #define iTexture0 sampler2D(commutator_texture0, commutator_repeat)\n\
+         #define iTexture1 sampler2D(commutator_texture1, commutator_repeat)\n\
+         #define iTexture2 sampler2D(commutator_texture2, commutator_repeat)\n\
+         #define iTexture3 sampler2D(commutator_texture3, commutator_repeat)\n\
+         #define iResolution (commutator_resolution.xyz)\n\
+         #define iTime (commutator_time.x)\n\
+         #define iTimeDelta (commutator_time.y)\n\
+         #define iFrame (int(commutator_time.z))\n",
     );
     for (i, name) in inputs.iter().enumerate().take(MAX_INPUTS) {
         let lane = ["x", "y", "z", "w"][i % 4];
         header.push_str(&format!(
-            "#define {name} (vardoger_inputs[{}].{lane})\n",
+            "#define {name} (commutator_inputs[{}].{lane})\n",
             i / 4
         ));
     }
@@ -154,7 +154,7 @@ pub fn program(code: &str, inputs: &[String]) -> (String, usize) {
          void main() {{\n\
          \x20   vec4 color = vec4(0.0, 0.0, 0.0, 1.0);\n\
          \x20   mainImage(color, gl_FragCoord.xy);\n\
-         \x20   vardoger_color = color;\n\
+         \x20   commutator_color = color;\n\
          }}\n"
     );
     (program, lines)
@@ -170,7 +170,7 @@ pub fn valid_input_name(name: &str) -> bool {
     starts
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
         && !name.starts_with("gl_")
-        && !name.starts_with("vardoger_")
+        && !name.starts_with("commutator_")
         && !matches!(
             name,
             "iResolution"
@@ -284,6 +284,6 @@ mod tests {
         assert!(!valid_input_name("2k"));
         assert!(!valid_input_name("iTime"));
         assert!(!valid_input_name("gl_Position"));
-        assert!(!valid_input_name("vardoger_x"));
+        assert!(!valid_input_name("commutator_x"));
     }
 }

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use vardoger_proto::BackgroundTask;
+use commutator_proto::BackgroundTask;
 
 use super::wire::{Frame, MessageFrame, SystemFrame};
 
@@ -32,7 +32,7 @@ const MAX_COMMANDS: usize = 256;
 /// The roster's background agents (`task_type: "local_agent"`), oldest
 /// first: each reports back when it ends, waking the agent. Other kinds the
 /// CLI may add aren't assumed to.
-pub(super) fn agents(tasks: Option<&[Value]>) -> Vec<vardoger_proto::WaitingOn> {
+pub(super) fn agents(tasks: Option<&[Value]>) -> Vec<commutator_proto::WaitingOn> {
     tasks
         .into_iter()
         .flatten()
@@ -45,9 +45,9 @@ pub(super) fn agents(tasks: Option<&[Value]>) -> Vec<vardoger_proto::WaitingOn> 
                 .map(str::trim)
                 .filter(|d| !d.is_empty())
                 .unwrap_or("Background agent");
-            Some(vardoger_proto::WaitingOn {
+            Some(commutator_proto::WaitingOn {
                 id: id.to_owned(),
-                kind: vardoger_proto::WaitingKind::Agent,
+                kind: commutator_proto::WaitingKind::Agent,
                 label: label.to_owned(),
             })
         })

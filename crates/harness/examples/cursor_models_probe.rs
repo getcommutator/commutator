@@ -1,5 +1,5 @@
 //! Live probe: real cursor model discovery through the harness path.
-use vardoger_harness::{CursorHarness, Harness};
+use commutator_harness::{CursorHarness, Harness};
 
 #[tokio::main]
 async fn main() {

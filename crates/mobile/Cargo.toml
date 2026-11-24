@@ -1,5 +1,5 @@
 [package]
-name = "vardoger-mobile"
+name = "commutator-mobile"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ publish.workspace = true
 # link. Platform code paints, scrolls and handles gestures; everything that
 # decides *what* to paint and *where* lives here.
 [lib]
-name = "vardoger_mobile"
+name = "commutator_mobile"
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
@@ -17,18 +17,18 @@ tokio.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 uniffi = "0.32"
-vardoger-markdown.workspace = true
-vardoger-text.workspace = true
-vardoger-visual.workspace = true
-vardoger-visual-gpu.workspace = true
-vardoger-doc.workspace = true
-vardoger-proto.workspace = true
-vardoger-client.workspace = true
-vardoger-account.workspace = true
+commutator-markdown.workspace = true
+commutator-text.workspace = true
+commutator-visual.workspace = true
+commutator-visual-gpu.workspace = true
+commutator-doc.workspace = true
+commutator-proto.workspace = true
+commutator-client.workspace = true
+commutator-account.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true
-vardoger-syntax.workspace = true
+commutator-syntax.workspace = true
 zatex = { workspace = true, features = ["bundled"] }
 thiserror.workspace = true
-vardoger-term.workspace = true
+commutator-term.workspace = true

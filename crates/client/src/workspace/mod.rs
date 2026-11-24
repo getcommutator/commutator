@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use vardoger_doc::{RegistryDoc, WorkspaceState};
-use vardoger_proto::{CheckoutChangeRequestStatus, SidebarPreferences};
+use commutator_doc::{RegistryDoc, WorkspaceState};
+use commutator_proto::{CheckoutChangeRequestStatus, SidebarPreferences};
 
 pub(crate) use view::{DeriveContext, device_online};
 pub use view::{
@@ -86,7 +86,7 @@ impl WorkspaceStore {
         (state, prefs)
     }
 
-    pub(crate) fn chat(&self, chat_id: &str) -> Option<vardoger_proto::Chat> {
+    pub(crate) fn chat(&self, chat_id: &str) -> Option<commutator_proto::Chat> {
         self.state()
             .0
             .chats

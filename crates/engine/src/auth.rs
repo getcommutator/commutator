@@ -1,5 +1,5 @@
-//! Who this machine is signed in as: its sign-in to a Vardoger server
-//! ([`crate::account`]), read when the engine starts. `vardoger login` or
+//! Who this machine is signed in as: its sign-in to a Commutator server
+//! ([`crate::account`]), read when the engine starts. `commutator login` or
 //! the app ([`Auth::sign_in`]) signs in; signing out here ([`Auth::sign_out`])
 //! removes this machine on the server too. Signed out, the engine works on
 //! its own as always.
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
-use vardoger_rpc::TokenError;
+use commutator_rpc::TokenError;
 
 use crate::account::Account;
 
@@ -21,7 +21,7 @@ pub struct AuthUser {
     pub name: Option<String>,
 }
 
-/// AuthStatus stream payload, in the [`vardoger_proto::AuthState`] wire shape.
+/// AuthStatus stream payload, in the [`commutator_proto::AuthState`] wire shape.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthState {
     SignedOut,
@@ -40,11 +40,11 @@ impl AuthState {
         }
     }
 
-    pub fn to_proto(&self) -> vardoger_proto::AuthState {
+    pub fn to_proto(&self) -> commutator_proto::AuthState {
         match self {
-            AuthState::SignedOut => vardoger_proto::AuthState::SignedOut,
-            AuthState::SignedIn { user } => vardoger_proto::AuthState::SignedIn {
-                user: vardoger_proto::UserProfile {
+            AuthState::SignedOut => commutator_proto::AuthState::SignedOut,
+            AuthState::SignedIn { user } => commutator_proto::AuthState::SignedIn {
+                user: commutator_proto::UserProfile {
                     id: user.id.clone(),
                     email: user.email.clone(),
                     name: user.name.clone(),
@@ -125,7 +125,7 @@ impl Auth {
         self.account().map(|account| account.email)
     }
 
-    /// Start signing in to `server` (else `VARDOGER_SERVER_URL`, else the
+    /// Start signing in to `server` (else `COMMUTATOR_SERVER_URL`, else the
     /// server signed in to before) and return the page to open. The browser
     /// comes back to a loopback listener here; the account is then saved and
     /// the state moves to signed in. The relay picks it up at the next start.
@@ -133,7 +133,7 @@ impl Auth {
         let data_dir = self.inner.data_dir.clone();
         let Some(server) = crate::account::server_url(server, self.account().as_ref()) else {
             anyhow::bail!(
-                "no Vardoger server to sign in to: set VARDOGER_SERVER_URL or run `vardoger login <server>` once"
+                "no Commutator server to sign in to: set COMMUTATOR_SERVER_URL or run `commutator login <server>` once"
             );
         };
         let device_id = crate::device_id(&data_dir)?;
@@ -197,7 +197,7 @@ impl Auth {
 
 /// The server's bearer for this machine: what its relay dials with.
 #[async_trait::async_trait]
-impl vardoger_rpc::TokenSource for Auth {
+impl commutator_rpc::TokenSource for Auth {
     async fn token(&self) -> Result<String, TokenError> {
         self.account()
             .map(|account| account.token)
@@ -288,9 +288,9 @@ mod tests {
     #[tokio::test]
     async fn signing_in_needs_a_server() {
         // SAFETY: no other test in this binary reads it.
-        unsafe { std::env::remove_var("VARDOGER_SERVER_URL") };
+        unsafe { std::env::remove_var("COMMUTATOR_SERVER_URL") };
         let dir = tempfile::tempdir().unwrap();
         let error = Auth::new(dir.path()).sign_in(None).await.unwrap_err();
-        assert!(format!("{error}").contains("VARDOGER_SERVER_URL"), "{error}");
+        assert!(format!("{error}").contains("COMMUTATOR_SERVER_URL"), "{error}");
     }
 }
