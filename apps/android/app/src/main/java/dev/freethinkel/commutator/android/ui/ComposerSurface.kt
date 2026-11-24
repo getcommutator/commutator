@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -153,6 +154,7 @@ class MenuAction(
     val destructive: Boolean = false,
     /** A toggle's state (a trailing check), or null for a plain action. */
     val checked: Boolean? = null,
+    val enabled: Boolean = true,
     val onClick: () -> Unit,
 )
 
@@ -172,8 +174,10 @@ fun GroupedActionMenu(expanded: Boolean, onDismiss: () -> Unit, groups: List<Lis
             DropdownMenuGroup(shapes = MenuDefaults.groupShape(g, shown.size)) {
                 if (g == 0 && header != null) MenuDefaults.Label { Text(header, style = MaterialTheme.typography.labelMedium, maxLines = 2) }
                 actions.forEachIndexed { i, a ->
-                    val tint = if (a.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    val tint = (if (a.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                        .let { if (a.enabled) it else it.copy(alpha = 0.38f) }
                     DropdownMenuItem(
+                        enabled = a.enabled,
                         onClick = {
                             onDismiss()
                             a.onClick()

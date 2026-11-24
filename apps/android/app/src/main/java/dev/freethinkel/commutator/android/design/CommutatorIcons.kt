@@ -96,6 +96,10 @@ object ZIcons {
     val GitHub = R.drawable.zi_github
     val Commutator = R.drawable.zi_commutator
     val Menu = R.drawable.zi_menu
+    val Question = R.drawable.zi_question
+    val Alarm = R.drawable.zi_alarm
+    val RowsCompress = R.drawable.zi_rows_compress
+    val RowsExpand = R.drawable.zi_rows_expand
 }
 
 @Composable

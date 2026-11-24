@@ -127,12 +127,12 @@ fun warningColor(): Color = if (LocalDarkTheme.current) Color(0xFFFACC15) else C
 @Composable
 fun StatusLabel(row: SessionRow) {
     @Composable
-    fun label(text: String, color: Color, dot: Boolean) {
+    fun label(text: String, color: Color, dot: Boolean, icon: Int = dev.freethinkel.commutator.android.design.ZIcons.Check) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (dot) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(color))
             } else {
-                dev.freethinkel.commutator.android.design.ZIcon(dev.freethinkel.commutator.android.design.ZIcons.Check, null, Modifier.size(15.dp), tint = color)
+                dev.freethinkel.commutator.android.design.ZIcon(icon, null, Modifier.size(15.dp), tint = color)
             }
             Spacer(Modifier.width(5.dp))
             Text(text, style = MaterialTheme.typography.labelLarge, color = color)
@@ -144,9 +144,9 @@ fun StatusLabel(row: SessionRow) {
     when (row.indicator) {
         // (Waiting on background work is drawn as Working, as on desktop and iOS.)
         ChatIndicator.WORKING, ChatIndicator.WAITING -> LoadingIndicator(Modifier.size(26.dp))
-        ChatIndicator.AWAITING_INPUT -> label("Input", MaterialTheme.colorScheme.primary, dot = true)
+        ChatIndicator.AWAITING_INPUT -> label("Input", MaterialTheme.colorScheme.error, dot = false, icon = dev.freethinkel.commutator.android.design.ZIcons.Question)
         ChatIndicator.ERRORED -> label("Failed", MaterialTheme.colorScheme.error, dot = true)
-        ChatIndicator.COMPLETED, ChatIndicator.IDLE -> if (row.indicator == ChatIndicator.COMPLETED && row.unseen) label("Done", successColor(), dot = false) else Row(verticalAlignment = Alignment.CenterVertically) {
+        ChatIndicator.COMPLETED, ChatIndicator.IDLE -> if (row.wokeAtMs != null) label("Woke", MaterialTheme.colorScheme.onSurfaceVariant, dot = false, icon = dev.freethinkel.commutator.android.design.ZIcons.Alarm) else if (row.indicator == ChatIndicator.COMPLETED && row.unseen) label("Done", successColor(), dot = false) else Row(verticalAlignment = Alignment.CenterVertically) {
             if (row.unseen) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
                 Spacer(Modifier.width(5.dp))
