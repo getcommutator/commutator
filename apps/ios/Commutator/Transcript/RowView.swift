@@ -124,6 +124,80 @@ final class RowView: UIView {
         addSubview(fresh)
         fresh.isHidden = true
         clipsToBounds = false
+        highlights[0].fillColor = Self.highlightColor
+        layer.addSublayer(highlights[0])
+    }
+
+    // MARK: Selection
+
+    /// Selection tint: over the text (a bubble's fill is painted on the canvas).
+    private static let highlightColor = Palette.accent.withAlphaComponent(0.28).cgColor
+    /// Index 0 paints over the canvas; n over scroller n-1's content.
+    private var highlights = [CAShapeLayer()]
+    private var selected: (range: Range<Int>, model: RowModel)?
+
+    /// Paint `range` of the row text as selected (nil clears).
+    func setSelection(_ range: Range<Int>?) {
+        guard let model, let range, !range.isEmpty else {
+            if selected != nil { highlights.forEach { $0.path = nil } }
+            selected = nil
+            return
+        }
+        if let s = selected, s.range == range, s.model === model { return }
+        selected = (range, model)
+        let paths = highlights.map { _ in CGMutablePath() }
+        for i in model.textOrder {
+            let r = model.display.runs[i]
+            let lo = max(range.lowerBound, Int(r.start)), hi = min(range.upperBound, Int(r.start + r.len))
+            guard lo < hi else { continue }
+            let box = model.runBox(i)
+            let x0 = model.runX(i, lo), x1 = model.runX(i, hi)
+            let layer = r.scroller.map { Int($0) + 1 } ?? 0
+            if layer < paths.count { paths[layer].addRect(CGRect(x: x0, y: box.minY, width: x1 - x0, height: box.height)) }
+        }
+        for (layer, path) in zip(highlights, paths) { layer.path = path }
+    }
+
+    /// Row point → the coordinates runs of `scroller` are placed in.
+    private func layerPoint(_ p: CGPoint, _ scroller: UInt32?) -> CGPoint {
+        guard let s = scroller, Int(s) < scrollers.count else { return p }
+        let sv = scrollers[Int(s)]
+        return CGPoint(x: p.x - sv.frame.minX + sv.contentOffset.x, y: p.y - sv.frame.minY)
+    }
+
+    private func rowRect(_ r: CGRect, _ scroller: UInt32?) -> CGRect {
+        guard let s = scroller, Int(s) < scrollers.count else { return r }
+        let sv = scrollers[Int(s)]
+        return r.offsetBy(dx: sv.frame.minX - sv.contentOffset.x, dy: sv.frame.minY)
+    }
+
+    /// The text offset nearest `point` (row coordinates) and how far it is.
+    func textOffset(at point: CGPoint) -> (offset: Int, distance: CGFloat)? {
+        guard let model else { return nil }
+        var best: (offset: Int, dy: CGFloat, dx: CGFloat)?
+        for i in model.textOrder {
+            let p = layerPoint(point, model.display.runs[i].scroller)
+            let box = model.runBox(i)
+            let dy = max(0, box.minY - p.y, p.y - box.maxY)
+            let dx = max(0, box.minX - p.x, p.x - box.maxX)
+            if let b = best, (b.dy, b.dx) <= (dy, dx) { continue }
+            best = (model.runOffset(i, x: p.x), dy, dx)
+        }
+        return best.map { ($0.offset, hypot($0.dx, $0.dy)) }
+    }
+
+    /// Caret at `offset` in row coordinates: on the run it starts (or, for
+    /// the selection's end, the run it ends).
+    func caret(at offset: Int, end: Bool) -> CGRect? {
+        guard let model else { return nil }
+        let runs = model.display.runs
+        let order = model.textOrder
+        let pick = end
+            ? order.last { Int(runs[$0].start) < offset } ?? order.first
+            : order.first { Int(runs[$0].start + runs[$0].len) > offset } ?? order.last
+        guard let i = pick else { return nil }
+        let box = model.runBox(i)
+        return rowRect(CGRect(x: model.runX(i, offset), y: box.minY, width: 0, height: box.height), runs[i].scroller)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -189,9 +263,14 @@ final class RowView: UIView {
             s.clipsToBounds = true
             let c = RowCanvas()
             s.addSubview(c)
+            let h = CAShapeLayer()
+            h.fillColor = Self.highlightColor
+            s.layer.addSublayer(h)
+            highlights.append(h)
             addSubview(s)
             scrollers.append(s)
         }
+        setSelection(nil)
         for (i, s) in scrollers.enumerated() {
             guard i < d.scrollers.count else {
                 s.isHidden = true

@@ -58,6 +58,16 @@ class TranscriptState {
     private var width = 0f
     private var scale = 0f
 
+    // ── Text selection (see Selection.kt) ─────────────────────────────────
+    data class TextPoint(val key: ULong, val offset: Int)
+    var selAnchor by mutableStateOf<TextPoint?>(null)
+    var selFocus by mutableStateOf<TextPoint?>(null)
+    /** The long-pressed word, while that press extends the selection. */
+    internal var pressWord by mutableStateOf<Pair<TextPoint, TextPoint>?>(null)
+    internal var draggingHandle by mutableStateOf(false)
+    /** Code blocks' horizontal scroll, by row key and scroller. */
+    internal val scrolls = HashMap<Pair<ULong, Int>, androidx.compose.foundation.ScrollState>()
+
     /** Attachment upload progress (rings on `pending://` thumbnails). */
     var uploadProgress by mutableStateOf<Double?>(null)
 
