@@ -14,6 +14,7 @@ final class Toast: UIView {
         current?.dismiss(animated: false)
         let toast = Toast(text: text, action: action, handler: handler)
         toast.translatesAutoresizingMaskIntoConstraints = false
+        toast.wrapText(within: window.bounds.width - 48)
         window.addSubview(toast)
         // Sit just above the bottom chrome actually on screen (the "New
         // session" accessory or the tab bar — expanded or minimized), not at a
@@ -47,11 +48,21 @@ final class Toast: UIView {
         return top
     }
 
+    private let label = UILabel()
+    private var button: UIButton?
+
+    /// A two-line label with no width of its own wraps at whatever width the
+    /// first layout pass happens to give it ("Archive" / "d"): give it the
+    /// widest line the toast can hold next to its button.
+    private func wrapText(within toastWidth: CGFloat) {
+        let beside = button.map { 14 + $0.intrinsicContentSize.width } ?? 0
+        label.preferredMaxLayoutWidth = toastWidth - 20 - (button == nil ? 20 : 10) - beside
+    }
+
     private init(text: String, action: String?, handler: (() -> Void)?) {
         super.init(frame: .zero)
         glass.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glass)
-        let label = UILabel()
         label.text = text
         label.font = Fonts.ui(.sansMedium, 15)
         label.textColor = Palette.text
@@ -80,6 +91,7 @@ final class Toast: UIView {
             b.setContentHuggingPriority(.required, for: .horizontal)
             b.setContentCompressionResistancePriority(.required, for: .horizontal)
             stack.addArrangedSubview(b)
+            button = b
         }
         stack.translatesAutoresizingMaskIntoConstraints = false
         glass.contentView.addSubview(stack)
