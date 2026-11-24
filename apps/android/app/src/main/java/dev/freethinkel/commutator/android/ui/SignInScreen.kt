@@ -3,7 +3,6 @@ package dev.freethinkel.commutator.android.ui
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -35,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,11 +52,9 @@ fun SignInScreen(model: AppModel) {
         verticalArrangement = Arrangement.Center,
     ) {
         Image(
-            painterResource(R.drawable.ic_launcher_foreground),
+            painterResource(R.drawable.ic_launcher_pcb),
             null,
-            Modifier.size(148.dp)
-                .clip(MaterialShapes.Cookie12Sided.toShape())
-                .background(colorResource(R.color.icon_background)),
+            Modifier.size(148.dp).clip(MaterialShapes.Cookie12Sided.toShape()),
         )
         Spacer(Modifier.height(32.dp))
         Text("Commutator", style = MaterialTheme.typography.displayMedium)

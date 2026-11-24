@@ -391,7 +391,7 @@ fn offer_given(
 
 /// The GitHub repository releases come from, unless `COMMUTATOR_RELEASES_REPO`
 /// names another (`owner/name`).
-pub const REPOSITORY: &str = "getvardoger/commutator";
+pub const REPOSITORY: &str = "getcommutator/commutator";
 const GITHUB_API: &str = "https://api.github.com";
 
 /// The newest release on the channel this install follows
@@ -681,11 +681,11 @@ fn validate_release_override(value: &str) -> anyhow::Result<String> {
 /// The project's GitHub releases page — the advisory update strip opens this
 /// for unmanaged installs (source builds, hand-copied binaries), where no
 /// updater flow exists to drive.
-pub const RELEASES_PAGE: &str = "https://github.com/getvardoger/commutator/releases";
+pub const RELEASES_PAGE: &str = "https://github.com/getcommutator/commutator/releases";
 
 /// The newest release's page — the download destination offered when this
 /// installation cannot replace itself.
-pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getvardoger/commutator/releases/latest";
+pub const LATEST_RELEASE_PAGE: &str = "https://github.com/getcommutator/commutator/releases/latest";
 
 
 // ---------------------------------------------------------------------------
