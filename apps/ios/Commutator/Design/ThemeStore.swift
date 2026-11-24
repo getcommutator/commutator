@@ -11,6 +11,18 @@ enum ThemeStore {
     static var lightId: String { UserDefaults.standard.string(forKey: "theme.light") ?? defaultLight }
     static var darkId: String { UserDefaults.standard.string(forKey: "theme.dark") ?? defaultDark }
 
+    /// The built-in families (desktop order), for the pickers.
+    static let families: [ThemeFamilyInfo] = themeFamilies()
+
+    /// The family a variant belongs to ("Dracula", "Commutator"), if it's built in.
+    static func family(of variantId: String) -> ThemeFamilyInfo? {
+        families.first { $0.variants.contains { $0.id == variantId } }
+    }
+
+    static func variant(_ id: String) -> ThemeVariantInfo? {
+        families.lazy.flatMap(\.variants).first { $0.id == id }
+    }
+
     private static let lock = NSLock()
     private static var palettes: (light: PhonePalette, dark: PhonePalette)?
     /// A role's index in `PhonePalette.roles`.

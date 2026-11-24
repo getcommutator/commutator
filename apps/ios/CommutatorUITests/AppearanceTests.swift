@@ -47,8 +47,33 @@ final class AppearanceTests: XCTestCase {
         XCTAssertGreaterThan(backgroundHits(app, dracula), 10, "the background is Dracula's")
     }
 
-    func testDefaultIsCommutator() {
+    func testPickDarkTheme() {
         let app = launch()
+        let settings = app.tabBars.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 15))
+        settings.tap()
+        let appearance = app.cells["settings-appearance"]
+        XCTAssertTrue(appearance.waitForExistence(timeout: 5))
+        appearance.tap()
+        app.cells["settings-theme:dark"].tap()
+        let dracula = app.cells["settings-variant:dracula"]
+        XCTAssertTrue(dracula.waitForExistence(timeout: 5))
+        dracula.tap()
+        // Repainted in place, no relaunch.
+        XCTAssertGreaterThan(backgroundHits(app, self.dracula), 10, "the background turned Dracula's")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(appearance.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Dracula'")).firstMatch.waitForExistence(timeout: 5))
+
+        // Back to Commutator, so other tests start from the default.
+        appearance.tap()
+        app.cells["settings-theme:dark"].tap()
+        app.cells["settings-variant:commutator-dark"].tap()
+        XCTAssertGreaterThan(backgroundHits(app, commutatorDark), 10, "back to Commutator Dark")
+    }
+
+    func testDefaultIsCommutator() {
+        let app = launch(["-theme.dark", "commutator-dark"])
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
         XCTAssertGreaterThan(backgroundHits(app, commutatorDark), 10, "the background is Commutator Dark's")
     }
