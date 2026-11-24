@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialShapes
@@ -29,8 +28,6 @@ import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.ToggleButton
-import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,12 +38,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.freethinkel.commutator.android.core.AppModel
-import dev.freethinkel.commutator.android.design.ThemeMode
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
 import uniffi.commutator_core.coreVersion
@@ -57,6 +50,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     model: AppModel,
     onArchived: () -> Unit,
+    onAppearance: () -> Unit = {},
     onBack: (() -> Unit)? = null,
 ) {
     val appearance by model.appearance.collectAsState()
@@ -115,50 +109,18 @@ fun SettingsScreen(
                 ) { Text(host.name) }
             }
         }
-        section("Appearance")
+        section("Display")
         item {
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
-                Surface(shape = segmentedShapes(0, 2).shape, color = cardColor()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Theme", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
-                            val modes = listOf(
-                                Triple(ThemeMode.System, "System", ZIcons.Monitor),
-                                Triple(ThemeMode.Light, "Light", ZIcons.Sun),
-                                Triple(ThemeMode.Dark, "Dark", ZIcons.Moon),
-                            )
-                            modes.forEachIndexed { index, (mode, label, icon) ->
-                                ToggleButton(
-                                    checked = appearance.mode == mode,
-                                    onCheckedChange = { model.setAppearance(appearance.copy(mode = mode)) },
-                                    modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
-                                    shapes = when (index) {
-                                        0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-                                        modes.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
-                                        else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-                                    },
-                                ) {
-                                    ZIcon(icon, null, Modifier.size(ToggleButtonDefaults.IconSize))
-                                    Spacer(Modifier.size(ToggleButtonDefaults.IconSpacing))
-                                    Text(label)
-                                }
-                            }
-                        }
-                    }
-                }
-                SegmentedListItem(
-                    onClick = { model.setAppearance(appearance.copy(dynamicColor = !appearance.dynamicColor)) },
-                    shapes = segmentedShapes(1, 2),
-                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                    leadingContent = { IconTile(ZIcons.Magic) },
-                    supportingContent = { Text("Tint Commutator with your wallpaper's palette") },
-                    trailingContent = { Switch(appearance.dynamicColor, { model.setAppearance(appearance.copy(dynamicColor = it)) }) },
-                ) { Text("Wallpaper colors") }
-            }
+            SegmentedListItem(
+                onClick = onAppearance,
+                shapes = segmentedShapes(0, 1),
+                colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                leadingContent = { IconTile(ZIcons.Magic) },
+                supportingContent = { Text(appearanceSummary(appearance, dev.freethinkel.commutator.android.design.LocalDarkTheme.current)) },
+                trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) { Text("Appearance") }
         }
-        section("Wallpaper")
-        item { WallpaperSettings(model) }
         section("Sessions")
         item {
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
@@ -257,7 +219,7 @@ fun SettingsScreen(
     }
 }
 
-private fun LazyListScope.section(title: String) {
+internal fun LazyListScope.section(title: String) {
     item {
         Text(
             title,
@@ -282,7 +244,7 @@ fun IconTile(
 
 /** Wallpaper: shown behind new sessions and the sessions list (iOS parity). */
 @Composable
-private fun WallpaperSettings(model: AppModel) {
+internal fun WallpaperSettings(model: AppModel) {
     val store = model.wallpaper
     val state by store.state.collectAsState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
