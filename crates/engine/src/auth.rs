@@ -19,6 +19,8 @@ pub struct AuthUser {
     pub email: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
 }
 
 /// AuthStatus stream payload, in the [`commutator_proto::AuthState`] wire shape.
@@ -48,6 +50,7 @@ impl AuthState {
                     id: user.id.clone(),
                     email: user.email.clone(),
                     name: user.name.clone(),
+                    picture: user.picture.clone(),
                 },
                 org_id: None,
             },
@@ -68,6 +71,7 @@ fn state_of(account: Option<&Account>) -> AuthState {
                 id: account.email.clone(),
                 email: account.email.clone(),
                 name: account.name.clone(),
+                picture: account.picture.clone(),
             },
         },
         None => AuthState::SignedOut,
@@ -94,14 +98,48 @@ impl Auth {
         let data_dir = data_dir.into();
         let account = Account::load(&data_dir);
         let (state_tx, _) = watch::channel(state_of(account.as_ref()));
-        Self {
+        let auth = Self {
             inner: Arc::new(Inner {
                 data_dir,
                 account: std::sync::Mutex::new(account),
                 state_tx,
                 pending: std::sync::Mutex::new(None),
             }),
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(auth.clone().refresh_profile());
         }
+        auth
+    }
+
+    /// Bring the saved name and photo up to date with the server (`GET
+    /// /me`): a sign-in from before the server kept photos gets one without
+    /// signing in again. Offline, it keeps what was saved.
+    async fn refresh_profile(self) {
+        let Some(account) = self.account() else { return };
+        let profile = match commutator_account::me(&account.server_url, &account.token).await {
+            Ok(profile) => profile,
+            Err(err) => return tracing::debug!(error = %err, "auth: profile not refreshed"),
+        };
+        let mut guard = self
+            .inner
+            .account
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Signed out or signed in again meanwhile: that one is newer.
+        let Some(saved) = guard.as_mut().filter(|saved| saved.token == account.token) else {
+            return;
+        };
+        if (&saved.email, &saved.name, &saved.picture) == (&profile.email, &profile.name, &profile.picture) {
+            return;
+        }
+        saved.email = profile.email;
+        saved.name = profile.name;
+        saved.picture = profile.picture;
+        if let Err(err) = saved.save(&self.inner.data_dir) {
+            tracing::warn!(error = %err, "auth: could not save the refreshed profile");
+        }
+        self.inner.state_tx.send_replace(state_of(Some(saved)));
     }
 
     pub fn account(&self) -> Option<Account> {
@@ -126,16 +164,13 @@ impl Auth {
     }
 
     /// Start signing in to `server` (else `COMMUTATOR_SERVER_URL`, else the
-    /// server signed in to before) and return the page to open. The browser
+    /// server signed in to before, else the hosted one) and return the page
+    /// to open. The browser
     /// comes back to a loopback listener here; the account is then saved and
     /// the state moves to signed in. The relay picks it up at the next start.
     pub async fn sign_in(&self, server: Option<String>) -> anyhow::Result<String> {
         let data_dir = self.inner.data_dir.clone();
-        let Some(server) = crate::account::server_url(server, self.account().as_ref()) else {
-            anyhow::bail!(
-                "no Commutator server to sign in to: set COMMUTATOR_SERVER_URL or run `commutator login <server>` once"
-            );
-        };
+        let server = crate::account::server_url(server, self.account().as_ref());
         let device_id = crate::device_id(&data_dir)?;
         let name = crate::device_name(&device_id);
         let sign_in =
@@ -220,6 +255,7 @@ mod tests {
             device_id: "d".into(),
             email: "me@example.com".into(),
             name: None,
+            picture: None,
         }
         .save(dir.path())
         .unwrap();
@@ -286,11 +322,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signing_in_needs_a_server() {
+    async fn signing_in_defaults_to_the_hosted_server() {
         // SAFETY: no other test in this binary reads it.
         unsafe { std::env::remove_var("COMMUTATOR_SERVER_URL") };
         let dir = tempfile::tempdir().unwrap();
-        let error = Auth::new(dir.path()).sign_in(None).await.unwrap_err();
-        assert!(format!("{error}").contains("COMMUTATOR_SERVER_URL"), "{error}");
+        let page = Auth::new(dir.path()).sign_in(None).await.unwrap();
+        assert!(page.starts_with(commutator_account::DEFAULT_SERVER_URL), "{page}");
     }
 }

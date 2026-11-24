@@ -596,6 +596,13 @@ pub fn send_button_mode(run_live: bool, has_text: bool) -> SendButtonMode {
     }
 }
 
+/// A send during a live turn steers it, as t3code does, unless it's Cmd/Ctrl+Enter,
+/// the host or harness can't steer, or files are staged: those queue for the turn's end.
+/// With messages already queued it queues behind them, so it never overtakes them.
+fn busy_send_steers(alternate: bool, can_steer: bool, has_files: bool, queue_empty: bool) -> bool {
+    !alternate && can_steer && !has_files && queue_empty
+}
+
 /// Queue rows are represented by the queue panel until the host promotes them
 /// into the transcript. They must never publish (or refresh) a local echo.
 fn should_publish_optimistic_echo(queue: bool) -> bool {
@@ -7379,7 +7386,11 @@ impl Composer {
         self.mention.active = crate::popover::menu_step(self.mention.active, rows, delta);
         if let Some(active) = self.mention.active {
             // Keep the keyboard cursor visible in the scrolled row stack.
-            self.mention_scroll.scroll_to_item(active);
+            crate::popover::reveal(
+                &self.mention_scroll,
+                active..=active,
+                crate::popover::MENU_FADE,
+            );
         }
         self.sync_mention_controls(cx);
         cx.notify();
@@ -7812,7 +7823,11 @@ impl Composer {
             crate::popover::menu_step(self.slash.active, self.slash.filtered.len(), delta);
         if let Some(active) = self.slash.active {
             // Keep the keyboard cursor visible in the scrolled row stack.
-            self.slash_scroll.scroll_to_item(active);
+            crate::popover::reveal(
+                &self.slash_scroll,
+                active..=active,
+                crate::popover::MENU_FADE,
+            );
         }
         self.sync_mention_controls(cx);
         cx.notify();
@@ -8334,6 +8349,22 @@ impl Composer {
     }
 
     fn on_submit(&mut self, cx: &mut Context<Self>) {
+        self.submit(false, cx)
+    }
+
+    /// Whether a send into the live turn steers it rather than queueing.
+    fn busy_send_steers(&self, alternate: bool, cx: &App) -> bool {
+        let state = self.state.read(cx);
+        let can_steer = self.pickers.read(cx).steers_mid_turn(cx)
+            && state.selected_chat.as_deref().is_some_and(|chat_id| {
+                state.chat_host_supports(chat_id, capabilities::MESSAGE_QUEUE_ACTIONS_V1)
+            });
+        let has_files = !self.staged().is_empty() || !self.staged_appshots().is_empty();
+        busy_send_steers(alternate, can_steer, has_files, state.queue.is_empty())
+    }
+
+    /// `alternate` is Cmd/Ctrl+Enter: during a live turn it queues instead of steering.
+    fn submit(&mut self, alternate: bool, cx: &mut Context<Self>) {
         if self.commit_queue_edit(cx) {
             return;
         }
@@ -8371,9 +8402,12 @@ impl Composer {
             SendButtonMode::Stop => {}
             _ if no_content => {}
             _ if self.send_blocked(cx) => {}
-            SendButtonMode::Send => self.send(text, false, cx),
-            // Busy: keep the message queued until the current turn ends.
-            SendButtonMode::Queue => self.send(text, true, cx),
+            SendButtonMode::Send => self.send(text, false, false, cx),
+            // Busy: steer the live turn (Enter) or queue for its end (Cmd/Ctrl+Enter).
+            SendButtonMode::Queue => {
+                let steer = self.busy_send_steers(alternate, cx);
+                self.send(text, true, steer, cx)
+            }
         }
     }
 
@@ -8390,7 +8424,7 @@ impl Composer {
             self.staged_comments(cx).len(),
         );
         match modified_submit_target(has_content) {
-            ModifiedSubmitTarget::SubmitContent => self.on_submit(cx),
+            ModifiedSubmitTarget::SubmitContent => self.submit(true, cx),
             ModifiedSubmitTarget::ActivateLatestQueued => self.activate_latest_queued(cx),
         }
     }
@@ -8400,7 +8434,9 @@ impl Composer {
     /// thread the picked config in: worktree creation (when the isolated toggle
     /// is on), `Mutate createChat` with the `ChatConfig` + cwd, and the model /
     /// reasoning / options on the Run request itself (§1.7).
-    fn send(&mut self, text: String, queue: bool, cx: &mut Context<Self>) {
+    /// `steer`: the queued row steers the live turn at once (the queue panel's
+    /// Steer), so the host's own fallbacks apply when it can't.
+    fn send(&mut self, text: String, queue: bool, steer: bool, cx: &mut Context<Self>) {
         if !self.check_reference_delivery(&text, cx) {
             return;
         }
@@ -9164,6 +9200,16 @@ impl Composer {
                         chat_id: err_chat_id.clone(),
                         message_id: message_id.clone(),
                     });
+                    // ponytail: steers the selected chat's row by id; a chat switch
+                    // mid-send finds no such row there and the message just stays queued.
+                    if steer {
+                        composer.queue_rpc(
+                            methods::STEER_QUEUED_MESSAGE_NOW,
+                            serde_json::json!({ "id": message_id, "keepTool": true }),
+                            "Couldn't steer that message",
+                            cx,
+                        );
+                    }
                 }
                 if let Err(message) = result {
                     // Failure: red banner, echo removed, prompt back in the
@@ -9694,7 +9740,9 @@ impl Composer {
                         el.on_click(cx.listener(|this, _, _, cx| this.on_submit(cx)))
                     })
                     .tooltip(crate::settings::widgets::text_tooltip(
-                        if mode == SendButtonMode::Queue {
+                        if mode == SendButtonMode::Queue && self.busy_send_steers(false, cx) {
+                            "Steer message (⌘↩ to queue)"
+                        } else if mode == SendButtonMode::Queue {
                             "Queue message"
                         } else {
                             "Send message"
@@ -13599,7 +13647,7 @@ mod tests {
                 })).unwrap()];
                 });
                 assert!(!composer.reference_delivery_supported(cx));
-                composer.send(draft.clone(), false, cx);
+                composer.send(draft.clone(), false, false, cx);
                 assert!(
                     composer
                         .failure
@@ -14851,6 +14899,15 @@ mod tests {
             send_button_mode(live, composer_has_content("", 0, 0)),
             SendButtonMode::Stop
         );
+    }
+
+    #[test]
+    fn a_busy_send_steers_unless_queued_on_purpose_or_unsteerable() {
+        assert!(busy_send_steers(false, true, false, true));
+        assert!(!busy_send_steers(true, true, false, true), "Cmd/Ctrl+Enter queues");
+        assert!(!busy_send_steers(false, false, false, true), "no mid-turn steering");
+        assert!(!busy_send_steers(false, true, true, true), "staged files queue");
+        assert!(!busy_send_steers(false, true, false, false), "never overtakes queued rows");
     }
 
     #[test]

@@ -89,15 +89,8 @@ class CredentialStore(context: Context) {
             prefs.edit().putString("hostId", value?.id).putString("hostName", value?.name).apply()
         }
 
-    /** The last server signed in to (the sign-in page's field). Kept across sign-outs. */
-    var lastServerUrl: String?
-        get() = prefs.getString("lastServerUrl", null)
-        set(value) = prefs.edit().putString("lastServerUrl", value).apply()
-
     fun clear() {
-        val server = lastServerUrl
         prefs.edit().clear().apply()
-        lastServerUrl = server
     }
 
     private companion object {

@@ -588,14 +588,14 @@ final class ComposerBar: UIView, UITextViewDelegate, UIGestureRecognizerDelegate
         case .send:
             symbol = "arrow.up"
             config.baseBackgroundColor = enabled ? Palette.accent : Palette.controlFill
-            config.baseForegroundColor = enabled ? .white : Palette.tertiary
+            config.baseForegroundColor = enabled ? Palette.onAccent : Palette.tertiary
             config.contentInsets = .zero
         case .queue:
             // Same look as Send (the long-press menu still offers steer /
             // stop-and-send); only the accessibility label says "Queue".
             symbol = "arrow.up"
             config.baseBackgroundColor = Palette.accent
-            config.baseForegroundColor = .white
+            config.baseForegroundColor = Palette.onAccent
             config.contentInsets = .zero
         case .stop:
             symbol = "stop.fill"

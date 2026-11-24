@@ -15,9 +15,7 @@ pub async fn login(
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let saved = Account::load(&config.data_dir);
-    let Some(server) = server_url(server, saved.as_ref()) else {
-        anyhow::bail!("name the server: commutator login https://…");
-    };
+    let server = server_url(server, saved.as_ref());
     let device_id = commutator_engine::device_id(&config.data_dir)?;
     let name = commutator_engine::device_name(&device_id);
     // Over SSH the browser is on another machine: its callback can't reach here.
@@ -133,17 +131,15 @@ mod tests {
             device_id: "d".into(),
             email: "me@example.com".into(),
             name: None,
+            picture: None,
         };
         assert_eq!(
-            server_url(Some("https://named.example/".into()), Some(&saved)).as_deref(),
-            Some("https://named.example")
+            server_url(Some("https://named.example/".into()), Some(&saved)),
+            "https://named.example"
         );
         if std::env::var_os("COMMUTATOR_SERVER_URL").is_none() {
-            assert_eq!(
-                server_url(None, Some(&saved)).as_deref(),
-                Some("https://saved.example")
-            );
-            assert_eq!(server_url(None, None), None);
+            assert_eq!(server_url(None, Some(&saved)), "https://saved.example");
+            assert_eq!(server_url(None, None), commutator_engine::account::DEFAULT_SERVER_URL);
         }
     }
 }

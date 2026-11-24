@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
             typography::init(settings.ui_font_family.clone(), settings.ui_font_size, settings.terminal_font_family.clone(), settings.terminal_font_size, settings.code_font_family.clone(), settings.code_font_size, fonts, cx);
             theme_library::init(data.clone(), cx);
             appearance::init(appearance::AppearanceMode::Dark, settings.theme_selection,
-                settings.accent, settings.surface, cx);
+                settings.surface, cx);
             composer::init(cx, commutator_ui::settings::ComposerSendBehavior::default());
             terminal::panel::init(cx);
             app_menus::init(cx);
@@ -109,7 +109,7 @@ fn main() -> anyhow::Result<()> {
                 state
             });
             let boot = EngineBootConfig { data_dir:data, ipc_port:0,
-                edge_url:String::new(), edge_token:None, org_id:None,
+                edge_token:None, org_id:None,
             let window = cx.open_window(WindowOptions {
                 window_bounds:Some(WindowBounds::Windowed(Bounds::new(
                     gpui::point(px(0.),px(0.)),size(px(1320.),px(880.))))),

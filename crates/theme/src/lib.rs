@@ -272,75 +272,6 @@ impl<'de> Deserialize<'de> for Color {
 #[error("expected a CSS hex color (#rgb, #rgba, #rrggbb, or #rrggbbaa)")]
 pub struct ColorParseError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum AccentPreset {
-    #[default]
-    Commutator,
-    Orange,
-    Amber,
-    Green,
-    Cyan,
-    Blue,
-    Pink,
-}
-
-impl AccentPreset {
-    pub const ALL: [Self; 7] = [
-        Self::Commutator,
-        Self::Orange,
-        Self::Amber,
-        Self::Green,
-        Self::Cyan,
-        Self::Blue,
-        Self::Pink,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Commutator => "Commutator",
-            Self::Orange => "Orange",
-            Self::Amber => "Amber",
-            Self::Green => "Green",
-            Self::Cyan => "Cyan",
-            Self::Blue => "Blue",
-            Self::Pink => "Pink",
-        }
-    }
-
-    pub fn color(self, appearance: Appearance) -> Color {
-        let (dark, light) = match self {
-            Self::Commutator => ("#8b7cf6", "#5b43e8"),
-            Self::Orange => ("#fb923c", "#c2410c"),
-            Self::Amber => ("#fbbf24", "#a16207"),
-            Self::Green => ("#4ade80", "#15803d"),
-            Self::Cyan => ("#22d3ee", "#0e7490"),
-            Self::Blue => ("#60a5fa", "#2563eb"),
-            Self::Pink => ("#f472b6", "#be185d"),
-        };
-        if appearance.is_dark() { dark } else { light }
-            .parse()
-            .expect("built-in accent colors are valid")
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum AccentSelection {
-    #[default]
-    ThemeDefault,
-    Preset(AccentPreset),
-}
-
-impl AccentSelection {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::ThemeDefault => "Theme default",
-            Self::Preset(preset) => preset.label(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccentRoles {
     pub primary: Color,
@@ -492,18 +423,6 @@ pub struct ThemeVariant {
     pub source: ThemeSource,
 }
 
-impl ThemeVariant {
-    pub fn accent_for(&self, selection: AccentSelection) -> AccentRoles {
-        match selection {
-            AccentSelection::ThemeDefault => self.accent,
-            AccentSelection::Preset(preset) => AccentRoles::derive(
-                preset.color(self.appearance),
-                self.appearance,
-                self.colors.background,
-            ),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -766,23 +685,14 @@ mod tests {
 
     #[test]
     fn accent_overlay_meets_interaction_contrast() {
-        for appearance in Appearance::ALL {
-            let background = if appearance.is_dark() {
-                Color::rgb(6, 6, 6)
-            } else {
-                Color::WHITE
-            };
-            for preset in AccentPreset::ALL {
-                let roles = AccentRoles::derive(preset.color(appearance), appearance, background);
-                assert!(
-                    roles.primary.contrast(background) >= 3.0,
-                    "{appearance:?} {preset:?}"
-                );
-                assert!(
-                    roles.on.contrast(roles.strong) >= 4.5,
-                    "{appearance:?} {preset:?}"
-                );
-            }
+        for variant in builtins::builtin_registry()
+            .families
+            .iter()
+            .flat_map(|family| &family.variants)
+        {
+            let (roles, background) = (variant.accent, variant.colors.background);
+            assert!(roles.primary.contrast(background) >= 3.0, "{}", variant.id);
+            assert!(roles.on.contrast(roles.strong) >= 4.5, "{}", variant.id);
         }
     }
 

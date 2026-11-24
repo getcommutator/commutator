@@ -40,7 +40,6 @@ fn a_chat_round_trips_through_a_local_engine() {
         Engine::new(EngineConfig {
             data_dir: engine_dir.path().to_path_buf(),
             // Nothing listens here: a signed-out, local-only profile.
-            edge_url: "http://127.0.0.1:1".into(),
             ipc_port: port,
             default_harness: HarnessId::Mock,
         })

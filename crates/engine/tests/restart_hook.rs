@@ -9,7 +9,6 @@ async fn the_restart_hook_reaches_the_live_engine_and_holds_none_after() {
     let dir = tempfile::tempdir().unwrap();
     let config = EngineConfig {
         data_dir: dir.path().to_path_buf(),
-        edge_url: "http://127.0.0.1:1".into(),
         ipc_port: 0,
         default_harness: HarnessId::Mock,
     };

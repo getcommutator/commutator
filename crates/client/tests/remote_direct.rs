@@ -101,13 +101,13 @@ fn a_remote_terminal_goes_direct_and_falls_back_to_the_relay() {
         device_id: machine.clone(),
         email: "me@example.com".into(),
         name: None,
+        picture: None,
     }
     .save(engine_dir.path())
     .unwrap();
     let engine = rt.spawn(
         Engine::new(EngineConfig {
             data_dir: engine_dir.path().to_path_buf(),
-            edge_url: "http://127.0.0.1:1".into(),
             ipc_port: port,
             default_harness: HarnessId::Mock,
         })

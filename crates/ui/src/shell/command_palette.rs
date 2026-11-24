@@ -833,13 +833,16 @@ impl Shell {
         };
         palette.set_active(&rows, next);
         // A section's first row brings its header along, and the very first
-        // row returns to the top, so a header never hides above the edge.
+        // row returns to the top, so a header never hides above the edge;
+        // the row stays clear of the edge fades.
         if next == 0 {
             palette.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         } else {
-            palette
-                .scroll
-                .scroll_to_item(scroll_child_index(&sections, next));
+            popover::reveal(
+                &palette.scroll,
+                scroll_child_index(&sections, next)..=child_index(&sections, next),
+                RESULTS_FADE_BAND,
+            );
         }
         cx.notify();
     }
@@ -1245,10 +1248,8 @@ impl Shell {
             }))
             .on_key_down(
                 cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
-                    match event.keystroke.key.as_str() {
-                        "up" | "down" => {
-                            this.move_palette_selection(event.keystroke.key == "down", cx)
-                        }
+                    match popover::nav_key(&event.keystroke) {
+                        key @ ("up" | "down") => this.move_palette_selection(key == "down", cx),
                         "enter" => {
                             let activate = this
                                 .command_palette
@@ -1512,7 +1513,6 @@ mod tests {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,

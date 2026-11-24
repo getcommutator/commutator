@@ -1,11 +1,11 @@
 import UIKit
 
-/// Root on iPhone: the Sessions list, with a Liquid Glass bottom bar of
-/// native toolbar items — Settings, Search (the system's toolbar-integrated
-/// field) and New session — instead of tabs. A plain container for
-/// the Sessions navigation stack: a hidden tab bar came back on device
-/// whenever a screen that hides the bottom bar was popped.
-final class MainTabController: UIViewController, AppRouter {
+/// Root on iPhone: tabs — Chats, Pull requests, Settings. New session and
+/// search sit in the Chats tab's navigation bar. Full-screen pages (a
+/// session, a folder) push on an outer stack over the whole tab controller,
+/// so the tab bar stays part of the page underneath and slides with it,
+/// never fading in over the page that leaves.
+final class MainTabController: UIViewController, AppRouter, UINavigationControllerDelegate {
     private let app: AppModel
 
     init(app: AppModel) {
@@ -17,63 +17,72 @@ final class MainTabController: UIViewController, AppRouter {
 
     private lazy var sessionsList = SessionsViewController(app: app)
     private lazy var nav = sessionsNav()
+    private lazy var tabs = makeTabs()
+    /// The outer stack: the tabs at its root, full-screen pages above.
+    private lazy var stack = makeStack()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Palette.background
-        addChild(nav)
-        nav.view.frame = view.bounds
-        nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(nav.view)
-        nav.didMove(toParent: self)
+        addChild(stack)
+        stack.view.frame = view.bounds
+        stack.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(stack.view)
+        stack.didMove(toParent: self)
     }
 
-    override var childForStatusBarStyle: UIViewController? { nav }
+    override var childForStatusBarStyle: UIViewController? { stack }
+
+    private func makeStack() -> UINavigationController {
+        let stack = Self.nav(tabs)
+        stack.setNavigationBarHidden(true, animated: false)
+        stack.delegate = self
+        // The tabs have no title of their own to go back to.
+        tabs.navigationItem.backButtonDisplayMode = .minimal
+        return stack
+    }
+
+    /// The outer bar is the pushed page's; the tabs bring their own.
+    func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+        navigationController.setNavigationBarHidden(viewController === tabs, animated: animated)
+    }
+
+    private func makeTabs() -> UITabBarController {
+        let nav = self.nav
+        let prs = Self.nav(PullRequestsViewController(), tab: true)
+        let settings = Self.nav(MoreViewController(app: app), tab: true)
+        let tabs = UITabBarController(tabs: [
+            UITab(title: "Chats", image: UIImage(systemName: "bubble.left.and.bubble.right"), identifier: "chats") { _ in nav },
+            UITab(title: "Pull requests", image: UIImage(systemName: "arrow.triangle.pull"), identifier: "pulls") { _ in prs },
+            UITab(title: "Settings", image: UIImage(systemName: "gearshape"), identifier: "settings") { _ in settings },
+        ])
+        tabs.tabBar.tintColor = Palette.text
+        return tabs
+    }
 
     private func sessionsNav() -> UINavigationController {
         sessionsList.enableToolbarSearch()
-        updateBottomBar()
-        let nav = Self.nav(sessionsList)
-        nav.isToolbarHidden = false
-        nav.toolbar.tintColor = Palette.text
-        return nav
+        sessionsList.loadViewIfNeeded()
+        sessionsList.navigationItem.rightBarButtonItems = [sessionsList.navigationItem.rightBarButtonItem, composeItem].compactMap { $0 }
+        return Self.nav(sessionsList, tab: true)
     }
-
-    private lazy var settingsItem: UIBarButtonItem = {
-        let item = UIBarButtonItem(image: UIImage(systemName: "gearshape"), primaryAction: UIAction { [weak self] _ in self?.showSettings() })
-        item.accessibilityLabel = "Settings"
-        item.accessibilityIdentifier = "bottom-settings"
-        return item
-    }()
 
     private lazy var composeItem: UIBarButtonItem = {
         let item = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil"), primaryAction: UIAction { [weak self] _ in self?.presentNewSession() })
-        item.style = .prominent
-        item.tintColor = Palette.text
         item.accessibilityLabel = "New session"
         item.accessibilityIdentifier = "new-session"
         return item
     }()
 
-    /// The bar: Settings · Search · New session.
-    private func updateBottomBar() {
-        // Fixed spaces split the glass: each control its own shape.
-        var items: [UIBarButtonItem] = [settingsItem, .fixedSpace(0), sessionsList.navigationItem.searchBarPlacementBarButtonItem, .fixedSpace(0)]
-        items.append(composeItem)
-        // `viewIfLoaded`: loading the list outside its nav controller lays it
-        // out without the large title, and it opens collapsed.
-        sessionsList.setToolbarItems(items, animated: sessionsList.viewIfLoaded?.window != nil)
-    }
-
-    /// The bottom bar's frame when it's on screen (toast placement).
+    /// The tab bar's frame when it's on screen (toast placement).
     func bottomBarFrame(in window: UIWindow) -> CGRect? {
-        guard nav.topViewController === sessionsList, !nav.isToolbarHidden, nav.toolbar.window != nil
-        else { return nil }
-        return nav.toolbar.convert(nav.toolbar.bounds, to: window)
+        let bar = tabs.tabBar
+        guard stack.topViewController === tabs, !tabs.isTabBarHidden, !bar.isHidden, bar.window != nil else { return nil }
+        return bar.convert(bar.bounds, to: window)
     }
 
-    static func nav(_ root: UIViewController) -> UINavigationController {
-        let nav = UINavigationController(rootViewController: root)
+    static func nav(_ root: UIViewController, tab: Bool = false) -> UINavigationController {
+        let nav = tab ? TabNavigationController(rootViewController: root) : UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = true
         // Setting an appearance object drops iOS 26's scroll-edge effect;
         // style titles through the bar's own attributes instead.
@@ -97,14 +106,10 @@ final class MainTabController: UIViewController, AppRouter {
         present(nav, animated: true)
     }
 
-    /// Settings over the list (the bottom bar steps aside).
     func showSettings() {
         if presentedViewController != nil { dismiss(animated: false) }
-        if nav.topViewController is MoreViewController { return }
-        nav.popToRootViewController(animated: false)
-        let more = MoreViewController(app: app)
-        more.hidesBottomBarWhenPushed = true
-        nav.pushViewController(more, animated: true)
+        stack.popToRootViewController(animated: false)
+        tabs.selectedTab = tabs.tabs.first { $0.identifier == "settings" }
     }
 
     func showSearch() {
@@ -121,8 +126,9 @@ final class MainTabController: UIViewController, AppRouter {
             return showSessionOpenError()
         }
         UIView.performWithoutAnimation {
-            nav.popToRootViewController(animated: false)
-            nav.pushViewController(session, animated: false)
+            showChats()
+            popToChats()
+            stack.pushViewController(session, animated: false)
             view.layoutIfNeeded()
             session.prepareArrival()
             // Sending puts the keyboard away; it slides down with the handoff.
@@ -145,14 +151,16 @@ final class MainTabController: UIViewController, AppRouter {
     /// Back to the Sessions list, releasing any pushed session (the iPad
     /// split takes the open session back into its own column).
     func popToFrontPage() {
-        nav.popToRootViewController(animated: false)
+        showChats()
+        popToChats()
     }
 
     /// The split's open session, handed over as it is when the window
     /// narrows (iPhone Duo folding): same page, scroll position and draft.
     func adoptSession(_ session: SessionViewController) {
-        nav.popToRootViewController(animated: false)
-        nav.pushViewController(session, animated: false)
+        showChats()
+        popToChats()
+        stack.pushViewController(session, animated: false)
     }
 
     /// The pushed session, taken off the stack for the split's main column
@@ -160,11 +168,11 @@ final class MainTabController: UIViewController, AppRouter {
     /// `relocating`, for the split to clear once it's placed.
     func releaseSession() -> SessionViewController? {
         // The session itself, not a side chat pushed above it.
-        guard let session = nav.viewControllers.first(where: { ($0 as? SessionViewController)?.isCompanion == false }) as? SessionViewController else {
+        guard let session = stack.viewControllers.first(where: { ($0 as? SessionViewController)?.isCompanion == false }) as? SessionViewController else {
             return nil
         }
         session.relocating = true
-        nav.popToRootViewController(animated: false)
+        popToChats()
         return session
     }
 
@@ -182,8 +190,45 @@ final class MainTabController: UIViewController, AppRouter {
             return showSessionOpenError()
         }
         if presentedViewController != nil { dismiss(animated: true) }
+        showChats()
+        popToChats()
+        stack.pushViewController(session, animated: true)
+    }
+
+    private func showChats() {
+        tabs.selectedTab = tabs.tabs.first { $0.identifier == "chats" }
+    }
+
+    /// Off every pushed page, back to the Chats list.
+    private func popToChats() {
+        stack.popToRootViewController(animated: false)
         nav.popToRootViewController(animated: false)
-        nav.pushViewController(session, animated: true)
+    }
+}
+
+/// A tab's own stack. A page that hides the tab bar goes on the shell's
+/// outer stack instead, over the tab bar rather than under it.
+final class TabNavigationController: UINavigationController {
+    override func pushViewController(_ viewController: UIViewController, animated: Bool) {
+        if viewController.hidesBottomBarWhenPushed, let outer = navigationController {
+            return outer.pushViewController(viewController, animated: animated)
+        }
+        super.pushViewController(viewController, animated: animated)
+    }
+}
+
+/// The Pull requests tab. ponytail: empty until the server serves PRs.
+final class PullRequestsViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Pull requests"
+        view.backgroundColor = Palette.background
+        navigationItem.largeTitleDisplayMode = .always
+        var empty = UIContentUnavailableConfiguration.empty()
+        empty.image = UIImage(systemName: "arrow.triangle.pull")
+        empty.text = "No pull requests"
+        empty.secondaryText = "Pull requests from your sessions will show up here."
+        contentUnavailableConfiguration = empty
     }
 }
 

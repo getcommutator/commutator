@@ -295,6 +295,9 @@ enum QueueSend {
     NextTurn,
     /// Something is running and can take input mid-turn: steer it in.
     Steer,
+    /// [`Self::Steer`] that leaves an open tool call running: the agent reads
+    /// it when the call ends, as t3code steers.
+    SteerAfterTool,
     /// The user said now: stop what is running first.
     Interrupt,
 }
@@ -2753,13 +2756,27 @@ impl DocHost {
         Ok(true)
     }
 
-    /// Promote one held row without ever interrupting a turn. A live,
+    /// Promote a held row without ever interrupting a turn. A live,
     /// steerable turn receives it as steering; if that turn has already ended,
     /// it starts normally as the next turn. Turn-boundary providers retain it
     /// in their mailbox until ready. A row's files go with it as the steer's
     /// attachments (images as images); one whose files from another device
     /// haven't landed yet stays queued, and the call says why.
+    ///
+    /// The rows queued before it go first, in order: a steer never lets a
+    /// message overtake the ones the person sent ahead of it.
     pub async fn steer_queued_now(&self, chat_id: &str, id: &str) -> Result<bool, EngineError> {
+        self.steer_queued(chat_id, id, true).await
+    }
+
+    /// [`Self::steer_queued_now`]; `stop_tool` false leaves an open tool call
+    /// running ([`QueueSend::SteerAfterTool`]).
+    pub async fn steer_queued(
+        &self,
+        chat_id: &str,
+        id: &str,
+        stop_tool: bool,
+    ) -> Result<bool, EngineError> {
         if !self.is_host(chat_id) {
             return Err(EngineError::Other(format!(
                 "device {} does not host chat {chat_id}",
@@ -2768,27 +2785,54 @@ impl DocHost {
         }
         let handle = self.open(chat_id)?;
         let _drain = handle.drain_lock.lock().await;
-        let Some(candidate) = handle
-            .doc
-            .read_queue()?
-            .into_iter()
-            .find(|item| item.id == id)
-        else {
+        let queue = handle.doc.read_queue()?;
+        let Some(at) = queue.iter().position(|item| item.id == id) else {
             return Ok(false);
         };
-        // Its files ride the steer, as images where they are. Ones still on
-        // their way from another device can't go yet (the drain waits for
-        // them; a steer says so).
-        if !self.missing_row_attachments(&candidate).is_empty() {
-            return Err(EngineError::Other(
-                "this message's images are still uploading".into(),
-            ));
+        let rows = &queue[..=at];
+        // Checked for every row before any moves, so a refusal leaves the
+        // queue as it was.
+        for row in rows {
+            // Its files ride the steer, as images where they are. Ones still
+            // on their way from another device can't go yet (the drain waits
+            // for them; a steer says so).
+            if !self.missing_row_attachments(row).is_empty() {
+                return Err(EngineError::Other(if row.id == id {
+                    "this message's images are still uploading".into()
+                } else {
+                    "an earlier queued message's images are still uploading".into()
+                }));
+            }
+            if row.delivery_gate.is_some() {
+                return Err(EngineError::Other(if row.id == id {
+                    "queued message is blocked for editing or review".into()
+                } else {
+                    "an earlier queued message is blocked for editing or review".into()
+                }));
+            }
         }
-        if candidate.delivery_gate.is_some() {
-            return Err(EngineError::Other(
-                "queued message is blocked for editing or review".into(),
-            ));
+        let send = if stop_tool {
+            QueueSend::Steer
+        } else {
+            QueueSend::SteerAfterTool
+        };
+        for row in rows {
+            if !self.steer_queued_row(&handle, row, send).await? {
+                return Ok(false);
+            }
         }
+        Ok(true)
+    }
+
+    /// [`Self::steer_queued_now`] for one row the caller checked, under the
+    /// chat's drain lock.
+    async fn steer_queued_row(
+        &self,
+        handle: &Arc<ChatDocHandle>,
+        candidate: &QueuedMessage,
+        send: QueueSend,
+    ) -> Result<bool, EngineError> {
+        let (chat_id, id) = (handle.chat_id.as_str(), candidate.id.as_str());
         if self.sessions().is_some_and(|sessions| {
             sessions.defers_to_turn_end(chat_id, None)
                 || candidate
@@ -2798,6 +2842,11 @@ impl DocHost {
         }) {
             // Send next: lead the ordinary rows; the drain delivers it the
             // moment the current turn ends (and applies its target config).
+            // A row steered already leads, in its place: moving it again
+            // would put it behind the rows steered after it.
+            if lock(&handle.steered_rows).contains(&candidate.id) {
+                return Ok(true);
+            }
             let Some(item) = handle.doc.take_queued(id)? else {
                 return Ok(false);
             };
@@ -2816,7 +2865,7 @@ impl DocHost {
         // Always attempt the non-interrupting path first. If no turn exists,
         // `dispatch_queued` falls through to NextTurn; if a new turn appeared
         // after our capability check, the prompt steers that turn instead.
-        if let Err(err) = self.dispatch_queued(&handle, &item, QueueSend::Steer).await {
+        if let Err(err) = self.dispatch_queued(handle, &item, send).await {
             if was_paused {
                 handle.queue_paused.store(true, Ordering::Release);
             }
@@ -3069,22 +3118,19 @@ impl DocHost {
             queued_message_prompt(&item.text, &attachments)
         };
         self.resolve_attachment_refs(&mut prompt, &mut attachments);
-        if send == QueueSend::Steer
+        if matches!(send, QueueSend::Steer | QueueSend::SteerAfterTool)
             && item
                 .config
                 .as_ref()
                 .is_none_or(|cfg| sessions.live_run_matches_config(chat_id, cfg))
         {
-            match sessions
-                .steer_now(
-                    chat_id,
-                    &prompt,
-                    attachments.clone(),
-                    Some(message_id.clone()),
-                    now_ms(),
-                )
-                .await?
-            {
+            let (attachments, id) = (attachments.clone(), Some(message_id.clone()));
+            let outcome = if send == QueueSend::SteerAfterTool {
+                sessions.steer_with(chat_id, &prompt, attachments, id, now_ms()).await?
+            } else {
+                sessions.steer_now(chat_id, &prompt, attachments, id, now_ms()).await?
+            };
+            match outcome {
                 SteerOutcome::Accepted => return Ok(()),
                 SteerOutcome::DeferredByUpdate => {
                     return Err(EngineError::Other(

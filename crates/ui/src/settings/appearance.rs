@@ -1,5 +1,5 @@
-//! Settings → Appearance: system behavior, independent light/dark variants,
-//! and the optional interactive accent overlay.
+//! Settings → Appearance: system behavior and independent light/dark
+//! variants; the accent is always the theme's own.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -14,7 +14,7 @@ use gpui::{
 };
 use commutator_theme::vscode::{ImportReport, SourceCompilation};
 use commutator_theme::{
-    AccentPreset, AccentSelection, CustomThemeEntry, CustomThemeStatus, InstallMode,
+    CustomThemeEntry, CustomThemeStatus, InstallMode,
     SurfacePreference, SurfaceTreatment, ThemeRegistry, ThemeSelection,
 };
 
@@ -1512,13 +1512,6 @@ fn bar(fraction: f32, tone: Hsla) -> gpui::Div {
         .bg(tone)
 }
 
-fn accent_helper(accent: AccentSelection) -> String {
-    match accent {
-        AccentSelection::ThemeDefault => "Theme default".into(),
-        AccentSelection::Preset(preset) => preset.label().into(),
-    }
-}
-
 fn surface_label(surface: SurfacePreference) -> &'static str {
     match surface {
         SurfacePreference::ThemeDefault => "Theme default",
@@ -1608,13 +1601,9 @@ fn miniature(theme: &Theme, corners: Corners) -> AnyElement {
     .into_any_element()
 }
 
-fn miniature_split(
-    themes: &ThemeSelection,
-    accent: AccentSelection,
-    surface: SurfacePreference,
-) -> AnyElement {
-    let light = Theme::for_selection(Appearance::Light, &themes.light, accent, surface);
-    let dark = Theme::for_selection(Appearance::Dark, &themes.dark, accent, surface);
+fn miniature_split(themes: &ThemeSelection, surface: SurfacePreference) -> AnyElement {
+    let light = Theme::for_selection(Appearance::Light, &themes.light, surface);
+    let dark = Theme::for_selection(Appearance::Dark, &themes.dark, surface);
     div()
         .size_full()
         .flex()
@@ -1639,17 +1628,16 @@ fn miniature_split(
 pub(crate) fn preview(
     mode: AppearanceMode,
     themes: &ThemeSelection,
-    accent: AccentSelection,
     surface: SurfacePreference,
 ) -> AnyElement {
     match mode {
-        AppearanceMode::System => miniature_split(themes, accent, surface),
+        AppearanceMode::System => miniature_split(themes, surface),
         AppearanceMode::Light => miniature(
-            &Theme::for_selection(Appearance::Light, &themes.light, accent, surface),
+            &Theme::for_selection(Appearance::Light, &themes.light, surface),
             Corners::All,
         ),
         AppearanceMode::Dark => miniature(
-            &Theme::for_selection(Appearance::Dark, &themes.dark, accent, surface),
+            &Theme::for_selection(Appearance::Dark, &themes.dark, surface),
             Corners::All,
         ),
     }
@@ -1686,11 +1674,7 @@ fn compact_action(
 }
 
 fn import_scene_preview(variant: &commutator_theme::ThemeVariant) -> AnyElement {
-    let theme = Theme::from_variant(
-        variant,
-        AccentSelection::ThemeDefault,
-        SurfacePreference::ThemeDefault,
-    );
+    let theme = Theme::from_variant(variant, SurfacePreference::ThemeDefault);
     div()
         .w_full()
         .h(px(86.0))
@@ -1851,80 +1835,6 @@ fn report_panel(theme: &Theme, report: &ImportReport) -> impl IntoElement {
                 )))
             })),
     )
-}
-
-pub(crate) fn accent_swatch(
-    page_theme: &Theme,
-    selection: AccentSelection,
-    selected: bool,
-) -> gpui::Stateful<gpui::Div> {
-    let swatch_theme = Theme::for_selection(
-        page_theme.appearance,
-        page_theme.variant_id.as_ref(),
-        selection,
-        page_theme.surface_preference,
-    );
-    let sample = match selection {
-        AccentSelection::ThemeDefault => div()
-            .size_full()
-            .rounded(px(6.0))
-            .bg(swatch_theme.accent_wash)
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(2.0))
-            .child(
-                div()
-                    .w(px(4.0))
-                    .h(px(13.0))
-                    .rounded(px(2.0))
-                    .bg(swatch_theme.glyph.light),
-            )
-            .child(
-                div()
-                    .w(px(4.0))
-                    .h(px(16.0))
-                    .rounded(px(2.0))
-                    .bg(swatch_theme.glyph.mid),
-            )
-            .child(
-                div()
-                    .w(px(4.0))
-                    .h(px(11.0))
-                    .rounded(px(2.0))
-                    .bg(swatch_theme.glyph.deep),
-            ),
-        AccentSelection::Preset(_) => div().size_full().rounded(px(6.0)).bg(swatch_theme.accent),
-    };
-    div()
-        .id(SharedString::from(format!("accent-{}", selection.label())))
-        .aria_label(selection.label())
-        .aria_selected(selected)
-        .flex_none()
-        .w(px(30.0))
-        .h(px(34.0))
-        .pb(px(4.0))
-        .border_b_2()
-        .border_color(if selected {
-            swatch_theme.accent
-        } else {
-            gpui::transparent_black()
-        })
-        .cursor_pointer()
-        .child(
-            div()
-                .size(px(30.0))
-                .p(px(2.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(if selected {
-                    page_theme.border_strong
-                } else {
-                    page_theme.border
-                })
-                .bg(page_theme.surface_raised.opacity(0.42))
-                .child(sample),
-        )
 }
 
 impl AppearancePage {
@@ -2135,7 +2045,7 @@ impl AppearancePage {
             .unwrap_or_default();
         let options = variants.iter().map(|(id, name)| {
             let sample =
-                Theme::for_selection(appearance_kind, id, AccentSelection::ThemeDefault, surface);
+                Theme::for_selection(appearance_kind, id, surface);
             widgets::SelectOption::new(name.clone())
                 .leading(move || palette_preview(&sample).into_any_element())
         });
@@ -2370,11 +2280,7 @@ impl AppearancePage {
                     "Light"
                 };
                 let report = compilation.reports.get(&variant.id);
-                let sample = Theme::from_variant(
-                    variant,
-                    AccentSelection::ThemeDefault,
-                    SurfacePreference::ThemeDefault,
-                );
+                let sample = Theme::from_variant(variant, SurfacePreference::ThemeDefault);
                 main = main.child(
                     div()
                         .id(SharedString::from(format!("theme-import-row-{variant_id}")))
@@ -3519,7 +3425,6 @@ impl Render for AppearancePage {
         let fixed = theme.font_sans_fixed.clone();
         let current_mode = appearance::mode(cx);
         let current_themes = appearance::themes(cx);
-        let current_accent = appearance::accent(cx);
         let current_surface = appearance::surface(cx);
         let ui_settings = crate::settings::current(cx);
         let current_background = ui_settings.new_thread_composer_background;
@@ -3541,7 +3446,7 @@ impl Render for AppearancePage {
                     mode.label(),
                     selected,
                     selection_t,
-                    preview(mode, &current_themes, current_accent, current_surface),
+                    preview(mode, &current_themes, current_surface),
                 )
                 .id(SharedString::from(format!("appearance-{}", mode.label())))
                 .tab_index(0)
@@ -3578,22 +3483,6 @@ impl Render for AppearancePage {
             );
         }
 
-        let mut accent_choices = vec![AccentSelection::ThemeDefault];
-        accent_choices.extend(AccentPreset::ALL.map(AccentSelection::Preset));
-        let accent_controls = accent_choices
-            .into_iter()
-            .map(|selection| {
-                let selected = selection == current_accent;
-                accent_swatch(&theme, selection, selected)
-                    .tab_index(0)
-                    .role(gpui::Role::Button)
-                    .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        appearance::set_accent(selection, cx);
-                        cx.notify();
-                    }))
-            })
-            .collect::<Vec<_>>();
         let surface_control =
             widgets::select("appearance-surface", "Glass", &theme, |page: &mut Self| {
                 &mut page.surface_select
@@ -3614,35 +3503,6 @@ impl Render for AppearancePage {
             })
             .render(&self.surface_select, cx);
         let mut settings_rows = theme_rows;
-        settings_rows.push(
-            widgets::card_row(&theme, false)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(160.0))
-                        .child(widgets::row_title(&theme, "Accent color"))
-                        .child(widgets::meta_line(
-                            &theme,
-                            vec![
-                                div()
-                                    .child(SharedString::from(if crate::settings::current(cx).wallpaper_theme_colors {
-                                        "Wallpaper colors are enabled; this accent is used when they are off.".to_string()
-                                    } else { accent_helper(current_accent) }))
-                                    .into_any_element(),
-                            ],
-                        )),
-                )
-                .child(
-                    div()
-                        .max_w_full()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(8.0))
-                        .children(accent_controls),
-                )
-                .into_any_element(),
-        );
         let match_wallpaper = crate::settings::current(cx).wallpaper_theme_colors;
         settings_rows.push(
             widgets::card_row(&theme, false)
@@ -4428,18 +4288,6 @@ mod tests {
     }
 
     #[test]
-    fn accent_helper_names_the_selected_accent() {
-        assert_eq!(
-            accent_helper(AccentSelection::ThemeDefault),
-            "Theme default"
-        );
-        assert_eq!(
-            accent_helper(AccentSelection::Preset(AccentPreset::Pink)),
-            "Pink"
-        );
-    }
-
-    #[test]
     fn surface_helper_distinguishes_inherited_and_explicit_materials() {
         assert_eq!(
             surface_helper(SurfacePreference::ThemeDefault, SurfaceTreatment::Opaque),
@@ -4661,7 +4509,6 @@ mod tests {
             appearance::init(
                 appearance::AppearanceMode::Dark,
                 ThemeSelection::default(),
-                AccentSelection::default(),
                 SurfacePreference::Opaque,
                 cx,
             );

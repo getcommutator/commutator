@@ -209,6 +209,11 @@ struct QueuedMessageParams {
     /// Present for MoveQueuedMessage only.
     #[serde(default)]
     to_index: usize,
+    /// SteerQueuedMessageNow only: leave an open tool call running, so the
+    /// agent reads the steer when it ends (the composer's Enter) rather than
+    /// stopping it (the queue row's Steer).
+    #[serde(default)]
+    keep_tool: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3599,7 +3604,7 @@ impl RpcService for EngineRpc {
                 let p: QueuedMessageParams = parse_params(params)?;
                 let sent = self
                     .doc_host
-                    .steer_queued_now(&p.chat_id, &p.id)
+                    .steer_queued(&p.chat_id, &p.id, !p.keep_tool)
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({ "sent": sent }))

@@ -271,7 +271,6 @@ fn main() -> anyhow::Result<()> {
     let boot = EngineBootConfig {
         data_dir: data.clone(),
         ipc_port,
-        edge_url: String::new(),
         default_harness: commutator_proto::HarnessId::ClaudeCode,
     };
     let handle = runtime.block_on(state::EngineHandle::bootstrap(boot.clone()))?;
@@ -340,7 +339,6 @@ fn main() -> anyhow::Result<()> {
             appearance::init(
                 appearance::AppearanceMode::Dark,
                 settings.theme_selection,
-                settings.accent,
                 settings.surface,
                 cx,
             );

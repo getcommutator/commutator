@@ -9,7 +9,7 @@ enum Palette {
         }
     }
 
-    // Commutator Light / Commutator Dark (crates/theme builtins): cool neutrals, violet accent.
+    // Commutator Light / Commutator Dark (crates/theme builtins): cool neutrals, monochrome accent.
     static let background = dynamic(0xF3F3F5, 0x060606)
     /// The open session's row in the iPad sidebar.
     static let rowActive = dual(UIColor(white: 1, alpha: 0.9), UIColor(white: 1, alpha: 0.06))
@@ -18,10 +18,14 @@ enum Palette {
     static let secondary = dynamic(0x62626A, 0xA9A9AE)
     static let tertiary = dynamic(0x97979F, 0x6B6B72)
     static let hairline = dynamic(0xE2E2E6, 0x1E1E22)
-    static let accent = dynamic(0x5B43E8, 0x8B7CF6)
+    static let accent = dynamic(0x18181B, 0xECECEC)
+    /// A switch's on track: the dark accent is too light for the white thumb.
+    static let toggleOn = dynamic(0x18181B, 0x8E8E93)
+    /// Labels and glyphs on an accent fill.
+    static let onAccent = dynamic(0xFFFFFF, 0x18181B)
     /// Translucent control fill that reads on glass in both modes.
     static let controlFill = dynamic(0x27272C, 0xE8E8EA, alpha: 0.075)
-    static let accentSoft = dynamic(0x5B43E8, 0x8B7CF6, alpha: 0.12)
+    static let accentSoft = dynamic(0x18181B, 0xECECEC, alpha: 0.12)
     static let danger = dynamic(0xDC2626, 0xF87171)
     static let success = dynamic(0x15803D, 0x34D399)
     static let warning = dynamic(0xA16207, 0xFACC15)
@@ -60,7 +64,7 @@ enum Palette {
         case .codeText: dynamic(0x303035, 0xE8E8EA)
         case .codeBackground: codeBackground
         case .codeBorder: codeBorder
-        case .quoteBar: dynamic(0x5B43E8, 0x8B7CF6, alpha: 0.45)
+        case .quoteBar: dynamic(0x18181B, 0xECECEC, alpha: 0.45)
         case .rule: hairline
         case .tableBorder: dynamic(0xE2E2E6, 0x232327)
         case .tableHeaderBackground: dynamic(0xF3F3F5, 0x121215)
@@ -91,7 +95,7 @@ enum Palette {
         case .diffDelWash: dynamic(0xDC2626, 0xF87171, alpha: 0.055)
         case .diffAddBar: dynamic(0x15803D, 0x34D399, alpha: 0.55)
         case .diffDelBar: dynamic(0xDC2626, 0xF87171, alpha: 0.55)
-        case .diffHunk: dual(UIColor(hex: 0x5B43E8, alpha: 0.07), UIColor(hex: 0x8B7CF6, alpha: 0.08))
+        case .diffHunk: dual(UIColor(hex: 0x18181B, alpha: 0.07), UIColor(hex: 0xECECEC, alpha: 0.08))
         // Error cards: a red wash, and a lighter red that reads on it.
         case .dangerWash: dual(UIColor(hex: 0xDC2626, alpha: 0.08), UIColor(hex: 0xF87171, alpha: 0.12))
         case .dangerSoft: dynamic(0xB91C1C, 0xFCA5A5)

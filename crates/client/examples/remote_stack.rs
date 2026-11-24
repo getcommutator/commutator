@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         device_id: machine.clone(),
         email: "dev@localhost".into(),
         name: Some("Local dev".into()),
+        picture: None,
     }
     .save(&engine_dir)?;
 
@@ -58,7 +59,6 @@ async fn main() -> anyhow::Result<()> {
     println!("ios launch args: -account {server_url} {phone_token} {phone} -host {machine} -harness mock");
     Engine::new(EngineConfig {
         data_dir: engine_dir,
-        edge_url: "http://127.0.0.1:1".into(),
         ipc_port: ipc,
         default_harness: HarnessId::Mock,
     })

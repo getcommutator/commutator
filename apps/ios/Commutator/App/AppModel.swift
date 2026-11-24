@@ -10,36 +10,41 @@ final class AppModel {
         var folders: [FolderRowVM] = []
         var sessions: [SessionRowVM] = []
         var sectionSessions: [String: [SessionRowVM]] = [:]
-        /// `sessions` grouped by repository project, groups in recency order.
-        var projectGroups: [ProjectGroupVM] = []
+        /// Repositories, the Projects view's sections (checkouts of one
+        /// repository share one), most recently active first.
+        var projects: [ProjectTreeVM] = []
     }
 
-    struct ProjectGroupVM: Equatable {
-        /// Section id: `project:<group key>` (`home:<device>` without a project).
+    /// One repository in the Projects view (Shepherd's workspace card): its
+    /// main checkout, then its other checkouts (worktrees). A checkout's
+    /// chats are `sectionSessions[checkout.id]`.
+    struct ProjectTreeVM: Equatable {
+        /// `project:<group key>`.
         let id: String
         var name: String
-        var sessions: [SessionRowVM]
+        var colorIndex: Int
+        var main: FolderRowVM
+        var worktrees: [FolderRowVM]
+        /// The project a checkout row stands for (a new chat goes there);
+        /// none for a worktree known only from where a chat runs.
+        var projectIds: [String: String]
     }
 
-    /// The Sessions page groups its unsectioned sessions by project
-    /// (the desktop sidebar's "By project"). Local to this phone.
-    var groupByProject: Bool {
-        get { UserDefaults.standard.bool(forKey: "groupByProject") }
-        set {
-            guard newValue != groupByProject else { return }
-            UserDefaults.standard.set(newValue, forKey: "groupByProject")
-            observers.values.forEach { $0() }
-        }
+    /// The Sessions page's two views, under Activity: Chats (the chats that
+    /// need you in one list, Working, Asleep and Archived at its foot) and
+    /// Projects (chats under their repository and its worktrees).
+    enum SessionsView: String, CaseIterable {
+        case chats, projects
+        var title: String { self == .chats ? "Chats" : "Projects" }
+        var symbol: String { self == .chats ? "tray.full" : "folder" }
     }
 
-    /// Activity: the Sessions page as one list of the chats that need you,
-    /// Working, Asleep and Archived folded at its foot (the desktop
-    /// sidebar's Activity view). Local to this phone; off by default.
-    var activityOn: Bool {
-        get { UserDefaults.standard.bool(forKey: ActivityList.Keys.on) }
+    /// Local to this phone; Chats by default.
+    var sessionsView: SessionsView {
+        get { UserDefaults.standard.string(forKey: "sessionsView").flatMap(SessionsView.init) ?? .chats }
         set {
-            guard newValue != activityOn else { return }
-            UserDefaults.standard.set(newValue, forKey: ActivityList.Keys.on)
+            guard newValue != sessionsView else { return }
+            UserDefaults.standard.set(newValue.rawValue, forKey: "sessionsView")
             settingsChanged()
         }
     }
@@ -187,17 +192,14 @@ final class AppModel {
         }
         #endif
         if args.contains("-demo") {
-            // The demo (and its UI tests) start Activity as asked (`-activity
-            // on`), off otherwise: one run's choice must not seed the next.
-            let i = args.firstIndex(of: "-activity")
-            let on = i.map { $0 + 1 < args.count && args[$0 + 1] == "on" } ?? false
-            UserDefaults.standard.set(on, forKey: ActivityList.Keys.on)
+            // The demo (and its UI tests) start on Chats, or Projects as asked
+            // (`-projects`): one run's choice must not seed the next.
+            UserDefaults.standard.set(args.contains("-projects") ? "projects" : "chats", forKey: "sessionsView")
             for key in [ActivityList.Keys.workingShelf, ActivityList.Keys.archiveAfter, ActivityList.Keys.unarchived, ActivityList.Keys.openShelves] {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-            // A test that says how Activity starts says how the list folds
-            // too: nothing folded.
-            if i != nil { UserDefaults.standard.removeObject(forKey: "collapsedSections") }
+            // Nothing folded either.
+            UserDefaults.standard.removeObject(forKey: "collapsedSections")
         }
         if args.contains("-demo") || args.contains("-route") && account == nil {
             start(.demo(options: Self.demoOptions()))
@@ -280,18 +282,11 @@ final class AppModel {
         return id
     }
 
-    /// The last server signed in to (the sign-in page's field).
-    static var lastServerURL: String? {
-        get { UserDefaults.standard.string(forKey: "lastServerURL") }
-        set { UserDefaults.standard.set(newValue, forKey: "lastServerURL") }
-    }
-
     /// Signed in to the server: next, pick the machine.
     @MainActor func signedIn(_ a: ServerAccount) {
         let saved = SavedAccount(serverUrl: a.serverUrl, token: a.token, deviceId: a.deviceId, email: a.email, name: a.name)
         saved.save()
         account = saved
-        Self.lastServerURL = a.serverUrl
         onSignedIn?()
     }
 
@@ -502,7 +497,7 @@ final class AppModel {
             page.sectionSessions[s.id] = list
         }
         page.sessions = ws.front.recent.map(vm)
-        page.projectGroups = Self.projectGroups(ws.front.recent, page.sessions, projects: ws.projects)
+        page.projects = Self.projectTree(ws.projects, sectionSessions: &page.sectionSessions)
         rawProjects = ws.projects
         // Sessions reachable only through their project still resolve by id.
         for p in ws.projects {
@@ -559,7 +554,7 @@ final class AppModel {
             changed = true
         }
         if changed { UserDefaults.standard.set(back, forKey: ActivityList.Keys.unarchived) }
-        guard was != nil, activityOn, activityArchiveAfter > 0 else { return }
+        guard was != nil, activityArchiveAfter > 0 else { return }
         let cutoff = now.addingTimeInterval(-Double(activityArchiveAfter) * 86_400)
         var seen = Set<String>()
         for vm in active where seen.insert(vm.id).inserted {
@@ -570,32 +565,78 @@ final class AppModel {
         }
     }
 
-    /// Like the desktop's project grouping: checkouts of one repository
-    /// share a group (named for its representative), project-less sessions
-    /// group per device. Groups and rows keep the incoming recency order.
-    private static func projectGroups(_ rows: [SessionRow], _ vms: [SessionRowVM], projects: [ProjectView]) -> [ProjectGroupVM] {
-        let byId = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        var groups: [ProjectGroupVM] = []
-        var index: [String: Int] = [:]
-        for (row, vm) in zip(rows, vms) {
-            let id: String
-            let name: String
-            if let ref = row.project {
-                let project = byId[ref.id]
-                id = "project:" + (project?.groupKey ?? ref.id)
-                name = project?.groupName ?? ref.name
-            } else {
-                id = "home:" + row.deviceId
-                name = row.deviceName.map { "Home · \($0)" } ?? "Home"
-            }
-            if let i = index[id] {
-                groups[i].sessions.append(vm)
-            } else {
-                index[id] = groups.count
-                groups.append(ProjectGroupVM(id: id, name: name, sessions: [vm]))
-            }
+    /// The Projects view: checkouts grouped by repository (`groupKey`), the
+    /// one named for the group as its main checkout. Its worktrees are the
+    /// group's other checkouts and every folder a chat runs in that isn't a
+    /// checkout's own (the desktop's worktree groups), named for the folder.
+    /// Repositories run most recently active first.
+    private static func projectTree(_ projects: [ProjectView], sectionSessions: inout [String: [SessionRowVM]]) -> [ProjectTreeVM] {
+        var groups: [String: [ProjectView]] = [:]
+        var order: [String] = []
+        for p in projects {
+            if groups[p.groupKey] == nil { order.append(p.groupKey) }
+            groups[p.groupKey, default: []].append(p)
         }
-        return groups
+        func trim(_ path: String) -> String {
+            var path = path.trimmingCharacters(in: .whitespaces)
+            while path.count > 1, path.hasSuffix("/") || path.hasSuffix("\\") { path.removeLast() }
+            return path
+        }
+        func rows(_ list: [SessionRow]) -> [SessionRowVM] {
+            list.sorted { $0.lastActivityMs > $1.lastActivityMs }.map(vm)
+        }
+        var out: [(tree: ProjectTreeVM, last: Int64)] = []
+        for key in order {
+            let checkouts = groups[key] ?? []
+            guard let main = checkouts.first(where: { $0.name == $0.groupName }) ?? checkouts.first else { continue }
+            // Chats by the folder they run in: a checkout's own path, or a
+            // worktree beside it.
+            var byFolder: [String: [SessionRow]] = [:]
+            var folderOrder: [String] = []
+            var checkoutOf: [String: ProjectView] = [:]
+            for c in checkouts {
+                let home = c.deviceId + ":" + trim(c.path)
+                checkoutOf[home] = c
+                if byFolder[home] == nil { folderOrder.append(home); byFolder[home] = [] }
+            }
+            for c in checkouts {
+                for chat in c.sessions {
+                    let cwd = chat.cwd.map(trim).flatMap { $0.isEmpty ? nil : $0 }
+                    let folder = c.deviceId + ":" + (cwd ?? trim(c.path))
+                    if byFolder[folder] == nil { folderOrder.append(folder) }
+                    byFolder[folder, default: []].append(chat)
+                }
+            }
+            let mainHome = main.deviceId + ":" + trim(main.path)
+            var mainRow: FolderRowVM!
+            var worktrees: [FolderRowVM] = []
+            var projectIds: [String: String] = [:]
+            for folder in folderOrder {
+                let list = rows(byFolder[folder] ?? [])
+                let id = "checkout:" + folder
+                sectionSessions[id] = list
+                if let c = checkoutOf[folder] { projectIds[id] = c.id }
+                let name = checkoutOf[folder]?.name ?? String(folder.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last ?? Substring(folder))
+                if folder == mainHome {
+                    mainRow = FolderRowVM(id: id, name: name, count: list.count, symbol: "folder")
+                } else {
+                    worktrees.append(FolderRowVM(id: id, name: name, count: list.count, symbol: "arrow.triangle.branch"))
+                }
+            }
+            // Worktrees in use most recently first; ones without chats last.
+            let latest = sectionSessions
+            worktrees.sort { (latest[$0.id]?.first?.lastActivity ?? .distantPast) > (latest[$1.id]?.first?.lastActivity ?? .distantPast) }
+            let last = checkouts.flatMap(\.sessions).map(\.lastActivityMs).max() ?? main.createdAtMs
+            out.append((ProjectTreeVM(id: "project:" + key, name: main.groupName, colorIndex: Int(main.colorIndex), main: mainRow, worktrees: worktrees, projectIds: projectIds), last))
+        }
+        return out.sorted { $0.last > $1.last }.map(\.tree)
+    }
+
+    /// Every chat not archived, most recent first (the Projects view's Chats).
+    var allChats: [SessionRowVM] {
+        var seen = Set<String>()
+        let rows = frontPage.folders.flatMap { sessions(inFolder: $0.id) } + frontPage.sessions
+        return rows.filter { seen.insert($0.id).inserted }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
     static func status(_ i: ChatIndicator) -> SessionRowVM.Status {

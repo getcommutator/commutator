@@ -72,6 +72,7 @@ fn a_chat_round_trips_through_a_remote_engine() {
         device_id: machine.clone(),
         email: "me@example.com".into(),
         name: None,
+        picture: None,
     }
     .save(engine_dir.path())
     .unwrap();
@@ -79,7 +80,6 @@ fn a_chat_round_trips_through_a_remote_engine() {
     let engine = rt.spawn(
         Engine::new(EngineConfig {
             data_dir: engine_dir.path().to_path_buf(),
-            edge_url: "http://127.0.0.1:1".into(),
             ipc_port: port,
             default_harness: HarnessId::Mock,
         })

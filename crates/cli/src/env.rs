@@ -1,15 +1,4 @@
-//! The edge and sign-in client `commutator` resolves from its environment.
-
-/// Production edge (Cloudflare Worker + Durable Objects on the zeron.sh zone).
-/// `COMMUTATOR_EDGE_URL` overrides (local dev / self-hosting).
-pub const DEFAULT_EDGE_URL: &str = "https://edge.zeron.sh";
-
-pub fn edge_url_from_env() -> String {
-    std::env::var("COMMUTATOR_EDGE_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_EDGE_URL.into())
-}
+//! What `commutator` resolves from its environment.
 
 /// The engine's IPC port: `COMMUTATOR_IPC_PORT`, else 27754.
 pub fn ipc_port_from_env() -> u16 {

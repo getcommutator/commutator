@@ -860,9 +860,23 @@ fn flush_latest(cx: &mut App) {
 #[serde(rename_all = "camelCase")]
 pub enum SidebarOrganization {
     ByProject,
+    /// The Projects view's grouping (never picked under Organize): projects
+    /// with their worktrees nested under them, as in Shepherd.
+    ByWorktree,
     ByDevice,
     #[default]
     InOneList,
+}
+
+/// Which sidebar the window shows, picked under ⋯ → Sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum SidebarView {
+    /// Sessions, organized by `sidebar_organization`.
+    #[default]
+    Chats,
+    /// Projects, each worktree nested under its project with its sessions.
+    Projects,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -999,7 +1013,8 @@ pub struct UiSettings {
     /// Legacy: the grouped-by-project toggle predates spaces (which group by
     /// folder inherently). Kept for file compatibility; no longer read.
     pub sidebar_grouped: bool,
-    /// How active sessions are partitioned in the sidebar.
+    pub sidebar_view: SidebarView,
+    /// How active sessions are partitioned in the Chats sidebar.
     pub sidebar_organization: SidebarOrganization,
     /// Timestamp used to order active sessions (newest first).
     pub sidebar_sort: SidebarSort,
@@ -1165,9 +1180,7 @@ pub struct UiSettings {
     /// The user hid the session card (project, device, side chats, actions)
     /// that otherwise shows beside a transcript with room for it.
     pub session_info_hidden: bool,
-    /// Interactive identity overlay; imported themes default to their own accent.
-    pub accent: commutator_theme::AccentSelection,
-    /// Glass policy, independent from the selected appearance, theme, and accent.
+    /// Glass policy, independent from the selected appearance and theme.
     pub surface: commutator_theme::SurfacePreference,
     /// Optional device-local artwork behind the blank new-thread composer.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1185,10 +1198,6 @@ pub struct UiSettings {
     pub reduce_motion: crate::motion::ReduceMotion,
     /// Also snap animations while the main window is not focused.
     pub pause_animations_in_background: bool,
-    /// Pre-theme settings used `accentColor`. Read it once, migrate to
-    /// [`Self::accent`], and never write it again.
-    #[serde(default, rename = "accentColor", skip_serializing)]
-    legacy_accent_color: Option<crate::theme::AccentColor>,
 }
 
 impl Default for UiSettings {
@@ -1198,6 +1207,7 @@ impl Default for UiSettings {
             sidebar_width: SIDEBAR_DEFAULT,
             sidebar_collapsed: false,
             sidebar_grouped: false,
+            sidebar_view: SidebarView::Chats,
             sidebar_organization: SidebarOrganization::InOneList,
             sidebar_sort: SidebarSort::LastUpdated,
             sidebar_show_project_label: true,
@@ -1271,7 +1281,6 @@ impl Default for UiSettings {
             files_word_wrap: false,
             files_show_all: false,
             session_info_hidden: false,
-            accent: commutator_theme::AccentSelection::default(),
             surface: commutator_theme::SurfacePreference::default(),
             new_thread_composer_background: None,
             wallpaper_folder: None,
@@ -1282,7 +1291,6 @@ impl Default for UiSettings {
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
-            legacy_accent_color: None,
         }
     }
 }
@@ -1843,6 +1851,7 @@ impl UiSettings {
             sidebar_width,
             sidebar_collapsed,
             sidebar_grouped,
+            sidebar_view,
             sidebar_organization,
             sidebar_sort,
             sidebar_show_project_label,
@@ -1908,7 +1917,6 @@ impl UiSettings {
             files_word_wrap,
             files_show_all,
             session_info_hidden,
-            accent,
             surface,
             new_thread_composer_background,
             wallpaper_folder,
@@ -1919,7 +1927,6 @@ impl UiSettings {
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
-            legacy_accent_color,
             pull_request_destination,
             last_pull_request_repository,
             last_pull_request_device,
@@ -2081,7 +2088,7 @@ impl UiSettings {
                     }
                     serde_json::from_value::<UiSettings>(value)
                 }) {
-                    Ok(settings) => settings.migrated().clamped(),
+                    Ok(settings) => settings.clamped(),
                     Err(err) => {
                         tracing::warn!(error = %err, "ui-settings corrupt; using defaults");
                         Self::default()
@@ -2108,16 +2115,6 @@ impl UiSettings {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, &path)
-    }
-
-    fn migrated(mut self) -> Self {
-        if self.accent == commutator_theme::AccentSelection::ThemeDefault
-            && let Some(accent) = self.legacy_accent_color.take()
-        {
-            self.accent = commutator_theme::AccentSelection::Preset(accent.into());
-        }
-        self.legacy_accent_color = None;
-        self
     }
 
     pub fn path(data_dir: &Path) -> PathBuf {
@@ -2901,6 +2898,7 @@ mod tests {
             sidebar_width: 300.0,
             sidebar_collapsed: true,
             sidebar_grouped: true,
+            sidebar_view: SidebarView::Projects,
             sidebar_organization: SidebarOrganization::ByDevice,
             sidebar_sort: SidebarSort::Created,
             sidebar_compact: true,
@@ -3013,7 +3011,6 @@ mod tests {
             code_font_size: 11.0,
             files_show_all: true,
             session_info_hidden: true,
-            accent: commutator_theme::AccentSelection::Preset(commutator_theme::AccentPreset::Cyan),
             surface: commutator_theme::SurfacePreference::Frosted,
             new_thread_composer_background: Some(NewThreadComposerBackground {
                 path: "/tmp/commutator/new-thread-background.png".into(),
@@ -3032,7 +3029,6 @@ mod tests {
             new_thread_background_effect: NewThreadBackgroundEffect::Ascii,
             reduce_motion: crate::motion::ReduceMotion::On,
             pause_animations_in_background: true,
-            legacy_accent_color: None,
             onboarding_completed: false,
         };
         settings.save(dir.path()).unwrap();
@@ -3347,7 +3343,6 @@ mod tests {
         .unwrap();
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.appearance, crate::appearance::AppearanceMode::System);
-        assert_eq!(loaded.accent, commutator_theme::AccentSelection::ThemeDefault);
         assert_eq!(loaded.surface, commutator_theme::SurfacePreference::ThemeDefault);
         assert_eq!(loaded.sidebar_width, 300.0);
         assert!(loaded.sidebar_pinned_session_ids_by_profile.is_empty());
@@ -3429,20 +3424,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_accent_color_migrates_to_an_explicit_preset() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(UiSettings::path(dir.path()), r#"{"accentColor":"cyan"}"#).unwrap();
-        let loaded = UiSettings::load(dir.path());
-        assert_eq!(
-            loaded.accent,
-            commutator_theme::AccentSelection::Preset(commutator_theme::AccentPreset::Cyan)
-        );
-        loaded.save(dir.path()).unwrap();
-        let saved = std::fs::read_to_string(UiSettings::path(dir.path())).unwrap();
-        assert!(!saved.contains("accentColor"));
-    }
-
-    #[test]
     fn settings_without_ui_font_default_to_geist() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -3516,6 +3497,7 @@ mod tests {
                 id: user_id.to_string(),
                 email: format!("{user_id}@example.com"),
                 name: None,
+                picture: None,
             },
             org_id: org_id.map(str::to_string),
         }

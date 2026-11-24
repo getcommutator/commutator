@@ -434,7 +434,14 @@ pub(crate) fn prepare_runs(ctx: &mut Ctx, runs: &[InlineRun], kind: TextKind, mu
         };
         paints.push(SpanPaint {
             color,
-            decoration: if s.strikethrough { Decoration::Strikethrough } else { Decoration::None },
+            // The accent is monochrome, so a link is told apart by its underline.
+            decoration: if s.strikethrough {
+                Decoration::Strikethrough
+            } else if link.is_some() && !chip {
+                Decoration::Underline
+            } else {
+                Decoration::None
+            },
             link,
             chip,
         });

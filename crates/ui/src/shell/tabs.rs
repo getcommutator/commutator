@@ -1,6 +1,6 @@
-//! Session navigation — the horizontal tab strip is gone (wing 2026-08-10):
-//! the activity sidebar IS the session list, and the titlebar names the
-//! selected session (harness brand icon + title). A `+` new-session button
+//! Session navigation — the activity sidebar is the session list, and the
+//! titlebar names the selected session (harness brand icon + title); in the
+//! Projects sidebar it shows the session's project/worktree chats as tabs. A `+` new-session button
 //! lives in the titlebar's left control cluster while an existing session is
 //! selected. `UiSettings.open_tabs` is legacy — no longer read or written.
 
@@ -608,6 +608,84 @@ impl Shell {
                 crate::running_pill::mark_titlebar_button(button, running_lanes, &theme)
             })
         });
+        // Projects sidebar: the open chat's project/worktree chats as tabs
+        // in place of its title.
+        let tabs = self.project_chat_tabs(cx);
+        let selected_chat = self.state.read(cx).selected_chat.clone();
+        let tab_strip = (!tabs.is_empty()).then(|| {
+            div()
+                .id("project-chat-tabs")
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.0))
+                .overflow_x_scroll()
+                .children(tabs.into_iter().map(|(id, title, harness, working)| {
+                    use crate::surface_chrome::{
+                        TAB_CHIP_FONT, TAB_CHIP_GAP, TAB_CHIP_HEIGHT, TAB_CHIP_ICON,
+                        TAB_CHIP_PAD_L, TAB_CHIP_PAD_R, TAB_CHIP_SLOT_SIZE,
+                    };
+                    let active = selected_chat.as_deref() == Some(id.as_str());
+                    // The pane tabs' chip (surface_chrome::tab_chip) sized to
+                    // its title, with the working dot in the trailing slot.
+                    crate::surface_chrome::tab(
+                        SharedString::from(format!("project-chat-tab-{id}")),
+                        active,
+                        &theme,
+                    )
+                    .h(px(TAB_CHIP_HEIGHT))
+                    .min_w(px(96.0))
+                    .max_w(px(220.0))
+                    .pl(px(TAB_CHIP_PAD_L))
+                    .pr(px(TAB_CHIP_PAD_R))
+                    .gap(px(TAB_CHIP_GAP))
+                    // A tab is a button, not part of the window's drag area.
+                    .block_mouse_except_scroll()
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_chat(id.clone(), cx);
+                    }))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(TAB_CHIP_SLOT_SIZE))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when_some(
+                                harness.map(crate::pickers::harness_brand_icon),
+                                |el, (path, tint)| {
+                                    el.child(
+                                        icon(path)
+                                            .size(px(TAB_CHIP_ICON))
+                                            .text_color(tint.unwrap_or(theme.text_muted)),
+                                    )
+                                },
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(crate::typography::ui_rems(TAB_CHIP_FONT))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(TAB_CHIP_SLOT_SIZE))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(working, |el| {
+                                el.child(div().size(px(6.0)).rounded_full().bg(theme.accent))
+                            }),
+                    )
+                }))
+        });
+        let tab_strip_absent = tab_strip.is_none();
         let inner = div()
             .size_full()
             .flex()
@@ -619,7 +697,8 @@ impl Shell {
             // In panel takeover the header strip spans the whole band — the
             // title would sit UNDER it (both flex_none, the row overflows and
             // paint order stacks them), so it hides for the duration.
-            .when(!takeover, |el| {
+            .when(!takeover && tab_strip.is_some(), |el| el.children(tab_strip))
+            .when(!takeover && tab_strip_absent, |el| {
                 el.child(
                     div()
                         .min_w_0()

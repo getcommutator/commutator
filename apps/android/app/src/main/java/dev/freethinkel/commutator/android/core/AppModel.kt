@@ -309,9 +309,9 @@ class AppModel(private val app: Application) {
     // ── sign-in ────────────────────────────────────────────────────────────
 
     /** The server's Google sign-in URL to open in a Custom Tab (null: a bad address). */
-    fun beginSignIn(serverUrl: String): String? = try {
+    fun beginSignIn(): String? = try {
         signInError.value = null
-        ServerSignIn(serverUrl.trim(), deviceName()).also { pendingSignIn = it }.url()
+        ServerSignIn(SERVER_URL, deviceName()).also { pendingSignIn = it }.url()
     } catch (e: Exception) {
         signInError.value = "That server address doesn't look right."
         null
@@ -329,7 +329,6 @@ class AppModel(private val app: Application) {
                 pendingSignIn = null
                 val saved = CredentialStore.Account(a.serverUrl, a.token, a.deviceId, a.email, a.name)
                 credentials.store(saved)
-                credentials.lastServerUrl = a.serverUrl
                 _account.value = saved
             } catch (e: Exception) {
                 Log.w("Commutator", "sign-in failed", e)
@@ -682,6 +681,9 @@ class AppModel(private val app: Application) {
 
 /** Past [DeliveryService]'s 25 s, so a message sent just before leaving goes first. */
 private const val REST_AFTER_MS = 30_000L
+
+/** The hosted Commutator server every app signs in to. */
+private const val SERVER_URL = "https://commutator.freethinkel.dev"
 
 /** A snackbar raised from anywhere in the app. */
 class Toast(val message: String, val action: String? = null, val run: (() -> Unit)? = null)

@@ -1624,6 +1624,9 @@ pub struct UserProfile {
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+    /// The account's profile photo URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -27,16 +27,25 @@ pub struct Account {
     pub email: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The account's profile photo URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
 }
 
-/// The server to sign in to: the one named, else `COMMUTATOR_SERVER_URL`,
-/// else the one this machine signed in to before.
-pub fn server_url(named: Option<String>, saved: Option<&Account>) -> Option<String> {
+pub use commutator_account::DEFAULT_SERVER_URL;
+
+/// The server to sign in to: the one named, else `COMMUTATOR_SERVER_URL`
+/// (local stacks), else the one this machine signed in to before, else the
+/// hosted one.
+pub fn server_url(named: Option<String>, saved: Option<&Account>) -> String {
     named
         .or_else(|| std::env::var("COMMUTATOR_SERVER_URL").ok())
         .filter(|url| !url.trim().is_empty())
         .or_else(|| saved.map(|account| account.server_url.clone()))
-        .map(|url| url.trim().trim_end_matches('/').to_owned())
+        .unwrap_or_else(|| commutator_account::DEFAULT_SERVER_URL.into())
+        .trim()
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 pub fn path(data_dir: &Path) -> PathBuf {
@@ -187,6 +196,7 @@ impl SignIn {
             device_id: redeemed.device_id,
             email: redeemed.email,
             name: redeemed.name,
+            picture: redeemed.picture,
         })
     }
 }
@@ -277,6 +287,7 @@ mod tests {
             device_id: "d".into(),
             email: "me@example.com".into(),
             name: None,
+            picture: None,
         };
         account.save(dir.path()).unwrap();
         assert_eq!(Account::load(dir.path()), Some(account));

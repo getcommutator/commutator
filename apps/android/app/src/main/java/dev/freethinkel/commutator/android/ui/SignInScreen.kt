@@ -18,16 +18,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
@@ -43,7 +37,6 @@ import dev.freethinkel.commutator.android.core.AppModel
 fun SignInScreen(model: AppModel) {
     val context = LocalContext.current
     val error by model.signInError.collectAsState()
-    var server by rememberSaveable { mutableStateOf(model.credentials.lastServerUrl ?: "https://commutator.freethinkel.dev") }
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -66,22 +59,11 @@ fun SignInScreen(model: AppModel) {
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(40.dp))
-        OutlinedTextField(
-            value = server,
-            onValueChange = { server = it },
-            label = { Text("Your Commutator server") },
-            placeholder = { Text("https://commutator.example.com") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
-                val url = model.beginSignIn(server) ?: return@Button
+                val url = model.beginSignIn() ?: return@Button
                 CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url))
             },
-            enabled = server.startsWith("https://") || server.startsWith("http://"),
             modifier = Modifier.fillMaxWidth().heightIn(min = ButtonDefaults.MediumContainerHeight),
             shapes = ButtonDefaults.shapes(),
             contentPadding = ButtonDefaults.contentPaddingFor(ButtonDefaults.MediumContainerHeight),

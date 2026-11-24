@@ -35,126 +35,35 @@
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use gpui::{App, Global, Hsla, SharedString, hsla};
-use serde::{Deserialize, Serialize};
 use commutator_syntax::HighlightKind;
 use commutator_theme::{
-    AccentPreset, AccentSelection, Color as ModelColor, SurfacePreference, SurfaceTreatment,
-    ThemeRegistry, ThemeVariant,
+    Color as ModelColor, SurfacePreference, SurfaceTreatment, ThemeRegistry, ThemeVariant,
 };
 
-/// User-selectable accent family. A choice is one color identity, not a
-/// miniature multi-hue theme: every interactive accent role stays on the same
-/// authored hue in both appearances.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum AccentColor {
-    /// The exact upstream Commutator indigo.
-    #[default]
-    #[serde(alias = "violet", alias = "indigo", alias = "red", alias = "purple")]
-    Commutator,
-    Orange,
-    Amber,
-    Green,
-    #[serde(alias = "teal")]
-    Cyan,
-    Blue,
-    Pink,
-}
-
-impl AccentColor {
-    pub const ALL: [Self; 7] = [
-        Self::Commutator,
-        Self::Orange,
-        Self::Amber,
-        Self::Green,
-        Self::Cyan,
-        Self::Blue,
-        Self::Pink,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Commutator => "Commutator",
-            Self::Orange => "Orange",
-            Self::Amber => "Amber",
-            Self::Green => "Green",
-            Self::Cyan => "Cyan",
-            Self::Blue => "Blue",
-            Self::Pink => "Pink",
-        }
-    }
-
-    fn tokens(self, appearance: Appearance) -> AccentTokens {
-        // These are deliberately authored pairs. Runtime contrast correction
-        // used to gamut-clip OKLCH into sRGB and then mutate HSL lightness,
-        // producing different chroma and apparent hues across light/dark.
-        let (primary, strong) = match (self, appearance) {
-            (Self::Commutator, Appearance::Dark) => {
-                (oklch(0.673, 0.182, 276.935), oklch(0.585, 0.233, 277.117))
-            }
-            (Self::Commutator, Appearance::Light) => {
-                (oklch(0.511, 0.262, 276.966), oklch(0.511, 0.262, 276.966))
-            }
-            (Self::Orange, Appearance::Dark) => (oklch(0.75, 0.18, 55.0), oklch(0.54, 0.19, 55.0)),
-            (Self::Orange, Appearance::Light) => (oklch(0.50, 0.19, 55.0), oklch(0.50, 0.19, 55.0)),
-            (Self::Amber, Appearance::Dark) => (oklch(0.80, 0.17, 84.0), oklch(0.52, 0.14, 84.0)),
-            (Self::Amber, Appearance::Light) => (oklch(0.48, 0.14, 84.0), oklch(0.48, 0.14, 84.0)),
-            (Self::Green, Appearance::Dark) => (oklch(0.75, 0.17, 150.0), oklch(0.50, 0.15, 150.0)),
-            (Self::Green, Appearance::Light) => {
-                (oklch(0.46, 0.14, 150.0), oklch(0.46, 0.14, 150.0))
-            }
-            (Self::Cyan, Appearance::Dark) => (oklch(0.76, 0.13, 205.0), oklch(0.49, 0.12, 205.0)),
-            (Self::Cyan, Appearance::Light) => (oklch(0.45, 0.11, 205.0), oklch(0.45, 0.11, 205.0)),
-            (Self::Blue, Appearance::Dark) => (oklch(0.70, 0.17, 255.0), oklch(0.50, 0.20, 255.0)),
-            (Self::Blue, Appearance::Light) => (oklch(0.47, 0.21, 255.0), oklch(0.47, 0.21, 255.0)),
-            (Self::Pink, Appearance::Dark) => (oklch(0.72, 0.18, 350.0), oklch(0.51, 0.20, 350.0)),
-            (Self::Pink, Appearance::Light) => (oklch(0.48, 0.20, 350.0), oklch(0.48, 0.20, 350.0)),
-        };
-        AccentTokens {
-            primary,
-            strong,
-            wash: match appearance {
-                Appearance::Dark => strong.opacity(0.45),
-                Appearance::Light => primary.opacity(0.10),
-            },
-            selection: primary.opacity(if appearance.is_dark() { 0.35 } else { 0.24 }),
-            caret: primary,
-            code_text: primary,
-            code_wash: primary.opacity(match appearance {
-                Appearance::Dark => 0.12,
-                Appearance::Light => 0.10,
-            }),
-            activity: primary,
-            glyph: GlyphPalette::for_accent(primary, strong, appearance),
-        }
-    }
-}
-
-impl From<AccentColor> for AccentPreset {
-    fn from(value: AccentColor) -> Self {
-        match value {
-            AccentColor::Commutator => Self::Commutator,
-            AccentColor::Orange => Self::Orange,
-            AccentColor::Amber => Self::Amber,
-            AccentColor::Green => Self::Green,
-            AccentColor::Cyan => Self::Cyan,
-            AccentColor::Blue => Self::Blue,
-            AccentColor::Pink => Self::Pink,
-        }
-    }
-}
-
-impl From<AccentPreset> for AccentColor {
-    fn from(value: AccentPreset) -> Self {
-        match value {
-            AccentPreset::Commutator => Self::Commutator,
-            AccentPreset::Orange => Self::Orange,
-            AccentPreset::Amber => Self::Amber,
-            AccentPreset::Green => Self::Green,
-            AccentPreset::Cyan => Self::Cyan,
-            AccentPreset::Blue => Self::Blue,
-            AccentPreset::Pink => Self::Pink,
-        }
+/// The fallback theme's accent, the same monochrome as Commutator Light /
+/// Dark: near-black on light, near-white on dark. Themes bring their own.
+fn fallback_accent(appearance: Appearance) -> AccentTokens {
+    let (primary, strong, on) = match appearance {
+        Appearance::Dark => (grey(0xec), grey(0xd4), grey(0x18)),
+        Appearance::Light => (grey(0x18), grey(0x18), neutral(0.985)),
+    };
+    AccentTokens {
+        primary,
+        strong,
+        on,
+        wash: match appearance {
+            Appearance::Dark => strong.opacity(0.45),
+            Appearance::Light => primary.opacity(0.10),
+        },
+        selection: primary.opacity(if appearance.is_dark() { 0.35 } else { 0.24 }),
+        caret: primary,
+        code_text: primary,
+        code_wash: primary.opacity(match appearance {
+            Appearance::Dark => 0.12,
+            Appearance::Light => 0.10,
+        }),
+        activity: primary,
+        glyph: GlyphPalette::for_accent(primary, strong, appearance),
     }
 }
 
@@ -199,6 +108,7 @@ impl GlyphPalette {
 struct AccentTokens {
     primary: Hsla,
     strong: Hsla,
+    on: Hsla,
     wash: Hsla,
     selection: Hsla,
     caret: Hsla,
@@ -595,8 +505,6 @@ pub struct Theme {
     pub variant_id: SharedString,
     /// Stable id of the family that owns [`Self::variant_id`].
     pub family_id: SharedString,
-    /// Whether the base theme or a user preset owns interactive identity.
-    pub accent_selection: AccentSelection,
     /// Effective wallpaper overlay; manual theme/accent selections remain intact.
     pub wallpaper_color: Option<commutator_theme::Color>,
     /// The persisted policy that resolved [`Self::surface_treatment`].
@@ -604,8 +512,6 @@ pub struct Theme {
     /// The effective treatment after applying [`Self::surface_preference`] to
     /// the selected variant's recommendation.
     pub surface_treatment: SurfaceTreatment,
-    /// The selected interactive accent used to build this theme.
-    pub accent_color: AccentColor,
 
     // ---- paint: neutral surfaces ----
     /// Main content panel. Dark: the deepest plane (#060606). Light: pure white —
@@ -1003,11 +909,10 @@ impl Theme {
         if !self.is_frost() {
             return self.surface_overlay;
         }
-        // Light glass must keep the blurred scene visible. A contrast guard
-        // against solid black raised this to 85–100%, effectively selecting
-        // opaque material even when the user explicitly chose frost.
+        // Light glass keeps a hint of the blurred scene, but reads as the
+        // theme's surface: at 45% a modal's scrim showed through as grey.
         if matches!(self.appearance, Appearance::Light) {
-            return self.surface_overlay.opacity(0.45);
+            return self.surface_overlay.opacity(0.85);
         }
         self.surface_overlay
             .opacity(self.contrast_checked_tint_alpha(
@@ -1141,20 +1046,14 @@ impl Theme {
     /// reference screenshots of the original app (docs/reference): main panel
     /// `#060606`, shell/sidebar `#0d0d0d`.
     pub fn dark() -> Self {
-        Self::dark_with_accent(AccentColor::default())
-    }
-
-    pub fn dark_with_accent(accent_color: AccentColor) -> Self {
-        let accent = accent_color.tokens(Appearance::Dark);
+        let accent = fallback_accent(Appearance::Dark);
         Self {
             appearance: Appearance::Dark,
             variant_id: "commutator-dark".into(),
             family_id: "commutator".into(),
-            accent_selection: AccentSelection::Preset(accent_color.into()),
             wallpaper_color: None,
             surface_preference: SurfacePreference::ThemeDefault,
             surface_treatment: SurfaceTreatment::Frosted,
-            accent_color,
             bg: grey(6),       // main panel — sampled #060606
             surface: grey(13), // shell / sidebar — sampled #0d0d0d
             surface_raised: neutral(0.235),
@@ -1174,7 +1073,7 @@ impl Theme {
             accent: accent.primary,
             accent_strong: accent.strong,
             accent_wash: accent.wash,
-            on_accent: neutral(0.985),
+            on_accent: accent.on,
             danger: oklch(0.704, 0.191, 22.216),       // red-400
             danger_muted: oklch(0.808, 0.114, 19.571), // red-300
             warning: oklch(0.828, 0.189, 84.429),      // amber-400
@@ -1222,20 +1121,14 @@ impl Theme {
     /// from the 400 to the 600 step at identical hue so they clear WCAG AA on
     /// white instead of glowing.
     pub fn light() -> Self {
-        Self::light_with_accent(AccentColor::default())
-    }
-
-    pub fn light_with_accent(accent_color: AccentColor) -> Self {
-        let accent = accent_color.tokens(Appearance::Light);
+        let accent = fallback_accent(Appearance::Light);
         Self {
             appearance: Appearance::Light,
             variant_id: "commutator-light".into(),
             family_id: "commutator".into(),
-            accent_selection: AccentSelection::Preset(accent_color.into()),
             wallpaper_color: None,
             surface_preference: SurfacePreference::ThemeDefault,
             surface_treatment: SurfaceTreatment::Frosted,
-            accent_color,
             bg: grey(0xff), // main panel — clean white
             // Deeper than ~neutral-100 looks on paper: the content card is pure
             // white and sits *inside* this surface, so too small a step leaves the
@@ -1270,7 +1163,7 @@ impl Theme {
             accent: accent.primary,
             accent_strong: accent.strong,
             accent_wash: accent.wash,
-            on_accent: neutral(0.985),
+            on_accent: accent.on,
             danger: oklch(0.577, 0.245, 27.325),        // red-600
             danger_muted: oklch(0.505, 0.213, 27.518),  // red-700
             warning: oklch(0.555, 0.163, 48.998),       // amber-700 — carries 12px text
@@ -1315,13 +1208,9 @@ impl Theme {
 
     /// Build the theme for an appearance.
     pub fn for_appearance(appearance: Appearance) -> Self {
-        Self::for_preferences(appearance, AccentColor::default())
-    }
-
-    pub fn for_preferences(appearance: Appearance, accent: AccentColor) -> Self {
         match appearance {
-            Appearance::Dark => Self::dark_with_accent(accent),
-            Appearance::Light => Self::light_with_accent(accent),
+            Appearance::Dark => Self::dark(),
+            Appearance::Light => Self::light(),
         }
     }
 
@@ -1350,28 +1239,20 @@ impl Theme {
         self
     }
 
-    /// Resolve one complete registered variant and then apply the narrowly
-    /// scoped accent policy. Components consume only the resulting semantic
-    /// tokens; VS Code keys never escape the importer.
+    /// Resolve one complete registered variant, its accent included.
+    /// Components consume only the resulting semantic tokens; VS Code keys
+    /// never escape the importer.
     pub fn for_selection(
         appearance: Appearance,
         variant_id: &str,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
     ) -> Self {
-        Self::for_selection_with_wallpaper(
-            appearance,
-            variant_id,
-            accent_selection,
-            surface_preference,
-            None,
-        )
+        Self::for_selection_with_wallpaper(appearance, variant_id, surface_preference, None)
     }
 
     fn for_selection_with_wallpaper(
         appearance: Appearance,
         variant_id: &str,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
         wallpaper_color: Option<commutator_theme::Color>,
     ) -> Self {
@@ -1388,9 +1269,7 @@ impl Theme {
         if let Some(color) = wallpaper_color {
             let mut variant = variant.clone();
             crate::settings::wallpaper_colors::tint_variant(&mut variant, color);
-            let mut theme =
-                Self::from_variant(&variant, AccentSelection::ThemeDefault, surface_preference);
-            theme.accent_selection = accent_selection;
+            let mut theme = Self::from_variant(&variant, surface_preference);
             theme.wallpaper_color = Some(color);
             if theme.surface_treatment == SurfaceTreatment::Frosted {
                 // Glass interactions lift toward white rather than laying a
@@ -1401,23 +1280,18 @@ impl Theme {
             }
             theme
         } else {
-            Self::from_variant(variant, accent_selection, surface_preference)
+            Self::from_variant(variant, surface_preference)
         }
     }
 
     pub(crate) fn from_variant(
         variant: &ThemeVariant,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
     ) -> Self {
         let appearance = model_appearance(variant.appearance);
-        let accent_color = match accent_selection {
-            AccentSelection::ThemeDefault => AccentColor::Commutator,
-            AccentSelection::Preset(preset) => preset.into(),
-        };
-        let mut theme = Self::for_preferences(appearance, accent_color);
+        let mut theme = Self::for_appearance(appearance);
         let colors = &variant.colors;
-        let accent = variant.accent_for(accent_selection);
+        let accent = variant.accent;
         let text_backgrounds = [
             colors.background,
             colors.shell,
@@ -1442,7 +1316,6 @@ impl Theme {
         };
         theme.variant_id = variant.id.clone().into();
         theme.family_id = variant.family_id.clone().into();
-        theme.accent_selection = accent_selection;
         theme.surface_preference = surface_preference;
         theme.surface_treatment = surface_preference.resolve(variant.recommended_surface_treatment);
         theme.bg = model_color(colors.background);
@@ -1510,15 +1383,8 @@ impl Theme {
     /// context-free paint helpers at it. The **only** way the appearance should
     /// change — setting the global directly leaves [`current_appearance`] stale.
     pub fn install(appearance: Appearance, cx: &mut App) {
-        Self::install_preferences(appearance, AccentColor::default(), cx);
-    }
-
-    pub fn install_preferences(appearance: Appearance, accent: AccentColor, cx: &mut App) {
-        let accent_changed = cx
-            .try_global::<Theme>()
-            .is_some_and(|theme| theme.accent_color != accent);
         set_current_appearance(appearance);
-        let next = Self::for_preferences(appearance, accent)
+        let next = Self::for_appearance(appearance)
             .with_font_sans(crate::typography::effective_family_name(cx))
             .with_font_mono(crate::typography::code_effective_family_name(cx))
             .with_font_terminal(crate::typography::terminal_effective_family_name(cx))
@@ -1526,24 +1392,17 @@ impl Theme {
             .with_terminal_font_size(crate::typography::terminal_font_size(cx));
         sync_gpui_base_scrollbar(&next, cx);
         cx.set_global(next);
-        // An accent-only swap leaves CURRENT_APPEARANCE unchanged, but cached
-        // resolved colors still need to be discarded for the next frame.
-        if accent_changed {
-            bump_style_generation();
-        }
     }
 
     pub fn install_selection(
         appearance: Appearance,
         variant_id: &str,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
         cx: &mut App,
     ) {
         Self::install_selection_inner(
             appearance,
             variant_id,
-            accent_selection,
             surface_preference,
             false,
             cx,
@@ -1557,14 +1416,12 @@ impl Theme {
     pub fn reinstall_selection(
         appearance: Appearance,
         variant_id: &str,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
         cx: &mut App,
     ) {
         Self::install_selection_inner(
             appearance,
             variant_id,
-            accent_selection,
             surface_preference,
             true,
             cx,
@@ -1574,7 +1431,6 @@ impl Theme {
     fn install_selection_inner(
         appearance: Appearance,
         variant_id: &str,
-        accent_selection: AccentSelection,
         surface_preference: SurfacePreference,
         force_generation: bool,
         cx: &mut App,
@@ -1582,7 +1438,6 @@ impl Theme {
         let next = Self::for_selection_with_wallpaper(
             appearance,
             variant_id,
-            accent_selection,
             surface_preference,
             crate::settings::wallpaper_colors::active(cx),
         )
@@ -1593,7 +1448,6 @@ impl Theme {
         .with_terminal_font_size(crate::typography::terminal_font_size(cx));
         let changed = cx.try_global::<Theme>().is_some_and(|theme| {
             theme.variant_id != next.variant_id
-                || theme.accent_selection != next.accent_selection
                 || theme.surface_preference != next.surface_preference
                 || theme.appearance != next.appearance
                 || theme.wallpaper_color != next.wallpaper_color
@@ -2087,18 +1941,17 @@ mod tests {
     }
 
     #[test]
-    fn commutator_accent_is_the_exact_upstream_default() {
+    fn fallback_accent_is_monochrome() {
         let dark = Theme::dark();
         let light = Theme::light();
-        assert_eq!(dark.accent_color, AccentColor::Commutator);
-        assert_eq!(dark.accent, oklch(0.673, 0.182, 276.935));
-        assert_eq!(dark.accent_strong, oklch(0.585, 0.233, 277.117));
+        assert_eq!(dark.accent, grey(0xec));
+        assert_eq!(dark.accent_strong, grey(0xd4));
         assert_eq!(dark.code_text, dark.accent);
         assert_eq!(dark.busy, dark.accent);
         assert_eq!(dark.glyph.mid, dark.accent);
         assert_eq!(dark.caret, dark.accent);
-        assert_eq!(light.accent, oklch(0.511, 0.262, 276.966));
-        assert_eq!(light.accent_strong, oklch(0.511, 0.262, 276.966));
+        assert_eq!(light.accent, grey(0x18));
+        assert_eq!(light.accent_strong, grey(0x18));
         assert_eq!(light.code_text, light.accent);
         assert_eq!(light.busy, light.accent);
         assert_eq!(light.glyph.mid, light.accent);
@@ -2114,7 +1967,6 @@ mod tests {
             let theme = Theme::for_selection_with_wallpaper(
                 appearance,
                 id,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Frosted,
                 Some(ModelColor::rgb(20, 60, 140)),
             );
@@ -2141,7 +1993,6 @@ mod tests {
                 let theme = Theme::for_selection_with_wallpaper(
                     appearance,
                     id,
-                    AccentSelection::ThemeDefault,
                     SurfacePreference::Opaque,
                     Some(color),
                 );
@@ -2161,25 +2012,10 @@ mod tests {
     }
 
     #[test]
-    fn previous_preview_accent_names_migrate_without_resetting_settings() {
-        for old_default in ["violet", "indigo", "red", "purple"] {
-            assert_eq!(
-                serde_json::from_str::<AccentColor>(&format!(r#""{old_default}""#)).unwrap(),
-                AccentColor::Commutator
-            );
-        }
-        assert_eq!(
-            serde_json::from_str::<AccentColor>(r#""teal""#).unwrap(),
-            AccentColor::Cyan
-        );
-    }
-
-    #[test]
     fn theme_recommendation_and_surface_override_resolve_independently() {
         let catppuccin = Theme::for_selection(
             Appearance::Dark,
             "catppuccin-mocha",
-            AccentSelection::ThemeDefault,
             SurfacePreference::ThemeDefault,
         );
         let commutator = Theme::dark();
@@ -2192,7 +2028,6 @@ mod tests {
         let frosted = Theme::for_selection(
             Appearance::Dark,
             "catppuccin-mocha",
-            AccentSelection::ThemeDefault,
             SurfacePreference::Frosted,
         );
         assert_eq!(frosted.variant_id, catppuccin.variant_id);
@@ -2214,7 +2049,6 @@ mod tests {
         let opaque_commutator = Theme::for_selection(
             Appearance::Dark,
             "commutator-dark",
-            AccentSelection::ThemeDefault,
             SurfacePreference::Opaque,
         );
         assert_eq!(opaque_commutator.surface_treatment, SurfaceTreatment::Opaque);
@@ -2228,7 +2062,6 @@ mod tests {
             let appearance = model_appearance(variant.appearance);
             let theme = Theme::from_variant(
                 variant,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Frosted,
             );
             let adverse_backdrop = match appearance {
@@ -2281,7 +2114,6 @@ mod tests {
 
         let theme = Theme::from_variant(
             &variant,
-            AccentSelection::ThemeDefault,
             SurfacePreference::Opaque,
         );
         assert!(painted_contrast(theme.text, theme.bg) >= 4.5);
@@ -2299,7 +2131,6 @@ mod tests {
         {
             let theme = Theme::from_variant(
                 variant,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Opaque,
             );
             assert_eq!(
@@ -2318,15 +2149,9 @@ mod tests {
     }
 
     #[test]
-    fn every_accent_is_one_coherent_color_identity() {
-        let default_dark = Theme::dark();
-        let default_light = Theme::light();
-        for accent in AccentColor::ALL {
-            for (theme, baseline) in [
-                (Theme::dark_with_accent(accent), &default_dark),
-                (Theme::light_with_accent(accent), &default_light),
-            ] {
-                assert_eq!(theme.accent_color, accent);
+    fn the_accent_is_one_coherent_color_identity() {
+        {
+            for theme in [Theme::dark(), Theme::light()] {
                 for (surface_name, surface) in [
                     ("content", theme.bg),
                     ("shell", theme.surface),
@@ -2334,16 +2159,14 @@ mod tests {
                 ] {
                     assert!(
                         contrast_ratio(theme.accent, surface) >= 4.5,
-                        "{} {:?} accent is only {:.2}:1 on the {surface_name} surface",
-                        accent.label(),
+                        "{:?} accent is only {:.2}:1 on the {surface_name} surface",
                         theme.appearance,
                         contrast_ratio(theme.accent, surface)
                     );
                 }
                 assert!(
                     contrast_ratio(theme.on_accent, theme.accent_strong) >= 4.0,
-                    "{} {:?} solid is only {:.2}:1 against its label",
-                    accent.label(),
+                    "{:?} solid is only {:.2}:1 against its label",
                     theme.appearance,
                     contrast_ratio(theme.on_accent, theme.accent_strong)
                 );
@@ -2364,22 +2187,6 @@ mod tests {
                     })
                 );
                 assert!(hue_distance(theme.accent.h, theme.accent_strong.h) <= 0.04);
-
-                // Semantic colors and code syntax keep their meaning. Accent
-                // preferences only recolor interactive identity roles.
-                assert_eq!(theme.danger, baseline.danger);
-                assert_eq!(theme.warning, baseline.warning);
-                assert_eq!(theme.success, baseline.success);
-                assert_eq!(theme.diff_add, baseline.diff_add);
-                assert_eq!(theme.diff_del, baseline.diff_del);
-                if accent != AccentColor::Commutator {
-                    assert_ne!(theme.code_text, baseline.code_text);
-                    assert_ne!(theme.busy, baseline.busy);
-                    assert_ne!(theme.selection, baseline.selection);
-                }
-                assert_eq!(theme.syntax.keyword, baseline.syntax.keyword);
-                assert_eq!(theme.syntax.string, baseline.syntax.string);
-                assert_eq!(theme.syntax.number, baseline.syntax.number);
             }
         }
     }
@@ -2387,25 +2194,6 @@ mod tests {
     fn hue_distance(a: f32, b: f32) -> f32 {
         let distance = (a - b).abs();
         distance.min(1.0 - distance)
-    }
-
-    #[test]
-    fn every_settings_swatch_has_a_distinct_primary() {
-        let previews = AccentColor::ALL.map(|accent| {
-            let theme = Theme::dark_with_accent(accent);
-            (accent, theme.accent)
-        });
-        for (index, (accent, color)) in previews.iter().enumerate() {
-            for (other_accent, other_color) in previews.iter().skip(index + 1) {
-                assert_ne!(
-                    color,
-                    other_color,
-                    "{} and {} share the same primary",
-                    accent.label(),
-                    other_accent.label()
-                );
-            }
-        }
     }
 
     /// The core claim of the light palette: it is *paired* to dark by contrast
@@ -2554,11 +2342,8 @@ mod tests {
             HighlightKind::Embedded,
             HighlightKind::Invalid,
         ];
-        for accent in AccentColor::ALL {
-            for theme in [
-                Theme::dark_with_accent(accent),
-                Theme::light_with_accent(accent),
-            ] {
+        {
+            for theme in [Theme::dark(), Theme::light()] {
                 let add_bg = flatten(theme.diff_add.opacity(0.055), theme.bg);
                 let del_bg = flatten(theme.diff_del.opacity(0.055), theme.bg);
                 for kind in kinds {
@@ -2579,8 +2364,7 @@ mod tests {
                         let ratio = contrast_ratio(color, background);
                         assert!(
                             ratio >= floor,
-                            "{} {:?} {kind:?} is {ratio:.2}:1 on {name}",
-                            accent.label(),
+                            "{:?} {kind:?} is {ratio:.2}:1 on {name}",
                             theme.appearance
                         );
                     }
@@ -2813,7 +2597,7 @@ mod tests {
             assert!(light.is_frost());
             assert!(dark.glass_overlay().a < 1.0);
             assert!(light.glass_overlay().a < 1.0);
-            assert_eq!(light.glass_overlay().a, 0.45);
+            assert_eq!(light.glass_overlay().a, 0.85);
             assert_eq!(light.input_glass_bg().a, 0.35);
             assert_eq!(crate::popover::surface_bg(&dark).a, 0.15);
             assert_eq!(dark.for_popup().text_muted, dark.text.opacity(0.64));
@@ -2941,7 +2725,6 @@ mod tests {
         for variant in registry.families.iter().flat_map(|family| &family.variants) {
             let theme = Theme::from_variant(
                 variant,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Frosted,
             );
             if !theme.is_frost() {
@@ -2949,8 +2732,8 @@ mod tests {
             }
             let popup = theme.for_popup();
             if matches!(theme.appearance, Appearance::Light) {
-                assert_eq!(crate::popover::surface_bg(&theme).a, 0.45);
-                assert_eq!(crate::popover::surface_bg(&popup).a, 0.45);
+                assert_eq!(crate::popover::surface_bg(&theme).a, 0.85);
+                assert_eq!(crate::popover::surface_bg(&popup).a, 0.85);
                 assert_eq!(theme.input_glass_bg().a, 0.35);
             } else {
                 assert_eq!(crate::popover::surface_bg(&theme).a, 0.15);
@@ -2996,7 +2779,6 @@ mod tests {
         variant.colors.text_faint = variant.colors.background;
         let theme = Theme::from_variant(
             &variant,
-            AccentSelection::ThemeDefault,
             SurfacePreference::Frosted,
         );
         let popup = theme.for_popup();

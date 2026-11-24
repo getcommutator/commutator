@@ -21,7 +21,7 @@
 
 use gpui::{App, Global, Subscription, Window};
 use serde::{Deserialize, Serialize};
-use commutator_theme::{AccentSelection, SurfacePreference, ThemeSelection};
+use commutator_theme::{SurfacePreference, ThemeSelection};
 
 use crate::settings::{self, SavePolicy};
 use crate::theme::{Appearance, Theme};
@@ -68,7 +68,6 @@ pub struct AppearanceState {
     pub mode: AppearanceMode,
     pub system: Appearance,
     pub themes: ThemeSelection,
-    pub accent: AccentSelection,
     pub surface: SurfacePreference,
 }
 
@@ -89,7 +88,6 @@ pub fn resolve(mode: AppearanceMode, system: Appearance) -> Appearance {
 pub fn init(
     mode: AppearanceMode,
     themes: ThemeSelection,
-    accent: AccentSelection,
     surface: SurfacePreference,
     cx: &mut App,
 ) {
@@ -99,7 +97,6 @@ pub fn init(
         mode,
         system,
         themes: themes.clone(),
-        accent,
         surface,
     });
     sync_ns_appearance(mode);
@@ -107,7 +104,6 @@ pub fn init(
     Theme::install_selection(
         appearance,
         themes.variant_id(model_appearance(appearance)),
-        accent,
         surface,
         cx,
     );
@@ -124,12 +120,6 @@ pub fn mode(cx: &App) -> AppearanceMode {
 pub fn themes(cx: &App) -> ThemeSelection {
     cx.try_global::<AppearanceState>()
         .map(|state| state.themes.clone())
-        .unwrap_or_default()
-}
-
-pub fn accent(cx: &App) -> AccentSelection {
-    cx.try_global::<AppearanceState>()
-        .map(|state| state.accent)
         .unwrap_or_default()
 }
 
@@ -156,7 +146,7 @@ pub fn set_mode(mode: AppearanceMode, cx: &mut App) {
     });
 }
 
-/// Change the interactive accent without changing any semantic theme roles.
+/// Pick the theme for one appearance.
 pub fn set_theme(appearance: Appearance, variant_id: impl Into<String>, cx: &mut App) {
     if !cx.has_global::<AppearanceState>() {
         return;
@@ -176,22 +166,7 @@ pub fn set_theme(appearance: Appearance, variant_id: impl Into<String>, cx: &mut
     });
 }
 
-pub fn set_accent(accent: AccentSelection, cx: &mut App) {
-    if !cx.has_global::<AppearanceState>() {
-        return;
-    }
-    let state = cx.global_mut::<AppearanceState>();
-    if state.accent == accent {
-        return;
-    }
-    state.accent = accent;
-    apply(cx);
-    settings::update(SavePolicy::Immediate, cx, |settings| {
-        settings.accent = accent;
-    });
-}
-
-/// Change glass independently from appearance, theme, and accent selections.
+/// Change glass independently from appearance and theme selections.
 pub fn set_surface(surface: SurfacePreference, cx: &mut App) {
     if !cx.has_global::<AppearanceState>() {
         return;
@@ -252,19 +227,17 @@ pub fn apply(cx: &mut App) {
     };
     sync_ns_appearance(state.mode);
     let wanted = resolve(state.mode, state.system);
-    let accent = state.accent;
     let surface = state.surface;
     let variant_id = state.themes.variant_id(model_appearance(wanted)).to_owned();
     let changed = !cx.try_global::<Theme>().is_some_and(|theme| {
         theme.appearance == wanted
             && theme.variant_id.as_ref() == variant_id
-            && theme.accent_selection == accent
             && theme.surface_preference == surface
             && theme.wallpaper_color == settings::wallpaper_colors::active(cx)
     });
     if changed {
         tracing::debug!(?wanted, %variant_id, "appearance: installing palette");
-        Theme::install_selection(wanted, &variant_id, accent, surface, cx);
+        Theme::install_selection(wanted, &variant_id, surface, cx);
         cx.refresh_windows();
     }
     // Unconditional, even when the palette did not move: this is the only thing
@@ -285,10 +258,9 @@ pub fn apply_registry_change(cx: &mut App) {
         return;
     };
     let wanted = resolve(state.mode, state.system);
-    let accent = state.accent;
     let surface = state.surface;
     let variant_id = state.themes.variant_id(model_appearance(wanted)).to_owned();
-    Theme::reinstall_selection(wanted, &variant_id, accent, surface, cx);
+    Theme::reinstall_selection(wanted, &variant_id, surface, cx);
     cx.refresh_windows();
     reapply_window_background(cx);
 }

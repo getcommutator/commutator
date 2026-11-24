@@ -28,7 +28,6 @@ fn main() -> anyhow::Result<()> {
             commutator_ui::run_app(commutator_ui::UiConfig {
                 data_dir: engine.data_dir,
                 ipc_port: engine.ipc_port,
-                edge_url: engine.edge_url,
                 default_harness: engine.default_harness,
                 initial_url: open_url,
             });

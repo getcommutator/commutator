@@ -14,7 +14,7 @@ use crate::pickers::{
     same_folder_path,
 };
 use gpui::{FocusHandle, Window};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use commutator_proto::{
     ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, HomeFolderMatch,
     HomeFolderSearchResult, SearchHomeFoldersRequest, Space,
@@ -240,7 +240,6 @@ mod pinned_session_tests {
                 EngineBootConfig {
                     data_dir: path.into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -255,6 +254,7 @@ mod pinned_session_tests {
                 id: "user".into(),
                 email: "test@example.com".into(),
                 name: None,
+                picture: None,
             },
             org_id: Some("org".into()),
         });
@@ -997,6 +997,64 @@ mod pinned_session_tests {
     }
 
     #[gpui::test]
+    fn sidebar_worktrees_of_one_project_group_apart(cx: &mut gpui::TestAppContext) {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let window = pin_test_shell(cx, dir.path());
+        window
+            .update(cx, |shell, _, cx| {
+                shell.settings.sidebar_view = SidebarView::Projects;
+                shell.state.update(cx, |state, _| {
+                    state.workspace_scope = Some(WorkspaceScope::Local);
+                    state.spaces = vec![
+                        serde_json::from_value(serde_json::json!({
+                            "id": "app", "deviceId": "local", "path": "/src/app", "name": "app",
+                            "createdAt": Utc::now()
+                        }))
+                        .unwrap(),
+                    ];
+                    state.chats = [
+                        ("tree-new", "/src/wt/lucky-river"),
+                        ("main-mid", "/src/app/"),
+                        ("tree-old", "/src/wt/lucky-river"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (id, cwd))| {
+                        let mut chat = pin_test_chat(id);
+                        chat.space_id = Some("app".into());
+                        chat.device_id = "local".into();
+                        chat.cwd = Some(cwd.into());
+                        chat.created_at = Utc::now() - chrono::Duration::minutes(ix as i64);
+                        chat
+                    })
+                    .collect();
+                });
+                // The project group leads, its worktree nests right after.
+                assert_eq!(
+                    shell.sidebar_visible_order(cx),
+                    ids(&["main-mid", "tree-new", "tree-old"])
+                );
+                let state = shell.state.read(cx);
+                let chat = |id: &str| state.chats.iter().find(|c| c.id == id).unwrap();
+                assert_eq!(
+                    sidebar_worktree_group(state, chat("tree-old")),
+                    (
+                        "local:/src/wt/lucky-river".into(),
+                        "app / lucky-river".into(),
+                        Some("app".into())
+                    )
+                );
+                assert_eq!(
+                    sidebar_worktree_group(state, chat("main-mid")),
+                    ("app".into(), "app".into(), None)
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
     fn sidebar_remote_pins_ignore_old_local_preferences(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let window = pin_test_shell(cx, dir.path());
@@ -1115,7 +1173,6 @@ mod pinned_session_tests {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -1232,7 +1289,6 @@ mod pinned_session_tests {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -1763,7 +1819,6 @@ mod pinned_session_tests {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -2123,6 +2178,8 @@ impl Render for SidebarViewOptionsTooltip {
 
 #[derive(Clone, Copy)]
 enum SidebarViewRow {
+    ChatsView,
+    ProjectsView,
     ByProject,
     Compact,
     ShowProjectIcon,
@@ -2144,15 +2201,27 @@ impl SidebarViewRow {
     fn closes_submenu(self) -> bool {
         matches!(
             self,
-            Self::ByProject | Self::ByDevice | Self::InOneList | Self::LastUpdated | Self::Created
+            Self::ChatsView
+                | Self::ProjectsView
+                | Self::ByProject
+                | Self::ByDevice
+                | Self::InOneList
+                | Self::LastUpdated
+                | Self::Created
         )
     }
 }
 
-const SIDEBAR_VIEW_GROUPS: [(&str, std::ops::Range<usize>); 3] =
-    [("Organize", 0..3), ("Sort", 3..5), ("Show", 5..12)];
+const SIDEBAR_VIEW_GROUPS: [(&str, std::ops::Range<usize>); 4] = [
+    ("Sidebar", 0..2),
+    ("Organize", 2..5),
+    ("Sort", 5..7),
+    ("Show", 7..14),
+];
 
-const SIDEBAR_VIEW_ROWS: [SidebarViewRow; 12] = [
+const SIDEBAR_VIEW_ROWS: [SidebarViewRow; 14] = [
+    SidebarViewRow::ChatsView,
+    SidebarViewRow::ProjectsView,
     SidebarViewRow::ByDevice,
     SidebarViewRow::ByProject,
     SidebarViewRow::InOneList,
@@ -2171,6 +2240,13 @@ const SIDEBAR_VIEW_ROWS: [SidebarViewRow; 12] = [
 // (well over 2x the intra-list gap). Disclosure content gets a small 4px
 // handoff from its header without leaving dead space while collapsed.
 const SIDEBAR_SECTION_GAP: f32 = 12.0;
+/// Shepherd's workspace row height, for the Projects sidebar's rows: one
+/// line when compact, two otherwise.
+fn project_tree_row_height(two_lines: bool) -> f32 {
+    if two_lines { 44.0 } else { 32.0 }
+}
+/// A worktree group's inset under its project group.
+const SIDEBAR_WORKTREE_INDENT: f32 = 14.0;
 pub(super) const SIDEBAR_DISCLOSURE_HEADER_HEIGHT: f32 = 28.0;
 pub(super) const SIDEBAR_DISCLOSURE_BODY_INSET: f32 = 4.0;
 const SIDEBAR_DISCLOSURE_SECTION_HEIGHT: f32 =
@@ -2217,6 +2293,162 @@ fn sidebar_project_group(state: &AppState, chat: &commutator_proto::Chat) -> (St
             None => (format!("home:{}", chat.device_id), "No project".to_string()),
         },
     }
+}
+
+/// Worktree-mode group of a chat as (key, label, parent). A chat in its
+/// project's own folder (or with no folder) sits in the project group; one
+/// running in a worktree gets `device:folder`, labelled `project / folder`,
+/// with the project group as parent so it nests under it (Shepherd's tree).
+fn sidebar_worktree_group(
+    state: &AppState,
+    chat: &commutator_proto::Chat,
+) -> (String, String, Option<String>) {
+    let (project_key, project) = sidebar_project_group(state, chat);
+    let trim = |path: &str| path.trim().trim_end_matches(['/', '\\']).to_string();
+    let space_path = state.space_for_chat(chat).map(|space| trim(&space.path));
+    let folder = chat.cwd.as_deref().map(trim).filter(|cwd| !cwd.is_empty());
+    match folder {
+        Some(folder) if Some(&folder) != space_path.as_ref() => {
+            let name = folder.rsplit(['/', '\\']).next().unwrap_or(&folder);
+            (
+                format!("{}:{folder}", chat.device_id),
+                format!("{project} / {name}"),
+                Some(project_key),
+            )
+        }
+        _ => (project_key, project, None),
+    }
+}
+
+/// The listed worktrees of each project in `project_keys` that no group
+/// shows yet (no chat runs there), by project key, as (space id, worktree).
+fn sidebar_closed_worktrees(
+    spaces: &[commutator_proto::Space],
+    listed: &HashMap<String, Vec<commutator_proto::RepoRef>>,
+    project_keys: &HashSet<String>,
+    group_keys: &HashSet<&str>,
+) -> HashMap<String, Vec<(String, commutator_proto::RepoRef)>> {
+    let mut closed: HashMap<String, Vec<(String, commutator_proto::RepoRef)>> = HashMap::new();
+    for space in spaces {
+        let project = commutator_proto::view::project_key(space);
+        if !project_keys.contains(&project) {
+            continue;
+        }
+        for worktree in listed.get(&space.id).into_iter().flatten() {
+            let Some(path) = worktree.worktree_path.as_deref() else {
+                continue;
+            };
+            let key = format!(
+                "{}:{}",
+                space.device_id,
+                path.trim().trim_end_matches(['/', '\\'])
+            );
+            if !group_keys.contains(key.as_str()) {
+                closed
+                    .entry(project.clone())
+                    .or_default()
+                    .push((space.id.clone(), worktree.clone()));
+            }
+        }
+    }
+    closed
+}
+
+/// Moves each worktree group right after its project group, the project
+/// taking the place of whichever of them comes first. A worktree whose
+/// project has no group of its own stays where it is.
+// ponytail: O(groups²), fine for a sidebar.
+fn nest_worktree_groups<T>(
+    groups: Vec<(Option<(String, String)>, Vec<T>)>,
+    parents: &HashMap<String, String>,
+) -> Vec<(Option<(String, String)>, Vec<T>)> {
+    let keys: Vec<Option<String>> = groups
+        .iter()
+        .map(|(group, _)| group.as_ref().map(|(key, _)| key.clone()))
+        .collect();
+    let root = |key: &Option<String>| {
+        key.as_ref().map(|key| {
+            parents
+                .get(key)
+                .filter(|parent| keys.iter().any(|k| k.as_ref() == Some(*parent)))
+                .unwrap_or(key)
+                .clone()
+        })
+    };
+    let roots: Vec<Option<String>> = keys.iter().map(root).collect();
+    let mut slots: Vec<_> = groups.into_iter().map(Some).collect();
+    let mut out = Vec::with_capacity(slots.len());
+    for i in 0..slots.len() {
+        if slots[i].is_none() {
+            continue;
+        }
+        let Some(r) = roots[i].clone() else {
+            out.extend(slots[i].take());
+            continue;
+        };
+        if let Some(j) = keys.iter().position(|k| k.as_ref() == Some(&r)) {
+            out.extend(slots[j].take());
+        }
+        for j in 0..slots.len() {
+            if roots[j].as_ref() == Some(&r) {
+                out.extend(slots[j].take());
+            }
+        }
+    }
+    out
+}
+
+/// A project or worktree row in the Projects sidebar, at Shepherd's
+/// workspace-row metrics: 32px tall with a 13px label, 44px when not compact
+/// with `subline` (branch or folder) under it; 8px padding and radius.
+fn project_tree_row(
+    theme: &Theme,
+    id: SharedString,
+    active: bool,
+    mark: Option<AnyElement>,
+    label: SharedString,
+    subline: Option<SharedString>,
+    count: Option<usize>,
+    fold: Option<AnyElement>,
+) -> gpui::Stateful<gpui::Div> {
+    let height = project_tree_row_height(subline.is_some());
+    let label = div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .child(super::sidebar_faded_label(id.clone(), true, div().child(label)))
+        .children(subline.map(|subline| {
+            div()
+                .truncate()
+                .text_size(crate::typography::ui_rems(11.0))
+                .text_color(theme.text_muted)
+                .child(subline)
+        }));
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .h(px(height))
+        .px(px(8.0))
+        .rounded(px(8.0))
+        .cursor_pointer()
+        .text_size(crate::typography::ui_rems(13.0))
+        .text_color(theme.text)
+        .when(active, |el| el.bg(theme.glass_hover()))
+        .when(!active, |el| el.hover(|el| el.bg(theme.glass_hover())))
+        .children(mark)
+        .child(label)
+        .children(count.map(|count| {
+            div()
+                .flex_none()
+                .text_size(crate::typography::ui_rems(11.0))
+                .text_color(theme.text_muted)
+                .child(count.to_string())
+        }))
+        .children(fold)
 }
 
 /// Shared quiet rule for sidebar groups and palette sections.
@@ -3878,7 +4110,11 @@ impl Shell {
                     // rows can be scrolled to (the footer index would leave
                     // a request pending against a row that never exists).
                     if menu.active < rows.len() {
-                        menu.list_scroll.scroll_to_item(menu.active);
+                        popover::reveal(
+                            &menu.list_scroll,
+                            menu.active..=menu.active,
+                            popover::MENU_FADE,
+                        );
                     }
                     cx.notify();
                 }
@@ -3930,9 +4166,21 @@ impl Shell {
         }
         self.cancel_sidebar_session_transfer(cx);
         self.cancel_pinned_session_drag(cx);
+        if matches!(
+            row,
+            SidebarViewRow::ByProject | SidebarViewRow::ByDevice | SidebarViewRow::InOneList
+        ) {
+            self.settings.sidebar_view = SidebarView::Chats;
+        }
         match row {
             SidebarViewRow::ByProject => {
                 self.settings.sidebar_organization = SidebarOrganization::ByProject
+            }
+            SidebarViewRow::ChatsView => self.settings.sidebar_view = SidebarView::Chats,
+            SidebarViewRow::ProjectsView => {
+                self.settings.sidebar_view = SidebarView::Projects;
+                // Every project shows there: no filter narrows it.
+                self.set_space_filter(None, cx);
             }
             SidebarViewRow::ShowProjectLabel => {
                 self.settings.sidebar_show_project_label = !self.settings.sidebar_show_project_label
@@ -4133,7 +4381,10 @@ impl Shell {
         let show_branch = self.settings.sidebar_show_branch;
         let show_pr = self.settings.sidebar_show_pull_request;
 
+        let view = self.settings.sidebar_view;
         let labels = [
+            "Chats",
+            "Projects",
             "By device",
             "By project",
             "None",
@@ -4148,6 +4399,8 @@ impl Shell {
             "Archived",
         ];
         let icons = [
+            icons::LIST,
+            icons::WORKTREE,
             icons::LAPTOP,
             icons::FOLDER,
             icons::LIST,
@@ -4162,10 +4415,13 @@ impl Shell {
             icons::FOLDER,
             icons::ARCHIVE_MINIMALISTIC,
         ];
+        let chats_view = view == SidebarView::Chats;
         let selected = [
-            organization == SidebarOrganization::ByDevice,
-            organization == SidebarOrganization::ByProject,
-            organization == SidebarOrganization::InOneList,
+            chats_view,
+            view == SidebarView::Projects,
+            chats_view && organization == SidebarOrganization::ByDevice,
+            chats_view && organization == SidebarOrganization::ByProject,
+            chats_view && organization == SidebarOrganization::InOneList,
             sort == SidebarSort::LastUpdated,
             sort == SidebarSort::Created,
             show_branch,
@@ -4177,12 +4433,18 @@ impl Shell {
             self.settings.sidebar_show_archived,
         ];
         let values = [
-            labels[selected[..3].iter().position(|v| *v).unwrap_or(0)].to_string(),
-            labels[3 + selected[3..5].iter().position(|v| *v).unwrap_or(0)].to_string(),
+            labels[selected[..2].iter().position(|v| *v).unwrap_or(0)].to_string(),
+            // Organize applies to the Chats sidebar only.
+            selected[2..5]
+                .iter()
+                .position(|v| *v)
+                .map_or("—", |ix| labels[2 + ix])
+                .to_string(),
+            labels[5 + selected[5..7].iter().position(|v| *v).unwrap_or(0)].to_string(),
         ];
         let mut groups: Vec<AnyElement> = Vec::new();
         for (group, (label, range)) in SIDEBAR_VIEW_GROUPS.iter().enumerate() {
-            if group == 2 {
+            if group == 3 {
                 groups.push(popover::menu_separator().into_any_element());
             }
             let open = submenu == Some(group);
@@ -4477,8 +4739,16 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Hidden from View → Show: keep the row's top breathing room only.
-        if !self.settings.sidebar_show_project_filter {
+        // Hidden from View → Show, and always in the Projects sidebar (it
+        // lists every project): keep the row's top breathing room only.
+        if self.settings.sidebar_view == SidebarView::Projects
+            && self.settings.space_filter.is_some()
+        {
+            self.set_space_filter(None, cx);
+        }
+        if !self.settings.sidebar_show_project_filter
+            || self.settings.sidebar_view == SidebarView::Projects
+        {
             return div().flex_none().h(px(4.0)).into_any_element();
         }
         let filter = self.settings.space_filter.clone();
@@ -4950,26 +5220,23 @@ impl Shell {
                     .any(|section| section.session_ids.contains(&chat.id))
             })
             .collect();
-        let ordered = if self.settings.sidebar_organization != SidebarOrganization::InOneList {
+        let worktree_parents = self.sidebar_worktree_parents(state, &chats);
+        let ordered = if self.sidebar_organization() != SidebarOrganization::InOneList {
             let mut groups: Vec<(Option<(String, String)>, Vec<commutator_proto::Chat>)> = Vec::new();
             for chat in chats {
-                let key = Some((
-                    if self.settings.sidebar_organization == SidebarOrganization::ByProject {
-                        sidebar_project_group(state, &chat).0
-                    } else {
-                        chat.device_id.clone()
-                    },
-                    String::new(),
-                ));
+                let key = self
+                    .sidebar_group_key(state, &chat)
+                    .map(|key| (key, String::new()));
                 if let Some((_, existing)) = groups.iter_mut().find(|(group, _)| group == &key) {
                     existing.push(chat);
                 } else {
                     groups.push((key, vec![chat]));
                 }
             }
-            if self.settings.sidebar_organization == SidebarOrganization::ByDevice {
+            if self.sidebar_organization() == SidebarOrganization::ByDevice {
                 promote_local_device_group(&mut groups, state.local_device_id.as_deref());
             }
+            let groups = nest_worktree_groups(groups, &worktree_parents);
             groups
                 .into_iter()
                 .flat_map(|(_, rows)| rows)
@@ -4985,9 +5252,7 @@ impl Shell {
             .chain(ordered)
             .collect::<Vec<_>>();
         let mut visible = project_pinned_first(&ordered, pinned_order);
-        if !self.sessions_open
-            && self.settings.sidebar_organization == SidebarOrganization::InOneList
-        {
+        if !self.sessions_open && self.sidebar_organization() == SidebarOrganization::InOneList {
             visible.retain(|id| pinned_order.contains(id) || custom_order.contains(id));
         }
         if !self.pinned_open {
@@ -5036,18 +5301,425 @@ impl Shell {
     /// The group a chat's row sits under when the sidebar groups by device or
     /// by project; `None` in one list.
     fn sidebar_group_key(&self, state: &AppState, chat: &commutator_proto::Chat) -> Option<String> {
-        match self.settings.sidebar_organization {
+        match self.sidebar_organization() {
             SidebarOrganization::ByDevice => Some(chat.device_id.clone()),
             SidebarOrganization::ByProject => Some(sidebar_project_group(state, chat).0),
+            SidebarOrganization::ByWorktree => Some(sidebar_worktree_group(state, chat).0),
             SidebarOrganization::InOneList => None,
         }
     }
 
+    /// The grouping the sidebar draws: the Projects view always nests
+    /// worktrees under projects; the Chats view uses the Organize choice.
+    pub(super) fn sidebar_organization(&self) -> SidebarOrganization {
+        match self.settings.sidebar_view {
+            SidebarView::Projects => SidebarOrganization::ByWorktree,
+            SidebarView::Chats => self.settings.sidebar_organization,
+        }
+    }
+
+    /// Worktree group key → its project group key, in worktree mode only.
+    fn sidebar_worktree_parents(
+        &self,
+        state: &AppState,
+        chats: &[commutator_proto::Chat],
+    ) -> HashMap<String, String> {
+        if self.sidebar_organization() != SidebarOrganization::ByWorktree {
+            return HashMap::new();
+        }
+        chats
+            .iter()
+            .filter_map(|chat| match sidebar_worktree_group(state, chat) {
+                (key, _, Some(parent)) => Some((key, parent)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Asks each shown project's checkouts for their linked worktrees, when
+    /// the set changes or 15 s after the last ask. A device that is offline
+    /// or a folder that is not a repository just has none to show.
+    fn refresh_sidebar_worktrees(
+        &mut self,
+        project_keys: &HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let (spaces, local, engine) = {
+            let state = self.state.read(cx);
+            let spaces: Vec<commutator_proto::Space> = state
+                .spaces
+                .iter()
+                .filter(|space| {
+                    space.git_detected
+                        && project_keys.contains(&commutator_proto::view::project_key(space))
+                })
+                .cloned()
+                .collect();
+            (
+                spaces,
+                state.local_device_id.clone(),
+                state.engine().cloned(),
+            )
+        };
+        let mut ids: Vec<String> = spaces.iter().map(|space| space.id.clone()).collect();
+        ids.sort();
+        let fresh = self
+            .sidebar_worktrees_for
+            .as_ref()
+            .is_some_and(|(asked, at)| {
+                *asked == ids && at.elapsed() < std::time::Duration::from_secs(15)
+            });
+        if fresh {
+            return;
+        }
+        self.sidebar_worktrees.retain(|id, _| ids.contains(id));
+        self.sidebar_worktrees_for = Some((ids, std::time::Instant::now()));
+        let Some(engine) = engine else {
+            return;
+        };
+        for space in spaces {
+            let engine = engine.clone();
+            let local = local.clone();
+            cx.spawn(async move |this, cx| {
+                let mut params = serde_json::Map::new();
+                params.insert("repoPath".into(), space.path.clone().into());
+                if local.as_deref() != Some(space.device_id.as_str()) {
+                    params.insert("targetDeviceId".into(), space.device_id.clone().into());
+                }
+                let Ok(value) = engine
+                    .client()
+                    .call(methods::LIST_REFS, serde_json::Value::Object(params))
+                    .await
+                else {
+                    return;
+                };
+                let Ok(refs) = serde_json::from_value::<Vec<commutator_proto::RepoRef>>(value)
+                else {
+                    return;
+                };
+                let worktrees: Vec<_> = refs
+                    .into_iter()
+                    .filter(|r| r.worktree_path.is_some())
+                    .collect();
+                this.update(cx, |shell, cx| {
+                    if shell.sidebar_worktrees.get(&space.id) != Some(&worktrees) {
+                        shell.sidebar_worktrees.insert(space.id.clone(), worktrees);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// The Projects sidebar's bottom panel (Shepherd's Agents): every active
+    /// chat, latest first, each naming its project or worktree.
+    pub(super) fn render_agents_panel(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.settings.sidebar_view != SidebarView::Projects {
+            return None;
+        }
+        let now = Utc::now();
+        let (chats, selected) = {
+            let state = self.state.read(cx);
+            let mut chats: Vec<_> = state
+                .sidebar_chats(now, self.settings.space_filter.as_deref())
+                .into_iter()
+                .map(|(status, chat)| {
+                    let place = sidebar_worktree_group(state, chat).1;
+                    (status, chat.clone(), place)
+                })
+                .collect();
+            chats.sort_by(|a, b| compare_sidebar_chats(SidebarSort::LastUpdated, &a.1, &b.1));
+            (chats, state.selected_chat.clone())
+        };
+        if chats.is_empty() {
+            return None;
+        }
+        let rows: Vec<AnyElement> = chats
+            .into_iter()
+            .map(|(status, chat, place)| {
+                let title = transcript::single_line(chat.title.as_deref().unwrap_or("New session"));
+                let time_ago =
+                    format_time_ago(chat.last_message_at.unwrap_or(chat.created_at), now).into();
+                self.render_chat_row(
+                    chat.id.clone(),
+                    title.into(),
+                    time_ago,
+                    place.into(),
+                    None,
+                    None,
+                    chat.config.as_ref().map(|config| config.harness),
+                    status,
+                    selected.as_deref() == Some(chat.id.as_str()),
+                    false,
+                    false,
+                    None,
+                    None,
+                    true,
+                    None,
+                    theme,
+                    cx,
+                )
+            })
+            .collect();
+        Some(
+            div()
+                .flex_none()
+                .max_h(gpui::relative(0.45))
+                .flex()
+                .flex_col()
+                .border_t_1()
+                .border_color(theme.border.opacity(0.6))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(SIDEBAR_DISCLOSURE_HEADER_HEIGHT))
+                        .px(px(Theme::SPACE_SM * 2.0))
+                        .flex()
+                        .items_center()
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .text_color(theme.text_muted)
+                        .child("Agents"),
+                )
+                .child(
+                    div()
+                        .id("sidebar-agents")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px(px(Theme::SPACE_SM))
+                        .pb(px(Theme::SPACE_SM))
+                        .flex()
+                        .flex_col()
+                        .gap(px(SIDEBAR_LIST_GAP))
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// After a project's last section, its worktrees that have no chats
+    /// (hidden while the project is folded).
+    fn push_closed_worktrees(
+        &mut self,
+        rendered: &mut Vec<(String, f32, AnyElement)>,
+        section_ix: usize,
+        section_roots: &[Option<String>],
+        closed_worktrees: &mut HashMap<String, Vec<(String, commutator_proto::RepoRef)>>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = section_roots[section_ix].as_ref() else {
+            return;
+        };
+        let last_of_project = section_roots
+            .get(section_ix + 1)
+            .is_none_or(|next| next.as_ref() != Some(root));
+        let project_open = !self
+            .sidebar_collapsed_groups
+            .contains(&self.sidebar_group_collapse_key(root));
+        if last_of_project && project_open {
+            for (space_id, worktree) in closed_worktrees.remove(root).unwrap_or_default() {
+                rendered.push(self.render_closed_worktree_row(space_id, worktree, theme, cx));
+            }
+        }
+    }
+
+    /// A project or worktree in the Projects sidebar: its mark, name and
+    /// chat count; highlighted while one of its chats is open, and a click
+    /// opens its latest chat (the rest are tabs above the conversation).
+    #[allow(clippy::too_many_arguments)]
+    fn render_project_tree_row(
+        &mut self,
+        key: &str,
+        label: &str,
+        rows: &[ActiveChatRow],
+        nested: bool,
+        // `Some(open)` on a project with worktrees under it: its chevron
+        // folds them away (Shepherd's project fold).
+        fold_open: Option<bool>,
+        icon_chat: Option<String>,
+        selected: Option<&str>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> (String, f32, AnyElement) {
+        let fold = fold_open.map(|open| {
+            let collapse_key = self.sidebar_group_collapse_key(key);
+            let chevron =
+                self.sidebar_disclosure_chevron(&format!("group:{collapse_key}"), open, theme);
+            div()
+                .id(SharedString::from(format!("sidebar-project-fold-{key}")))
+                .flex_none()
+                .size(px(20.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .hover(|el| el.bg(theme.glass_hover()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if !this.sidebar_collapsed_groups.remove(&collapse_key) {
+                        this.sidebar_collapsed_groups.insert(collapse_key.clone());
+                    }
+                    cx.notify();
+                }))
+                .child(chevron)
+                .into_any_element()
+        });
+        let active = rows.iter().any(|row| Some(row.chat.id.as_str()) == selected);
+        let latest = rows
+            .iter()
+            .max_by_key(|row| row.chat.last_message_at.unwrap_or(row.chat.created_at))
+            .map(|row| row.chat.id.clone());
+        let label = if nested {
+            label.rsplit(" / ").next().unwrap_or(label)
+        } else {
+            label
+        };
+        let mark = if nested {
+            Some(
+                icon(icons::WORKTREE)
+                    .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                    .text_color(sidebar_header_glyph(theme))
+                    .into_any_element(),
+            )
+        } else {
+            icon_chat.map(|chat_id| {
+                self.render_project_group_icon(&chat_id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, cx)
+            })
+        };
+        let subline = (!self.settings.sidebar_compact)
+            .then(|| rows.iter().find_map(|row| row.branch.clone()))
+            .flatten()
+            .map(SharedString::from);
+        let row_height = project_tree_row_height(subline.is_some());
+        let header = project_tree_row(
+            theme,
+            SharedString::from(format!("sidebar-project-{key}")),
+            active,
+            mark,
+            SharedString::from(label.to_string()),
+            subline,
+            Some(rows.len()),
+            fold,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if let Some(chat_id) = latest.clone() {
+                this.open_chat(chat_id, cx);
+            }
+        }));
+        let gap = if nested {
+            SIDEBAR_LIST_GAP
+        } else {
+            SIDEBAR_SECTION_GAP
+        };
+        let element = div()
+            .w_full()
+            .pt(px(gap))
+            .when(nested, |el| el.pl(px(SIDEBAR_WORKTREE_INDENT)))
+            .child(header)
+            .into_any_element();
+        (format!("p:{key}"), gap + row_height, element)
+    }
+
+    /// The open chat's project or worktree siblings, oldest first, for the
+    /// tab strip above the conversation; empty outside the Projects sidebar.
+    pub(super) fn project_chat_tabs(
+        &self,
+        cx: &App,
+    ) -> Vec<(String, SharedString, Option<commutator_proto::HarnessId>, bool)> {
+        if self.settings.sidebar_view != SidebarView::Projects {
+            return Vec::new();
+        }
+        let state = self.state.read(cx);
+        let Some(selected) = state.selected_chat_row() else {
+            return Vec::new();
+        };
+        let key = self.sidebar_group_key(state, selected);
+        let mut chats: Vec<_> = state
+            .sidebar_chats(Utc::now(), self.settings.space_filter.as_deref())
+            .into_iter()
+            .filter(|(_, chat)| self.sidebar_group_key(state, chat) == key)
+            .collect();
+        chats.sort_by(|(_, a), (_, b)| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        chats
+            .into_iter()
+            .map(|(status, chat)| {
+                (
+                    chat.id.clone(),
+                    SharedString::from(transcript::single_line(
+                        chat.title.as_deref().unwrap_or("New session"),
+                    )),
+                    chat.config.as_ref().map(|config| config.harness),
+                    status == commutator_proto::ChatIndicator::Working,
+                )
+            })
+            .collect()
+    }
+
+    /// A worktree of the project above with no chats: faint, its branch by
+    /// the worktree mark; a click starts a new chat in it.
+    fn render_closed_worktree_row(
+        &self,
+        space_id: String,
+        worktree: commutator_proto::RepoRef,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> (String, f32, AnyElement) {
+        let path = worktree.worktree_path.clone().unwrap_or_default();
+        let branch = worktree.name;
+        let mark = icon(icons::WORKTREE)
+            .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+            .text_color(sidebar_header_glyph(theme))
+            .into_any_element();
+        let subline = (!self.settings.sidebar_compact).then(|| SharedString::from(path.clone()));
+        let row_height = project_tree_row_height(subline.is_some());
+        let header = project_tree_row(
+            theme,
+            SharedString::from(format!("sidebar-closed-worktree-{path}")),
+            false,
+            Some(mark),
+            branch.clone().into(),
+            subline,
+            None,
+            None,
+        )
+        .opacity(0.6)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.open_new_session(Some(space_id.clone()), cx);
+            let pickers = this.composer.read(cx).pickers().clone();
+            pickers.update(cx, |pickers, cx| {
+                pickers.use_worktree(space_id.clone(), branch.clone(), cx)
+            });
+        }));
+        let element = div()
+            .w_full()
+            .pt(px(SIDEBAR_LIST_GAP))
+            .pl(px(SIDEBAR_WORKTREE_INDENT))
+            .child(header)
+            .into_any_element();
+        (
+            format!("w:{path}"),
+            SIDEBAR_LIST_GAP + row_height,
+            element,
+        )
+    }
+
     /// A device/project group's key in `sidebar_collapsed_groups`.
     fn sidebar_group_collapse_key(&self, group: &str) -> String {
-        let organization = match self.settings.sidebar_organization {
+        let organization = match self.sidebar_organization() {
             SidebarOrganization::ByDevice => "device",
             SidebarOrganization::ByProject => "project",
+            SidebarOrganization::ByWorktree => "worktree",
             SidebarOrganization::InOneList => "list",
         };
         format!("{organization}:{group}")
@@ -5192,9 +5864,13 @@ impl Shell {
             .change_request_for_chat(&chat)
             .cloned()
             .filter(|_| self.settings.sidebar_show_pull_request);
-        let group = match self.settings.sidebar_organization {
+        let group = match self.sidebar_organization() {
             SidebarOrganization::ByDevice => Some((chat.device_id.clone(), device)),
             SidebarOrganization::ByProject => Some(sidebar_project_group(state, &chat)),
+            SidebarOrganization::ByWorktree => {
+                let (key, label, _) = sidebar_worktree_group(state, &chat);
+                Some((key, label))
+            }
             SidebarOrganization::InOneList => None,
         };
         ActiveChatRow {
@@ -5223,6 +5899,7 @@ impl Shell {
                 drag.filter == filter && profile_key.as_deref() == Some(&drag.profile_key)
             })
             .map(|drag| drag.visible_ids.clone());
+        let worktree_parents;
         let mut rows: Vec<ActiveChatRow> = {
             let state = self.state.read(cx);
             let mut chats: Vec<_> = state
@@ -5233,6 +5910,8 @@ impl Shell {
             chats.sort_by(|left, right| {
                 compare_sidebar_chats(self.settings.sidebar_sort, &left.1, &right.1)
             });
+            let plain: Vec<_> = chats.iter().map(|(_, chat)| chat.clone()).collect();
+            worktree_parents = self.sidebar_worktree_parents(state, &plain);
             chats
                 .into_iter()
                 .map(|(status, chat)| self.sidebar_chat_data(status, chat, state))
@@ -5326,10 +6005,46 @@ impl Shell {
                     .position(|id| id == &row.chat.id)
             });
         }
-        if self.settings.sidebar_organization == SidebarOrganization::ByDevice {
+        if self.sidebar_organization() == SidebarOrganization::ByDevice {
             let local_device_id = self.state.read(cx).local_device_id.clone();
             promote_local_device_group(&mut regular_groups, local_device_id.as_deref());
         }
+        let regular_groups = nest_worktree_groups(regular_groups, &worktree_parents);
+        // Worktree groups drawn under their project: indented, branch glyph,
+        // folder name only.
+        let nested_groups: HashSet<String> = regular_groups
+            .iter()
+            .filter_map(|(group, _)| group.as_ref())
+            .filter(|(key, _)| {
+                worktree_parents.get(key).is_some_and(|parent| {
+                    regular_groups
+                        .iter()
+                        .any(|(g, _)| g.as_ref().is_some_and(|(k, _)| k == parent))
+                })
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut closed_worktrees = if self.settings.sidebar_view == SidebarView::Projects {
+            let project_keys: HashSet<String> = regular_groups
+                .iter()
+                .filter_map(|(group, _)| group.as_ref().map(|(key, _)| key))
+                .filter(|key| !worktree_parents.contains_key(*key))
+                .cloned()
+                .collect();
+            self.refresh_sidebar_worktrees(&project_keys, cx);
+            let group_keys: HashSet<&str> = regular_groups
+                .iter()
+                .filter_map(|(group, _)| group.as_ref().map(|(key, _)| key.as_str()))
+                .collect();
+            sidebar_closed_worktrees(
+                &self.state.read(cx).spaces,
+                &self.sidebar_worktrees,
+                &project_keys,
+                &group_keys,
+            )
+        } else {
+            HashMap::new()
+        };
         let mut sections = Vec::with_capacity(regular_groups.len() + usize::from(pinned_count > 0));
         if !pinned_rows.is_empty() {
             sections.push((None, pinned_rows));
@@ -5448,10 +6163,24 @@ impl Shell {
             .enumerate()
             .map(|(index, id)| (id, index))
             .collect();
+        // Each section's project: its own key, or the project a nested
+        // worktree group sits under. The project's last section is followed
+        // by its worktrees that have no chats.
+        let section_roots: Vec<Option<String>> = sections
+            .iter()
+            .map(|(group, _)| {
+                group
+                    .as_ref()
+                    .map(|(key, _)| match worktree_parents.get(key) {
+                        Some(parent) if nested_groups.contains(key) => parent.clone(),
+                        _ => key.clone(),
+                    })
+            })
+            .collect();
         let mut slot = 0usize;
         let mut rendered = Vec::new();
         let mut moving_row = None;
-        for (group, rows) in sections {
+        for (section_ix, (group, rows)) in sections.into_iter().enumerate() {
             let pinned_group = slot < pinned_count;
             let drag_group = if pinned_group {
                 "pinned".to_owned()
@@ -5462,14 +6191,57 @@ impl Shell {
             };
             // A project group wears the project icon on its header instead
             // of repeating it on every row.
-            let project_group = self.settings.sidebar_organization
-                == SidebarOrganization::ByProject
-                && group
-                    .as_ref()
-                    .is_some_and(|(key, _)| !key.starts_with("section:"));
+            let project_group = matches!(
+                self.sidebar_organization(),
+                SidebarOrganization::ByProject | SidebarOrganization::ByWorktree
+            ) && group
+                .as_ref()
+                .is_some_and(|(key, _)| !key.starts_with("section:"));
             let header_icon_chat = (project_group && self.settings.sidebar_show_project_icon)
                 .then(|| rows.first().map(|row| row.chat.id.clone()))
                 .flatten();
+            // The Projects sidebar lists projects and worktrees only; their
+            // chats are tabs above the conversation.
+            if self.settings.sidebar_view == SidebarView::Projects && project_group && !pinned_group
+            {
+                if let Some((key, label)) = group.as_ref() {
+                    let nested = nested_groups.contains(key);
+                    let root = section_roots[section_ix].clone().unwrap_or_else(|| key.clone());
+                    let folded = self
+                        .sidebar_collapsed_groups
+                        .contains(&self.sidebar_group_collapse_key(&root));
+                    if nested && folded {
+                        continue; // under its folded project
+                    }
+                    let has_worktrees = section_roots
+                        .iter()
+                        .filter(|r| r.as_deref() == Some(key.as_str()))
+                        .count()
+                        > 1
+                        || closed_worktrees.get(key).is_some_and(|trees| !trees.is_empty());
+                    let row = self.render_project_tree_row(
+                        key,
+                        label,
+                        &rows,
+                        nested,
+                        (!nested && has_worktrees).then_some(!folded),
+                        header_icon_chat,
+                        selected.as_deref(),
+                        theme,
+                        cx,
+                    );
+                    rendered.push(row);
+                    self.push_closed_worktrees(
+                        &mut rendered,
+                        section_ix,
+                        &section_roots,
+                        &mut closed_worktrees,
+                        theme,
+                        cx,
+                    );
+                    continue;
+                }
+            }
             let mut rendered_rows = Vec::with_capacity(rows.len());
             for (group_index, row) in rows.into_iter().enumerate() {
                 let ActiveChatRow {
@@ -5692,21 +6464,39 @@ impl Shell {
                             .mb(px((extra_gap - SIDEBAR_LIST_GAP).min(0.0))),
                     )
                 });
-            let visible_label: SharedString = label.into();
+            let nested = nested_groups.contains(&key);
+            let visible_label: SharedString = if nested {
+                label
+                    .rsplit(" / ")
+                    .next()
+                    .unwrap_or(&label)
+                    .to_string()
+                    .into()
+            } else {
+                label.into()
+            };
             let chevron = self.sidebar_disclosure_chevron(&motion_key, !collapsed, theme);
             let toggle_key = collapse_key.clone();
             let toggle_motion_key = motion_key.clone();
-            let group_icon = header_icon_chat.map(|chat_id| {
-                self.render_project_group_icon(&chat_id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, cx)
-            });
+            let group_icon = if nested {
+                Some(
+                    icon(icons::WORKTREE)
+                        .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                        .text_color(sidebar_header_glyph(theme))
+                        .into_any_element(),
+                )
+            } else {
+                header_icon_chat.map(|chat_id| {
+                    self.render_project_group_icon(&chat_id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, cx)
+                })
+            };
             // A real project's group gets a hover-revealed `+` that opens a new
             // chat homed on it — on this device's checkout when it has one
             // (the project picker's local-first order), never silently on a
             // possibly offline machine just because it cloned first. The
             // device chip still switches among the repository's checkouts.
             let group_name = SharedString::from(format!("sidebar-group-hover-{collapse_key}"));
-            let group_space = (self.settings.sidebar_organization
-                == SidebarOrganization::ByProject)
+            let group_space = (self.sidebar_organization() == SidebarOrganization::ByProject)
                 .then(|| {
                     let state = self.state.read(cx);
                     state
@@ -5785,10 +6575,19 @@ impl Shell {
                 .flex()
                 .flex_col()
                 .pt(px(SIDEBAR_SECTION_GAP))
+                .when(nested, |el| el.pl(px(SIDEBAR_WORKTREE_INDENT)))
                 .child(header)
                 .child(body)
                 .into_any_element();
             rendered.push((format!("g:{collapse_key}"), height, element));
+            self.push_closed_worktrees(
+                &mut rendered,
+                section_ix,
+                &section_roots,
+                &mut closed_worktrees,
+                theme,
+                cx,
+            );
         }
         SidebarSessionRows {
             custom_count,
@@ -5882,7 +6681,7 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.settings.sidebar_organization != SidebarOrganization::InOneList {
+        if self.sidebar_organization() != SidebarOrganization::InOneList {
             return content;
         }
         let open = self.sessions_open;
@@ -5978,7 +6777,10 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.settings.sidebar_show_archived {
+        // The Projects sidebar has no Archived shelf.
+        if !self.settings.sidebar_show_archived
+            || self.settings.sidebar_view == SidebarView::Projects
+        {
             return None;
         }
         const INITIAL: usize = ARCHIVED_INITIAL_ROWS;
@@ -7018,7 +7820,11 @@ impl Shell {
                     // Keep the highlighted row in view as the cursor walks
                     // past the viewport (user-reported: the list didn't
                     // follow the keyboard).
-                    flow.list_scroll.scroll_to_item(flow.active);
+                    popover::reveal(
+                        &flow.list_scroll,
+                        flow.active..=flow.active,
+                        popover::MENU_FADE,
+                    );
                     cx.notify();
                 }
             }
@@ -7924,8 +8730,43 @@ impl Shell {
 mod tests {
     use chrono::{TimeZone as _, Utc};
 
-    use super::{compare_sidebar_chats, promote_local_device_group};
+    use super::{
+        compare_sidebar_chats, nest_worktree_groups, promote_local_device_group,
+        sidebar_closed_worktrees,
+    };
     use crate::settings::SidebarSort;
+
+    #[test]
+    fn a_project_lists_its_worktrees_without_chats_after_its_groups() {
+        let space: commutator_proto::Space = serde_json::from_value(serde_json::json!({
+            "id": "app", "deviceId": "mac", "path": "/src/app", "createdAt": Utc::now()
+        }))
+        .unwrap();
+        let tree = |name: &str| commutator_proto::RepoRef {
+            name: name.into(),
+            current: false,
+            worktree_path: Some(format!("/wt/{name}/")),
+        };
+        let listed = [("app".to_string(), vec![tree("busy"), tree("idle")])].into();
+        let projects = ["app".to_string()].into();
+        let groups = ["app", "mac:/wt/busy"].into();
+        let closed = sidebar_closed_worktrees(&[space], &listed, &projects, &groups);
+        let names: Vec<&str> = closed["app"].iter().map(|(_, t)| t.name.as_str()).collect();
+        assert_eq!(names, ["idle"], "a worktree with chats has its own group");
+
+        // A worktree's group follows its project, whichever is newer.
+        let parents = [("mac:/wt/busy".to_string(), "app".to_string())].into();
+        let nested = nest_worktree_groups(
+            vec![
+                (Some(("mac:/wt/busy".into(), String::new())), vec![1]),
+                (Some(("other".into(), String::new())), vec![2]),
+                (Some(("app".into(), String::new())), vec![3]),
+            ],
+            &parents,
+        );
+        let order: Vec<u8> = nested.into_iter().flat_map(|(_, rows)| rows).collect();
+        assert_eq!(order, [3, 1, 2]);
+    }
 
     fn group(device: &str, value: u8) -> (Option<(String, String)>, Vec<u8>) {
         (Some((device.into(), device.into())), vec![value])
@@ -8111,7 +8952,6 @@ mod project_flow_tests {
                 EngineBootConfig {
                     data_dir: data.path().into(),
                     ipc_port: 0,
-                    edge_url: String::new(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -8198,7 +9038,6 @@ mod project_flow_tests {
                 EngineBootConfig {
                     data_dir: data.path().into(),
                     ipc_port: 0,
-                    edge_url: String::new(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -8312,7 +9151,6 @@ mod home_folder_search_tests {
                 crate::EngineBootConfig {
                     data_dir,
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,

@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -200,10 +202,9 @@ private fun MainNav(model: AppModel) {
     NavHost(nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             if (!wide) {
-                Home(
+                PhoneTabs(
                     model,
                     open,
-                    onSettings = { nav.navigate(Routes.SETTINGS) },
                     onSearch = { nav.navigate(Routes.SEARCH) },
                     onNew = { nav.navigate(Routes.NEW) },
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
@@ -381,7 +382,7 @@ private fun androidx.compose.foundation.layout.BoxScope.Toasts(model: AppModel, 
     }
     val entry by nav.currentBackStackEntryAsState()
     val inset = when (entry?.destination?.route) {
-        Routes.HOME -> 96.dp
+        Routes.HOME -> 168.dp
         Routes.CHAT, Routes.NEW -> 96.dp
         Routes.TERMINAL, Routes.SUBAGENT -> 72.dp
         else -> 16.dp
@@ -436,6 +437,64 @@ private fun Home(
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
                 .padding(16.dp),
+        )
+    }
+}
+
+/** Phone front page: Chats · Pull requests · Settings in a bottom navigation bar. */
+@Composable
+private fun PhoneTabs(
+    model: AppModel,
+    open: (String) -> Unit,
+    onSearch: () -> Unit,
+    onNew: () -> Unit,
+    onArchived: () -> Unit,
+) {
+    var tab by rememberSaveable { mutableStateOf(0) }
+    androidx.compose.material3.Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
+        bottomBar = {
+            androidx.compose.material3.NavigationBar {
+                listOf("Chats" to ZIcons.TabSessions, "Pull requests" to ZIcons.PullRequest, "Settings" to ZIcons.TabSettings)
+                    .forEachIndexed { i, (label, icon) ->
+                        NavigationBarItem(
+                            selected = tab == i,
+                            onClick = { tab = i },
+                            icon = { ZIcon(icon, null, Modifier.size(24.dp)) },
+                            label = { Text(label) },
+                        )
+                    }
+            }
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            when (tab) {
+                0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived)
+                1 -> PullRequestsScreen()
+                else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    SettingsScreen(model, onArchived = onArchived)
+                }
+            }
+        }
+    }
+}
+
+/** The Pull requests tab. ponytail: empty until the server serves PRs. */
+@Composable
+private fun PullRequestsScreen() {
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        ZIcon(ZIcons.PullRequest, null, Modifier.size(40.dp))
+        Text("No pull requests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+        Text(
+            "Pull requests from your sessions will show up here.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }

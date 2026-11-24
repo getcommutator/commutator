@@ -45,7 +45,6 @@ fn setup(cx: &mut TestAppContext) -> (tempfile::TempDir, Entity<Shell>, &mut Vis
             EngineBootConfig {
                 data_dir: dir.path().into(),
                 ipc_port: 0,
-                edge_url: String::new(),
                 default_harness: commutator_proto::HarnessId::Mock,
             },
             cx,

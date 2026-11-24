@@ -1424,7 +1424,6 @@ mod tests {
         let theme = Theme::for_selection(
             Appearance::Dark,
             "dracula",
-            commutator_theme::AccentSelection::ThemeDefault,
             commutator_theme::SurfacePreference::ThemeDefault,
         );
         assert_eq!(terminal_panel_bg(&theme), theme.terminal.background);
@@ -1457,7 +1456,6 @@ mod tests {
             let theme = Theme::for_selection(
                 appearance,
                 &variant.id,
-                commutator_theme::AccentSelection::ThemeDefault,
                 commutator_theme::SurfacePreference::ThemeDefault,
             );
             for index in 0..16 {

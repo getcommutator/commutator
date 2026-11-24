@@ -45,7 +45,6 @@ pub fn launch(config: &EngineConfig, app_exe: &Path) -> std::io::Result<Child> {
         &commutator_launch::LaunchConfig {
             data_dir: config.data_dir.clone(),
             ipc_port: config.ipc_port,
-            edge_url: config.edge_url.clone(),
         },
         app_exe,
     )

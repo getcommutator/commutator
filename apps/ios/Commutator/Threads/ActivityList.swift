@@ -10,11 +10,10 @@ import UIKit
 ///
 /// What a chat is doing and its sleep are the engine's (synced, the same on
 /// every device: a row's status, `waiting`, `sleepUntil`, `wokeAt`). The
-/// view and its settings are this phone's (`AppModel.activityOn` …). Pure:
-/// the Sessions page and Settings read it.
+/// view and its settings are this phone's (`AppModel.sessionsView` …). Pure:
+/// the Sessions page reads it.
 enum ActivityList {
     enum Keys {
-        static let on = "activity.on"
         static let workingShelf = "activity.workingShelf"
         static let archiveAfter = "activity.archiveAfter"
         /// Chats brought back from Archived, by id: when (Unix seconds).

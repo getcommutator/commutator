@@ -193,7 +193,6 @@ mod tests {
         cx.update(|cx| {
             gpui_base::init(cx);
             let settings = super::super::UiSettings {
-                accent: commutator_theme::AccentSelection::Preset(commutator_theme::AccentPreset::Pink),
                 appearance: crate::appearance::AppearanceMode::Dark,
                 ..Default::default()
             };
@@ -201,7 +200,6 @@ mod tests {
             crate::appearance::init(
                 settings.appearance,
                 settings.theme_selection.clone(),
-                settings.accent,
                 settings.surface,
                 cx,
             );
@@ -212,7 +210,6 @@ mod tests {
             assert_eq!(active(cx), Some(Color::rgb(30, 130, 220)));
             assert_ne!(crate::theme::Theme::of(cx).accent, manual.accent);
             assert_ne!(crate::theme::Theme::of(cx).bg, manual.bg);
-            assert_eq!(super::super::current(cx).accent, settings.accent);
             super::super::install_new_thread_composer_background(&second, cx).unwrap();
             assert_eq!(
                 crate::theme::Theme::of(cx).wallpaper_color,
@@ -232,7 +229,6 @@ mod tests {
             assert_eq!(crate::theme::Theme::of(cx).accent, manual.accent);
             let saved = super::super::UiSettings::load(&dir.path().join("data"));
             assert!(saved.wallpaper_theme_colors);
-            assert_eq!(saved.accent, settings.accent);
             assert_eq!(saved.theme_selection, settings.theme_selection);
         });
     }

@@ -125,11 +125,11 @@ final class TerminalKeyBar: UIInputView {
         case .once:
             c = UIButton.Configuration.prominentGlass()
             c.baseBackgroundColor = Palette.accent.withAlphaComponent(0.75)
-            c.baseForegroundColor = .white
+            c.baseForegroundColor = Palette.onAccent
         case .locked:
             c = UIButton.Configuration.prominentGlass()
             c.baseBackgroundColor = Palette.accent
-            c.baseForegroundColor = .white
+            c.baseForegroundColor = Palette.onAccent
         }
         c.title = button.configuration?.title
         c.titleTextAttributesTransformer = Self.titleFont

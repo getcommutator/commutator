@@ -266,11 +266,11 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
             strip.apply(state)
             if wasEmpty != state.isEmpty { render(animated: animated) }
         }
-        // Violet like the working glyphs: a running agent isn't an alert.
+        // Accent like the working glyphs: a running agent isn't an alert.
         companionsItem.badge = state.runningAgents > 0 ? {
             var badge = UIBarButtonItem.Badge.count(state.runningAgents)
             badge.backgroundColor = Palette.accent
-            badge.foregroundColor = .white
+            badge.foregroundColor = Palette.onAccent
             return badge
         }() : nil
         if parentId != nil, navigationItem.subtitle == nil {

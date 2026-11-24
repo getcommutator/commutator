@@ -7,10 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use commutator_engine::{Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
 use commutator_rpc::{connect_ipc, connect_ws, memory_client, methods};
 
-fn config(data_dir: &std::path::Path, edge_url: String) -> EngineConfig {
+fn config(data_dir: &std::path::Path) -> EngineConfig {
     EngineConfig {
         data_dir: data_dir.to_path_buf(),
-        edge_url,
         ipc_port: 0,
         default_harness: HarnessId::Mock,
     }
@@ -51,7 +50,7 @@ async fn rejecting_edge() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<
 #[tokio::test]
 async fn a_signed_out_boot_serves_local_data() {
     let dir = tempfile::tempdir().unwrap();
-    let config = config(dir.path(), "http://127.0.0.1:1".into());
+    let config = config(dir.path());
     let auth = Engine::build_auth(&config);
     let scope = Engine::initial_workspace_scope(&auth);
     let profile = Engine::resolve_profile(&config, &auth, scope)
@@ -85,13 +84,12 @@ async fn a_signed_out_boot_serves_local_data() {
 #[tokio::test]
 async fn local_runtime_checks_public_releases_without_starting_edge_links() {
     let dir = tempfile::tempdir().unwrap();
-    let (edge_url, requests, edge_task) = rejecting_edge().await;
     // A stand-in for the GitHub API (debug builds only). No other test here
     // checks for releases.
     let (releases_url, release_requests, releases_task) = rejecting_edge().await;
     // SAFETY: no other test in this binary reads it.
     unsafe { std::env::set_var("COMMUTATOR_RELEASES_API", &releases_url) };
-    let config = config(dir.path(), edge_url);
+    let config = config(dir.path());
     let auth = Engine::build_auth(&config);
     let scope = Engine::initial_workspace_scope(&auth);
     let profile = Engine::resolve_profile(&config, &auth, scope)
@@ -119,14 +117,12 @@ async fn local_runtime_checks_public_releases_without_starting_edge_links() {
     .await
     .expect("release checker asked GitHub for the latest release");
     assert!(runtime.core().links().is_none());
-    assert_eq!(requests.load(Ordering::SeqCst), 0, "release checks never touch the edge");
 
     runtime.shutdown().await;
     let stopped_at = release_requests.load(Ordering::SeqCst);
     updater.check_now();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert_eq!(release_requests.load(Ordering::SeqCst), stopped_at);
-    edge_task.abort();
     releases_task.abort();
 }
 
@@ -137,7 +133,7 @@ async fn headless_stop_rpc_drains_the_daemon_and_releases_ipc() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().port()
     };
-    let mut engine_config = config(dir.path(), "http://127.0.0.1:1".into());
+    let mut engine_config = config(dir.path());
     engine_config.ipc_port = port;
     let daemon = tokio::spawn(Engine::new(engine_config).run());
 

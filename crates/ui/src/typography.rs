@@ -587,7 +587,6 @@ fn reinstall_theme(cx: &mut App) {
             crate::theme::Appearance::Dark => commutator_theme::Appearance::Dark,
             crate::theme::Appearance::Light => commutator_theme::Appearance::Light,
         }),
-        crate::appearance::accent(cx),
         crate::appearance::surface(cx),
         cx,
     );

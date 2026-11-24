@@ -2,7 +2,7 @@
 //! a systemd **user** unit on Linux (the VPS deployment target), a launchd
 //! LaunchAgent on macOS. The unit runs the current executable with the
 //! `COMMUTATOR_*` environment captured at install time, so
-//! `COMMUTATOR_EDGE_URL=… commutator daemon install` bakes that override in.
+//! `COMMUTATOR_DATA_DIR=… commutator daemon install` bakes that override in.
 //!
 //! Auth is decoupled: without a saved session the service remains up on the
 //! local-only profile. `commutator login` and a service restart opt into sync.
@@ -23,7 +23,7 @@ const SYSTEMD_UNIT: &str = "commutator.service";
 const CAPTURED_ENV: &[&str] = &[
     "PATH",
     "COMMUTATOR_DATA_DIR",
-    "COMMUTATOR_EDGE_URL",
+    "COMMUTATOR_SERVER_URL",
     "COMMUTATOR_ORG_ID",
     "COMMUTATOR_IPC_PORT",
     "COMMUTATOR_CALLBACK_PORT",
@@ -380,13 +380,13 @@ mod tests {
             Path::new("/usr/local/bin/commutator"),
             &[
                 ("PATH".into(), "/usr/bin:/bin".into()),
-                ("COMMUTATOR_EDGE_URL".into(), "https://edge.example".into()),
+                ("COMMUTATOR_DATA_DIR".into(), "/srv/commutator".into()),
                 ("RUST_LOG".into(), "info,commutator=\"debug\"".into()),
             ],
         );
         assert!(unit.contains("ExecStart=/usr/local/bin/commutator headless\n"));
         assert!(unit.contains("Environment=\"PATH=/usr/bin:/bin\"\n"));
-        assert!(unit.contains("Environment=\"COMMUTATOR_EDGE_URL=https://edge.example\"\n"));
+        assert!(unit.contains("Environment=\"COMMUTATOR_DATA_DIR=/srv/commutator\"\n"));
         // Inner quotes escaped so systemd re-parses the value verbatim.
         assert!(unit.contains("Environment=\"RUST_LOG=info,commutator=\\\"debug\\\"\"\n"));
         assert!(unit.contains("StartLimitIntervalSec=60\n"));
@@ -435,7 +435,7 @@ mod tests {
     fn launchd_plist_shape() {
         let plist = render_launchd_plist(
             Path::new("/Users/x/commutator & co/commutator"),
-            &[("COMMUTATOR_EDGE_URL".into(), "https://e?a=1&b=2".into())],
+            &[("COMMUTATOR_SERVER_URL".into(), "https://e?a=1&b=2".into())],
             Path::new("/Users/x/.commutator/daemon.log"),
         );
         assert!(plist.contains("<key>Label</key><string>sh.commutator.app</string>"));

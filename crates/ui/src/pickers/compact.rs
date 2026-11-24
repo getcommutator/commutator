@@ -768,7 +768,7 @@ impl Pickers {
     /// fast mode.
     pub(super) fn compact_panel_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         self.compact_keyboard = true;
-        match event.keystroke.key.as_str() {
+        match popover::nav_key(&event.keystroke) {
             "escape" => self.animate_close(cx),
             "f" if !event.keystroke.modifiers.modified() => {
                 let Some((option, choice, default, _)) = self.compact_fast_choice(cx) else {
@@ -776,9 +776,9 @@ impl Pickers {
                 };
                 self.pick_option(option, choice, default, cx);
             }
-            "up" | "down" => {
+            key @ ("up" | "down") => {
                 self.show_compact_models(cx);
-                let delta = if event.keystroke.key == "up" { -1 } else { 1 };
+                let delta = if key == "up" { -1 } else { 1 };
                 if let Some(next) =
                     popover::menu_step(Some(self.active), self.model_rows_len(cx), delta)
                 {

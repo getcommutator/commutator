@@ -3037,7 +3037,11 @@ impl Changes {
                 let delta = if key == popover::MenuKey::Up { -1 } else { 1 };
                 if let Some(menu) = self.ref_menu.open_mut() {
                     menu.active = popover::menu_step(Some(menu.active), count, delta).unwrap_or(0);
-                    self.ref_menu_scroll.scroll.scroll_to_item(menu.active);
+                    popover::reveal(
+                        &self.ref_menu_scroll.scroll,
+                        menu.active..=menu.active,
+                        popover::MENU_FADE,
+                    );
                     cx.notify();
                 }
             }
@@ -5511,7 +5515,7 @@ rename to new_name.rs
 
     #[test]
     fn sticky_header_uses_the_content_theme_in_dark_and_light() {
-        use commutator_theme::{AccentSelection, SurfacePreference};
+        use commutator_theme::SurfacePreference;
 
         for (appearance, variant_id) in [
             (crate::theme::Appearance::Dark, "gruvbox-dark"),
@@ -5520,7 +5524,6 @@ rename to new_name.rs
             let opaque = Theme::for_selection(
                 appearance,
                 variant_id,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Opaque,
             );
             let opaque_paint = sticky_file_header_paint(&opaque);
@@ -5540,7 +5543,6 @@ rename to new_name.rs
             let frosted = Theme::for_selection(
                 appearance,
                 variant_id,
-                AccentSelection::ThemeDefault,
                 SurfacePreference::Frosted,
             );
             let frosted_paint = sticky_file_header_paint(&frosted);

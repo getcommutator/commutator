@@ -279,6 +279,45 @@ pub enum MenuKey {
     Other,
 }
 
+/// The key a list reads: ctrl-n / ctrl-p as "down" / "up" (see
+/// [`classify_key`]), anything else as itself.
+pub fn nav_key(keystroke: &gpui::Keystroke) -> &str {
+    match classify_key(
+        &keystroke.key,
+        keystroke.modifiers.platform,
+        keystroke.modifiers.control,
+    ) {
+        MenuKey::Up => "up",
+        MenuKey::Down => "down",
+        _ => keystroke.key.as_str(),
+    }
+}
+
+/// Scrolls `scroll` so children `ixs` sit `margin` clear of the list's edges,
+/// out from under its edge fades; no-op when they already do (Shepherd's
+/// `reveal`). Before the first layout it falls back to `scroll_to_item`.
+pub fn reveal(scroll: &ScrollHandle, ixs: std::ops::RangeInclusive<usize>, margin: f32) {
+    let (Some(first), Some(last)) = (
+        scroll.bounds_for_item(*ixs.start()),
+        scroll.bounds_for_item(*ixs.end()),
+    ) else {
+        return scroll.scroll_to_item(*ixs.end());
+    };
+    let item = first.union(&last);
+    let view = scroll.bounds();
+    let margin = px(margin);
+    // Child bounds are laid out unscrolled; the offset goes negative as the
+    // list scrolls down.
+    let mut offset = scroll.offset();
+    if item.top() + offset.y < view.top() + margin {
+        offset.y = view.top() + margin - item.top();
+    } else if item.bottom() + offset.y > view.bottom() - margin {
+        offset.y = view.bottom() - margin - item.bottom();
+    }
+    offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.0));
+    scroll.set_offset(offset);
+}
+
 pub fn classify_key(key: &str, cmd: bool, ctrl: bool) -> MenuKey {
     match key {
         "up" => MenuKey::Up,
@@ -390,12 +429,16 @@ pub fn completion_list(
     )
 }
 
+/// The band of [`faded_menu_list`]'s edge fades; [`reveal`] keeps the
+/// keyboard row this far clear of them.
+pub const MENU_FADE: f32 = 12.0;
+
 /// All picker lists use the same paint-time, overflow-dependent edge fades.
 pub fn faded_menu_list(
     scroll: &ScrollHandle,
     list: impl IntoElement,
 ) -> crate::edge_fade::EdgeFaded {
-    crate::edge_fade::edge_faded(12.0, true, true, list).fade_overflow_y(scroll)
+    crate::edge_fade::edge_faded(MENU_FADE, true, true, list).fade_overflow_y(scroll)
 }
 
 /// Shared completion-row typography and shrink rules. Long skill names and

@@ -589,6 +589,7 @@ pub fn parse_auth_state(value: &serde_json::Value) -> Option<AuthState> {
             id: u.get("id")?.as_str()?.to_string(),
             email: u.get("email")?.as_str()?.to_string(),
             name: u.get("name").and_then(|n| n.as_str()).map(str::to_string),
+            picture: u.get("picture").and_then(|p| p.as_str()).map(str::to_string),
         })
     };
     match tag {

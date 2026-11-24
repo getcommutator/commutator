@@ -90,7 +90,6 @@ pub fn app_path(app_exe: &Path) -> PathBuf {
 pub struct LaunchConfig {
     pub data_dir: PathBuf,
     pub ipc_port: u16,
-    pub edge_url: String,
 }
 
 /// Start the background engine for `config`, detached from the app: its
@@ -102,8 +101,7 @@ pub fn launch(config: &LaunchConfig, app_exe: &Path) -> std::io::Result<Child> {
         .env(MANAGED_ENV, "1")
         .env(APP_ENV, app_path(app_exe))
         .env("COMMUTATOR_DATA_DIR", &config.data_dir)
-        .env("COMMUTATOR_IPC_PORT", config.ipc_port.to_string())
-        .env("COMMUTATOR_EDGE_URL", &config.edge_url);
+        .env("COMMUTATOR_IPC_PORT", config.ipc_port.to_string());
     spawn_detached(&mut command)
 }
 

@@ -255,7 +255,7 @@ fn main() -> anyhow::Result<()> {
             settings.code_font_family.clone(), settings.code_font_size, fonts, cx);
         theme_library::init(data.clone(), cx);
         appearance::init(appearance::AppearanceMode::Dark, settings.theme_selection,
-            settings.accent, settings.surface, cx);
+            settings.surface, cx);
         history::init(settings.git_history_columns, settings.git_history_column_widths,
             settings.git_history_column_order, settings.git_history_author_display, cx);
         composer::init(cx, settings.composer_send_behavior);
@@ -276,7 +276,7 @@ fn main() -> anyhow::Result<()> {
             state.auto_selected = true; state.chats_synced = true; state.spaces_synced = true;
             state
         });
-        let boot = EngineBootConfig { data_dir: data, ipc_port: 0, edge_url: String::new(),
+        let boot = EngineBootConfig { data_dir: data, ipc_port: 0, 
         let window = cx.open_window(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(gpui::point(px(20.), px(40.)), size(px(1200.), px(820.))))),
             window_background: theme::Theme::of(cx).window_background_appearance(),

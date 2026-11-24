@@ -24,17 +24,17 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/** Commutator Light / Commutator Dark (crates/theme builtins): cool neutrals, violet accent. */
+/** Commutator Light / Commutator Dark (crates/theme builtins): cool neutrals, monochrome accent. */
 private val CommutatorLight = lightColorScheme(
-    primary = Color(0xFF5B43E8),
+    primary = Color(0xFF18181B),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE5E0FF),
-    onPrimaryContainer = Color(0xFF1E0E6B),
-    inversePrimary = Color(0xFF8B7CF6),
-    secondary = Color(0xFF5E5A71),
+    primaryContainer = Color(0xFFE4E4E7),
+    onPrimaryContainer = Color(0xFF18181B),
+    inversePrimary = Color(0xFFECECEC),
+    secondary = Color(0xFF5F5F66),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE4E1F0),
-    onSecondaryContainer = Color(0xFF1C1A29),
+    secondaryContainer = Color(0xFFE4E4E7),
+    onSecondaryContainer = Color(0xFF1C1C20),
     tertiary = Color(0xFF0F766E),
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFCCF2EC),
@@ -45,7 +45,7 @@ private val CommutatorLight = lightColorScheme(
     onSurface = Color(0xFF27272C),
     surfaceVariant = Color(0xFFE7E7EB),
     onSurfaceVariant = Color(0xFF62626A),
-    surfaceTint = Color(0xFF5B43E8),
+    surfaceTint = Color(0xFF18181B),
     surfaceBright = Color(0xFFFFFFFF),
     surfaceDim = Color(0xFFE2E2E6),
     surfaceContainerLowest = Color(0xFFFFFFFF),
@@ -65,15 +65,15 @@ private val CommutatorLight = lightColorScheme(
 )
 
 private val CommutatorDark = darkColorScheme(
-    primary = Color(0xFF8B7CF6),
-    onPrimary = Color(0xFF1A0F5C),
-    primaryContainer = Color(0xFF2F2670),
-    onPrimaryContainer = Color(0xFFE5E0FF),
-    inversePrimary = Color(0xFF5B43E8),
-    secondary = Color(0xFFC8C3DC),
-    onSecondary = Color(0xFF302D40),
-    secondaryContainer = Color(0xFF26242F),
-    onSecondaryContainer = Color(0xFFE4E1F0),
+    primary = Color(0xFFECECEC),
+    onPrimary = Color(0xFF18181B),
+    primaryContainer = Color(0xFF2C2C30),
+    onPrimaryContainer = Color(0xFFECECEC),
+    inversePrimary = Color(0xFF18181B),
+    secondary = Color(0xFFC6C6CC),
+    onSecondary = Color(0xFF2E2E33),
+    secondaryContainer = Color(0xFF26262A),
+    onSecondaryContainer = Color(0xFFE4E4E7),
     tertiary = Color(0xFF5EEAD4),
     onTertiary = Color(0xFF003731),
     tertiaryContainer = Color(0xFF0C3A35),
@@ -84,7 +84,7 @@ private val CommutatorDark = darkColorScheme(
     onSurface = Color(0xFFE8E8EA),
     surfaceVariant = Color(0xFF1C1C20),
     onSurfaceVariant = Color(0xFFA9A9AE),
-    surfaceTint = Color(0xFF8B7CF6),
+    surfaceTint = Color(0xFFECECEC),
     surfaceBright = Color(0xFF26262A),
     surfaceDim = Color(0xFF060606),
     surfaceContainerLowest = Color(0xFF000000),

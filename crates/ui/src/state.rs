@@ -95,8 +95,6 @@ pub struct EngineBootConfig {
     pub data_dir: PathBuf,
     /// Localhost IPC port to probe / serve.
     pub ipc_port: u16,
-    /// Edge base URL for the embedded engine.
-    pub edge_url: String,
     /// Harness for doc-command runs until per-chat config lands (M4).
     pub default_harness: HarnessId,
 }
@@ -260,7 +258,6 @@ impl EngineHandle {
 
         let engine_config = EngineConfig {
             data_dir: config.data_dir,
-            edge_url: config.edge_url,
             ipc_port: config.ipc_port,
             default_harness: config.default_harness,
         };
@@ -3767,7 +3764,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -3794,7 +3790,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: free_port().await,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -3829,7 +3824,6 @@ mod tests {
         let error = match EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -3885,7 +3879,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -3920,7 +3913,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -3966,7 +3958,6 @@ mod tests {
         let config = EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         };
         let (a, b) = tokio::join!(
@@ -4072,7 +4063,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4096,7 +4086,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: dir.path().to_path_buf(),
             ipc_port: free_port().await,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -4158,7 +4147,6 @@ mod tests {
         let handle = EngineHandle::bootstrap(EngineBootConfig {
             data_dir: ui_dir.path().to_path_buf(),
             ipc_port: port,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: HarnessId::Mock,
         })
         .await
@@ -5517,6 +5505,7 @@ mod tests {
             id: "u".into(),
             email: "w@example.com".into(),
             name: None,
+            picture: None,
         };
         let signed_in = AuthState::SignedIn { user, org_id: None };
         assert!(state.apply_auth(signed_in.clone()));
@@ -5828,6 +5817,7 @@ mod tests {
                 id: "u".into(),
                 email: "w@example.com".into(),
                 name: None,
+                picture: None,
             },
             org_id: Some("org-1".into()),
         });

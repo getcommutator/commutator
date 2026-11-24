@@ -774,13 +774,13 @@ impl Shell {
                 .flex_col()
                 .track_focus(&self.section_menu_focus)
                 .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                    match event.keystroke.key.as_str() {
+                    match popover::nav_key(&event.keystroke) {
                         "escape" => this.section_menu = None,
-                        "up" | "down" => {
+                        key @ ("up" | "down") => {
                             this.section_menu_active = popover::menu_step(
                                 this.section_menu_active,
                                 3,
-                                if event.keystroke.key == "up" { -1 } else { 1 },
+                                if key == "up" { -1 } else { 1 },
                             )
                         }
                         "enter" => {
@@ -942,7 +942,6 @@ mod tests {
                 EngineBootConfig {
                     data_dir: path.into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -1450,6 +1449,7 @@ mod tests {
                             id: "user".into(),
                             email: "test@example.test".into(),
                             name: None,
+                            picture: None,
                         },
                         org_id: Some("org".into()),
                     });
@@ -1586,6 +1586,7 @@ mod tests {
                             id: "user".into(),
                             email: "test@example.test".into(),
                             name: None,
+                            picture: None,
                         },
                         org_id: Some("org".into()),
                     });

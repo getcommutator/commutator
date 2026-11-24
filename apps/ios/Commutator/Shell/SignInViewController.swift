@@ -1,12 +1,14 @@
 import AuthenticationServices
 import UIKit
 
-/// Signed out: the welcome page — the mark, a line, the account's Commutator
-/// server, and "Continue with Google" (the server's sign-in, in the system
-/// web-auth sheet, coming back to `commutator://auth`).
-final class SignInViewController: UIViewController, UITextFieldDelegate {
+/// Signed out: the welcome page — the mark, a line, and "Continue with
+/// Google" (the hosted server's sign-in, in the system web-auth sheet, coming
+/// back to `commutator://auth`).
+final class SignInViewController: UIViewController {
+    /// The hosted Commutator server every app signs in to.
+    static let serverURL = "https://commutator.freethinkel.dev"
+
     private let app: AppModel
-    private let server = UITextField()
     private let status = UILabel()
     private var start: UIButton!
     private let signIn = ServerWebSignIn()
@@ -47,25 +49,6 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
         tagline.textAlignment = .center
         tagline.numberOfLines = 0
 
-        // ponytail: our hosted server as the default; the field still takes any other.
-        server.text = AppModel.lastServerURL ?? "https://commutator.freethinkel.dev"
-        server.placeholder = "https://commutator.example.com"
-        server.font = Fonts.ui(.sans, 16)
-        server.textColor = Palette.text
-        server.keyboardType = .URL
-        server.autocapitalizationType = .none
-        server.autocorrectionType = .no
-        server.returnKeyType = .go
-        server.clearButtonMode = .whileEditing
-        server.delegate = self
-        server.accessibilityIdentifier = "server-url"
-        server.borderStyle = .roundedRect
-        server.backgroundColor = Palette.background.withAlphaComponent(0.6)
-        let serverLabel = UILabel()
-        serverLabel.text = "Your Commutator server"
-        serverLabel.font = Fonts.ui(.sansMedium, 13)
-        serverLabel.textColor = Palette.secondary
-
         status.font = Fonts.ui(.sans, 14)
         status.textColor = Palette.secondary
         status.textAlignment = .center
@@ -79,11 +62,9 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
         top.alignment = .center
         top.spacing = 12
         top.setCustomSpacing(26, after: mark)
-        let bottom = UIStackView(arrangedSubviews: [serverLabel, server, status, start])
+        let bottom = UIStackView(arrangedSubviews: [status, start])
         bottom.axis = .vertical
-        bottom.spacing = 8
-        bottom.setCustomSpacing(16, after: server)
-        bottom.setCustomSpacing(16, after: status)
+        bottom.spacing = 16
         for v in [top, bottom] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
@@ -93,29 +74,17 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
             top.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
             top.centerYAnchor.constraint(equalTo: guide.centerYAnchor, constant: -80),
             top.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 32),
-            server.heightAnchor.constraint(equalToConstant: 44),
             bottom.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
             bottom.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
             bottom.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -16),
         ])
     }
 
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        go()
-        return true
-    }
-
     private func go() {
-        let url = (server.text ?? "").trimmingCharacters(in: .whitespaces)
-        guard url.hasPrefix("https://") || url.hasPrefix("http://") else {
-            status.text = "Enter your server's address, starting with https://"
-            return
-        }
-        view.endEditing(true)
         start.isEnabled = false
         status.text = nil
         Task { @MainActor in
-            let error = await signIn.run(app: app, serverURL: url, from: self)
+            let error = await signIn.run(app: app, serverURL: Self.serverURL, from: self)
             start.isEnabled = true
             status.text = error
         }

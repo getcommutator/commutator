@@ -13,7 +13,7 @@ pub mod ipc_cli;
 
 pub use engine_commands::run_engine_command;
 pub use commutator_cli::{
-    DEFAULT_EDGE_URL, edge_url_from_env, init_logging, long_running_setup, open_log_file, paths,
+    init_logging, long_running_setup, open_log_file, paths,
 };
 
 /// mimalloc, macOS only: libmalloc never returns the streaming churn's
@@ -36,7 +36,6 @@ pub fn engine_config_from_env() -> commutator_engine::EngineConfig {
     commutator_engine::heap::set_trim(allocator::trim);
     commutator_engine::EngineConfig {
         data_dir: paths::data_dir(),
-        edge_url: edge_url_from_env(),
         ipc_port: commutator_cli::ipc_port_from_env(),
         default_harness: harness_from_env(),
     }

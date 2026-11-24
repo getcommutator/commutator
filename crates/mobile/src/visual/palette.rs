@@ -51,14 +51,14 @@ impl Palette {
     pub fn new(dark: bool) -> Self {
         let pick = |light: u32, night: u32| hex(if dark { night } else { light });
         let text = pick(0x27272C, 0xE8E8EA);
-        let accent = pick(0x5B43E8, 0x8B7CF6);
+        let accent = pick(0x18181B, 0xECECEC);
         Self {
             dark,
             text,
             muted: pick(0x62626A, 0xA9A9AE),
             faint: pick(0x97979F, 0x6B6B72),
             accent,
-            on_accent: hex(0xFFFFFF),
+            on_accent: pick(0xFFFFFF, 0x18181B),
             success: pick(0x15803D, 0x34D399),
             warning: pick(0xA16207, 0xFACC15),
             danger: pick(0xDC2626, 0xF87171),
@@ -174,11 +174,11 @@ mod tests {
                     assert_ne!(a, b);
                 }
             }
-            // The violet accent drops the fixed violet.
+            // The grey accent drops the last fixed color (sky).
             assert!(
                 !palette
                     .chart
-                    .contains(&hex(if dark { 0xa78bfa } else { 0x7c3aed }))
+                    .contains(&hex(if dark { 0x38bdf8 } else { 0x0284c7 }))
             );
         }
     }

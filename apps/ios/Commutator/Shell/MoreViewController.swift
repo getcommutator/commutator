@@ -74,7 +74,7 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
                 let toggle = UISwitch()
                 toggle.isOn = on
                 toggle.isEnabled = !row.disabled
-                toggle.onTintColor = Palette.accent
+                toggle.onTintColor = Palette.toggleOn
                 toggle.accessibilityIdentifier = "toggle-\(row.id)"
                 toggle.addAction(UIAction { [weak self, weak toggle] _ in
                     self?.toggled(row.id, toggle?.isOn ?? false)
@@ -106,10 +106,6 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func toggled(_ id: String, _ on: Bool) {
-        if id == "groupByProject" {
-            app.groupByProject = on
-            return
-        }
         if id == "math:render" {
             MathSettings.render = on
             return reload()
@@ -155,13 +151,10 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
             math.append(Row(id: "math:size", title: "Math Size", subtitle: "\(MathSettings.size)% of the text around it", symbol: "textformat.size"))
         }
         s.appendItems(math)
-        s.appendSections(["Sessions"])
-        s.appendItems([
-            Row(id: "activity", title: "Activity", subtitle: app.activityOn ? "On — the chats that need you, in one list" : "Off", symbol: "tray.full"),
-            // (Activity keeps one list of its own: grouping stands aside.)
-            Row(id: "groupByProject", title: "Group by Project", subtitle: app.activityOn ? "Not while Activity is on" : "Sessions outside your sections, under their project", symbol: "square.stack.3d.up", accessory: .toggle(app.groupByProject), disabled: app.activityOn),
-            Row(id: "archived", title: "Archived Sessions", symbol: "archivebox"),
-        ])
+        s.appendSections(["Activity"])
+        s.appendItems(AppModel.SessionsView.allCases.map { view in
+            Row(id: "view:" + view.rawValue, title: view.title, symbol: view.symbol, accessory: .check(app.sessionsView == view))
+        })
         s.appendSections([" "])
         s.appendItems([Row(id: "signout", title: "Sign Out", symbol: "rectangle.portrait.and.arrow.right", accessory: .none, destructive: true)])
         dataSource.apply(s, animatingDifferences: false)
@@ -177,7 +170,8 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
             alert.popoverPresentationController?.sourceView = collectionView.cellForItem(at: path)
             present(alert, animated: true)
-        case "activity": navigationController?.pushViewController(ActivitySettingsViewController(app: app), animated: true)
+        case let id where id.hasPrefix("view:"):
+            AppModel.SessionsView(rawValue: String(id.dropFirst(5))).map { app.sessionsView = $0 }
         case let id where id.hasPrefix("appearance:"):
             let style = Int(id.dropFirst(11)) ?? 0
             UserDefaults.standard.set(style, forKey: "appearance")
@@ -223,8 +217,6 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
             present(sheet, animated: true)
         case "wallpaper:remove":
             WallpaperStore.remove()
-        case "archived":
-            navigationController?.pushViewController(FolderViewController(app: app, folder: FolderRowVM(id: "archived", name: "Archived", count: 0, symbol: "archivebox")), animated: true)
         case "signout":
             let alert = UIAlertController(title: "Sign out?", message: "Local drafts stay on this device.", preferredStyle: .actionSheet)
             alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in self?.app.signOut() })

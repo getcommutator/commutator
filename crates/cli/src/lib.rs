@@ -24,7 +24,7 @@ pub mod update_cli;
 use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 
 pub use env::{
-    DEFAULT_EDGE_URL, DEFAULT_IPC_PORT, edge_url_from_env, ipc_port_from, ipc_port_from_env,
+    DEFAULT_IPC_PORT, ipc_port_from, ipc_port_from_env,
 };
 pub use logging::{RotatingLog, init_logging, long_running_setup, open_log_file};
 

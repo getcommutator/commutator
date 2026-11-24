@@ -1,7 +1,9 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        let plist = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../dist/macos/Info-unbundled.plist");
+        // Read at run time: `env!` would bake in the folder the build script
+        // was compiled in, and a moved checkout then links a missing file.
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("set by cargo");
+        let plist = std::path::Path::new(&manifest_dir).join("../../dist/macos/Info-unbundled.plist");
         println!("cargo:rerun-if-changed={}", plist.display());
         // `cargo run` has no .app Info.plist. NSBundle also reads privacy
         // declarations from this Mach-O section, so source builds can request

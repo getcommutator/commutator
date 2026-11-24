@@ -788,7 +788,6 @@ impl Onboarding {
     ) -> AnyElement {
         let current_mode = appearance::mode(cx);
         let themes = appearance::themes(cx);
-        let current_accent = appearance::accent(cx);
         let surface = appearance::surface(cx);
         let reduced_motion = motion::reduced_motion(cx);
         let cards = AppearanceMode::ALL.into_iter().map(|mode| {
@@ -805,7 +804,7 @@ impl Onboarding {
                 mode.label(),
                 selected,
                 selection_t,
-                crate::settings::appearance::preview(mode, &themes, current_accent, surface),
+                crate::settings::appearance::preview(mode, &themes, surface),
             )
             .id(SharedString::from(format!(
                 "onboarding-mode-{}",
@@ -813,19 +812,6 @@ impl Onboarding {
             )))
             .on_click(cx.listener(move |_, _, _, cx| {
                 appearance::set_mode(mode, cx);
-                cx.notify();
-            }))
-        });
-        let mut accents = vec![commutator_theme::AccentSelection::ThemeDefault];
-        accents.extend(commutator_theme::AccentPreset::ALL.map(commutator_theme::AccentSelection::Preset));
-        let swatches = accents.into_iter().map(|selection| {
-            crate::settings::appearance::accent_swatch(
-                theme,
-                selection,
-                selection == current_accent,
-            )
-            .on_click(cx.listener(move |_, _, _, cx| {
-                appearance::set_accent(selection, cx);
                 cx.notify();
             }))
         });
@@ -846,25 +832,6 @@ impl Onboarding {
                 )
                 .mt(px(24.0))
                 .gap(px(12.0)),
-            )
-            .child(
-                widgets::section_card(theme).mt(px(16.0)).child(
-                    widgets::card_row(theme, true)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(80.0))
-                                .child(widgets::row_title(theme, "Accent")),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .gap(px(8.0))
-                                .children(swatches),
-                        ),
-                ),
             )
             .child(self.render_wallpaper_choice(theme, cx))
             .into_any_element()
@@ -1134,11 +1101,7 @@ impl Onboarding {
         } else {
             format!("Only on {}", this_device())
         };
-        let look = format!(
-            "{} · {}",
-            appearance::mode(cx).label(),
-            appearance::accent(cx).label()
-        );
+        let look = appearance::mode(cx).label().to_string();
         let agents = match agents_summary(&self.harnesses) {
             AgentsSummary::Installed(names) => short_names(&names),
             AgentsSummary::NoneInstalled => "None yet".into(),

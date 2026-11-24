@@ -195,6 +195,7 @@ mod tests {
                         id: "user-a".into(),
                         email: "user@example.com".into(),
                         name: None,
+                        picture: None,
                     },
                     org_id: Some("org-a".into()),
                 }),

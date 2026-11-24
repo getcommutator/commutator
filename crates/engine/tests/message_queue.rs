@@ -929,8 +929,46 @@ async fn held_policy_keeps_a_steerable_message_visible_until_steer_now() {
     core.shutdown().await;
 }
 
-/// Send next on a turn-boundary agent: the row jumps ahead of ordinary rows
-/// and goes out the moment the current turn ends, not into the transcript now.
+/// Steering a later row mid-turn steers the rows queued before it first, in
+/// order: a steer never lets a message overtake earlier ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn steer_now_delivers_earlier_rows_first() {
+    let (core, harness, prompts) = setup(SteeringMode::StepBoundary).await;
+    core.doc_host
+        .queue_message(CHAT, "opening", Vec::new())
+        .expect("queue opening");
+    wait_for(
+        || prompts.lock().unwrap().iter().any(|p| p == "opening"),
+        "the first turn to start",
+    )
+    .await;
+    core.doc_host
+        .queue_message_with_behavior(CHAT, "first", Vec::new(), true)
+        .expect("queue first");
+    let second = core
+        .doc_host
+        .queue_message_with_behavior(CHAT, "second", Vec::new(), true)
+        .expect("queue second");
+    core.doc_host
+        .queue_message_with_behavior(CHAT, "later", Vec::new(), true)
+        .expect("queue later");
+
+    assert!(core.doc_host.steer_queued_now(CHAT, &second).await.unwrap());
+    wait_for(
+        || user_messages(&core).iter().any(|m| m == "second"),
+        "the steers to land",
+    )
+    .await;
+    assert_eq!(user_messages(&core), vec!["opening", "first", "second"]);
+    assert_eq!(queue_texts(&core), vec!["later"]);
+
+    let _ = harness.finish.send(());
+    core.shutdown().await;
+}
+
+/// Send next on a turn-boundary agent: the row (and every row queued before
+/// it, in order) jumps ahead of later ordinary rows and goes out the moment
+/// the current turn ends, not into the transcript now.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn steer_now_sends_a_turn_boundary_row_next() {
     let (core, harness, prompts) = setup(SteeringMode::TurnBoundary).await;
@@ -944,35 +982,44 @@ async fn steer_now_sends_a_turn_boundary_row_next() {
     )
     .await;
     core.doc_host
-        .queue_message(CHAT, "ordinary", Vec::new())
-        .expect("queue ordinary message");
+        .queue_message(CHAT, "earlier", Vec::new())
+        .expect("queue earlier message");
     let first = core
         .doc_host
         .queue_message(CHAT, "steered first", Vec::new())
         .expect("queue held message");
+    core.doc_host
+        .queue_message(CHAT, "ordinary", Vec::new())
+        .expect("queue ordinary message");
     let second = core
         .doc_host
         .queue_message(CHAT, "steered second", Vec::new())
         .expect("queue held message");
 
+    // Steering a row takes the rows queued before it along, in order.
     assert!(core.doc_host.steer_queued_now(CHAT, &first).await.unwrap());
+    assert_eq!(
+        queue_texts(&core),
+        vec!["earlier", "steered first", "ordinary", "steered second"]
+    );
+    // Rows already steered keep their places.
     assert!(core.doc_host.steer_queued_now(CHAT, &second).await.unwrap());
     assert_eq!(
         queue_texts(&core),
-        vec!["steered first", "steered second", "ordinary"]
+        vec!["earlier", "steered first", "ordinary", "steered second"]
     );
     assert_eq!(user_messages(&core), vec!["opening".to_owned()]);
     assert_eq!(harness.requests.lock().unwrap().len(), 1);
 
     let _ = harness.finish.send(());
     wait_for(
-        || prompts.lock().unwrap().iter().any(|p| p == "steered first"),
+        || prompts.lock().unwrap().iter().any(|p| p == "earlier"),
         "delivery at the turn end",
     )
     .await;
     assert_eq!(
         queue_texts(&core),
-        vec!["steered second", "ordinary"],
+        vec!["steered first", "ordinary", "steered second"],
         "one row per turn"
     );
     let _ = harness.finish.send(());

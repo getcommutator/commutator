@@ -8,13 +8,9 @@ use commutator_engine::{
     default_registry,
 };
 
-fn config(
-    data_dir: &Path,
-    edge_url: String,
-) -> EngineConfig {
+fn config(data_dir: &Path) -> EngineConfig {
     EngineConfig {
         data_dir: data_dir.to_path_buf(),
-        edge_url,
         ipc_port: 0,
         default_harness: HarnessId::Mock,
     }
@@ -55,7 +51,7 @@ fn concurrent_engine_info(
 #[tokio::test]
 async fn concurrent_engine_info_and_runtime_share_one_device_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config = Arc::new(config(dir.path(), "http://127.0.0.1:1".into()));
+    let config = Arc::new(config(dir.path()));
     let announced = concurrent_engine_info(config, 32);
 
     assert_eq!(announced.len(), 1, "every viewport announces one identity");
@@ -79,7 +75,7 @@ async fn concurrent_engine_info_and_runtime_share_one_device_identity() {
 async fn empty_legacy_device_identity_is_repaired_once_for_all_boots() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("device-id"), b"").expect("seed truncated identity");
-    let config = Arc::new(config(dir.path(), "http://127.0.0.1:1".into()));
+    let config = Arc::new(config(dir.path()));
 
     let announced = concurrent_engine_info(config, 32);
     assert_eq!(

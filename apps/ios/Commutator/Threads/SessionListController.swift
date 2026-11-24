@@ -298,7 +298,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
             done(true)
         }
         pin.image = UIImage(systemName: vm.pinned ? "pin.slash.fill" : "pin.fill")
-        pin.backgroundColor = Palette.accent
+        pin.backgroundColor = .systemGray
         return UISwipeActionsConfiguration(actions: [pin])
     }
 
@@ -310,7 +310,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
                 done(true)
             }
             restore.image = UIImage(systemName: "tray.and.arrow.up.fill")
-            restore.backgroundColor = Palette.accent
+            restore.backgroundColor = .systemGray
             return UISwipeActionsConfiguration(actions: [restore])
         }
         let archive = UIContextualAction(style: .destructive, title: "Archive") { [weak self] _, _, done in
@@ -319,10 +319,10 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         }
         archive.image = UIImage(systemName: "archivebox.fill")
         archive.backgroundColor = Palette.secondary
-        // Activity: Sleep (or, asleep, Wake) where Move stands; it lists no
-        // sections to move into. A chat under way isn't archived (as the
-        // desktop's Archive: stop it first).
-        if app.activityOn, let vm = sessions[id] {
+        // Sleep (or, asleep, Wake) beside Archive. A chat under way isn't
+        // archived (as the desktop's Archive: stop it first).
+        guard let vm = sessions[id] else { return UISwipeActionsConfiguration(actions: [archive]) }
+        do {
             let underWay = vm.status == .working
             if vm.sleepUntil != nil {
                 let wake = UIContextualAction(style: .normal, title: "Wake") { [weak self] _, _, done in
@@ -341,13 +341,6 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
             sleep.backgroundColor = .systemIndigo
             return UISwipeActionsConfiguration(actions: underWay ? [sleep] : [archive, sleep])
         }
-        let move = UIContextualAction(style: .normal, title: "Move") { [weak self] _, view, done in
-            self?.presentMoveMenu(id, from: view)
-            done(true)
-        }
-        move.image = UIImage(systemName: "folder.fill")
-        move.backgroundColor = UIColor(hex: 0x5E6AD2)
-        return UISwipeActionsConfiguration(actions: [archive, move])
     }
 
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {
@@ -365,9 +358,8 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
                     self.deleteAction(id),
                 ])
             }
-            if self.app.activityOn {
-                // Activity lists no sections (nothing to move into); Sleep or
-                // Wake, and Stop Waiting on a process it waits on.
+            do {
+                // Sleep or Wake, and Stop Waiting on a process it waits on.
                 var activity: [UIMenuElement] = [self.sleepMenu(vm)]
                 if vm.canStopWaiting {
                     activity.append(UIAction(title: "Stop Waiting", image: UIImage(systemName: "xmark.circle")) { _ in self.app.stopWaiting(id) })
@@ -382,13 +374,6 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
                     self.deleteAction(id),
                 ])
             }
-            return UIMenu(children: [
-                UIAction(title: vm.pinned ? "Unpin" : "Pin", image: UIImage(systemName: vm.pinned ? "pin.slash" : "pin")) { _ in self.app.setPinned(id, !vm.pinned) },
-                self.moveMenu(id),
-                UIAction(title: "Rename…", image: UIImage(systemName: "pencil")) { _ in self.rename(id) },
-                UIAction(title: "Archive", image: UIImage(systemName: "archivebox")) { _ in self.app.archive(id) },
-                self.deleteAction(id),
-            ])
         }
     }
 
@@ -434,39 +419,6 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
             self?.confirmDelete(app: self?.app, id) {}
         }
-    }
-
-    func moveMenu(_ id: String) -> UIMenu {
-        var items: [UIMenuElement] = app.frontPage.folders.filter { $0.id != "pinned" }.map { f in
-            UIAction(title: f.name, image: UIImage(systemName: "folder")) { [weak self] _ in self?.app.move(id, toSection: f.id) }
-        }
-        items.append(UIAction(title: "No Section", image: UIImage(systemName: "tray")) { [weak self] _ in self?.app.move(id, toSection: nil) })
-        items.append(UIAction(title: "New Section…", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
-            self?.promptForSection { name in self?.app.createSection(name) }
-        })
-        return UIMenu(title: "Move to Section", image: UIImage(systemName: "folder"), children: items)
-    }
-
-    private func presentMoveMenu(_ id: String, from view: UIView) {
-        let sheet = UIAlertController(title: "Move to Section", message: nil, preferredStyle: .actionSheet)
-        for f in app.frontPage.folders where f.id != "pinned" {
-            sheet.addAction(UIAlertAction(title: f.name, style: .default) { [weak self] _ in self?.app.move(id, toSection: f.id) })
-        }
-        sheet.addAction(UIAlertAction(title: "No Section", style: .default) { [weak self] _ in self?.app.move(id, toSection: nil) })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        sheet.popoverPresentationController?.sourceView = view
-        present(sheet, animated: true)
-    }
-
-    func promptForSection(_ done: @escaping (String) -> Void) {
-        let alert = UIAlertController(title: "New Section", message: nil, preferredStyle: .alert)
-        alert.addTextField { $0.placeholder = "Name"; $0.autocapitalizationType = .words }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Create", style: .default) { _ in
-            let name = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
-            if !name.isEmpty { done(name) }
-        })
-        present(alert, animated: true)
     }
 
     private func rename(_ id: String) {
@@ -640,19 +592,49 @@ class SessionsViewController: SessionListController {
         if !query.trimmingCharacters(in: .whitespaces).isEmpty {
             return [("results", nil, [], app.search(query))]
         }
-        if app.activityOn { return activitySections() }
-        var out: [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] = []
-        for f in app.frontPage.folders {
-            out.append((f.id, f.name, [], app.sessions(inFolder: f.id)))
+        switch app.sessionsView {
+        case .chats: return activitySections()
+        // Its own page stands over this list.
+        case .projects: return []
         }
-        if app.groupByProject {
-            for g in app.frontPage.projectGroups {
-                out.append((g.id, g.name, [], g.sessions))
+    }
+
+    /// Projects: its own page, over this list while that view is on and
+    /// nothing is searched.
+    private var projectsPage: ProjectsViewController?
+
+    override func reload(animated: Bool) {
+        super.reload(animated: animated)
+        let wanted = app.sessionsView == .projects && query.trimmingCharacters(in: .whitespaces).isEmpty
+        if wanted, projectsPage == nil {
+            let page = ProjectsViewController(app: app)
+            page.openChat = { [weak self] id in self?.openSession(id) }
+            page.openCheckout = { [weak self] project, checkout in
+                guard let self else { return }
+                self.navigationController?.pushViewController(ProjectChatsViewController(app: self.app, project: project, checkout: checkout), animated: true)
             }
-            return out
+            page.newChat = { [weak self] projectId in
+                guard let self, let router = self.router else { return }
+                self.app.lastDraft.projectId = projectId
+                self.app.lastDraft.hostId = nil
+                self.app.lastDraft.branch = nil
+                router.presentNewSession(prompt: nil)
+            }
+            addChild(page)
+            page.view.frame = view.bounds
+            page.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(page.view)
+            page.didMove(toParent: self)
+            projectsPage = page
+            // The large title follows the page's own scrolling.
+            setContentScrollView(page.collectionView, for: .top)
+        } else if !wanted, let page = projectsPage {
+            page.willMove(toParent: nil)
+            page.view.removeFromSuperview()
+            page.removeFromParent()
+            projectsPage = nil
+            setContentScrollView(collectionView, for: .top)
         }
-        out.append(("recent", out.isEmpty ? nil : "Recent", [], app.frontPage.sessions))
-        return out
     }
 
     /// Activity: Pinned above, then one list (every other chat, sections
@@ -686,7 +668,7 @@ class SessionsViewController: SessionListController {
     private var archivedTotal = 0
 
     override func moreCount(_ id: String) -> Int {
-        guard id == ActivityList.Section.archived, app.activityOn, !isCollapsed(id) else { return 0 }
+        guard id == ActivityList.Section.archived, app.sessionsView == .chats, !isCollapsed(id) else { return 0 }
         return max(0, archivedTotal - archivedShown)
     }
 
@@ -709,111 +691,35 @@ class SessionsViewController: SessionListController {
     override func dropTarget(_ id: String) -> SessionDropTarget? {
         // Search results and project groups aren't places a session is put.
         guard query.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        // Activity orders itself: only Pinned is a place a session is put.
-        if app.activityOn { return id == "pinned" ? .pinned : nil }
-        switch id {
-        case "pinned": return .pinned
-        case "recent": return .recent
-        default: return app.frontPage.folders.contains { $0.id == id } ? .section(id) : nil
-        }
+        // Both views order themselves: only Pinned is a place a session is put.
+        return app.sessionsView == .chats && id == "pinned" ? .pinned : nil
     }
 
     override func headerMenu(_ id: String) -> UIMenu? {
-        if id == "recent" || id.hasPrefix(ActivityList.Section.list) { return nil }
-        guard let folder = app.frontPage.folders.first(where: { $0.id == id }) else { return nil }
-        let open = UIAction(title: "Open", image: UIImage(systemName: "arrow.up.right")) { [weak self] _ in self?.openFolder(id) }
-        if id == "pinned" {
-            return UIMenu(children: [
-                open,
-                UIAction(title: "Reorder…", image: UIImage(systemName: "arrow.up.arrow.down")) { [weak self] _ in self?.openFolder(id) },
-            ])
-        }
+        guard id == "pinned", app.frontPage.folders.contains(where: { $0.id == id }) else { return nil }
         return UIMenu(children: [
-            open,
-            UIAction(title: "Rename Section…", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.renameSection(folder) },
-            UIAction(title: "Delete Section", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in self?.app.deleteSection(id) },
+            UIAction(title: "Open", image: UIImage(systemName: "arrow.up.right")) { [weak self] _ in self?.openFolder(id) },
+            UIAction(title: "Reorder…", image: UIImage(systemName: "arrow.up.arrow.down")) { [weak self] _ in self?.openFolder(id) },
         ])
     }
 
-    /// Settings → Activity, from the "…" menu: in the tab's own stack on
-    /// iPhone, a sheet over the sidebar on iPad.
-    func openActivitySettings() {
-        let settings = ActivitySettingsViewController(app: app)
-        if let nav = navigationController, splitViewController == nil || splitViewController?.isCollapsed == true {
-            settings.hidesBottomBarWhenPushed = true
-            nav.pushViewController(settings, animated: true)
-        } else {
-            let sheet = UINavigationController(rootViewController: settings)
-            settings.navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak sheet] _ in sheet?.dismiss(animated: true) })
-            present(sheet, animated: true)
-        }
-    }
-
-    private func renameSection(_ folder: FolderRowVM) {
-        let alert = UIAlertController(title: "Rename Section", message: nil, preferredStyle: .alert)
-        alert.addTextField { $0.text = folder.name }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Rename", style: .default) { [weak self] _ in
-            guard let name = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return }
-            self?.app.renameSection(folder.id, name)
-        })
-        present(alert, animated: true)
-    }
-
+    /// Activity: Chats or Projects (rebuilt on each open, as Settings
+    /// switches it too).
     func optionsMenu() -> UIMenu {
         UIMenu(children: [
-            // Activity: the view itself, and the way to its settings. (Rebuilt
-            // on each open, as what it turns off is.)
             UIDeferredMenuElement.uncached { [weak self] done in
-                guard let self else { return done([]) }
-                let app = self.app
-                done([UIMenu(options: .displayInline, children: [
-                    UIAction(title: "Activity", image: UIImage(systemName: "tray.full"), state: app.activityOn ? .on : .off) { _ in
-                        app.activityOn.toggle()
-                    },
-                    UIAction(title: "Activity Settings…", image: UIImage(systemName: "gearshape")) { [weak self] _ in
-                        self?.openActivitySettings()
-                    },
-                ])])
-            },
-            // Rebuilt on each open: Settings flips Activity and grouping too.
-            // What Activity stands aside from (sections, grouping) is out of
-            // reach while it's on.
-            UIDeferredMenuElement.uncached { [weak self] done in
-                guard let self else { return done([]) }
-                let app = self.app
-                let off: UIMenuElement.Attributes = app.activityOn ? .disabled : []
-                done([
-                    UIAction(title: "New Section…", image: UIImage(systemName: "folder.badge.plus"), attributes: off) { [weak self] _ in
-                        self?.promptForSection { name in self?.app.createSection(name) }
-                    },
-                    UIAction(title: "Collapse All", image: UIImage(systemName: "rectangle.compress.vertical")) { [weak self] _ in
-                        guard let self else { return }
-                        if self.app.activityOn {
-                            let ids = ["pinned", ActivityList.Section.list] + Array(ActivityList.Section.shelves)
-                            for id in ids where !self.isCollapsed(id) { self.setCollapsed(id, true) }
-                            UISelectionFeedbackGenerator().selectionChanged()
-                            self.reload(animated: true)
-                            return
-                        }
-                        var ids = self.app.frontPage.folders.map(\.id)
-                        if self.app.groupByProject { ids += self.app.frontPage.projectGroups.map(\.id) }
-                        for id in ids where !self.isCollapsed(id) { self.toggleSection(id) }
-                    },
-                    UIAction(title: "Group by Project", image: UIImage(systemName: "square.stack.3d.up"), attributes: off, state: app.groupByProject ? .on : .off) { _ in
-                        app.groupByProject.toggle()
-                    },
-                ])
-            },
-            UIAction(title: "Archived", image: UIImage(systemName: "archivebox")) { [weak self] _ in
-                guard let self else { return }
-                self.navigationController?.pushViewController(FolderViewController(app: self.app, folder: FolderRowVM(id: "archived", name: "Archived", count: 0, symbol: "archivebox")), animated: true)
+                guard let app = self?.app else { return done([]) }
+                done([UIMenu(title: "Activity", options: .displayInline, children: AppModel.SessionsView.allCases.map { view in
+                    UIAction(title: view.title, image: UIImage(systemName: view.symbol), state: app.sessionsView == view ? .on : .off) { _ in
+                        app.sessionsView = view
+                    }
+                })])
             },
         ])
     }
 }
 
-/// One folder's sessions (Pinned, a user section, Archived).
+/// One folder's sessions (Pinned, Archived).
 final class FolderViewController: SessionListController {
     private let folder: FolderRowVM
 
@@ -838,11 +744,6 @@ final class FolderViewController: SessionListController {
             reload(animated: false)
             dataSource.reorderingHandlers.canReorderItem = { _ in true }
             dataSource.reorderingHandlers.didReorder = { [weak self] tx in self?.pinsReordered(tx) }
-        } else if folder.id != "archived" {
-            navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), menu: UIMenu(children: [
-                UIAction(title: "Rename Section…", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.renameSection() },
-                UIAction(title: "Delete Section", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in self?.deleteSection() },
-            ]))
         }
     }
 
@@ -868,30 +769,6 @@ final class FolderViewController: SessionListController {
         }
     }
 
-    private func renameSection() {
-        let alert = UIAlertController(title: "Rename Section", message: nil, preferredStyle: .alert)
-        alert.addTextField { [folder] in $0.text = folder.name }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Rename", style: .default) { [weak self] _ in
-            guard let self, let name = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return }
-            self.app.renameSection(self.folder.id, name)
-            self.title = name
-        })
-        present(alert, animated: true)
-    }
-
-    private func deleteSection() {
-        let alert = UIAlertController(title: "Delete “\(folder.name)”?", message: "Its sessions move back to the main list.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Delete Section", style: .destructive) { [weak self] _ in
-            guard let self else { return }
-            self.app.deleteSection(self.folder.id)
-            self.navigationController?.popViewController(animated: true)
-        })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        // iPad presents action sheets as popovers: anchor it to the ⋯ button.
-        alert.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
-        present(alert, animated: true)
-    }
 }
 
 extension SessionsViewController: UISearchResultsUpdating {

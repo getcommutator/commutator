@@ -85,8 +85,16 @@ pub(crate) fn tab(
 
 /// Fixed pane tab width. Drag reordering (drop-index quantisation and slide
 /// offsets) assumes uniform chips.
-pub(crate) const TAB_CHIP_WIDTH: f32 = 112.0;
-pub(crate) const TAB_CHIP_HEIGHT: f32 = 24.0;
+pub(crate) const TAB_CHIP_WIDTH: f32 = 160.0;
+/// Shepherd's tab metrics: 28px tall, 6/4 side padding, 6 between the
+/// parts, a 20px slot each side of the 12.5px title.
+pub(crate) const TAB_CHIP_HEIGHT: f32 = 28.0;
+pub(crate) const TAB_CHIP_PAD_L: f32 = 6.0;
+pub(crate) const TAB_CHIP_PAD_R: f32 = 4.0;
+pub(crate) const TAB_CHIP_GAP: f32 = 6.0;
+pub(crate) const TAB_CHIP_SLOT_SIZE: f32 = 20.0;
+pub(crate) const TAB_CHIP_FONT: f32 = 12.5;
+pub(crate) const TAB_CHIP_ICON: f32 = 14.0;
 /// A chip plus the strip's own gap.
 pub(crate) const TAB_CHIP_SLOT: f32 = TAB_CHIP_WIDTH + CONTROL_GAP;
 /// Width of the fade over tabs scrolled out of a strip.
@@ -132,12 +140,13 @@ pub(crate) fn tab_chip(
         .h(px(TAB_CHIP_HEIGHT))
         .w(px(TAB_CHIP_WIDTH))
         .flex_none()
-        .px(px(4.0))
+        .pl(px(TAB_CHIP_PAD_L))
+        .pr(px(TAB_CHIP_PAD_R))
         .rounded(px(CONTROL_RADIUS))
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(3.0))
+        .gap(px(TAB_CHIP_GAP))
         .cursor_pointer()
         .role(gpui::Role::Button)
         // The old session-tab strip's solved carve-out: NOT `.occlude()` — a
@@ -152,7 +161,7 @@ pub(crate) fn tab_chip(
         .child(
             div()
                 .flex_none()
-                .size(px(18.0))
+                .size(px(TAB_CHIP_SLOT_SIZE))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -163,7 +172,7 @@ pub(crate) fn tab_chip(
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(crate::typography::ui_rems(11.5))
+                .text_size(crate::typography::ui_rems(TAB_CHIP_FONT))
                 .text_color(if active { theme.text } else { theme.text_muted })
                 .child(title),
         )
@@ -174,7 +183,7 @@ pub(crate) fn tab_chip(
                 .id((close_id, ix))
                 .debug_selector(move || format!("{close_id}-{ix}"))
                 .flex_none()
-                .size(px(18.0))
+                .size(px(TAB_CHIP_SLOT_SIZE))
                 .rounded(px(4.0))
                 .relative()
                 .role(gpui::Role::Button)
@@ -225,7 +234,7 @@ pub(crate) fn tab_chip(
 /// A chip's leading glyph, quieter on inactive tabs.
 pub(crate) fn tab_chip_icon(path: &'static str, active: bool, theme: &Theme) -> gpui::AnyElement {
     crate::icons::icon(path)
-        .size(px(12.0))
+        .size(px(TAB_CHIP_ICON))
         .text_color(if active {
             theme.text_muted
         } else {

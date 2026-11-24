@@ -769,6 +769,10 @@ pub struct Pickers {
     draft_owner: Option<String>,
     /// Space the branch draft/cache belong to (see the state observer).
     space_owner: Option<String>,
+    /// (space, branch) of an existing worktree the next new chat in that
+    /// space runs in — set from the Projects sidebar, applied once the space
+    /// switch has dropped the old branch draft.
+    pending_worktree: Option<(String, String)>,
     device_owner: Option<String>,
     /// The device whose harness/model catalogs are loaded (see
     /// [`Self::catalog_device`]).
@@ -985,6 +989,11 @@ impl Pickers {
                 this.refs = Loadable::Idle;
                 this.refs_space = None;
             }
+            if this.pending_worktree.as_ref().map(|(space, _)| space) == this.space_owner.as_ref() {
+                if let Some((_, branch)) = this.pending_worktree.take() {
+                    this.use_worktree_branch(branch);
+                }
+            }
             // Catalogs are per-DEVICE (fetched from the host that runs the
             // agents), so a project switch on the same device keeps them. A
             // device switch revalidates against the new host with the loaded
@@ -1053,6 +1062,7 @@ impl Pickers {
         Self {
             state,
             space_owner,
+            pending_worktree: None,
             device_owner,
             catalog_owner,
             target_generation: 0,
@@ -1958,6 +1968,22 @@ impl Pickers {
 
     // ---- selections ----
 
+    /// Runs the next new chat in `space` in the existing worktree that has
+    /// `branch` checked out ("Current worktree"), as picking that ref would.
+    pub fn use_worktree(&mut self, space: String, branch: String, cx: &mut Context<Self>) {
+        if self.space_owner.as_deref() == Some(space.as_str()) {
+            self.use_worktree_branch(branch);
+            cx.notify();
+        } else {
+            self.pending_worktree = Some((space, branch));
+        }
+    }
+
+    fn use_worktree_branch(&mut self, branch: String) {
+        self.config.branch = Some(branch);
+        self.config.checkout = CheckoutKind::Local;
+    }
+
     fn pick_ref(&mut self, row: RepoRef, cx: &mut Context<Self>) {
         // Refs are fixed at creation: an existing session can never move
         // (wing's rule — the footer renders read-only labels there, so this
@@ -1968,8 +1994,7 @@ impl Pickers {
         if row.worktree_path.is_some() {
             // Reuse the ref's existing worktree ("Current worktree") — the
             // t3code `reuseExistingWorktree` path.
-            self.config.branch = Some(row.name.clone());
-            self.config.checkout = CheckoutKind::Local;
+            self.use_worktree_branch(row.name.clone());
         } else if self.config.checkout == CheckoutKind::NewWorktree || row.current {
             // Base pick for a new worktree, or the already-current ref.
             self.config.branch = Some(row.name.clone());
@@ -3185,12 +3210,12 @@ impl Pickers {
             }
         }
         if self.setting_menu.is_some() {
-            match event.keystroke.key.as_str() {
+            match popover::nav_key(&event.keystroke) {
                 "escape" | "left" => {
                     self.setting_menu = None;
                     self.setting_bounds = None;
                 }
-                "up" | "down" => {
+                key @ ("up" | "down") => {
                     let count = self
                         .scope_groups(self.setting_scope, cx)
                         .into_iter()
@@ -3200,10 +3225,14 @@ impl Pickers {
                     self.setting_active = popover::menu_step(
                         Some(self.setting_active),
                         count,
-                        if event.keystroke.key == "up" { -1 } else { 1 },
+                        if key == "up" { -1 } else { 1 },
                     )
                     .unwrap_or(0);
-                    self.setting_scroll.scroll_to_item(self.setting_active);
+                    popover::reveal(
+                        &self.setting_scroll,
+                        self.setting_active..=self.setting_active,
+                        popover::MENU_FADE,
+                    );
                 }
                 "enter" => self.activate_setting_choice(cx),
                 _ => return,
@@ -9878,7 +9907,7 @@ mod tests {
         // Case-insensitive; the length indexes into the NAME's bytes.
         assert_eq!(completion_prefix_len("Documents", "doc"), Some(3));
         assert_eq!(&"Documents"[3..], "uments");
-        assert_eq!(completion_prefix_len("commutator", "commutator"), Some(8));
+        assert_eq!(completion_prefix_len("commutator", "commutator"), Some(10));
         assert_eq!(completion_prefix_len("commutator", ""), Some(0));
         assert_eq!(completion_prefix_len("commutator", "dev"), None);
         // Longer than the name → not a prefix.

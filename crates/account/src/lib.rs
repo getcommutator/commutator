@@ -15,6 +15,9 @@ use sha2::{Digest, Sha256};
 /// The apps' callback: `commutator://auth?code=…`.
 pub const APP_REDIRECT: &str = "commutator://auth";
 
+/// The hosted Commutator server every app signs in to.
+pub const DEFAULT_SERVER_URL: &str = "https://commutator.freethinkel.dev";
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -55,6 +58,8 @@ pub struct Redeemed {
     pub device_id: String,
     pub email: String,
     pub name: Option<String>,
+    /// The account's profile photo URL.
+    pub picture: Option<String>,
 }
 
 /// A started sign-in: open [`Self::url`] in a browser, then [`Self::redeem`]
@@ -118,6 +123,8 @@ impl SignIn {
         struct User {
             email: String,
             name: Option<String>,
+            #[serde(default)]
+            picture: Option<String>,
         }
         let response = reqwest::Client::new()
             .post(format!("{}/auth/redeem", self.server_url))
@@ -144,6 +151,7 @@ impl SignIn {
             device_id: body.device_id,
             email: body.user.email,
             name: body.user.name,
+            picture: body.user.picture,
         })
     }
 }
@@ -162,6 +170,39 @@ pub fn callback_code(url: &str) -> Result<String, Error> {
         (_, Some(error)) => Err(Error::Refused(error)),
         _ => Err(Error::Invalid("the callback carries no code".into())),
     }
+}
+
+/// Who a device's token belongs to now (`GET /me`): its email, name and
+/// photo, which may have changed since sign-in.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Profile {
+    pub email: String,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub picture: Option<String>,
+}
+
+pub async fn me(server_url: &str, token: &str) -> Result<Profile, Error> {
+    #[derive(Deserialize)]
+    struct Me {
+        user: Profile,
+    }
+    let response = reqwest::Client::new()
+        .get(format!("{}/me", server_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(Error::Refused(status.to_string()));
+    }
+    let me: Me = response
+        .json()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))?;
+    Ok(me.user)
 }
 
 /// Remove device `device_id` from the account (sign-out).

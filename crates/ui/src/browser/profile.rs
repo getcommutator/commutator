@@ -106,6 +106,7 @@ mod tests {
                     id: user.into(),
                     email: "fixture@example.test".into(),
                     name: None,
+                    picture: None,
                 },
                 org_id: org.map(str::to_owned),
             };

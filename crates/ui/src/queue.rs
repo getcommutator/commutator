@@ -1904,7 +1904,7 @@ impl Composer {
     }
 
     /// Fire one queue mutation at the chat's doc host.
-    fn queue_rpc(
+    pub(crate) fn queue_rpc(
         &mut self,
         method: &'static str,
         params: serde_json::Value,

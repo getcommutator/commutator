@@ -146,8 +146,6 @@ pub(crate) fn new_id() -> String {
 pub struct EngineConfig {
     /// Data directory (default `~/.commutator`, dev `~/.commutator-dev`).
     pub data_dir: PathBuf,
-    /// Edge base URL.
-    pub edge_url: String,
     /// Localhost IPC port for the UI.
     pub ipc_port: u16,
     /// Harness for doc-command runs on chats without a workspace `config` row.

@@ -19,7 +19,7 @@ fn main() {
             settings.code_font_family.clone(), settings.code_font_size, fonts, cx);
         theme_library::init(data.clone(), cx);
         appearance::init(appearance::AppearanceMode::Dark, settings.theme_selection,
-            settings.accent, settings.surface, cx);
+            settings.surface, cx);
         history::init(settings.git_history_columns, settings.git_history_column_widths,
             settings.git_history_column_order, settings.git_history_author_display, cx);
         composer::init(cx, settings.composer_send_behavior);
@@ -49,7 +49,7 @@ fn main() {
             }
             s
         });
-        let boot = EngineBootConfig { data_dir: data, ipc_port: 0, edge_url: String::new(),
+        let boot = EngineBootConfig { data_dir: data, ipc_port: 0, 
             default_harness: HarnessId::ClaudeCode };
         cx.open_window(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(point(px(0.), px(0.)), size(px(1000.), px(680.))))),

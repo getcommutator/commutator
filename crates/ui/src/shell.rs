@@ -51,7 +51,7 @@ use crate::settings::shortcuts::{ShortcutsEvent, ShortcutsPage};
 use crate::settings::{
     self, CHAT_PANEL_MIN, ComposerSendBehavior, FILES_PANEL_MIN, JUMP_SLOTS, KeymapConfig,
     RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy, ShortcutId,
-    SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
+    SidebarOrganization, SidebarSort, SidebarView, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
     TERMINAL_MIN_HEIGHT, UiSettings, badge_combo, jump_hints_visible, modifier_send_hint_visible,
     platform_combo, sidebar_pin_profile_key,
 };
@@ -1079,8 +1079,8 @@ pub(crate) fn chat_title_editor(
 /// [`gpui::EdgeFade`] scope — per-primitive, so text fades per glyph).
 const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
-/// Target of the sidebar's "Star on GitHub" banner (same as the landing page).
-const GITHUB_REPO_URL: &str = "https://github.com/zeronsh/comet";
+/// Target of the sidebar's "Star on GitHub" banner.
+const GITHUB_REPO_URL: &str = "https://github.com/getcommutator/commutator";
 
 /// New-thread controls float over the tail of a top-anchored image hero. The
 /// hero reaches below the composer, giving its lower mask room to dissolve
@@ -1681,19 +1681,28 @@ fn account_menu_action(
 }
 
 /// The sidebar footer's profile label and the account menu's identity line.
-/// Anything without a signed-in account reads "Local"; the menu carries the
-/// storage/sync detail.
+/// A signed-in account shows its name (its email when unnamed); anything
+/// without one reads "Local", and the menu carries the storage detail.
 fn sidebar_account_identity(
     scope: Option<WorkspaceScope>,
     flow: SyncFlow,
     user: Option<&commutator_proto::UserProfile>,
 ) -> (SharedString, SharedString) {
+    let named = |user: &commutator_proto::UserProfile| -> (SharedString, SharedString) {
+        let name = user
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&user.email);
+        (name.to_owned().into(), user.email.clone().into())
+    };
     match scope {
         Some(WorkspaceScope::Local) => {
             let identity = if matches!(flow, SyncFlow::RestartPending { .. }) {
                 "Connects after restart"
             } else if let Some(user) = user {
-                return ("Local".into(), user.email.clone().into());
+                return named(user);
             } else {
                 "Stored on this device"
             };
@@ -1703,15 +1712,7 @@ fn sidebar_account_identity(
             ("Development".into(), "Authentication disabled".into())
         }
         Some(WorkspaceScope::Synced) | None => match user {
-            Some(user) => {
-                let name = user
-                    .name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(&user.email);
-                (name.to_owned().into(), user.email.clone().into())
-            }
+            Some(user) => named(user),
             None => ("Local".into(), "Not signed in".into()),
         },
     }
@@ -1965,6 +1966,12 @@ pub struct Shell {
     spaces_menu_bar: popover::MenuScrollbarState,
     /// Persisted organization/sort/metadata controls beside the project filter.
     sidebar_view_menu: popover::Popup<spaces::SidebarViewMenu>,
+    /// Projects sidebar: each shown project checkout's linked worktrees
+    /// (`ListRefs` rows with a worktree path), by space id.
+    sidebar_worktrees: std::collections::HashMap<String, Vec<commutator_proto::RepoRef>>,
+    /// The spaces `sidebar_worktrees` was asked for, and when: asked again
+    /// when they change, and on a render 15 s later (Shepherd's cadence).
+    sidebar_worktrees_for: Option<(Vec<String>, std::time::Instant)>,
     /// Natural-tab-order focus target for the icon-only view-options button.
     sidebar_view_trigger_focus: gpui::FocusHandle,
     /// Current pinned-row metrics shared by hit testing and displacement animations.
@@ -2441,6 +2448,8 @@ impl Shell {
             spaces_menu: popover::Popup::default(),
             spaces_menu_bar: popover::MenuScrollbarState::default(),
             sidebar_view_menu: popover::Popup::default(),
+            sidebar_worktrees: Default::default(),
+            sidebar_worktrees_for: None,
             sidebar_view_trigger_focus: cx.focus_handle().tab_stop(true),
             sidebar_pinned_heights: Vec::new(),
             project_icons: Default::default(),
@@ -4773,7 +4782,6 @@ impl Shell {
         self.settings.git_history_column_order = crate::history::configured_column_order(cx);
         self.settings.git_history_author_display = crate::history::configured_author_display(cx);
         self.settings.theme_selection = crate::appearance::themes(cx);
-        self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
         self.pull_settings(cx);
         settings::replace(self.settings.clone(), SavePolicy::Debounced, cx);
@@ -8652,7 +8660,7 @@ impl Shell {
         let regular_start = pinned_count + custom_count;
         let mut keyed = session_rows.rows;
         let regular_count = session_rows.regular_count;
-        let ungrouped = self.settings.sidebar_organization == SidebarOrganization::InOneList;
+        let ungrouped = self.sidebar_organization() == SidebarOrganization::InOneList;
         let regular_body_height = spaces::SIDEBAR_DISCLOSURE_BODY_INSET
             + keyed
                 .iter()
@@ -9048,6 +9056,7 @@ impl Shell {
         )
         .fade_overflow_y(&self.sidebar_scroll);
 
+        let agents_panel = self.render_agents_panel(theme, cx);
         let update_strip = self.render_update_strip(theme, cx);
         // Stacked above the update strip, the banner needs its own gap; alone
         // it leans on the user-menu block's padding like the strip does.
@@ -9062,6 +9071,7 @@ impl Shell {
             // window above this column.)
             .child(filter_row)
             .child(sidebar_lists)
+            .children(agents_panel)
             // Global connection pill (durable-by-design UI truth): appears
             // whenever the edge posture is degraded; hidden while healthy —
             // appearing IS the signal.
@@ -9517,6 +9527,10 @@ impl Shell {
             self.sync_flow,
             state.auth_user().is_some(),
         );
+        let picture = state
+            .auth_user()
+            .and_then(|user| user.picture.clone())
+            .map(SharedString::from);
         // The profile pill hugs avatar + name (shrinking so long names fade
         // out); the gap between it and the settings button is not interactive.
         let initial: SharedString = user_line
@@ -9581,8 +9595,11 @@ impl Shell {
                 cx.notify();
             }))
             .child(
-                // Avatar: white circle, initial in near-black (commutator user-menu.tsx).
+                // Avatar: white circle, initial in near-black (commutator user-menu.tsx),
+                // under the account's photo once it loads.
                 div()
+                    .relative()
+                    .overflow_hidden()
                     .size(px(SIDEBAR_FOOTER_AVATAR_SIZE))
                     .flex_none()
                     .rounded_full()
@@ -9595,7 +9612,18 @@ impl Shell {
                     .line_height(px(SIDEBAR_FOOTER_AVATAR_SIZE))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.bg)
-                    .child(div().w_full().text_center().child(initial)),
+                    .child(div().w_full().text_center().child(initial))
+                    .when_some(picture, |avatar, url| {
+                        avatar.child(
+                            gpui::img(url)
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .rounded_full()
+                                .object_fit(gpui::ObjectFit::Cover),
+                        )
+                    }),
             )
             .child(sidebar_faded_label(
                 "user-menu-label".into(),
@@ -12220,7 +12248,6 @@ impl Render for Shell {
         // globals before any later debounced settings save can overwrite them.
         self.settings.appearance = crate::appearance::mode(cx);
         self.settings.theme_selection = crate::appearance::themes(cx);
-        self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
         self.pull_settings(cx);
         let theme = Theme::of(cx);
@@ -13726,6 +13753,7 @@ mod tests {
             id: "u".into(),
             email: "wing@example.com".into(),
             name: Some("Wing".into()),
+            picture: None,
         };
         let unnamed = commutator_proto::UserProfile {
             name: Some("  ".into()),
@@ -13739,8 +13767,9 @@ mod tests {
         );
         assert_eq!(label(None, None), "Local");
         assert_eq!(label(Some(WorkspaceScope::Synced), None), "Local");
-        // Local-only storage stays "Local"; the menu line names the account.
-        assert_eq!(label(Some(WorkspaceScope::Local), Some(&named)), "Local");
+        // A signed-in local profile shows the account, as there is no cloud.
+        assert_eq!(label(Some(WorkspaceScope::Local), Some(&named)), "Wing");
+        assert_eq!(label(Some(WorkspaceScope::Local), None), "Local");
         assert_eq!(
             sidebar_account_identity(Some(WorkspaceScope::Local), SyncFlow::Idle, Some(&named)).1,
             "wing@example.com"
@@ -13754,6 +13783,7 @@ mod tests {
                 id: "user-1".into(),
                 email: "user@example.com".into(),
                 name: None,
+                picture: None,
             },
             org_id: None,
         };
@@ -14002,7 +14032,6 @@ mod tests {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14303,7 +14332,6 @@ mod exit_regressions {
         let boot = EngineBootConfig {
             data_dir: dir.path().into(),
             ipc_port: 0,
-            edge_url: "http://127.0.0.1:1".into(),
             default_harness: commutator_proto::HarnessId::Mock,
         };
         for (connection, expected) in [
@@ -14353,7 +14381,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14422,7 +14449,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14528,7 +14554,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14702,7 +14727,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14768,7 +14792,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14839,7 +14862,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14886,7 +14908,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -14955,7 +14976,6 @@ mod exit_regressions {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -15011,7 +15031,6 @@ mod exit_regressions {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -15074,7 +15093,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir,
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15331,7 +15349,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15513,7 +15530,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15612,7 +15628,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15694,7 +15709,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15772,7 +15786,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15842,7 +15855,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15925,7 +15937,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -15979,7 +15990,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16126,7 +16136,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16243,7 +16252,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16338,7 +16346,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16417,7 +16424,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16492,7 +16498,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16587,7 +16592,6 @@ mod exit_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -16762,7 +16766,6 @@ mod right_tab_mouse_regressions {
                     EngineBootConfig {
                         data_dir: dir.path().into(),
                         ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
                         default_harness: commutator_proto::HarnessId::Mock,
                     },
                     cx,
@@ -17272,7 +17275,6 @@ mod settings_modal_regressions {
                 EngineBootConfig {
                     data_dir: dir.path().into(),
                     ipc_port: 0,
-                    edge_url: "http://127.0.0.1:1".into(),
                     default_harness: commutator_proto::HarnessId::Mock,
                 },
                 cx,
@@ -17336,7 +17338,6 @@ mod settings_modal_regressions {
             EngineBootConfig {
                 data_dir: dir.into(),
                 ipc_port: 0,
-                edge_url: "http://127.0.0.1:1".into(),
                 default_harness: commutator_proto::HarnessId::Mock,
             },
             cx,
@@ -17622,6 +17623,7 @@ mod settings_modal_regressions {
                     id: "user-a".into(),
                     email: "user@example.com".into(),
                     name: None,
+                    picture: None,
                 },
                 org_id: Some("org-a".into()),
             });

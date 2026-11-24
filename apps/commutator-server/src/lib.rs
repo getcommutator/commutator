@@ -190,6 +190,8 @@ impl App {
                  expires INTEGER NOT NULL
              );",
         )?;
+        // ponytail: added after launch; fails harmlessly once the column exists.
+        let _ = db.execute("ALTER TABLE users ADD COLUMN picture TEXT", []);
         Ok(Arc::new(Self {
             config,
             db: Mutex::new(db),
@@ -221,6 +223,15 @@ impl App {
             [google_sub],
             |row| row.get(0),
         )?)
+    }
+
+    /// The profile photo `user` signed in with last.
+    pub fn set_picture(&self, user: &str, picture: Option<&str>) -> anyhow::Result<()> {
+        lock(&self.db).execute(
+            "UPDATE users SET picture = ?2 WHERE id = ?1",
+            rusqlite::params![user, picture],
+        )?;
+        Ok(())
     }
 
     /// A new device of `user`: its id and bearer token (shown only here).
@@ -397,6 +408,8 @@ struct GoogleUser {
     #[serde(default)]
     email_verified: bool,
     name: Option<String>,
+    /// The account's profile photo URL.
+    picture: Option<String>,
 }
 
 async fn google_callback(State(app): State<Arc<App>>, Query(q): Query<Callback>) -> Response {
@@ -427,6 +440,7 @@ async fn google_callback(State(app): State<Arc<App>>, Query(q): Query<Callback>)
             "this Google account may not sign in here",
         );
     }
+    let picture = user.picture.clone();
     let user = match app.upsert_user(&user.sub, &email, user.name.as_deref()) {
         Ok(id) => id,
         Err(err) => {
@@ -437,6 +451,9 @@ async fn google_callback(State(app): State<Arc<App>>, Query(q): Query<Callback>)
             );
         }
     };
+    if let Err(err) = app.set_picture(&user, picture.as_deref()) {
+        tracing::warn!(error = %err, "storing the profile photo");
+    }
     if sign_in.web {
         return web::signed_in(&app, &user);
     }
@@ -529,6 +546,8 @@ struct Redeemed {
 struct UserView {
     email: String,
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picture: Option<String>,
 }
 
 async fn redeem(State(app): State<Arc<App>>, Json(body): Json<Redeem>) -> Response {
@@ -573,12 +592,13 @@ impl App {
     fn user_view(&self, user: &str) -> Option<UserView> {
         lock(&self.db)
             .query_row(
-                "SELECT email, name FROM users WHERE id = ?1",
+                "SELECT email, name, picture FROM users WHERE id = ?1",
                 [user],
                 |row| {
                     Ok(UserView {
                         email: row.get(0)?,
                         name: row.get(1)?,
+                        picture: row.get(2)?,
                     })
                 },
             )

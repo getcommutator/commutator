@@ -181,7 +181,6 @@ fn files_panel_workspace_navigation_and_external_updates() {
             crate::appearance::init(
                 crate::appearance::AppearanceMode::Dark,
                 settings.theme_selection.clone(),
-                settings.accent,
                 settings.surface,
                 cx,
             );
@@ -198,7 +197,6 @@ fn files_panel_workspace_navigation_and_external_updates() {
             let boot = EngineBootConfig {
                 data_dir: data,
                 ipc_port: port,
-                edge_url: String::new(),
                 default_harness: commutator_proto::HarnessId::Mock,
             };
             let state = cx.new(|_| AppState::new());
