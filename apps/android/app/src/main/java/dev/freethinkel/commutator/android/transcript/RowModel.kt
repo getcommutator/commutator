@@ -76,6 +76,49 @@ class RowModel(val display: RowDisplay) {
         faded = masked
     }
 
+    // ── Selection geometry (run `i`, dp in its layer) ─────────────────────
+
+    /** Painted runs in text order. */
+    val textOrder: IntArray by lazy {
+        display.runs.indices
+            .filter { display.runs[it].len > 0u && display.runs[it].start.toInt() + display.runs[it].len.toInt() <= display.text.length }
+            .sortedBy { display.runs[it].start }
+            .toIntArray()
+    }
+
+    private val metrics = Paint.FontMetrics()
+
+    fun runBox(i: Int, fonts: StyleFonts, d: Float): RectF {
+        val r = display.runs[i]
+        val paint = fonts[r.style]
+        var ascent = 0f
+        var descent = 0f
+        if (paint != null) {
+            paint.getFontMetrics(metrics)
+            ascent = -metrics.ascent / d
+            descent = metrics.descent / d
+        }
+        return RectF(r.x, r.baseline - ascent, r.x + r.width, r.baseline + descent)
+    }
+
+    /** x of text offset `offset`, clamped into the run. */
+    fun runX(i: Int, offset: Int, fonts: StyleFonts, d: Float): Float {
+        val r = display.runs[i]
+        val s = r.start.toInt()
+        val e = s + r.len.toInt()
+        val paint = fonts[r.style] ?: return r.x
+        return r.x + paint.getRunAdvance(display.text, s, e, s, e, false, offset.coerceIn(s, e)) / d
+    }
+
+    /** Text offset nearest `x`. */
+    fun runOffset(i: Int, x: Float, fonts: StyleFonts, d: Float): Int {
+        val r = display.runs[i]
+        val s = r.start.toInt()
+        val e = s + r.len.toInt()
+        val paint = fonts[r.style] ?: return s
+        return paint.getOffsetForAdvance(display.text, s, e, s, e, false, (x - r.x) * d).coerceIn(s, e)
+    }
+
     /** Which runs to paint: `veilFrom` splits a streaming row into settled and fresh text. */
     sealed interface Pass {
         data object All : Pass

@@ -5,7 +5,16 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.horizontalScroll
@@ -142,16 +151,52 @@ fun Transcript(state: TranscriptState, actions: TranscriptActions, modifier: Mod
             }
     }
 
+    val haptics = LocalHapticFeedback.current
+    val toolbar = LocalTextToolbar.current
+    val clipboard = LocalClipboardManager.current
+    var origin by remember { mutableStateOf(Offset.Zero) }
+
+    // The Copy toolbar floats over a settled selection: hidden while a press
+    // or handle moves it, or the list scrolls, back 150 ms after it settles.
+    val anchor = state.selAnchor
+    val focus = state.selFocus
+    val busy = state.pressWord != null || state.draggingHandle || state.dragging
+    LaunchedEffect(anchor, focus, busy, state.offset) {
+        toolbar.hide()
+        if (anchor == null || busy) return@LaunchedEffect
+        kotlinx.coroutines.delay(150)
+        val o = state.ordered() ?: return@LaunchedEffect
+        val a = state.caret(o.lo, end = false, d)
+        val b = state.caret(o.hi, end = true, d)
+        val top = minOf(a?.top ?: Float.MAX_VALUE, b?.top ?: Float.MAX_VALUE).coerceAtLeast(state.offset)
+        val bottom = maxOf(a?.bottom ?: 0f, b?.bottom ?: 0f).coerceAtMost(state.offset + state.viewport)
+        val left = minOf(a?.left ?: 0f, b?.left ?: 0f)
+        val right = maxOf(a?.right ?: 0f, b?.right ?: 0f)
+        toolbar.showMenu(
+            rect = androidx.compose.ui.geometry.Rect(
+                origin.x + left * d, origin.y + (top - state.offset) * d,
+                origin.x + right * d, origin.y + (maxOf(top, bottom) - state.offset) * d,
+            ),
+            onCopyRequested = {
+                clipboard.setText(AnnotatedString(state.selectedText()))
+                state.clearSelection()
+            },
+        )
+    }
+    DisposableEffect(Unit) { onDispose { toolbar.hide() } }
+
     BoxWithConstraints(
         modifier
             .clipToBounds()
+            .onGloballyPositioned { origin = it.positionInRoot() }
             .overscroll(overscroll)
             .scrollable(
                 scrollable,
                 Orientation.Vertical,
                 overscrollEffect = overscroll,
                 interactionSource = interactions,
-            ),
+            )
+            .selectionPress(state, d) { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
     ) {
         val widthDp = maxWidth.value
         val heightDp = maxHeight.value
@@ -203,6 +248,10 @@ fun Transcript(state: TranscriptState, actions: TranscriptActions, modifier: Mod
                 }
             }
         }
+        if (state.selAnchor != null) {
+            SelectionHandle(state, start = true, d)
+            SelectionHandle(state, start = false, d)
+        }
     }
 }
 
@@ -235,8 +284,7 @@ private fun RowHost(
     val appear = remember(p.key) { Animatable(if (state.knownKeys.add(p.key) && state.settled) 0f else 1f) }
     LaunchedEffect(p.key) { if (appear.value < 1f) appear.animateTo(1f, tween(280)) }
 
-    var menuAt by remember { mutableStateOf<Offset?>(null) }
-    val haptics = LocalHapticFeedback.current
+    val tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
 
     Box(
         Modifier
@@ -246,13 +294,16 @@ private fun RowHost(
                 clock.longValue // redraw on every veil frame
                 drawIntoCanvas { c -> veil.draw(c.nativeCanvas, model, d, fonts, palette, System.nanoTime()) }
             }
-            .pointerTaps(model, d, actions, onLongPress = {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                menuAt = it
-            }),
+            // Over the canvas: a bubble's fill is painted there.
+            .drawBehind { state.selectionIn(p.index)?.let { drawSelection(model, 0, it, d, fonts, tint) } }
+            .pointerTaps(state, model, d, actions),
     ) {
         model.display.scrollers.forEachIndexed { i, s ->
             val scroll = rememberScrollState()
+            DisposableEffect(p.key, i) {
+                state.scrolls[p.key to i] = scroll
+                onDispose { state.scrolls.remove(p.key to i) }
+            }
             Box(
                 Modifier
                     .offset(s.x.dp, s.y.dp)
@@ -262,58 +313,109 @@ private fun RowHost(
                 Box(
                     Modifier
                         .size(s.contentWidth.dp, s.h.dp)
-                        .drawBehind { drawIntoCanvas { model.draw(it.nativeCanvas, i + 1, d, fonts, palette) } },
+                        .drawBehind {
+                            drawIntoCanvas { model.draw(it.nativeCanvas, i + 1, d, fonts, palette) }
+                            state.selectionIn(p.index)?.let { drawSelection(model, i + 1, it, d, fonts, tint) }
+                        },
                 ) {
                     RowWidgets(state, model, scroller = i.toUInt(), palette, actions)
                 }
             }
         }
         RowWidgets(state, model, scroller = null, palette, actions)
-        menuAt?.let { at -> RowMenu(state, frame, p, model, at, actions) { menuAt = null } }
     }
 }
 
-/** Link taps (row coordinates) and the long-press menu. */
-private fun Modifier.pointerTaps(model: RowModel, d: Float, actions: TranscriptActions, onLongPress: (Offset) -> Unit) =
+/** Link taps (row coordinates); a tap with a selection up clears it instead. */
+private fun Modifier.pointerTaps(state: TranscriptState, model: RowModel, d: Float, actions: TranscriptActions) =
     pointerInput(model) {
         detectTapGestures(
             onTap = { pos ->
+                if (state.selAnchor != null) {
+                    state.clearSelection()
+                    return@detectTapGestures
+                }
                 val x = pos.x / d
                 val y = pos.y / d
                 model.display.links.firstOrNull { l ->
                     l.scroller == null && x >= l.x - 4 && x <= l.x + l.w + 4 && y >= l.y - 2 && y <= l.y + l.h + 2
                 }?.let { actions.openUrl(it.url) }
             },
-            onLongPress = onLongPress,
         )
     }
 
-@Composable
-private fun RowMenu(
-    state: TranscriptState,
-    frame: LayoutFrame,
-    p: RowPlacement,
-    model: RowModel,
-    at: Offset,
-    actions: TranscriptActions,
-    dismiss: () -> Unit,
-) {
-    val clipboard = LocalClipboardManager.current
-    val density = LocalDensity.current
-    val block = model.display.copyText
-    val message = remember(frame, p.index) { frame.messageText(p.index) }
-    Box(Modifier.offset(with(density) { at.x.toDp() }, with(density) { at.y.toDp() })) {
-        val selectable = message ?: block
-        dev.freethinkel.commutator.android.ui.ActionMenu(
-            true,
-            dismiss,
-            listOfNotNull(
-                if (block.isNotEmpty()) dev.freethinkel.commutator.android.ui.MenuAction("Copy", ZIcons.Copy) { clipboard.setText(AnnotatedString(block)) } else null,
-                if (!message.isNullOrEmpty() && message != block) dev.freethinkel.commutator.android.ui.MenuAction("Copy message", ZIcons.Chat) { clipboard.setText(AnnotatedString(message)) } else null,
-                if (selectable.isNotEmpty()) dev.freethinkel.commutator.android.ui.MenuAction("Select text", ZIcons.Text) { actions.showText("Select text", selectable, false) } else null,
-            ),
-        )
+/**
+ * Long press selects a word and, without lifting, extends the selection.
+ * Events after the press are taken in the Initial pass, so neither the
+ * list's scroll nor a row's tap sees them.
+ */
+private fun Modifier.selectionPress(state: TranscriptState, d: Float, onStart: () -> Unit) =
+    pointerInput(state) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val press = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+            if (!state.beginPress(press.position.x / d, press.position.y / d + state.offset, d)) return@awaitEachGesture
+            onStart()
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == press.id } ?: break
+                change.consume()
+                if (!change.pressed) break
+                state.extendPress(change.position.x / d, change.position.y / d + state.offset, d)
+            }
+            state.pressWord = null
+        }
     }
+
+/** One end of the selection: a caret bar with a knob above (start) or below (end). */
+@Composable
+private fun SelectionHandle(state: TranscriptState, start: Boolean, d: Float) {
+    val o = state.ordered() ?: return
+    val caret = state.caret(if (start) o.lo else o.hi, end = !start, d) ?: return
+    val color = MaterialTheme.colorScheme.primary
+    val knob = 10f
+    val width = 36f
+    val top = caret.top - state.offset - if (start) knob + 2 else 0f
+    var grab by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        Modifier
+            .offset((caret.left - width / 2).dp, top.dp)
+            .size(width.dp, (caret.height() + knob + 2).dp)
+            .pointerInput(start) {
+                detectDragGestures(
+                    onDragStart = { at ->
+                        val now = state.ordered() ?: return@detectDragGestures
+                        val c = state.caret(if (start) now.lo else now.hi, end = !start, d) ?: return@detectDragGestures
+                        state.draggingHandle = true
+                        state.selAnchor = if (start) now.hi else now.lo
+                        state.selFocus = if (start) now.lo else now.hi
+                        // Finger → caret middle, in dp.
+                        grab = Offset(width / 2 - at.x / d, (if (start) knob + 2 else 0f) + c.height() / 2 - at.y / d)
+                    },
+                    onDragEnd = { state.draggingHandle = false },
+                    onDragCancel = { state.draggingHandle = false },
+                ) { change, _ ->
+                    change.consume()
+                    // Handle-local → content dp, through where the handle sits now.
+                    val o2 = state.ordered() ?: return@detectDragGestures
+                    val c = state.caret(if (start) o2.lo else o2.hi, end = !start, d) ?: return@detectDragGestures
+                    val boxLeft = c.left - width / 2
+                    val boxTop = c.top - if (start) knob + 2 else 0f
+                    val x = boxLeft + change.position.x / d + grab.x
+                    val y = boxTop + change.position.y / d + grab.y
+                    val anchor = state.selAnchor ?: return@detectDragGestures
+                    val hit = state.hitText(x, y, d) ?: return@detectDragGestures
+                    // The ends don't cross (the handles would swap under the finger).
+                    if ((if (start) state.precedes(hit, anchor) else state.precedes(anchor, hit)) == true) state.selFocus = hit
+                }
+            }
+            .drawBehind {
+                val barTop = if (start) (knob + 2) * d else 0f
+                drawRect(color, Offset(size.width / 2 - d, barTop), androidx.compose.ui.geometry.Size(2 * d, caret.height() * d))
+                val knobY = if (start) knob / 2 * d else (caret.height() + 2 + knob / 2) * d
+                drawCircle(color, knob / 2 * d, Offset(size.width / 2, knobY))
+            },
+    )
 }
 
 /**
