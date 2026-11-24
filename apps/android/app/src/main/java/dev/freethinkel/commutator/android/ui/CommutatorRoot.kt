@@ -457,6 +457,7 @@ private fun PhoneTabs(
     onSearch: () -> Unit,
     onNew: () -> Unit,
     onArchived: () -> Unit,
+    onPullRequests: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     androidx.compose.material3.Scaffold(
@@ -477,7 +478,7 @@ private fun PhoneTabs(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when (tab) {
-                0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived)
+                0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived, onPullRequests = onPullRequests)
                 1 -> PullRequestsScreen()
                 else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     SettingsScreen(model, onArchived = onArchived)
