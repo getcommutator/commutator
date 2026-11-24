@@ -112,10 +112,12 @@ fun TranscriptVisual(session: VisualSession, openUrl: (String) -> Unit, modifier
         }
     }
     // Attach carries the appearance; later flips go through setAppearance.
-    var shownDark by remember(session) { mutableStateOf(dark) }
-    LaunchedEffect(session, dark) {
-        if (dark != shownDark) {
-            shownDark = dark
+    // A theme change keeps `dark`: the core re-reads the selected theme on setAppearance.
+    val theme = dev.freethinkel.commutator.android.design.LocalPhonePalette.current
+    var applied by remember(session) { mutableStateOf(dark to theme) }
+    LaunchedEffect(session, dark, theme) {
+        if ((dark to theme) != applied) {
+            applied = dark to theme
             session.setAppearance(dark)
         }
     }

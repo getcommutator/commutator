@@ -70,6 +70,9 @@ private fun MaterialColors.toScheme(dark: Boolean): ColorScheme {
     )
 }
 
+/** "Wallpaper colors" is on: Material slots (and a few transcript roles) come from the system. */
+val LocalDynamicColor = staticCompositionLocalOf { false }
+
 /** The selected theme's palette for the current appearance (transcript roles, terminal). */
 val LocalPhonePalette = staticCompositionLocalOf<PhonePalette> { error("CommutatorTheme provides it") }
 
@@ -167,7 +170,8 @@ fun CommutatorTheme(appearance: Appearance = Appearance(), content: @Composable 
         else -> remember(palette) { palette.material.toScheme(dark) }
     }
     val typography = remember { commutatorTypography() }
-    CompositionLocalProvider(LocalDarkTheme provides dark, LocalPhonePalette provides palette) {
+    val dynamic = appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    CompositionLocalProvider(LocalDarkTheme provides dark, LocalPhonePalette provides palette, LocalDynamicColor provides dynamic) {
         MaterialExpressiveTheme(
             colorScheme = scheme,
             motionScheme = MotionScheme.expressive(),

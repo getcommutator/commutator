@@ -227,7 +227,9 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
             match role {
                 Text | InlineCodeText | CodeText => app.text,
                 TextSecondary => app.secondary,
-                TextTertiary | TextFaint => app.tertiary,
+                TextTertiary => app.tertiary,
+                // Whole blocks (tool output, diff context) paint in it: keep them readable.
+                TextFaint => argb(c.text_faint.ensure_contrast(bg, 3.5)),
                 Link | Accent => argb(accent),
                 Danger => app.danger,
                 Success => app.success,

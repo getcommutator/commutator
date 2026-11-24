@@ -103,7 +103,8 @@ fun Transcript(state: TranscriptState, actions: TranscriptActions, modifier: Mod
     val scheme = MaterialTheme.colorScheme
     val dark = LocalDarkTheme.current
     val theme = LocalPhonePalette.current
-    val palette = remember(scheme, dark, theme) { TranscriptPalette(dark, scheme, theme) }
+    val dynamic = dev.freethinkel.commutator.android.design.LocalDynamicColor.current
+    val palette = remember(scheme, dark, theme, dynamic) { TranscriptPalette(dark, scheme, theme, dynamic) }
     val interactions = remember { MutableInteractionSource() }
     val scrollable = rememberScrollableState { px -> -state.scrollBy(-px / d) * d }
     val overscroll = rememberOverscrollEffect()

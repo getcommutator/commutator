@@ -12,11 +12,12 @@ import uniffi.commutator_core.PhonePalette
  * the Material scheme so wallpaper colors flow into links and quotes.
  */
 /**
- * Transcript role colours: the selected theme's role table, except the roles Android has always
- * taken from its Material scheme (built from the same theme, or the wallpaper's with "Wallpaper
- * colors" on).
+ * Transcript role colours: the selected theme's role table. Text and the user bubble always come
+ * from the Material scheme (built from the same theme; Android's bubble is its container tone);
+ * with "Wallpaper colors" on (`dynamic`) the accent roles do too, so the wallpaper's palette
+ * reaches the transcript.
  */
-class TranscriptPalette(dark: Boolean, scheme: ColorScheme, theme: PhonePalette) {
+class TranscriptPalette(dark: Boolean, scheme: ColorScheme, theme: PhonePalette, dynamic: Boolean) {
     private val colors = IntArray(ColorRole.entries.size)
 
     val background: Int = scheme.background.toArgb()
@@ -28,10 +29,10 @@ class TranscriptPalette(dark: Boolean, scheme: ColorScheme, theme: PhonePalette)
         for (role in ColorRole.entries) {
             colors[role.ordinal] = when (role) {
                 ColorRole.TEXT -> scheme.onSurface.toArgb()
-                ColorRole.LINK, ColorRole.ACCENT -> accent.toArgb()
-                ColorRole.QUOTE_BAR -> accent.copy(alpha = 0.45f).toArgb()
                 ColorRole.USER_BUBBLE -> scheme.surfaceContainerHigh.toArgb()
-                ColorRole.DIFF_HUNK -> accent.copy(alpha = if (dark) 0.08f else 0.07f).toArgb()
+                ColorRole.LINK, ColorRole.ACCENT -> if (dynamic) accent.toArgb() else theme.roles[role.ordinal].toInt()
+                ColorRole.QUOTE_BAR -> if (dynamic) accent.copy(alpha = 0.45f).toArgb() else theme.roles[role.ordinal].toInt()
+                ColorRole.DIFF_HUNK -> if (dynamic) accent.copy(alpha = if (dark) 0.08f else 0.07f).toArgb() else theme.roles[role.ordinal].toInt()
                 else -> theme.roles[role.ordinal].toInt()
             }
         }

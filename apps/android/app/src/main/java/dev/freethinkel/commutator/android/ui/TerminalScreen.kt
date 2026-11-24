@@ -204,7 +204,9 @@ fun TerminalScreen(
     val fg = MaterialTheme.colorScheme.onSurface.toArgb()
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val dark = LocalDarkTheme.current
-    LaunchedEffect(dark) { store.dark = dark }
+    // Also on a theme change: the core resolves cell colours from the selected theme.
+    val theme = LocalPhonePalette.current
+    LaunchedEffect(dark, theme) { store.dark = dark }
 
     Column(Modifier.fillMaxSize().background(terminalBackground())) {
         // Header: back, the tab switcher, new terminal and the menu.
