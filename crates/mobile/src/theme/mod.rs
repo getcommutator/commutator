@@ -3,10 +3,13 @@
 
 mod commutator;
 
+use std::sync::{Arc, RwLock};
+
 use commutator_theme::{Appearance, Color, ThemeVariant, builtin_registry};
 
 use crate::layout::display::ColorRole;
 
+#[cfg(test)]
 pub(crate) const COLOR_ROLE_COUNT: usize = ColorRole::ALL.len();
 
 /// Everything the apps paint with, for one theme variant.
@@ -120,6 +123,52 @@ pub(crate) fn variant_or_default(id: &str, dark: bool) -> &'static ThemeVariant 
         .find(|v| v.id == id && v.appearance == wanted)
         .or_else(|| variants().find(|v| v.id == fallback))
         .expect("the Commutator themes are built in")
+}
+
+/// The variants the core paints its own visuals and terminal cells with, as the app last set
+/// them (`set_theme_selection`). Global in the app; per thread under test so tests that switch
+/// themes don't leak into others running alongside.
+struct Current {
+    light: Arc<PhonePalette>,
+    dark: Arc<PhonePalette>,
+}
+
+impl Current {
+    fn new(light_id: &str, dark_id: &str) -> Self {
+        Self {
+            light: Arc::new(phone_palette(variant_or_default(light_id, false))),
+            dark: Arc::new(phone_palette(variant_or_default(dark_id, true))),
+        }
+    }
+}
+
+#[cfg(not(test))]
+static CURRENT: std::sync::LazyLock<RwLock<Current>> =
+    std::sync::LazyLock::new(|| RwLock::new(Current::new("commutator-light", "commutator-dark")));
+
+#[cfg(test)]
+thread_local! {
+    static CURRENT: RwLock<Current> = RwLock::new(Current::new("commutator-light", "commutator-dark"));
+}
+
+fn with_current<T>(f: impl FnOnce(&RwLock<Current>) -> T) -> T {
+    #[cfg(not(test))]
+    return f(&CURRENT);
+    #[cfg(test)]
+    return CURRENT.with(f);
+}
+
+pub(crate) fn set_selection(light_id: &str, dark_id: &str) {
+    let next = Current::new(light_id, dark_id);
+    with_current(|current| *current.write().unwrap_or_else(|e| e.into_inner()) = next);
+}
+
+/// The selected variant's palette for `dark`.
+pub(crate) fn current_palette(dark: bool) -> Arc<PhonePalette> {
+    with_current(|current| {
+        let current = current.read().unwrap_or_else(|e| e.into_inner());
+        if dark { current.dark.clone() } else { current.light.clone() }
+    })
 }
 
 pub(crate) fn phone_palette(variant: &ThemeVariant) -> PhonePalette {

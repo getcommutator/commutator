@@ -21,7 +21,7 @@
 //!
 //! [`TerminalLink`]: commutator_client::TerminalLink
 
-mod color;
+pub(crate) mod color;
 mod keys;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -287,19 +287,14 @@ impl zc::TerminalSink for Sink {
 
 fn resolve_fg(cell: &CellSnapshot, fg: CellColor, bg: CellColor, dark: bool) -> u32 {
     let alpha = if cell.dim { 0xa0 } else { 0xff };
-    let back = color::rgb(bg, dark).unwrap_or(if dark {
-        color::BG_DARK
-    } else {
-        color::BG_LIGHT
-    });
+    let back = color::rgb(bg, dark).unwrap_or_else(|| color::default_bg(dark));
     match color::rgb(fg, dark) {
         // Defaults are the platform's: only dim needs saying.
         None if !cell.dim && fg == CellColor::Foreground => 0,
         None => {
             let base = match fg {
                 CellColor::Background => back,
-                _ if dark => color::FG_DARK,
-                _ => color::FG_LIGHT,
+                _ => color::default_fg(dark),
             };
             color::rgba(base, alpha)
         }

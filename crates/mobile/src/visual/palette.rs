@@ -9,6 +9,7 @@
 use commutator_visual::{Color, Token};
 
 use super::Rgba;
+use crate::layout::display::ColorRole;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Palette {
@@ -38,6 +39,14 @@ pub(crate) fn hex(v: u32) -> Rgba {
     }
 }
 
+/// 0xAARRGGBB → Rgba.
+pub(crate) fn rgba(argb: u32) -> Rgba {
+    Rgba {
+        a: (argb >> 24) as f32 / 255.0,
+        ..hex(argb & 0xFF_FFFF)
+    }
+}
+
 impl Rgba {
     pub(crate) fn alpha(self, a: f32) -> Rgba {
         Rgba {
@@ -48,21 +57,23 @@ impl Rgba {
 }
 
 impl Palette {
+    /// The selected theme's colours for `dark` (`crate::theme`).
     pub fn new(dark: bool) -> Self {
-        let pick = |light: u32, night: u32| hex(if dark { night } else { light });
-        let text = pick(0x27272C, 0xE8E8EA);
-        let accent = pick(0x18181B, 0xECECEC);
+        let theme = crate::theme::current_palette(dark);
+        let app = &theme.app;
+        let text = rgba(app.text);
+        let accent = rgba(app.accent);
         Self {
             dark,
             text,
-            muted: pick(0x62626A, 0xA9A9AE),
-            faint: pick(0x97979F, 0x6B6B72),
+            muted: rgba(app.secondary),
+            faint: rgba(app.tertiary),
             accent,
-            on_accent: pick(0xFFFFFF, 0x18181B),
-            success: pick(0x15803D, 0x34D399),
-            warning: pick(0xA16207, 0xFACC15),
-            danger: pick(0xDC2626, 0xF87171),
-            border: pick(0xE2E2E6, 0x232327),
+            on_accent: rgba(app.on_accent),
+            success: rgba(app.success),
+            warning: rgba(app.warning),
+            danger: rgba(app.danger),
+            border: rgba(theme.roles[ColorRole::TableBorder as usize]),
             border_strong: text.alpha(0.28),
             wash: text.alpha(0.075),
             chart: chart_series(accent, dark),

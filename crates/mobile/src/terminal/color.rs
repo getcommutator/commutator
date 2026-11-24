@@ -12,34 +12,34 @@ pub const MIN_CONTRAST: f32 = 3.0;
 /// xterm 6×6×6 cube levels.
 const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
 
-/// Commutator Dark / Light ANSI 16 (crates/theme builtins).
-const ANSI_DARK: [u32; 16] = [
-    0x242424, 0xf87171, 0x4ade80, 0xfacc15, 0x60a5fa, 0xc084fc, 0x22d3ee, 0xd4d4d8, 0x52525b,
-    0xfca5a5, 0x86efac, 0xfde047, 0x93c5fd, 0xd8b4fe, 0x67e8f9, 0xfafafa,
-];
-const ANSI_LIGHT: [u32; 16] = [
-    0x1f1f1f, 0xdc2626, 0x16a34a, 0xb45309, 0x2563eb, 0x9333ea, 0x0e7490, 0x3f3f46, 0x71717a,
-    0xb91c1c, 0x15803d, 0x92400e, 0x1d4ed8, 0x7e22ce, 0x155e75, 0x18181b,
-];
+/// The selected theme's terminal colours for `dark`: ANSI 0–15, then the default foreground and
+/// background (24-bit RGB).
+fn theme_terminal(dark: bool) -> ([u32; 16], u32, u32) {
+    let theme = crate::theme::current_palette(dark);
+    let t = &theme.terminal;
+    let mut ansi = [0; 16];
+    for (slot, argb) in ansi.iter_mut().zip(&t.ansi) {
+        *slot = argb & 0xFF_FFFF;
+    }
+    (ansi, t.foreground & 0xFF_FFFF, t.background & 0xFF_FFFF)
+}
 
-/// The app's text and terminal background (Palette.text / the terminal well).
-pub const FG_DARK: u32 = 0xe8e8ea;
-pub const FG_LIGHT: u32 = 0x27272c;
-pub const BG_DARK: u32 = 0x090909;
-pub const BG_LIGHT: u32 = 0xfafafb;
+/// The theme's default text colour (the platform paints it; dim cells need it said).
+pub fn default_fg(dark: bool) -> u32 {
+    theme_terminal(dark).1
+}
+
+/// The theme's terminal background.
+pub fn default_bg(dark: bool) -> u32 {
+    theme_terminal(dark).2
+}
 
 /// A cell color as 24-bit RGB; `None` = the default (foreground or
 /// background, the platform's own).
 pub fn rgb(color: CellColor, dark: bool) -> Option<u32> {
     Some(match color {
         CellColor::Foreground | CellColor::Background => return None,
-        CellColor::Indexed(ix @ 0..=15) => {
-            if dark {
-                ANSI_DARK[ix as usize]
-            } else {
-                ANSI_LIGHT[ix as usize]
-            }
-        }
+        CellColor::Indexed(ix @ 0..=15) => theme_terminal(dark).0[ix as usize],
         // The cube is the program's arithmetic: left alone.
         CellColor::Indexed(ix @ 16..=231) => {
             let n = ix as usize - 16;
@@ -176,12 +176,14 @@ mod tests {
     #[test]
     fn unreadable_program_colors_are_lifted() {
         let navy = 0x000080;
-        let lifted = ensure_contrast(navy, BG_DARK, MIN_CONTRAST);
-        assert!(contrast(lifted, BG_DARK) >= MIN_CONTRAST);
+        let bg = default_bg(true);
+        assert_eq!(bg, 0x090909, "Commutator Dark's terminal background");
+        let lifted = ensure_contrast(navy, bg, MIN_CONTRAST);
+        assert!(contrast(lifted, bg) >= MIN_CONTRAST);
         assert_ne!(lifted, navy);
         // Already readable: untouched.
-        assert_eq!(ensure_contrast(0xf87171, BG_DARK, MIN_CONTRAST), 0xf87171);
+        assert_eq!(ensure_contrast(0xf87171, bg, MIN_CONTRAST), 0xf87171);
         // Hidden text stays hidden.
-        assert_eq!(ensure_contrast(BG_DARK, BG_DARK, MIN_CONTRAST), BG_DARK);
+        assert_eq!(ensure_contrast(bg, bg, MIN_CONTRAST), bg);
     }
 }

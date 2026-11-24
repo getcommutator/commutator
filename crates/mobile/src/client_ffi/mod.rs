@@ -16,6 +16,7 @@ pub(crate) mod companions;
 mod providers;
 mod pull_requests;
 mod session;
+pub(crate) mod themes;
 mod types;
 
 use std::sync::Arc;

@@ -87,3 +87,44 @@ fn role_table_order_matches_the_enum() {
         assert_eq!(*role as usize, i, "{role:?}");
     }
 }
+
+#[test]
+fn families_split_by_appearance() {
+    let families = crate::client_ffi::themes::theme_families();
+    let ids: Vec<&str> = families.iter().map(|f| f.id.as_str()).collect();
+    let registry: Vec<&str> = builtin_registry().families.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(ids, registry);
+    let dracula = families.iter().find(|f| f.id == "dracula").unwrap();
+    assert!(dracula.variants.iter().all(|v| v.dark));
+    let commutator = families.iter().find(|f| f.id == "commutator").unwrap();
+    assert_eq!(commutator.variants.iter().filter(|v| v.dark).count(), 1);
+    assert_eq!(commutator.variants.iter().filter(|v| !v.dark).count(), 1);
+    assert!(families.iter().flat_map(|f| &f.variants).all(|v| v.swatches.len() == 4));
+}
+
+#[test]
+fn selection_drives_core_palette() {
+    // The selection is per thread under test, so this doesn't leak into other tests.
+    crate::client_ffi::themes::set_theme_selection("github-light".into(), "dracula".into());
+    let dracula = phone_palette(variant_or_default("dracula", true));
+    assert_eq!(current_palette(true).app.background, dracula.app.background);
+    let github = phone_palette(variant_or_default("github-light", false));
+    assert_eq!(current_palette(false).app.background, github.app.background);
+    assert_eq!(crate::visual::palette::Palette::new(true).text, crate::visual::palette::rgba(dracula.app.text));
+}
+
+#[test]
+fn terminal_ansi_follows_selection() {
+    crate::client_ffi::themes::set_theme_selection("commutator-light".into(), "dracula".into());
+    let dracula = phone_palette(variant_or_default("dracula", true));
+    let red = crate::terminal::color::rgb(commutator_term::emulator::CellColor::Indexed(1), true);
+    assert_eq!(red, Some(dracula.terminal.ansi[1] & 0xFF_FFFF));
+}
+
+#[test]
+fn ffi_palette_falls_back() {
+    assert_eq!(
+        crate::client_ffi::themes::theme_palette("gone".into(), true),
+        phone_palette(variant_or_default("commutator-dark", true))
+    );
+}
