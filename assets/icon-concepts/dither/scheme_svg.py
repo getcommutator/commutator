@@ -10,7 +10,9 @@ N, L = 12, 0.55                   # bars, drum length
 GAP = 0.06                        # radians cut from each side of a bar: the slots read at icon size
 A0, A1 = 0.0, math.radians(270)   # kept arc; the lower-front quarter is cut away
 STROKE = 7
-WHITE, SHAFT, MICA, CUT = "#ffffff", "#d2d2d2", "#5a5a5a", "#8c8c8c"
+# tones, lightest to darkest; the dither turns each into its own dot density (faces light, not bare
+# white, or the drawing reads as outlines only)
+WHITE, SHAFT, CUT, MICA = "#d2d2d2", "#8c8c8c", "#6e6e6e", "#4a4a4a"
 
 
 def norm(v):
