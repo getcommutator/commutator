@@ -16,12 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,7 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -51,10 +49,12 @@ fun SignInScreen(model: AppModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // The icon's drawing on its own: a mask tinted with the text colour, so it works in both themes.
         Image(
-            painterResource(R.drawable.ic_launcher_pcb),
+            painterResource(R.drawable.welcome_commutator),
             null,
-            Modifier.size(148.dp).clip(MaterialShapes.Cookie12Sided.toShape()),
+            Modifier.size(148.dp),
+            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
         )
         Spacer(Modifier.height(32.dp))
         Text("Commutator", style = MaterialTheme.typography.displayMedium)

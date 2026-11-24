@@ -36,10 +36,6 @@ enum Controls {
         return UIButton(configuration: c, primaryAction: UIAction { _ in action() })
     }
 
-    static var commutatorMark: UIImage? {
-        UIImage(named: "commutator-logo")?.withRenderingMode(.alwaysTemplate)
-    }
-
     static func symbol(_ name: String, _ size: CGFloat = 17, weight: UIImage.SymbolWeight = .medium) -> UIImage? {
         UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: weight))
     }

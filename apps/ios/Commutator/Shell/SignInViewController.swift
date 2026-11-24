@@ -25,13 +25,14 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
         wallpaper.frame = view.bounds
         wallpaper.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(wallpaper)
-        let mark = UIImageView(image: Controls.commutatorMark)
+        // The icon's drawing on its own: a template mask, so it takes the text colour in either theme.
+        let mark = UIImageView(image: UIImage(named: "welcome-mark")?.withRenderingMode(.alwaysTemplate))
         mark.tintColor = Palette.text
         mark.contentMode = .scaleAspectFit
         mark.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            mark.widthAnchor.constraint(equalToConstant: 53),
-            mark.heightAnchor.constraint(equalToConstant: 53),
+            mark.widthAnchor.constraint(equalToConstant: 120),
+            mark.heightAnchor.constraint(equalToConstant: 120),
         ])
         let title = UILabel()
         title.text = "Welcome to Commutator"
