@@ -43,6 +43,8 @@ struct SessionRowVM: Hashable {
     var wokeAt: Date?
     /// Its last move (the recency sort key).
     var lastActivity = Date(timeIntervalSince1970: 0)
+    /// Its project (`ProjectRef.id`): the tile wears the repository's artwork.
+    var projectId: String? = nil
 }
 
 /// Folder row ("Pinned 2 ›", "P0 3 ›").
@@ -51,6 +53,8 @@ struct FolderRowVM: Hashable {
     var name: String
     var count: Int
     var symbol: String
+    /// A worktree's folder on its main checkout's device (a new chat there runs in it).
+    var path: String? = nil
 }
 
 /// Two-line session row, laid out by hand: fixed height, no Auto Layout
@@ -71,6 +75,10 @@ final class SessionCell: UICollectionViewListCell {
     private var vm: SessionRowVM?
     /// The session open beside the sidebar (iPad): a quiet fill.
     var isCurrent = false { didSet { if isCurrent != oldValue { setNeedsUpdateConfiguration() } } }
+    /// The desktop sidebar's Compact: the title line alone. Set before `configure`.
+    var compact = false
+    /// The Projects page's rows (a 44 pt list cell).
+    static var compactHeight: CGFloat { (44 * TypeScale.factor).rounded() }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -100,7 +108,7 @@ final class SessionCell: UICollectionViewListCell {
 
     /// Fixed height: skip Auto Layout self-sizing entirely.
     override func preferredLayoutAttributesFitting(_ attrs: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
-        attrs.size.height = Self.height
+        attrs.size.height = compact ? Self.compactHeight : Self.height
         return attrs
     }
 
@@ -110,7 +118,7 @@ final class SessionCell: UICollectionViewListCell {
         if vm.sendFailed { return ("Failed", Palette.danger, .dot(Palette.danger)) }
         switch vm.status {
         case .working: return ("Working", StatusTone.working, .spinner)
-        case .awaiting: return ("Input", StatusTone.input, .dot(StatusTone.input))
+        case .awaiting: return ("Input", StatusTone.question, .symbol("questionmark", StatusTone.question))
         case .errored: return ("Failed", StatusTone.failed, .dot(StatusTone.failed))
         case .completed: return vm.unseen ? ("Done", StatusTone.done, .check(StatusTone.done)) : nil
         case .woke: return ("Woke", StatusTone.input, .symbol("alarm", StatusTone.input))
@@ -118,18 +126,37 @@ final class SessionCell: UICollectionViewListCell {
         }
     }
 
+    /// A group's glyph: its most pressing chat's (a question, then done and
+    /// not seen, then working), nil when nothing in it is.
+    static func urgentGlyph(_ list: [SessionRowVM]) -> StatusGlyph.Kind? {
+        func rank(_ vm: SessionRowVM) -> Int? {
+            switch vm.status {
+            case .awaiting: 0
+            case .completed: vm.unseen ? 1 : nil
+            case .woke: 2
+            case .working: 3
+            case .errored: 4
+            case .idle: nil
+            }
+        }
+        let urgent = list.compactMap { vm in rank(vm).map { ($0, vm) } }.min { $0.0 < $1.0 }?.1
+        return urgent.flatMap { corner($0)?.glyph }
+    }
+
     func configure(_ vm: SessionRowVM) {
         self.vm = vm
         harness.image = BrandMarks.image(for: vm.harness ?? "claude-code", side: Self.markSide)
         title.text = vm.title
-        title.font = Fonts.ui(vm.unseen ? .sansSemibold : .sansMedium, TypeScale.size(16.5))
+        // Compact matches the Projects page's rows (Agents): regular 15.
+        title.font = compact ? Fonts.ui(.sans, TypeScale.size(15)) : Fonts.ui(vm.unseen ? .sansSemibold : .sansMedium, TypeScale.size(16.5))
         title.textColor = vm.unseen || vm.status != .idle ? Palette.text : Palette.text.withAlphaComponent(0.88)
         // The project tile rides the meta line as an attachment, so the text
         // system itself centers it on the name's x-height and starts it at
         // the title's leading edge (a separately framed tile drifted high).
         let metaFont = Fonts.ui(.sans, TypeScale.size(13.5))
         let tileSide = (14 * TypeScale.factor).rounded()
-        let tile = NSTextAttachment(image: ProjectTile.image(name: vm.hasProject ? vm.projectName : "Home", colorIndex: vm.colorIndex, side: tileSide))
+        let art = vm.projectId.flatMap { ProjectArt.tile(spaceId: $0, side: tileSide) }
+        let tile = NSTextAttachment(image: art ?? ProjectTile.image(name: vm.hasProject ? vm.projectName : "Home", colorIndex: vm.colorIndex, side: tileSide))
         tile.bounds = CGRect(x: 0, y: (metaFont.xHeight - tileSide) / 2, width: tileSide, height: tileSide)
         let metaText = NSMutableAttributedString(attachment: tile)
         metaText.append(NSAttributedString(string: "  " + vm.projectName, attributes: [.font: metaFont, .foregroundColor: Palette.secondary]))
@@ -144,7 +171,8 @@ final class SessionCell: UICollectionViewListCell {
             metaText.append(NSAttributedString(string: " " + b, attributes: [.font: font, .foregroundColor: Palette.subline]))
         }
         meta.attributedText = metaText
-        if let pr = vm.pr, let n = vm.prNumber {
+        meta.isHidden = compact
+        if !compact, let pr = vm.pr, let n = vm.prNumber {
             prBadge.isHidden = false
             prBadge.configure(number: n, state: pr, size: TypeScale.size(11))
         } else {
@@ -175,8 +203,8 @@ final class SessionCell: UICollectionViewListCell {
         let left: CGFloat = 20
         let right: CGFloat = 20
         let k = TypeScale.factor
-        let titleY = (10 * k).rounded()
         let titleH = (22 * k).rounded()
+        let titleY = compact ? ((b.height - titleH) / 2).rounded() : (10 * k).rounded()
         let metaY = (35 * k).rounded()
         let metaH = (18 * k).rounded()
         // The mark centers on the title's x-height (font metrics, not the
@@ -253,6 +281,8 @@ final class SectionHeaderCell: UICollectionViewListCell {
         var count: Int
         var collapsed: Bool
         var live: StatusGlyph.Kind?
+        /// A project group's artwork (or monogram), before the title.
+        var icon: UIImage? = nil
     }
 
     static var height: CGFloat { (40 * TypeScale.factor).rounded() }
@@ -260,6 +290,7 @@ final class SectionHeaderCell: UICollectionViewListCell {
     private let count = UILabel()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)))
     private let live = StatusGlyph()
+    private let icon = UIImageView()
     private var shownCollapsed: Bool?
 
     override init(frame: CGRect) {
@@ -268,7 +299,7 @@ final class SectionHeaderCell: UICollectionViewListCell {
         count.textColor = Palette.tertiary
         chevron.tintColor = Palette.tertiary
         chevron.contentMode = .center
-        for v in [title, count, chevron, live] as [UIView] { contentView.addSubview(v) }
+        for v in [icon, title, count, chevron, live] as [UIView] { contentView.addSubview(v) }
         accessibilityTraits = .button
     }
 
@@ -294,6 +325,8 @@ final class SectionHeaderCell: UICollectionViewListCell {
         count.text = "\(s.count)"
         live.isHidden = s.live == nil
         if let kind = s.live { live.kind = kind }
+        icon.image = s.icon
+        icon.isHidden = s.icon == nil
         let rotate = { self.chevron.transform = s.collapsed ? CGAffineTransform(rotationAngle: -.pi / 2) : .identity }
         if shownCollapsed != nil, shownCollapsed != s.collapsed, window != nil {
             UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, animations: rotate)
@@ -313,7 +346,12 @@ final class SectionHeaderCell: UICollectionViewListCell {
         let h: CGFloat = 20
         let y = b.height - h - 6
         let tw = ceil(title.sizeThatFits(b.size).width)
-        title.frame = CGRect(x: 20, y: y, width: min(tw, b.width - 120), height: h)
+        var x: CGFloat = 20
+        if !icon.isHidden {
+            icon.frame = CGRect(x: x, y: y + h / 2 - 9, width: 18, height: 18)
+            x = icon.frame.maxX + 8
+        }
+        title.frame = CGRect(x: x, y: y, width: min(tw, b.width - x - 100), height: h)
         let cw = ceil(count.sizeThatFits(b.size).width)
         count.frame = CGRect(x: title.frame.maxX + 7, y: y, width: cw, height: h)
         live.frame = CGRect(x: count.frame.maxX + 7, y: y + h / 2 - 6, width: 12, height: 12)

@@ -28,6 +28,9 @@ final class AppModel {
         /// The project a checkout row stands for (a new chat goes there);
         /// none for a worktree known only from where a chat runs.
         var projectIds: [String: String]
+        /// Where the main checkout lives (its artwork is read from there).
+        var deviceId = ""
+        var path = ""
     }
 
     /// The Sessions page's two views, under Activity: Chats (the chats that
@@ -47,6 +50,47 @@ final class AppModel {
             UserDefaults.standard.set(newValue.rawValue, forKey: "sessionsView")
             settingsChanged()
         }
+    }
+
+    /// Activity's project filter (a `ProjectTreeVM.id`, t3code's): nil, every project.
+    var activityProject: String? {
+        get { UserDefaults.standard.string(forKey: "activity.project") }
+        set {
+            guard newValue != activityProject else { return }
+            UserDefaults.standard.set(newValue, forKey: "activity.project")
+            settingsChanged()
+        }
+    }
+
+    /// One-line chat rows (the desktop sidebar's Compact): Chats and a project's chats.
+    var compactRows: Bool {
+        get { UserDefaults.standard.bool(forKey: "projectChatsCompact") }
+        set {
+            guard newValue != compactRows else { return }
+            UserDefaults.standard.set(newValue, forKey: "projectChatsCompact")
+            settingsChanged()
+        }
+    }
+
+    /// Activity grouped by project: one list per project, no status shelves.
+    var activityGroupByProject: Bool {
+        get { UserDefaults.standard.bool(forKey: "activity.groupByProject") }
+        set {
+            guard newValue != activityGroupByProject else { return }
+            UserDefaults.standard.set(newValue, forKey: "activity.groupByProject")
+            settingsChanged()
+        }
+    }
+
+    /// Each chat's project (by its checkouts' chats), for Activity's filter and groups.
+    func projectByChat() -> [String: ProjectTreeVM] {
+        var out: [String: ProjectTreeVM] = [:]
+        for tree in frontPage.projects {
+            for checkout in [tree.main] + tree.worktrees {
+                for vm in sessions(inFolder: checkout.id) { out[vm.id] = tree }
+            }
+        }
+        return out
     }
 
     /// Activity folds chats under way (working, or waiting on work that
@@ -497,8 +541,14 @@ final class AppModel {
             page.sectionSessions[s.id] = list
         }
         page.sessions = ws.front.recent.map(vm)
-        page.projects = Self.projectTree(ws.projects, sectionSessions: &page.sectionSessions)
+        page.projects = Self.projectTree(ws.projects, worktrees: gitWorktrees, names: worktreeNames, sectionSessions: &page.sectionSessions)
         rawProjects = ws.projects
+        loadWorktrees(ws.projects)
+        // Each repository's artwork, for every row and header that names it.
+        for tree in page.projects {
+            for spaceId in tree.projectIds.values { ProjectArt.link(spaceId: spaceId, device: tree.deviceId, root: tree.path) }
+            _ = ProjectArt.image(client: client, device: tree.deviceId, root: tree.path) {}
+        }
         // Sessions reachable only through their project still resolve by id.
         for p in ws.projects {
             for r in p.sessions where all[r.id] == nil { all[r.id] = r }
@@ -570,18 +620,82 @@ final class AppModel {
     /// group's other checkouts and every folder a chat runs in that isn't a
     /// checkout's own (the desktop's worktree groups), named for the folder.
     /// Repositories run most recently active first.
-    private static func projectTree(_ projects: [ProjectView], sectionSessions: inout [String: [SessionRowVM]]) -> [ProjectTreeVM] {
+    /// Each repository's linked worktrees (`device:path` of its main
+    /// checkout → worktree paths), as the desktop lists them with no chats yet.
+    private var gitWorktrees: [String: [String]] = [:]
+    private var worktreesAsked: [String: Date] = [:]
+
+    /// Ask each git checkout's host for its worktrees, at most every 15 s
+    /// (the desktop's freshness); a changed answer rebuilds the tree.
+    private func loadWorktrees(_ projects: [ProjectView]) {
+        guard let client else { return }
+        for p in projects where p.gitDetected && p.name == p.groupName {
+            let home = p.deviceId + ":" + Self.trimPath(p.path)
+            guard Date().timeIntervalSince(worktreesAsked[home] ?? .distantPast) > 15 else { continue }
+            worktreesAsked[home] = Date()
+            Task { @MainActor [weak self] in
+                guard let refs = try? await client.listRefs(deviceId: p.deviceId, repoPath: p.path) else { return }
+                let main = Self.trimPath(p.path)
+                let paths = refs.compactMap(\.worktreePath).map(Self.trimPath).filter { $0 != main }
+                guard let self, self.gitWorktrees[home] != paths else { return }
+                self.gitWorktrees[home] = paths
+                self.refreshWorkspace()
+            }
+        }
+    }
+
+    /// Worktree names given on this phone (Projects' Rename), by checkout id.
+    private(set) var worktreeNames = UserDefaults.standard.dictionary(forKey: "worktreeNames") as? [String: String] ?? [:]
+
+    func renameWorktree(_ checkoutId: String, to name: String?) {
+        worktreeNames[checkoutId] = name.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        UserDefaults.standard.set(worktreeNames, forKey: "worktreeNames")
+        refreshWorkspace()
+    }
+
+    /// A new worktree off the main checkout's HEAD.
+    func createWorktree(_ project: ProjectTreeVM) async throws {
+        guard let client, let spaceId = project.projectIds[project.main.id] else { return }
+        _ = try await client.createWorktree(deviceId: project.deviceId, spaceId: spaceId, repoPath: project.path, base: "HEAD")
+        await MainActor.run { reloadWorktrees(project) }
+    }
+
+    /// `git worktree remove` on its host, and its project entry if it had one.
+    func deleteWorktree(_ project: ProjectTreeVM, _ checkout: FolderRowVM) async throws {
+        guard let client, let path = checkout.path else { return }
+        try await client.deleteWorktree(deviceId: project.deviceId, repoPath: project.path, worktreePath: path)
+        await MainActor.run {
+            if let spaceId = project.projectIds[checkout.id] { try? client.deleteProject(spaceId: spaceId) }
+            reloadWorktrees(project)
+        }
+    }
+
+    /// Every checkout of the repository leaves the list (folders stay on disk).
+    func removeProject(_ project: ProjectTreeVM) throws {
+        guard let client else { return }
+        for spaceId in Set(project.projectIds.values) { try client.deleteProject(spaceId: spaceId) }
+        refreshWorkspace()
+    }
+
+    private func reloadWorktrees(_ project: ProjectTreeVM) {
+        worktreesAsked[project.deviceId + ":" + project.path] = nil
+        refreshWorkspace()
+    }
+
+    private static func trimPath(_ path: String) -> String {
+        var path = path.trimmingCharacters(in: .whitespaces)
+        while path.count > 1, path.hasSuffix("/") || path.hasSuffix("\\") { path.removeLast() }
+        return path
+    }
+
+    private static func projectTree(_ projects: [ProjectView], worktrees gitWorktrees: [String: [String]] = [:], names: [String: String] = [:], sectionSessions: inout [String: [SessionRowVM]]) -> [ProjectTreeVM] {
         var groups: [String: [ProjectView]] = [:]
         var order: [String] = []
         for p in projects {
             if groups[p.groupKey] == nil { order.append(p.groupKey) }
             groups[p.groupKey, default: []].append(p)
         }
-        func trim(_ path: String) -> String {
-            var path = path.trimmingCharacters(in: .whitespaces)
-            while path.count > 1, path.hasSuffix("/") || path.hasSuffix("\\") { path.removeLast() }
-            return path
-        }
+        let trim = trimPath
         func rows(_ list: [SessionRow]) -> [SessionRowVM] {
             list.sorted { $0.lastActivityMs > $1.lastActivityMs }.map(vm)
         }
@@ -608,6 +722,11 @@ final class AppModel {
                 }
             }
             let mainHome = main.deviceId + ":" + trim(main.path)
+            // Worktrees with no chats yet (the host's own list).
+            for path in gitWorktrees[mainHome] ?? [] {
+                let folder = main.deviceId + ":" + path
+                if byFolder[folder] == nil { folderOrder.append(folder); byFolder[folder] = [] }
+            }
             var mainRow: FolderRowVM!
             var worktrees: [FolderRowVM] = []
             var projectIds: [String: String] = [:]
@@ -620,14 +739,15 @@ final class AppModel {
                 if folder == mainHome {
                     mainRow = FolderRowVM(id: id, name: name, count: list.count, symbol: "folder")
                 } else {
-                    worktrees.append(FolderRowVM(id: id, name: name, count: list.count, symbol: "arrow.triangle.branch"))
+                    let path = folder.hasPrefix(main.deviceId + ":") ? String(folder.dropFirst(main.deviceId.count + 1)) : nil
+                    worktrees.append(FolderRowVM(id: id, name: names[id] ?? name, count: list.count, symbol: "arrow.triangle.branch", path: path))
                 }
             }
             // Worktrees in use most recently first; ones without chats last.
             let latest = sectionSessions
             worktrees.sort { (latest[$0.id]?.first?.lastActivity ?? .distantPast) > (latest[$1.id]?.first?.lastActivity ?? .distantPast) }
             let last = checkouts.flatMap(\.sessions).map(\.lastActivityMs).max() ?? main.createdAtMs
-            out.append((ProjectTreeVM(id: "project:" + key, name: main.groupName, colorIndex: Int(main.colorIndex), main: mainRow, worktrees: worktrees, projectIds: projectIds), last))
+            out.append((ProjectTreeVM(id: "project:" + key, name: main.groupName, colorIndex: Int(main.colorIndex), main: mainRow, worktrees: worktrees, projectIds: projectIds, deviceId: main.deviceId, path: trim(main.path)), last))
         }
         return out.sorted { $0.last > $1.last }.map(\.tree)
     }
@@ -678,7 +798,8 @@ final class AppModel {
             canStopWaiting: r.waitsOnProcess,
             sleepUntil: r.sleepUntilMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) },
             wokeAt: r.wokeAtMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) },
-            lastActivity: Date(timeIntervalSince1970: TimeInterval(r.lastActivityMs) / 1000)
+            lastActivity: Date(timeIntervalSince1970: TimeInterval(r.lastActivityMs) / 1000),
+            projectId: r.project?.id
         )
     }
 
@@ -927,6 +1048,10 @@ final class AppModel {
         return WorktreeSpec(repoPath: project.path, base: draft.branch ?? "HEAD", spaceId: project.id)
     }
 
+    /// The worktree the next new chat in this project runs in (Projects'
+    /// worktree without chats); cleared when the new-chat screen closes.
+    var newChatIn: (projectId: String, cwd: String)?
+
     /// Create the chat, open it, and send the first message.
     func createSession(draft: NewSessionDraft, text: String, images: [StagedImage]) -> String? {
         guard let client else { return nil }
@@ -940,8 +1065,11 @@ final class AppModel {
         }
         let config = ChatConfig(harness: draft.harness, model: draft.model, reasoning: draft.effort, modelOptions: [:], sandbox: .workspaceWrite)
         do {
-            let worktree = Self.worktreeSpec(draft: draft, project: rawProjects.first { $0.id == draft.projectId })
-            let chatId = try client.createSession(newSession: NewSession(target: target, config: config, branch: worktree == nil ? draft.branch : nil, cwd: nil, title: nil))
+            // An existing worktree picked from Projects runs the chat there, not in a new one.
+            let cwd = newChatIn?.projectId == draft.projectId ? newChatIn?.cwd : nil
+            newChatIn = nil
+            let worktree = cwd != nil ? nil : Self.worktreeSpec(draft: draft, project: rawProjects.first { $0.id == draft.projectId })
+            let chatId = try client.createSession(newSession: NewSession(target: target, config: config, branch: worktree == nil && cwd == nil ? draft.branch : nil, cwd: cwd, title: nil))
             let handle = try client.openSession(chatId: chatId)
             _ = try handle.send(request: SendRequest(text: text, attachments: images.map(\.outgoing), worktree: worktree, busy: .queue))
             noteDeliveryActivity()

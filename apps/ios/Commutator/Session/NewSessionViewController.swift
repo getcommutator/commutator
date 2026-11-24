@@ -97,6 +97,7 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         rememberDraft()
+        if isBeingDismissed || navigationController?.isBeingDismissed == true { app.newChatIn = nil }
     }
 
     required init?(coder: NSCoder) { fatalError() }

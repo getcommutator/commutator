@@ -73,6 +73,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
 
         let sessionReg = UICollectionView.CellRegistration<SessionCell, String> { [weak self] cell, path, id in
             guard let self, let vm = self.sessions[id] else { return }
+            cell.compact = self.compactRows
             cell.configure(vm)
             cell.isCurrent = id == self.currentChatId
             cell.accessories = self.reorderable ? [.reorder(displayed: .whenEditing)] : []
@@ -119,6 +120,11 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
             }
         }
         token = app.observe { [weak self] in self?.reload(animated: true) }
+        artObserver = NotificationCenter.default.addObserver(forName: ProjectArt.loaded, object: nil, queue: .main) { [weak self] _ in
+            // Headers first (their state carries the icon), then every row.
+            self?.reload(animated: false)
+            self?.redrawRows()
+        }
         reload(animated: false)
         // Text size changes: fixed row heights change with the category.
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: SessionListController, _) in
@@ -138,6 +144,17 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         refresh.accessibilityIdentifier = "pull-to-refresh"
         collectionView.refreshControl = refresh
     }
+
+    private var artObserver: NSObjectProtocol?
+
+    /// A section header's icon (Chats grouped by project).
+    func headerIcon(_ id: String) -> UIImage? { nil }
+
+    /// Pin and Sleep (menu and swipes): Activity's, off in a project's chats.
+    var activityActions: Bool { true }
+
+    /// One-line session rows (a project's chats offer it).
+    var compactRows: Bool { false }
 
     /// Subclasses build their sections from the app model.
     func buildSections() -> [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] { [] }
@@ -160,7 +177,8 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
                         title: header,
                         count: s.sessions.count,
                         collapsed: isCollapsed(s.id),
-                        live: s.sessions.contains { $0.status == .working } ? .spinner : s.sessions.contains { $0.status == .awaiting } ? .dot(StatusTone.input) : nil
+                        live: SessionCell.urgentGlyph(s.sessions),
+                        icon: headerIcon(s.id)
                     )
                     if let old = headerStates[s.id], old != state { changed.append(.header(s.id)) }
                     headerStates[s.id] = state
@@ -191,6 +209,18 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         let present = Set(snapshot.itemIdentifiers)
         snapshot.reconfigureItems(changed.filter { present.contains($0) })
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
+        if shownCompact != nil, shownCompact != compactRows { redrawRows() }
+        shownCompact = compactRows
+    }
+
+    private var shownCompact: Bool?
+
+    /// Every row again (row height, project artwork).
+    func redrawRows() {
+        var s = dataSource.snapshot()
+        s.reconfigureItems(s.itemIdentifiers)
+        dataSource.apply(s, animatingDifferences: false)
+        collectionView.collectionViewLayout.invalidateLayout()
     }
 
     /// Subclasses follow the scroll (the front page fades its wallpaper).
@@ -292,7 +322,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
     }
 
     private func leadingSwipe(_ path: IndexPath) -> UISwipeActionsConfiguration? {
-        guard !isArchivedRow(path), let id = sessionId(path), let vm = sessions[id] else { return nil }
+        guard activityActions, !isArchivedRow(path), let id = sessionId(path), let vm = sessions[id] else { return nil }
         let pin = UIContextualAction(style: .normal, title: vm.pinned ? "Unpin" : "Pin") { [weak self] _, _, done in
             self?.app.setPinned(id, !vm.pinned)
             done(true)
@@ -321,7 +351,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         archive.backgroundColor = Palette.secondary
         // Sleep (or, asleep, Wake) beside Archive. A chat under way isn't
         // archived (as the desktop's Archive: stop it first).
-        guard let vm = sessions[id] else { return UISwipeActionsConfiguration(actions: [archive]) }
+        guard activityActions, let vm = sessions[id] else { return UISwipeActionsConfiguration(actions: [archive]) }
         do {
             let underWay = vm.status == .working
             if vm.sleepUntil != nil {
@@ -354,26 +384,16 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
             if archivedRow {
                 return UIMenu(children: [
                     UIAction(title: "Unarchive", image: UIImage(systemName: "tray.and.arrow.up")) { _ in self.app.unarchive(id) },
-                    UIAction(title: "Rename…", image: UIImage(systemName: "pencil")) { _ in self.rename(id) },
-                    self.deleteAction(id),
+                    UIAction(title: "Rename…", image: UIImage(systemName: "pencil")) { _ in self.renameChat(id, app: self.app) },
+                    self.deleteChatAction(id, app: self.app),
                 ])
             }
-            do {
-                // Sleep or Wake, and Stop Waiting on a process it waits on.
-                var activity: [UIMenuElement] = [self.sleepMenu(vm)]
-                if vm.canStopWaiting {
-                    activity.append(UIAction(title: "Stop Waiting", image: UIImage(systemName: "xmark.circle")) { _ in self.app.stopWaiting(id) })
-                }
-                return UIMenu(children: [
-                    UIAction(title: vm.pinned ? "Unpin" : "Pin", image: UIImage(systemName: vm.pinned ? "pin.slash" : "pin")) { _ in self.app.setPinned(id, !vm.pinned) },
-                    UIAction(title: "Rename…", image: UIImage(systemName: "pencil")) { _ in self.rename(id) },
-                    UIMenu(options: .displayInline, children: activity),
-                    vm.status == .working
-                        ? UIAction(title: "Archive", subtitle: "Stop it first: its agent is still working", image: UIImage(systemName: "archivebox"), attributes: .disabled) { _ in }
-                        : UIAction(title: "Archive", image: UIImage(systemName: "archivebox")) { _ in self.app.archive(id) },
-                    self.deleteAction(id),
-                ])
-            }
+            // Pin and Sleep belong to Activity, not a project's chats.
+            let activity: [UIMenuElement] = self.activityActions ? [
+                UIAction(title: vm.pinned ? "Unpin" : "Pin", image: UIImage(systemName: vm.pinned ? "pin.slash" : "pin")) { _ in self.app.setPinned(id, !vm.pinned) },
+                self.sleepMenu(vm),
+            ] : []
+            return UIMenu(children: activity + self.chatMenu(vm, app: self.app))
         }
     }
 
@@ -413,23 +433,6 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
             self?.app.sleep(id, until: until)
         }
         present(UINavigationController(rootViewController: picker), animated: true)
-    }
-
-    private func deleteAction(_ id: String) -> UIAction {
-        UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-            self?.confirmDelete(app: self?.app, id) {}
-        }
-    }
-
-    private func rename(_ id: String) {
-        let alert = UIAlertController(title: "Rename Session", message: nil, preferredStyle: .alert)
-        alert.addTextField { [weak self] in $0.text = self?.sessions[id]?.title }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Rename", style: .default) { [weak self] _ in
-            let title = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
-            if !title.isEmpty { self?.app.rename(id, title) }
-        })
-        present(alert, animated: true)
     }
 }
 
@@ -613,9 +616,10 @@ class SessionsViewController: SessionListController {
                 guard let self else { return }
                 self.navigationController?.pushViewController(ProjectChatsViewController(app: self.app, project: project, checkout: checkout), animated: true)
             }
-            page.newChat = { [weak self] projectId in
+            page.newChat = { [weak self] projectId, cwd in
                 guard let self, let router = self.router else { return }
                 self.app.lastDraft.projectId = projectId
+                self.app.newChatIn = cwd.map { (projectId, $0) }
                 self.app.lastDraft.hostId = nil
                 self.app.lastDraft.branch = nil
                 router.presentNewSession(prompt: nil)
@@ -639,27 +643,68 @@ class SessionsViewController: SessionListController {
 
     /// Activity: Pinned above, then one list (every other chat, sections
     /// and all, the one back last first), then its shelves at the foot,
-    /// each folded until opened: Working, Asleep, Archived.
+    /// each folded until opened: Working, Asleep, Archived. Grouped by
+    /// project (t3code's), one list per project instead, no shelves. The
+    /// project filter keeps one project's chats either way.
     private func activitySections() -> [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] {
         var out: [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] = []
         let now = Date()
-        let pinned = app.sessions(inFolder: "pinned")
-        if !pinned.isEmpty {
-            out.append(("pinned", "Pinned", [], pinned.map { ActivityList.decorate($0, now: now) }))
+        let owner = app.projectByChat()
+        // A filter on a project that's gone shows everything.
+        let filter = app.activityProject.flatMap { id in app.frontPage.projects.first { $0.id == id } }
+        func keep(_ vm: SessionRowVM) -> Bool {
+            guard let filter else { return true }
+            if let tree = owner[vm.id] { return tree.id == filter.id }
+            // Archived chats sit in no checkout's list: by their project's name.
+            return vm.hasProject && vm.projectName == filter.name
         }
+        let pinned = app.sessions(inFolder: "pinned").filter(keep)
         var rows = app.frontPage.sessions
         for f in app.frontPage.folders where f.id != "pinned" {
             rows += app.sessions(inFolder: f.id)
+        }
+        rows = rows.filter(keep)
+        if app.activityGroupByProject {
+            // Every chat, Pinned and asleep too, the one back last first; the
+            // projects in the order their latest chat came back.
+            var seen = Set<String>()
+            let unique: [SessionRowVM] = (pinned + rows).filter { seen.insert($0.id).inserted }
+            let ranked: [(rank: TimeInterval, vm: SessionRowVM)] = unique.map { (ActivityList.rank($0, shelf: nil), ActivityList.decorate($0, now: now)) }
+            let all: [SessionRowVM] = ranked.sorted { a, b in a.rank != b.rank ? a.rank > b.rank : a.vm.id < b.vm.id }.map { $0.vm }
+            var groups: [(id: String, name: String, chats: [SessionRowVM])] = []
+            for vm in all {
+                let tree = owner[vm.id]
+                let id = "activity.project." + (tree?.id ?? "none")
+                if let k = groups.firstIndex(where: { $0.id == id }) {
+                    groups[k].chats.append(vm)
+                } else {
+                    groups.append((id, tree?.name ?? "No Project", [vm]))
+                }
+            }
+            return groups.map { ($0.id, $0.name, [], $0.chats) }
+        }
+        if !pinned.isEmpty {
+            out.append(("pinned", "Pinned", [], pinned.map { ActivityList.decorate($0, now: now) }))
         }
         let page = ActivityList.page(rows, workingShelf: app.activityWorkingShelf, now: now)
         out.append((ActivityList.Section.list, "Activity", [], page.list))
         if !page.working.isEmpty { out.append((ActivityList.Section.working, "Working", [], page.working)) }
         if !page.asleep.isEmpty { out.append((ActivityList.Section.asleep, "Asleep", [], page.asleep)) }
-        if !app.archived.isEmpty {
-            archivedTotal = app.archived.count
-            out.append((ActivityList.Section.archived, "Archived", [], Array(app.archived.prefix(archivedShown))))
+        let archived = app.archived.filter(keep)
+        if !archived.isEmpty {
+            archivedTotal = archived.count
+            out.append((ActivityList.Section.archived, "Archived", [], Array(archived.prefix(archivedShown))))
         }
         return out
+    }
+
+    override var compactRows: Bool { app.compactRows }
+
+    override func headerIcon(_ id: String) -> UIImage? {
+        guard id.hasPrefix("activity.project."), let tree = app.frontPage.projects.first(where: { "activity.project." + $0.id == id }) else { return nil }
+        let side = (18 * TypeScale.factor).rounded()
+        return tree.projectIds[tree.main.id].flatMap { ProjectArt.tile(spaceId: $0, side: side) }
+            ?? ProjectTile.image(name: tree.name, colorIndex: tree.colorIndex, side: side)
     }
 
     /// Activity's Archived shows its first 10, then 25 more a tap (the
@@ -703,17 +748,42 @@ class SessionsViewController: SessionListController {
         ])
     }
 
-    /// Activity: Chats or Projects (rebuilt on each open, as Settings
-    /// switches it too).
+    /// The view (Chats or Projects), and in Chats its project filter and
+    /// grouping (rebuilt on each open, as Settings switches the view too).
     func optionsMenu() -> UIMenu {
         UIMenu(children: [
             UIDeferredMenuElement.uncached { [weak self] done in
                 guard let app = self?.app else { return done([]) }
-                done([UIMenu(title: "Activity", options: .displayInline, children: AppModel.SessionsView.allCases.map { view in
+                var items: [UIMenuElement] = [UIMenu(title: "Activity", options: .displayInline, children: AppModel.SessionsView.allCases.map { view in
                     UIAction(title: view.title, image: UIImage(systemName: view.symbol), state: app.sessionsView == view ? .on : .off) { _ in
                         app.sessionsView = view
                     }
-                })])
+                })]
+                if app.sessionsView == .chats {
+                    let current = app.activityProject.flatMap { id in app.frontPage.projects.first { $0.id == id } }
+                    let projects = [UIAction(title: "All Projects", image: UIImage(systemName: "square.stack"), state: current == nil ? .on : .off) { _ in
+                        app.activityProject = nil
+                    }] + app.frontPage.projects.map { p in
+                        // The repository's artwork once loaded, else its monogram.
+                        let art = p.projectIds[p.main.id].flatMap { ProjectArt.tile(spaceId: $0, side: 20) }
+                        return UIAction(title: p.name, image: art ?? ProjectTile.image(name: p.name, colorIndex: p.colorIndex, side: 20), state: current?.id == p.id ? .on : .off) { _ in
+                            app.activityProject = p.id
+                        }
+                    }
+                    let groupBy = [(false, "None", "list.bullet"), (true, "Project", "folder")].map { on, title, symbol in
+                        UIAction(title: title, image: UIImage(systemName: symbol), state: app.activityGroupByProject == on ? .on : .off) { _ in
+                            app.activityGroupByProject = on
+                        }
+                    }
+                    items.append(UIMenu(options: .displayInline, children: [
+                        UIMenu(title: "Project", subtitle: current?.name ?? "All Projects", image: UIImage(systemName: "line.3.horizontal.decrease"), children: projects),
+                        UIMenu(title: "Group By", subtitle: app.activityGroupByProject ? "Project" : "None", image: UIImage(systemName: "rectangle.3.group"), children: groupBy),
+                        UIAction(title: "Compact", image: UIImage(systemName: "rectangle.compress.vertical"), state: app.compactRows ? .on : .off) { _ in
+                            app.compactRows.toggle()
+                        },
+                    ]))
+                }
+                done(items)
             },
         ])
     }
@@ -800,5 +870,38 @@ final class SearchViewController: SessionListController, UISearchResultsUpdating
 
     override func buildSections() -> [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] {
         [("results", nil, [], app.search(query))]
+    }
+}
+
+extension UIViewController {
+    /// A chat's own actions (every list): Rename, Stop Waiting, Archive, Delete.
+    func chatMenu(_ vm: SessionRowVM, app: AppModel) -> [UIMenuElement] {
+        let id = vm.id
+        var items: [UIMenuElement] = [UIAction(title: "Rename…", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.renameChat(id, app: app) }]
+        if vm.canStopWaiting {
+            items.append(UIAction(title: "Stop Waiting", image: UIImage(systemName: "xmark.circle")) { _ in app.stopWaiting(id) })
+        }
+        items.append(vm.status == .working
+            ? UIAction(title: "Archive", subtitle: "Stop it first: its agent is still working", image: UIImage(systemName: "archivebox"), attributes: .disabled) { _ in }
+            : UIAction(title: "Archive", image: UIImage(systemName: "archivebox")) { _ in app.archive(id) })
+        items.append(deleteChatAction(id, app: app))
+        return items
+    }
+
+    func deleteChatAction(_ id: String, app: AppModel) -> UIAction {
+        UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self, weak app] _ in
+            self?.confirmDelete(app: app, id) {}
+        }
+    }
+
+    func renameChat(_ id: String, app: AppModel) {
+        let alert = UIAlertController(title: "Rename Session", message: nil, preferredStyle: .alert)
+        alert.addTextField { $0.text = app.row(id)?.title }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Rename", style: .default) { [weak app, weak alert] _ in
+            let title = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
+            if !title.isEmpty { app?.rename(id, title) }
+        })
+        present(alert, animated: true)
     }
 }
