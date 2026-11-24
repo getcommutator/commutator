@@ -51,6 +51,7 @@ import uniffi.commutator_core.serverDevices
 import uniffi.commutator_core.serverSignOut
 import java.io.File
 import java.util.UUID
+import uniffi.commutator_core.setThemeSelection
 
 /** How the app was launched (adb extras mirror the iOS launch arguments). */
 data class LaunchOptions(
@@ -121,13 +122,18 @@ class AppModel(private val app: Application) {
         Appearance(
             runCatching { ThemeMode.valueOf(settings.getString("theme", "System")!!) }.getOrDefault(ThemeMode.System),
             settings.getBoolean("dynamicColor", false),
-        ),
+            settings.getString("themeLight", null) ?: Appearance().lightTheme,
+            settings.getString("themeDark", null) ?: Appearance().darkTheme,
+        ).also { setThemeSelection(it.lightTheme, it.darkTheme) },
     )
     val appearance: StateFlow<Appearance> = _appearance.asStateFlow()
 
     fun setAppearance(value: Appearance) {
         _appearance.value = value
-        settings.edit().putString("theme", value.mode.name).putBoolean("dynamicColor", value.dynamicColor).apply()
+        // The core paints its own visuals and terminal cells with the selection too.
+        setThemeSelection(value.lightTheme, value.darkTheme)
+        settings.edit().putString("theme", value.mode.name).putBoolean("dynamicColor", value.dynamicColor)
+            .putString("themeLight", value.lightTheme).putString("themeDark", value.darkTheme).apply()
     }
 
     /** Sessions grouped by project in place of the flat Recent list. */

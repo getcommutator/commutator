@@ -23,85 +23,55 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import uniffi.commutator_core.MaterialColors
+import uniffi.commutator_core.PhonePalette
+import uniffi.commutator_core.themePalette
 
-/** Commutator Light / Commutator Dark (crates/theme builtins): cool neutrals, monochrome accent. */
-private val CommutatorLight = lightColorScheme(
-    primary = Color(0xFF18181B),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFE4E4E7),
-    onPrimaryContainer = Color(0xFF18181B),
-    inversePrimary = Color(0xFFECECEC),
-    secondary = Color(0xFF5F5F66),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE4E4E7),
-    onSecondaryContainer = Color(0xFF1C1C20),
-    tertiary = Color(0xFF0F766E),
-    onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFCCF2EC),
-    onTertiaryContainer = Color(0xFF00201D),
-    background = Color(0xFFF3F3F5),
-    onBackground = Color(0xFF27272C),
-    surface = Color(0xFFF3F3F5),
-    onSurface = Color(0xFF27272C),
-    surfaceVariant = Color(0xFFE7E7EB),
-    onSurfaceVariant = Color(0xFF62626A),
-    surfaceTint = Color(0xFF18181B),
-    surfaceBright = Color(0xFFFFFFFF),
-    surfaceDim = Color(0xFFE2E2E6),
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFAFAFB),
-    surfaceContainer = Color(0xFFEEEEF1),
-    surfaceContainerHigh = Color(0xFFE8E8EC),
-    surfaceContainerHighest = Color(0xFFE2E2E7),
-    outline = Color(0xFF97979F),
-    outlineVariant = Color(0xFFE2E2E6),
-    error = Color(0xFFDC2626),
-    onError = Color.White,
-    errorContainer = Color(0xFFFDE2E2),
-    onErrorContainer = Color(0xFF5F1111),
-    inverseSurface = Color(0xFF27272C),
-    inverseOnSurface = Color(0xFFF3F3F5),
-    scrim = Color.Black,
-)
+/** A theme's Material slots (resolved in the core from the desktop's themes). */
+private fun MaterialColors.toScheme(dark: Boolean): ColorScheme {
+    fun c(argb: UInt) = Color(argb.toInt())
+    return (if (dark) darkColorScheme() else lightColorScheme()).copy(
+        primary = c(primary),
+        onPrimary = c(onPrimary),
+        primaryContainer = c(primaryContainer),
+        onPrimaryContainer = c(onPrimaryContainer),
+        inversePrimary = c(inversePrimary),
+        secondary = c(secondary),
+        onSecondary = c(onSecondary),
+        secondaryContainer = c(secondaryContainer),
+        onSecondaryContainer = c(onSecondaryContainer),
+        tertiary = c(tertiary),
+        onTertiary = c(onTertiary),
+        tertiaryContainer = c(tertiaryContainer),
+        onTertiaryContainer = c(onTertiaryContainer),
+        background = c(background),
+        onBackground = c(onBackground),
+        surface = c(surface),
+        onSurface = c(onSurface),
+        surfaceVariant = c(surfaceVariant),
+        onSurfaceVariant = c(onSurfaceVariant),
+        surfaceTint = c(surfaceTint),
+        surfaceBright = c(surfaceBright),
+        surfaceDim = c(surfaceDim),
+        surfaceContainerLowest = c(surfaceContainerLowest),
+        surfaceContainerLow = c(surfaceContainerLow),
+        surfaceContainer = c(surfaceContainer),
+        surfaceContainerHigh = c(surfaceContainerHigh),
+        surfaceContainerHighest = c(surfaceContainerHighest),
+        outline = c(outline),
+        outlineVariant = c(outlineVariant),
+        error = c(error),
+        onError = c(onError),
+        errorContainer = c(errorContainer),
+        onErrorContainer = c(onErrorContainer),
+        inverseSurface = c(inverseSurface),
+        inverseOnSurface = c(inverseOnSurface),
+        scrim = c(scrim),
+    )
+}
 
-private val CommutatorDark = darkColorScheme(
-    primary = Color(0xFFECECEC),
-    onPrimary = Color(0xFF18181B),
-    primaryContainer = Color(0xFF2C2C30),
-    onPrimaryContainer = Color(0xFFECECEC),
-    inversePrimary = Color(0xFF18181B),
-    secondary = Color(0xFFC6C6CC),
-    onSecondary = Color(0xFF2E2E33),
-    secondaryContainer = Color(0xFF26262A),
-    onSecondaryContainer = Color(0xFFE4E4E7),
-    tertiary = Color(0xFF5EEAD4),
-    onTertiary = Color(0xFF003731),
-    tertiaryContainer = Color(0xFF0C3A35),
-    onTertiaryContainer = Color(0xFFCCF2EC),
-    background = Color(0xFF060606),
-    onBackground = Color(0xFFE8E8EA),
-    surface = Color(0xFF060606),
-    onSurface = Color(0xFFE8E8EA),
-    surfaceVariant = Color(0xFF1C1C20),
-    onSurfaceVariant = Color(0xFFA9A9AE),
-    surfaceTint = Color(0xFFECECEC),
-    surfaceBright = Color(0xFF26262A),
-    surfaceDim = Color(0xFF060606),
-    surfaceContainerLowest = Color(0xFF000000),
-    surfaceContainerLow = Color(0xFF0E0E10),
-    surfaceContainer = Color(0xFF131316),
-    surfaceContainerHigh = Color(0xFF1A1A1E),
-    surfaceContainerHighest = Color(0xFF222227),
-    outline = Color(0xFF6B6B72),
-    outlineVariant = Color(0xFF1E1E22),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF450A0A),
-    errorContainer = Color(0xFF3B1212),
-    onErrorContainer = Color(0xFFFDE2E2),
-    inverseSurface = Color(0xFFE8E8EA),
-    inverseOnSurface = Color(0xFF111113),
-    scrim = Color.Black,
-)
+/** The selected theme's palette for the current appearance (transcript roles, terminal). */
+val LocalPhonePalette = staticCompositionLocalOf<PhonePalette> { error("CommutatorTheme provides it") }
 
 /** Geist, from the same asset bytes the transcript measures. */
 val Geist: FontFamily by lazy {
@@ -169,7 +139,12 @@ private fun commutatorTypography(): Typography {
 
 enum class ThemeMode { System, Light, Dark }
 
-data class Appearance(val mode: ThemeMode = ThemeMode.System, val dynamicColor: Boolean = false)
+data class Appearance(
+    val mode: ThemeMode = ThemeMode.System,
+    val dynamicColor: Boolean = false,
+    val lightTheme: String = "commutator-light",
+    val darkTheme: String = "commutator-dark",
+)
 
 /** Whether the resolved theme is dark (the transcript palette follows it). */
 val LocalDarkTheme = staticCompositionLocalOf { false }
@@ -183,14 +158,16 @@ fun CommutatorTheme(appearance: Appearance = Appearance(), content: @Composable 
         ThemeMode.Dark -> true
     }
     val context = LocalContext.current
+    val themeId = if (dark) appearance.darkTheme else appearance.lightTheme
+    val palette = remember(themeId, dark) { themePalette(themeId, dark) }
+    // "Wallpaper colors" replaces the theme's Material slots with the system's dynamic scheme.
     val scheme: ColorScheme = when {
         appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> CommutatorDark
-        else -> CommutatorLight
+        else -> remember(palette) { palette.material.toScheme(dark) }
     }
     val typography = remember { commutatorTypography() }
-    CompositionLocalProvider(LocalDarkTheme provides dark) {
+    CompositionLocalProvider(LocalDarkTheme provides dark, LocalPhonePalette provides palette) {
         MaterialExpressiveTheme(
             colorScheme = scheme,
             motionScheme = MotionScheme.expressive(),
