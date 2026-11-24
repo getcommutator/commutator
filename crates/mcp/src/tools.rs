@@ -129,11 +129,11 @@ fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "create_chat",
-            description: "Create a child of your chat to delegate work to (kind subagent, the default when you speak from a chat or pass parent: listed under that chat's Subagents and in its transcript's subagent block), a side chat (kind side: only when the person should treat it as a side conversation of their own), or a standalone session (kind chat, no parent). Any connected provider works (see list_harnesses), whichever provider you run on. Delegation is one level deep: a chat that has a parent cannot create chats. Select a project and/or device; catalogs are validated on that host. Optionally send a first prompt and wait for the reply. For parallel delegation use create_chats, or launch with wait=false and wait only after all chats have started.",
+            description: "Create a child of your chat to delegate work to (kind subagent, the default when you speak from a chat or pass parent: listed under that chat's Subagents and in its transcript's subagent block), a side chat (kind side: only when the person should treat it as a side conversation of their own), or a standalone session (kind chat, no parent; the default for work in a checkout of its own, `cwd` or `branch`, so it shows in the sidebar's Projects and Agents). Any connected provider works (see list_harnesses), whichever provider you run on. Delegation is one level deep: a chat that has a parent cannot create chats. Select a project and/or device; catalogs are validated on that host. Optionally send a first prompt and wait for the reply. For parallel delegation use create_chats, or launch with wait=false and wait only after all chats have started.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "kind": { "type": "string", "enum": ["subagent", "side", "chat"], "description": "subagent (default with a parent or origin chat): delegated work, listed under the parent's Subagents. side: a side conversation for the person, needs a parent or origin. chat: standalone, no parent allowed. Omitted: subagent with a parent/origin, chat otherwise." },
+                    "kind": { "type": "string", "enum": ["subagent", "side", "chat"], "description": "subagent (default with a parent or origin chat): delegated work, listed under the parent's Subagents. side: a side conversation for the person, needs a parent or origin. chat: standalone, no parent allowed. Omitted: chat when `cwd` or `branch` is given (work in a checkout of its own, seen in the sidebar), else subagent with a parent/origin, chat otherwise." },
                     "project": { "type": "string", "description": "Project id, path, or name. Belongs to a specific device; when device is supplied, search only there. Optional." },
                     "device": { "type": "string", "description": "Host device (id or name). With project, it must own that project. Without either, use the local engine." },
                     "parent": { "type": "string", "description": "Parent chat to record (id, prefix, or title). Defaults to the chat you are speaking from." },
@@ -1145,7 +1145,15 @@ impl Tools {
             args.kind != Some(ChatKind::Chat) || explicit_parent.is_none(),
             "kind chat cannot have a parent"
         );
-        let parent_chat_id = if args.kind == Some(ChatKind::Chat) {
+        // Work in a checkout of its own (a worktree, a branch) stands on its
+        // own: a top-level chat the person sees in Projects and Agents, not a
+        // child of this one. An explicit kind or parent still decides.
+        let own_checkout = args.kind.is_none()
+            && explicit_parent.is_none()
+            && [&args.cwd, &args.branch]
+                .iter()
+                .any(|v| v.as_deref().is_some_and(|v| !v.trim().is_empty()));
+        let parent_chat_id = if args.kind == Some(ChatKind::Chat) || own_checkout {
             None
         } else {
             match explicit_parent {
@@ -2521,6 +2529,37 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("no chat matches"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn create_chat_in_its_own_checkout_is_top_level() {
+        let world = Arc::new(World::default());
+        let tools = tools(
+            world.clone(),
+            Origin {
+                chat_id: Some("chat-beta-2".into()),
+                device_id: None,
+                ..Default::default()
+            },
+        );
+        // A worktree or a branch of its own: no parent, so the sidebar lists it.
+        for args in [
+            json!({ "project": "space-1", "cwd": "/tmp/wt" }),
+            json!({ "project": "space-1", "branch": "feature/x" }),
+        ] {
+            let created = tools.call("create_chat", args).await.unwrap();
+            assert!(created["parentChatId"].is_null(), "{created}");
+            assert_eq!(created["kind"], "chat");
+        }
+        // Asked for as a subagent, it stays one.
+        let created = tools
+            .call(
+                "create_chat",
+                json!({ "project": "space-1", "cwd": "/tmp/wt", "kind": "subagent" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created["parentChatId"], "chat-beta-2");
     }
 
     #[tokio::test]
