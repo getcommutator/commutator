@@ -732,7 +732,9 @@ final class AppModel {
             var projectIds: [String: String] = [:]
             for folder in folderOrder {
                 let list = rows(byFolder[folder] ?? [])
-                let id = "checkout:" + folder
+                // Per repository: one folder can belong to two groups (a
+                // worktree two projects run chats in), and rows need unique ids.
+                let id = "checkout:" + key + "|" + folder
                 sectionSessions[id] = list
                 if let c = checkoutOf[folder] { projectIds[id] = c.id }
                 let name = checkoutOf[folder]?.name ?? String(folder.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last ?? Substring(folder))
