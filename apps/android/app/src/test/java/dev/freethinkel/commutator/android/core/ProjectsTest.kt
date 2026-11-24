@@ -28,7 +28,7 @@ class ProjectsTest {
         val trees = projectTree(
             listOf(project(listOf(chat("a", 1), chat("b", 2, cwd = "/src/app-wt1")))),
             gitWorktrees = mapOf("mac:/src/app" to listOf("/src/app-wt2")),
-            names = mapOf("checkout:mac:/src/app-wt1" to "Feature"),
+            names = mapOf("checkout:g|mac:/src/app-wt1" to "Feature"),
         )
         val t = trees.single()
         assertEquals(listOf("a"), t.main.chats.map { it.id })
@@ -37,6 +37,17 @@ class ProjectsTest {
         assertEquals(listOf("/src/app-wt1", "/src/app-wt2"), t.worktrees.map { it.path })
         assertEquals("p1", t.mainSpace)
         assertEquals(null, t.projectIds[t.worktrees[1].id])
+    }
+
+    @Test
+    fun aWorktreeTwoProjectsShareHasAnIdInEach() {
+        // Two repositories (groups) with chats in one worktree folder: the
+        // list keys its rows by id, so each group's row needs its own.
+        val shared = "/src/shared-wt"
+        val other = project(listOf(chat("b", 2, cwd = shared))).copy(id = "p2", path = "/src/other", groupKey = "h", groupName = "other")
+        val trees = projectTree(listOf(project(listOf(chat("a", 1, cwd = shared))), other))
+        val ids = trees.flatMap { t -> t.checkouts.map { it.id } }
+        assertEquals(ids.size, ids.toSet().size)
     }
 
     @Test

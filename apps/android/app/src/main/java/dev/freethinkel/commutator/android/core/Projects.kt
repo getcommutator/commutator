@@ -131,7 +131,9 @@ fun projectTree(
         val worktrees = mutableListOf<Checkout>()
         val projectIds = HashMap<String, String>()
         for ((folder, list) in byFolder) {
-            val id = "checkout:$folder"
+            // Per repository: one folder can belong to two groups (a worktree
+            // two projects run chats in), and list keys must be unique.
+            val id = "checkout:$key|$folder"
             val chats = list.sortedByDescending { it.lastActivityMs }
             checkoutOf[folder]?.let { projectIds[id] = it.id }
             val name = checkoutOf[folder]?.name ?: folder.split('/', '\\').last { it.isNotEmpty() }
