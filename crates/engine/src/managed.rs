@@ -38,6 +38,41 @@ pub use commutator_launch::{
 /// data directory.
 const HANDOFF: Duration = Duration::from_secs(60);
 
+/// The file an executable was started from, as far as telling it from a
+/// replacement goes: an update or a rebuild writes a new file at the path.
+type ExeStamp = (u64, Option<std::time::SystemTime>);
+
+fn exe_stamp(path: &Path) -> Option<ExeStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// This engine's executable and its stamp at startup.
+static STARTED_FROM: std::sync::OnceLock<Option<(PathBuf, ExeStamp)>> = std::sync::OnceLock::new();
+
+fn note_started_from() {
+    STARTED_FROM.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let stamp = exe_stamp(&exe)?;
+        Some((exe, stamp))
+    });
+}
+
+/// Whether the file at this engine's path is no longer the one it runs: a
+/// newer engine waits for a reload. Unlike the updater's version check
+/// (`restart_when_superseded`) this also sees a rebuild of the same version.
+fn binary_replaced() -> bool {
+    STARTED_FROM
+        .get()
+        .and_then(Option::as_ref)
+        .is_some_and(|(path, stamp)| replaced_since(path, *stamp))
+}
+
+/// A missing file (an update mid-swap) isn't a replacement yet.
+fn replaced_since(path: &Path, stamp: ExeStamp) -> bool {
+    exe_stamp(path).is_some_and(|now| now != stamp)
+}
+
 /// Start the background engine for `config`, detached from the app
 /// ([`commutator_launch::launch`]).
 pub fn launch(config: &EngineConfig, app_exe: &Path) -> std::io::Result<Child> {
@@ -118,6 +153,16 @@ impl RpcService for ManagedRpc {
                     keep_running: keep::load(&self.data_dir).keep_running_after_quit,
                     working,
                 })
+            }
+            methods::ENGINE_RESTART_CHECK => {
+                let working = match self.sessions().await {
+                    Some(sessions) => sessions.chats_with_work().len(),
+                    None => 0,
+                };
+                RpcReply::value(&serde_json::json!({
+                    "stale": binary_replaced(),
+                    "working": working,
+                }))
             }
             methods::APP_QUITTING => {
                 let stop_work = params
@@ -396,6 +441,7 @@ impl Engine {
     /// sign-out, after draining.
     pub async fn run_managed(self) -> anyhow::Result<()> {
         let config = self.config;
+        note_started_from();
         tracing::info!(data_dir = %config.data_dir.display(), port = config.ipc_port, "background engine starting");
         std::fs::create_dir_all(&config.data_dir)?;
         crate::update_trial::boot(&config.data_dir)?;
@@ -664,6 +710,20 @@ fn exec_installed() -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rebuilt_engine_file_reads_as_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("Commutator Engine");
+        std::fs::write(&exe, b"old build").unwrap();
+        let stamp = exe_stamp(&exe).unwrap();
+        assert!(!replaced_since(&exe, stamp), "the file it started from");
+        // `make app` recreates the bundle: a new file, another size.
+        std::fs::remove_file(&exe).unwrap();
+        assert!(!replaced_since(&exe, stamp), "mid-swap is not a replacement yet");
+        std::fs::write(&exe, b"the newer build").unwrap();
+        assert!(replaced_since(&exe, stamp));
+    }
 
     #[test]
     fn relaunches_run_the_installed_version() {

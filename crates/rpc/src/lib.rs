@@ -202,6 +202,10 @@ pub mod methods {
     pub const SET_BACKGROUND_SETTINGS: &str = "SetBackgroundSettings";
     /// A quitting app asks what's still working: `{ keepRunning, working }`.
     pub const QUIT_CHECK: &str = "QuitCheck";
+    /// Whether the background engine runs an older binary than the one now
+    /// installed at its path (an update or a rebuild it couldn't restart
+    /// into while chats worked): `{ stale, working }`. `StopEngine` reloads.
+    pub const ENGINE_RESTART_CHECK: &str = "EngineRestartCheck";
     /// The app quits with the setting off: the engine stops once nothing is
     /// pending; `{ stopWork: true }` stops the chats still working first.
     pub const APP_QUITTING: &str = "AppQuitting";
@@ -412,6 +416,7 @@ pub fn local_only(method: &str) -> bool {
         methods::GET_BACKGROUND_SETTINGS
             | methods::SET_BACKGROUND_SETTINGS
             | methods::QUIT_CHECK
+            | methods::ENGINE_RESTART_CHECK
             | methods::APP_QUITTING
             // An API key typed into this device's app: stored here alone.
             | methods::ADD_AGENT_API_KEY
