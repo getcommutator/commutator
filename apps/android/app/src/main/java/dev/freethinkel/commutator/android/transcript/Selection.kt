@@ -199,7 +199,7 @@ fun RowDisplay.wordRange(offset: Int): Pair<Int, Int> {
     val run = runs.firstOrNull { o >= it.start.toInt() && o < it.start.toInt() + it.len.toInt() }
     val lo = run?.start?.toInt() ?: 0
     val hi = run?.let { minOf(text.length, lo + it.len.toInt()) } ?: text.length
-    val words = BreakIterator.getWordInstance().apply { setText(text.substring(lo, hi)) }
+    val words = BreakIterator.getWordInstance().apply { setText(this@wordRange.text.substring(lo, hi)) }
     val end = words.following(o - lo)
     val start = words.previous()
     if (start != BreakIterator.DONE && end != BreakIterator.DONE && text.substring(lo + start, lo + end).any { it.isLetterOrDigit() }) {

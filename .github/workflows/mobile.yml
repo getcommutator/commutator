@@ -37,6 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ios-sim
+      # the core is built for arm64 only (aarch64-apple-ios-sim), so the app is too (ARCHS below)
       # the core once, outside Xcode: its build phase then reuses it (COMMUTATOR_SKIP_CORE)
       - run: scripts/ios/build-core.sh iphonesimulator
       # the Swift bindings and FFI header are committed: a core change must commit them too
@@ -46,7 +47,7 @@ jobs:
         run: |
           xcodebuild -project Commutator.xcodeproj -scheme Commutator \
             -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO COMMUTATOR_SKIP_CORE=1 build | tail -n 200
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO COMMUTATOR_SKIP_CORE=1 build | tail -n 200
           exit "${PIPESTATUS[0]}"
 
   android:
