@@ -15,12 +15,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use commutator_doc::{SessionCommandPayload, TranscriptWindow};
 use commutator_proto::{
-    AccessMode, Chat, ChatConfig, HarnessId, ReasoningLevel, RunRequest, SandboxLevel, Session, SessionStatus,
-    Space, UserInputAnswer,
+    AccessMode, Chat, ChatConfig, HarnessId, ProjectActionDraft, ProjectActionIcon, ReasoningLevel,
+    RunRequest, SandboxLevel, Session, SessionStatus, Space, UserInputAnswer,
 };
+use commutator_rpc::methods;
 
 use crate::transcript::{RenderOptions, RenderedMessage, render_entries};
-use crate::commutator::{HarnessInfo, TranscriptFollow, TurnOutcome, Commutator, session_for, short};
+use crate::commutator::{
+    HarnessInfo, TranscriptFollow, TurnOutcome, Commutator, resolve_space_in, session_for, short,
+};
 
 mod commands;
 
@@ -64,6 +67,9 @@ fn chat_key_schema(extra: Value) -> Value {
 }
 
 const DEVICE_STATS: &str = "device_stats";
+const LIST_PROJECT_ACTIONS: &str = "list_project_actions";
+const UPSERT_PROJECT_ACTION: &str = "upsert_project_action";
+const DELETE_PROJECT_ACTION: &str = "delete_project_action";
 
 fn device_schema() -> Value {
     json!({ "type": "string", "description": "Host device id or exact name. Omit for the local engine." })
@@ -90,6 +96,43 @@ fn catalog() -> Vec<ToolDef> {
             name: "list_projects",
             description: "Projects: folders on specific devices. Filter by device (id or name); omit for all projects. Use ids when names or paths repeat.",
             input_schema: json!({ "type": "object", "properties": { "device": device_schema() } }),
+        },
+        ToolDef {
+            name: LIST_PROJECT_ACTIONS,
+            description: "A project's Actions: saved shell commands people run from the project's Actions menu. The one with runOnWorktreeCreate is the worktree setup hook. Also returns importableActions (in the repo's commutator.json, not yet saved) and projectFileIssue (why that file can't be read). Only projects on this device (the local engine).",
+            input_schema: json!({
+                "type": "object",
+                "properties": { "project": { "type": "string", "description": "Project id, path, or name on this device." } },
+                "required": ["project"]
+            }),
+        },
+        ToolDef {
+            name: UPSERT_PROJECT_ACTION,
+            description: "Add a project Action, or replace one by action_id. With run_on_worktree_create it becomes the worktree setup hook: it runs in its own terminal in every new worktree Commutator creates for this project, with COMMUTATOR_PROJECT_ROOT (main checkout), COMMUTATOR_WORKTREE_PATH and COMMUTATOR_WORKTREE_BRANCH set. A project has one setup hook, so this clears the flag on the others. Returns the project's Actions after the change. Only projects on this device.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project id, path, or name on this device." },
+                    "action_id": { "type": "string", "description": "Replace this Action (from list_project_actions). Omit to add one." },
+                    "name": { "type": "string", "description": "Shown in the Actions menu, at most 80 characters." },
+                    "command": { "type": "string", "description": "Shell command, run at the project root (or in the new worktree for setup). At most 16 KiB; may span lines." },
+                    "icon": { "type": "string", "enum": ["play", "test", "lint", "configure", "build", "debug"] },
+                    "run_on_worktree_create": { "type": "boolean", "default": false, "description": "Make this the worktree setup hook." }
+                },
+                "required": ["project", "name", "command", "icon"]
+            }),
+        },
+        ToolDef {
+            name: DELETE_PROJECT_ACTION,
+            description: "Delete one project Action by id (from list_project_actions). Returns the project's Actions after the change. Only projects on this device.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project id, path, or name on this device." },
+                    "action_id": { "type": "string" }
+                },
+                "required": ["project", "action_id"]
+            }),
         },
         ToolDef {
             name: "list_harnesses",
@@ -617,6 +660,23 @@ struct DeviceArgs {
     device: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct ProjectActionArgs {
+    project: String,
+    action_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpsertProjectActionArgs {
+    project: String,
+    action_id: Option<String>,
+    name: String,
+    command: String,
+    icon: ProjectActionIcon,
+    #[serde(default)]
+    run_on_worktree_create: bool,
+}
+
 /// Where a turn's replies start: the message that began it, whose id the
 /// sender chose. Replies are matched by position after it, not by time
 /// (`createdAt` is stamped on the host's clock, which can run behind the
@@ -877,6 +937,9 @@ impl Tools {
             "list_devices" => self.list_devices().await,
             DEVICE_STATS => self.device_stats(parse(args)?).await,
             "list_projects" => self.list_projects(parse(args)?).await,
+            LIST_PROJECT_ACTIONS => self.list_project_actions(parse(args)?).await,
+            UPSERT_PROJECT_ACTION => self.upsert_project_action(parse(args)?).await,
+            DELETE_PROJECT_ACTION => self.delete_project_action(parse(args)?).await,
             "list_harnesses" => self.list_harnesses(parse(args)?).await,
             "list_models" => self.list_models(parse(args)?).await,
             "list_chats" => self.list_chats(parse(args)?).await,
@@ -1025,6 +1088,66 @@ impl Tools {
                 "git": s.git_detected,
             })).collect::<Vec<_>>()
         }))
+    }
+
+    /// Actions live in the hosting engine's own store, so only this device's
+    /// projects resolve; a path that is also a project elsewhere means this one.
+    async fn local_project(&self, key: &str) -> anyhow::Result<Space> {
+        let (spaces, local) =
+            tokio::try_join!(self.commutator.spaces(), self.commutator.local_device_id())?;
+        let (here, elsewhere): (Vec<Space>, Vec<Space>) =
+            spaces.into_iter().partition(|s| s.device_id == local);
+        resolve_space_in(&here, key.trim()).map_err(|err| {
+            match resolve_space_in(&elsewhere, key.trim()) {
+                Ok(space) => anyhow::anyhow!(
+                    "project {} is on another device; its Actions can only be changed from a chat on that device",
+                    space.path
+                ),
+                Err(_) => err,
+            }
+        })
+    }
+
+    async fn list_project_actions(&self, args: ProjectActionArgs) -> anyhow::Result<Value> {
+        let space = self.local_project(&args.project).await?;
+        self.project_actions_rpc(methods::LIST_PROJECT_ACTIONS, json!({ "spaceId": space.id }))
+            .await
+    }
+
+    async fn upsert_project_action(&self, args: UpsertProjectActionArgs) -> anyhow::Result<Value> {
+        let space = self.local_project(&args.project).await?;
+        let action = ProjectActionDraft {
+            name: args.name,
+            command: args.command,
+            icon: args.icon,
+            run_on_worktree_create: args.run_on_worktree_create,
+        };
+        self.project_actions_rpc(
+            methods::UPSERT_PROJECT_ACTION,
+            json!({ "spaceId": space.id, "actionId": args.action_id, "action": action }),
+        )
+        .await
+    }
+
+    async fn delete_project_action(&self, args: ProjectActionArgs) -> anyhow::Result<Value> {
+        let space = self.local_project(&args.project).await?;
+        let action_id = args.action_id.context("action_id is required")?;
+        self.project_actions_rpc(
+            methods::DELETE_PROJECT_ACTION,
+            json!({ "spaceId": space.id, "actionId": action_id }),
+        )
+        .await
+    }
+
+    /// The engine validates and answers with the project's snapshot.
+    async fn project_actions_rpc(&self, method: &str, params: Value) -> anyhow::Result<Value> {
+        match self.commutator.call_rpc(method, params).await {
+            Ok(snapshot) => Ok(snapshot),
+            Err(commutator_rpc::RpcError::UnknownMethod(_)) => anyhow::bail!(
+                "This device's running Commutator is too old for project Actions: update Commutator and restart it"
+            ),
+            Err(error) => anyhow::bail!("{error}"),
+        }
     }
 
     async fn list_harnesses(&self, args: DeviceArgs) -> anyhow::Result<Value> {
@@ -2151,6 +2274,18 @@ mod tests {
                         .push((method.into(), params.clone()));
                     RpcReply::Value(self.stats.clone().unwrap_or_default())
                 }
+                methods::LIST_PROJECT_ACTIONS
+                | methods::UPSERT_PROJECT_ACTION
+                | methods::DELETE_PROJECT_ACTION => {
+                    self.writes
+                        .lock()
+                        .unwrap()
+                        .push((method.to_owned(), params.clone()));
+                    RpcReply::Value(json!({
+                        "spaceId": params["spaceId"], "actions": [],
+                        "importableActions": [], "projectFileIssue": null
+                    }))
+                }
                 other => return Err(RpcError::UnknownMethod(other.into())),
             })
         }
@@ -2172,6 +2307,62 @@ mod tests {
             assert_eq!(def.input_schema["type"], "object", "{}", def.name);
             assert!(!def.description.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn project_actions_reach_the_local_projects_engine_store() {
+        let world = Arc::new(World::default());
+        let tools = tools(world.clone(), Origin::default());
+
+        // `/repo/comet` is a project on both devices: the local one is meant.
+        let listed = tools
+            .call(LIST_PROJECT_ACTIONS, json!({"project": "/repo/comet"}))
+            .await
+            .unwrap();
+        assert_eq!(listed["spaceId"], "space-1");
+
+        tools
+            .call(
+                UPSERT_PROJECT_ACTION,
+                json!({
+                    "project": "space-1", "name": "Setup", "command": "make setup",
+                    "icon": "configure", "run_on_worktree_create": true
+                }),
+            )
+            .await
+            .unwrap();
+        tools
+            .call(DELETE_PROJECT_ACTION, json!({"project": "space-1", "action_id": "setup"}))
+            .await
+            .unwrap();
+        let writes = world.writes.lock().unwrap().clone();
+        assert_eq!(
+            writes[1],
+            (
+                methods::UPSERT_PROJECT_ACTION.to_owned(),
+                json!({
+                    "spaceId": "space-1", "actionId": null,
+                    "action": { "name": "Setup", "command": "make setup",
+                                "icon": "configure", "runOnWorktreeCreate": true }
+                })
+            )
+        );
+        assert_eq!(writes[2].1, json!({"spaceId": "space-1", "actionId": "setup"}));
+
+        let elsewhere = tools
+            .call(LIST_PROJECT_ACTIONS, json!({"project": "/repo/unique"}))
+            .await
+            .unwrap_err();
+        assert!(elsewhere.contains("another device"), "{elsewhere}");
+        let bad_icon = tools
+            .call(
+                UPSERT_PROJECT_ACTION,
+                json!({"project": "space-1", "name": "X", "command": "x", "icon": "rocket"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(bad_icon.contains("rocket"), "{bad_icon}");
+        assert_eq!(world.writes.lock().unwrap().len(), 3, "rejected calls reach no engine");
     }
 
     #[tokio::test]
