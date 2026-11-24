@@ -946,6 +946,11 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     
     func deleteSession(chatId: String) throws 
     
+    /**
+     * Remove a linked worktree of `repo_path` on its host.
+     */
+    func deleteWorktree(deviceId: String, repoPath: String, worktreePath: String) async throws 
+    
     func deviceId()  -> String
     
     func devices()  -> [DeviceView]
@@ -1418,6 +1423,25 @@ open func deleteSession(chatId: String)throws   {try rustCallWithError(FfiConver
         FfiConverterString.lower(chatId),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Remove a linked worktree of `repo_path` on its host.
+     */
+open func deleteWorktree(deviceId: String, repoPath: String, worktreePath: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_method_coreclient_delete_worktree(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId),FfiConverterString.lower(repoPath),FfiConverterString.lower(worktreePath)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_void,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_void,
+            freeFunc: ffi_commutator_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
     
 open func deviceId() -> String  {
@@ -18746,6 +18770,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_delete_session() != 1598) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_method_coreclient_delete_worktree() != 27714) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_device_id() != 32890) {

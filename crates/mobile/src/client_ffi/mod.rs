@@ -456,6 +456,22 @@ impl CoreClient {
         on_runtime(async move { client.switch_ref(&device_id, &repo_path, &ref_name).await }).await
     }
 
+    /// Remove a linked worktree of `repo_path` on its host.
+    pub async fn delete_worktree(
+        &self,
+        device_id: String,
+        repo_path: String,
+        worktree_path: String,
+    ) -> CoreResult<()> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            client
+                .delete_worktree(&device_id, &repo_path, &worktree_path)
+                .await
+        })
+        .await
+    }
+
     /// Create a worktree off `base`; returns its path.
     pub async fn create_worktree(
         &self,
