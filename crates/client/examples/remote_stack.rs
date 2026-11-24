@@ -31,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
             google_client_id: "unused".into(),
             google_client_secret: "unused".into(),
             allowed_emails: vec!["dev@localhost".into()],
+            ice_servers: Vec::new(),
         },
         &server_dir.join("db"),
     )?;
