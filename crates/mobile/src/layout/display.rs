@@ -68,6 +68,61 @@ pub enum ColorRole {
     DangerSoft,
 }
 
+impl ColorRole {
+    /// Every role in declaration order: a role's index here is its index in a theme's role
+    /// table (`theme::PhonePalette::roles`) and in the apps' lookups.
+    pub const ALL: [ColorRole; 48] = [
+        ColorRole::Text,
+        ColorRole::TextSecondary,
+        ColorRole::TextTertiary,
+        ColorRole::Link,
+        ColorRole::Accent,
+        ColorRole::Danger,
+        ColorRole::Success,
+        ColorRole::Warning,
+        ColorRole::InlineCodeText,
+        ColorRole::InlineCodeBackground,
+        ColorRole::CodeText,
+        ColorRole::CodeBackground,
+        ColorRole::CodeBorder,
+        ColorRole::QuoteBar,
+        ColorRole::Rule,
+        ColorRole::TableBorder,
+        ColorRole::TableHeaderBackground,
+        ColorRole::UserBubble,
+        ColorRole::ChipBackground,
+        ColorRole::SyntaxKeyword,
+        ColorRole::SyntaxString,
+        ColorRole::SyntaxComment,
+        ColorRole::SyntaxNumber,
+        ColorRole::SyntaxFunction,
+        ColorRole::SyntaxType,
+        ColorRole::SyntaxConstant,
+        ColorRole::SyntaxVariable,
+        ColorRole::SyntaxProperty,
+        ColorRole::SyntaxOperator,
+        ColorRole::SyntaxPunctuation,
+        ColorRole::SyntaxTag,
+        ColorRole::SyntaxAttribute,
+        ColorRole::SyntaxEscape,
+        ColorRole::TextFaint,
+        ColorRole::TextSoft,
+        ColorRole::ToolRail,
+        ColorRole::ToolBadge,
+        ColorRole::ToolWell,
+        ColorRole::AgentCard,
+        ColorRole::AgentCardBorder,
+        ColorRole::AgentTile,
+        ColorRole::DiffAddWash,
+        ColorRole::DiffDelWash,
+        ColorRole::DiffAddBar,
+        ColorRole::DiffDelBar,
+        ColorRole::DiffHunk,
+        ColorRole::DangerWash,
+        ColorRole::DangerSoft,
+    ];
+}
+
 /// Text decorations, painted relative to the run's baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, uniffi::Enum)]
 pub enum Decoration {

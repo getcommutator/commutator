@@ -1932,6 +1932,7 @@ dependencies = [
  "commutator-syntax",
  "commutator-term",
  "commutator-text",
+ "commutator-theme",
  "commutator-visual",
  "commutator-visual-gpu",
  "serde",

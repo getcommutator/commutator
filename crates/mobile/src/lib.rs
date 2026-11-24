@@ -9,6 +9,7 @@ uniffi::setup_scaffolding!("commutator_core");
 mod client_ffi;
 pub mod layout;
 pub mod terminal;
+pub mod theme;
 pub mod wallpaper;
 pub mod visual;
 

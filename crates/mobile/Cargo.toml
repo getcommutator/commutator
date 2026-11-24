@@ -33,3 +33,4 @@ commutator-syntax.workspace = true
 zatex = { workspace = true, features = ["bundled"] }
 thiserror.workspace = true
 commutator-term.workspace = true
+commutator-theme.workspace = true
