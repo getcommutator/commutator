@@ -25,7 +25,10 @@ pub fn parse_remote(remote_url: &str) -> Option<GitLabProject> {
     let remote_url = remote_url.trim();
     let (authority, path) = match remote_url.split_once("://") {
         Some((scheme, rest)) => {
-            if !matches!(scheme.to_ascii_lowercase().as_str(), "ssh" | "http" | "https") {
+            if !matches!(
+                scheme.to_ascii_lowercase().as_str(),
+                "ssh" | "http" | "https"
+            ) {
                 return None;
             }
             rest.split_once('/')?
@@ -178,7 +181,11 @@ fn classify_failure(stderr: &[u8]) -> ChangeRequestError {
     }
 }
 
-fn item(project: &GitLabProject, filter: ChangeRequestFilter, mr: MergeRequest) -> ChangeRequestListItem {
+fn item(
+    project: &GitLabProject,
+    filter: ChangeRequestFilter,
+    mr: MergeRequest,
+) -> ChangeRequestListItem {
     ChangeRequestListItem {
         provider: "gitlab".into(),
         author: ChangeRequestActor {
@@ -220,7 +227,10 @@ mod tests {
             path: "acme/platform/app".into(),
         });
         assert_eq!(parse_remote("git@gitlab.com:acme/platform/app.git"), want);
-        assert_eq!(parse_remote("https://oauth2:t@gitlab.com/acme/platform/app/"), want);
+        assert_eq!(
+            parse_remote("https://oauth2:t@gitlab.com/acme/platform/app/"),
+            want
+        );
         assert_eq!(parse_remote("https://github.com/acme/app"), None);
         assert_eq!(parse_remote("https://gitlab.com/app"), None);
     }
@@ -236,7 +246,10 @@ mod tests {
         .unwrap();
         let project = parse_remote("git@gitlab.com:a/b.git").unwrap();
         let item = item(&project, ChangeRequestFilter::Authored, mr);
-        assert_eq!((item.number, item.title.as_str(), item.author.login.as_str()), (7, "Fix it", "ann"));
+        assert_eq!(
+            (item.number, item.title.as_str(), item.author.login.as_str()),
+            (7, "Fix it", "ann")
+        );
         assert_eq!(item.repository, "a/b");
         assert_eq!(item.provider, "gitlab");
         assert_eq!(item.mergeability, ChangeRequestMergeability::Conflicting);

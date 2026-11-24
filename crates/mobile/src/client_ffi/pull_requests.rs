@@ -225,6 +225,10 @@ mod tests {
         let conflict = item(&conflict);
         assert_eq!(conflict.section, PullRequestSection::Attention);
         assert_eq!(conflict.tone, PullRequestTone::Conflict);
-        assert!(conflict.status.contains("Merge conflicts"), "{}", conflict.status);
+        assert!(
+            conflict.status.contains("Merge conflicts"),
+            "{}",
+            conflict.status
+        );
     }
 }

@@ -8,7 +8,7 @@ use commutator_proto::{ChangeRequestFilter, ChangeRequestListItem, ChangeRequest
 use commutator_rpc::methods;
 
 use crate::Client;
-use crate::error::{ClientError, Result};
+use crate::error::ClientError;
 
 /// A repository whose pull requests couldn't be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +50,10 @@ impl Client {
             .filter(|p| p.device_online && p.git_detected)
             .map(|p| match &p.github_repo {
                 Some(repo) => (Target::Repository(repo.clone()), p.device_id.clone()),
-                None => (Target::Checkout(p.path.clone(), p.group_key.clone()), p.device_id.clone()),
+                None => (
+                    Target::Checkout(p.path.clone(), p.group_key.clone()),
+                    p.device_id.clone(),
+                ),
             })
             .filter(|(target, _)| seen.insert(target.key()))
             .collect();
@@ -91,7 +94,8 @@ impl Client {
             };
             // A checkout on neither GitHub nor GitLab (or an engine that
             // predates `cwd`): nothing to list, not a failure.
-            let silent = error.contains("pull_requests.unsupported") || error.contains("repository must be");
+            let silent =
+                error.contains("pull_requests.unsupported") || error.contains("repository must be");
             if matches!(target, Target::Checkout(..)) && silent {
                 continue;
             }
