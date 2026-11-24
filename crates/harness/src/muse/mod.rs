@@ -159,7 +159,6 @@ impl MuseHarness {
             let mut runner = session::Runner::new(host, tx, request, read_only);
             // The lease lives through shutdown even if the consumer drops its stream.
             let RunControls {
-                realtime: _,
                 execution_lease: _lease,
                 request_input,
                 mut steering,

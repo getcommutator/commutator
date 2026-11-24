@@ -408,10 +408,10 @@ where
 }
 
 impl Chat {
-    /// A session the user sees in chat lists: neither another chat's worker
-    /// (`parent_chat_id`) nor a hidden voice orchestrator.
+    /// A session the user sees in chat lists: not another chat's worker
+    /// (`parent_chat_id`).
     pub fn is_top_level(&self) -> bool {
-        self.parent_chat_id.is_none() && !crate::voice::is_orchestrator_chat(&self.id)
+        self.parent_chat_id.is_none()
     }
 
     /// True when this chat syncs over the chat2 dumb relay.
@@ -1630,9 +1630,6 @@ pub struct UserProfile {
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum AuthState {
     SignedOut,
-    NeedsOrganization {
-        user: UserProfile,
-    },
     #[serde(rename_all = "camelCase")]
     SignedIn {
         user: UserProfile,

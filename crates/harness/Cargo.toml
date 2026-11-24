@@ -22,7 +22,6 @@ path = "tests/fixtures/pi_rpc.rs"
 required-features = ["native-fixture"]
 
 [dependencies]
-vardoger-voice-media.workspace = true
 vardoger-proto.workspace = true
 base64 = "0.22"
 reqwest.workspace = true

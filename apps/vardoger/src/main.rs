@@ -3,9 +3,9 @@
 //! local-only without credentials. `vardoger login` and `vardoger logout` select
 //! the profile used by the next engine start without mutating a live runtime.
 //!
-//! The command line is `vardoger_cli`'s (shared with the engine helper and the
-//! zgx interface). The desktop app is the zgx interface (apps/zgx), which
-//! ships its own `vardoger`: this one opens no window.
+//! The command line is `vardoger_cli`'s (shared with the engine helper). With
+//! no subcommand it opens the desktop window (`vardoger_ui`, Zeron 0.2's GPUI
+//! interface), which connects to a running engine or embeds one.
 
 use vardoger_cli::{Engines, Launch};
 
@@ -19,9 +19,20 @@ fn main() -> anyhow::Result<()> {
         Launch::Done(result) => result,
         Launch::Engine(command) => vardoger_app::run_engine_command(command),
         #[cfg(target_os = "linux")]
-        Launch::Appshot => anyhow::bail!("Appshots are the desktop app's: open Vardoger and use its shortcut"),
-        Launch::Window { .. } => anyhow::bail!(
-            "this `vardoger` has no window: open the Vardoger app, or run `vardoger headless` for the engine alone"
-        ),
+        Launch::Appshot => vardoger_ui::appshots::request_running_appshot(
+            &vardoger_app::engine_config_from_env().data_dir,
+        )
+        .map_err(anyhow::Error::msg),
+        Launch::Window { open_url, safe_mode: _ } => {
+            let engine = vardoger_app::engine_config_from_env();
+            vardoger_ui::run_app(vardoger_ui::UiConfig {
+                data_dir: engine.data_dir,
+                ipc_port: engine.ipc_port,
+                edge_url: engine.edge_url,
+                default_harness: engine.default_harness,
+                initial_url: open_url,
+            });
+            Ok(())
+        }
     }
 }

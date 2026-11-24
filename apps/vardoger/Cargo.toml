@@ -26,6 +26,7 @@ vardoger-cli.workspace = true
 vardoger-mcp.workspace = true
 vardoger-notify.workspace = true
 vardoger-sync.workspace = true
+vardoger-ui.workspace = true
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true

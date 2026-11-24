@@ -61,7 +61,6 @@ async fn main() -> anyhow::Result<()> {
         extra_mcp: Vec::new(),
     };
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         steering,
         interrupt: interrupt.clone(),

@@ -37,7 +37,6 @@ async fn silent_agent_errors_via_the_prompt_stall_watchdog() {
     let (_steer_tx, steer_rx) = mpsc::channel(8);
     let token = CancellationToken::new();
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |_| {
             let (tx, rx) = oneshot::channel();
@@ -140,7 +139,6 @@ for raw in sys.stdin:
     let (_steer_tx, steer_rx) = mpsc::channel(8);
     let token = CancellationToken::new();
     let agy_controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |_| {
             let (tx, rx) = oneshot::channel();
@@ -263,7 +261,6 @@ for raw in sys.stdin:
     drop(steer_tx);
     let token = CancellationToken::new();
     let timer_controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |_| {
             let (tx, rx) = oneshot::channel();
@@ -396,7 +393,6 @@ for raw in sys.stdin:
     drop(steer_tx);
     let token = CancellationToken::new();
     let ccpa_controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |_| {
             let (tx, rx) = oneshot::channel();

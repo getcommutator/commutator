@@ -15,7 +15,6 @@ members = [
     "crates/mobile",
     "crates/mobile-bindgen",
     "crates/notify",
-    "crates/orb",
     "crates/preview",
     "crates/preview-label",
     "crates/proto",
@@ -24,13 +23,14 @@ members = [
     "crates/syntax",
     "crates/term",
     "crates/term-link",
+    "crates/theme",
+    "crates/ui",
     "crates/text",
     "crates/update",
+    "crates/veil",
     "crates/visual",
     "crates/visual-gpu",
     "crates/zatex",
-    "crates/voice-media",
-    "crates/voice-session",
 ]
 
 [workspace.package]
@@ -40,10 +40,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-vardoger-voice-session = { path = "crates/voice-session" }
-vardoger-orb = { path = "crates/orb" }
 vardoger-term-link = { path = "crates/term-link" }
-vardoger-voice-media = { path = "crates/voice-media" }
 vardoger-proto = { path = "crates/proto" }
 vardoger-preview = { path = "crates/preview" }
 vardoger-preview-label = { path = "crates/preview-label" }
@@ -64,8 +61,23 @@ vardoger-syntax = { path = "crates/syntax" }
 vardoger-text = { path = "crates/text" }
 vardoger-account = { path = "crates/account" }
 vardoger-term = { path = "crates/term" }
+vardoger-theme = { path = "crates/theme" }
+vardoger-veil = { path = "crates/veil" }
+vardoger-ui = { path = "crates/ui" }
 vardoger-visual-gpu = { path = "crates/visual-gpu" }
 zatex = { path = "crates/zatex" }
+
+# gpui: zeronsh/zui, patched below to the freethinkel/zui fork (the same rev
+# Shepherd uses, so both apps run one gpui).
+gpui = { git = "https://github.com/zeronsh/zui", rev = "18a89af04cfe079d55275b111ac349d5640d9cda" }
+gpui_platform = { git = "https://github.com/zeronsh/zui", rev = "18a89af04cfe079d55275b111ac349d5640d9cda", features = [
+    "wayland",
+    "x11",
+    "font-kit",
+    "runtime_shaders",
+] }
+gpui_tokio = { git = "https://github.com/zeronsh/zui", rev = "18a89af04cfe079d55275b111ac349d5640d9cda" }
+gpui-base = { git = "https://github.com/zeronsh/gpui-component", rev = "103f13da91ff2c7c52941bdc2b1910f29716dc19" }
 
 # CRDT
 loro = "1.17"
@@ -185,3 +197,26 @@ inherits = "release"
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
+
+# freethinkel/zui: every zui crate is patched, so gpui-base and the UI share one gpui.
+[patch."https://github.com/zeronsh/zui"]
+collections = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+derive_refineable = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_linux = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_macos = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_macros = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_platform = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_shared_string = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_tokio = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_util = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_web = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_wgpu = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+gpui_windows = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+http_client = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+media = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+perf = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+refineable = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+scheduler = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+sum_tree = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+util_macros = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }

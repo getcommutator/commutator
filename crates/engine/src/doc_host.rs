@@ -87,8 +87,6 @@ const ACTIVE_SYNC_CAP: usize = 28;
 /// The least time between two sync dispatcher passes, and the retry delay
 /// while a pass leaves work in flight.
 const SYNC_PASS_SPACING: std::time::Duration = std::time::Duration::from_millis(100);
-/// A quiesce for a Cloud sleep the stop never followed lifts after this.
-const QUIESCE_LEASE: std::time::Duration = std::time::Duration::from_secs(180);
 
 // All live-transport scenarios share the process budget, including tests in
 // sibling modules. Hold through shutdown so one fixture cannot rotate another.
@@ -152,12 +150,10 @@ struct DocHostInner {
     /// doc-host reference each other through Arcs, so a retired runtime's
     /// graph only drops once this back-edge is severed.
     sessions: Mutex<Option<SessionsEngine>>,
-    /// Quiesced for a Cloud sleep ([`DocHost::quiesce_for_sleep`]): drains
-    /// leave new work pending in the room, for the machine once it wakes.
+    /// Work is held ([`DocHost::hold_work`], while an update is tried out):
+    /// drains leave new work pending until [`DocHost::lift_quiesce`].
     quiesced: AtomicBool,
     boot_recovery_finished: AtomicBool,
-    /// Bumped per quiesce: only the newest one's lease lifts it.
-    quiesce_generation: AtomicU64,
     /// Drains between their quiesce check and the end of their dispatch (a
     /// run they start is registered — and Working — by then).
     dispatching: Arc<AtomicUsize>,
@@ -467,8 +463,6 @@ pub struct ChatDocHandle {
     /// explicit prompt or queue send resumes it; incidental doc/status changes
     /// must not turn Cancel into "send the next row".
     queue_paused: AtomicBool,
-    /// The queue is paused because it was restored from disk, not by a person.
-    queue_frozen_by_recovery: AtomicBool,
     /// True when the doc changed while nobody watched: the mirror rebuild is
     /// deferred to the next `watch_messages` attach instead of paid per commit.
     mirror_dirty: AtomicBool,
@@ -631,20 +625,6 @@ impl ChatDocHandle {
 
     pub fn chat_id(&self) -> &str {
         &self.chat_id
-    }
-
-    pub(crate) fn commit_voice(
-        &self,
-        transcript: &vardoger_proto::voice::VoiceTranscript,
-    ) -> Result<Option<String>, EngineError> {
-        let _owner = lock(&self.transcript_import);
-        vardoger_doc::voice::commit_voice_transcript(
-            &self.doc,
-            transcript,
-            &self.device_id,
-            chrono::Utc::now().timestamp_millis(),
-        )
-        .map_err(EngineError::from)
     }
 
     pub fn doc(&self) -> &SessionDoc {
@@ -1029,7 +1009,6 @@ impl DocHost {
                 sessions: Mutex::new(None),
                 quiesced: AtomicBool::new(false),
                 boot_recovery_finished: AtomicBool::new(false),
-                quiesce_generation: AtomicU64::new(0),
                 dispatching: Arc::new(AtomicUsize::new(0)),
                 workspace: OnceLock::new(),
                 repos: OnceLock::new(),
@@ -1112,57 +1091,6 @@ impl DocHost {
         (!self.inner.quiesced.load(Ordering::SeqCst)).then_some(guard)
     }
 
-    /// Before a Cloud sleep stops this engine: start nothing the stop would
-    /// cut off. Commands arriving from here on stay pending in their chat's
-    /// room and run on the woken machine (its boot reconcile finds them).
-    /// `Err(why)` when a turn is in flight or a command is already waiting:
-    /// the sleep is declined and work resumes at once. A quiesce the stop
-    /// never follows lifts itself after [`QUIESCE_LEASE`].
-    pub async fn quiesce_for_sleep(&self) -> Result<(), String> {
-        let generation = self.inner.quiesce_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.inner.quiesced.store(true, Ordering::SeqCst);
-        // Drains already past their check finish dispatching first.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-        while self.inner.dispatching.load(Ordering::SeqCst) > 0 {
-            if tokio::time::Instant::now() >= deadline {
-                self.lift_quiesce();
-                return Err("work is still being dispatched".into());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        let running = self
-            .sessions()
-            .map_or(0, |sessions| sessions.active_count());
-        // Sleeping stops the engine, and a parked chat's subagents with it.
-        let background = self
-            .sessions()
-            .map_or(0, |sessions| sessions.background_count());
-        let busy = if running > 0 {
-            Some(format!("{running} chat(s) have a turn in flight"))
-        } else if background > 0 {
-            Some(format!("{background} chat(s) have background work running"))
-        } else if self.has_waiting_commands() {
-            Some("a message is waiting to run".to_string())
-        } else {
-            None
-        };
-        if let Some(why) = busy {
-            self.lift_quiesce();
-            return Err(why);
-        }
-        let host = self.clone();
-        self.spawn_worker(async move {
-            tokio::time::sleep(QUIESCE_LEASE).await;
-            if host.inner.quiesce_generation.load(Ordering::SeqCst) == generation {
-                tracing::warn!(
-                    "quiesced for a sleep that never stopped this engine; resuming work"
-                );
-                host.lift_quiesce();
-            }
-        });
-        Ok(())
-    }
-
     /// Start no new work until [`Self::lift_quiesce`]: a new version trying out
     /// an update, whose changes may yet be undone. Controls keep working, as
     /// they do in a quiesce, and what queues meanwhile runs when it's lifted.
@@ -1185,20 +1113,6 @@ impl DocHost {
                 host.drain_queue(&handle).await;
             });
         }
-    }
-
-    /// A hosted chat has a command no drain has executed yet.
-    pub(crate) fn has_waiting_commands(&self) -> bool {
-        let handles: Vec<_> = lock(&self.inner.handles).values().cloned().collect();
-        let is_processed = |id: &str| self.inner.store.is_processed(id).unwrap_or(false);
-        handles.iter().any(|handle| {
-            self.is_host(&handle.chat_id)
-                && handle.doc.read_commands().is_ok_and(|commands| {
-                    commands
-                        .iter()
-                        .any(|c| c.status == SessionCommandStatus::Pending && !is_processed(&c.id))
-                })
-        })
     }
 
     /// Wire the sessions engine (engine assembly; see `SessionsEngine::set_doc_host`).
@@ -1328,24 +1242,6 @@ impl DocHost {
     pub fn boot_recovery_finished(&self) {
         self.inner.boot_recovery_finished.store(true, Ordering::Release);
         self.kick_drains();
-    }
-
-    /// A Cloud machine restarts on every wake, which nobody there asked for or
-    /// sees, so a message queued before a sleep or a kill was meant to go, and
-    /// frozen it would wait for a prompt that may never come. Not ahead of a turn
-    /// the kill cut off, though: boot recovery brings that back first, and a row
-    /// sent now would read to it as the chat having moved on.
-    fn thaw_recovered_queue(&self, handle: &ChatDocHandle, sessions: &SessionsEngine) {
-        if !handle.queue_frozen_by_recovery.load(Ordering::Acquire)
-            || !vardoger_proto::is_cloud_device(&self.inner.config.device_id, "")
-            || !self.inner.boot_recovery_finished.load(Ordering::Acquire)
-            || sessions.revival_pending(&handle.chat_id)
-        {
-            return;
-        }
-        if handle.queue_frozen_by_recovery.swap(false, Ordering::AcqRel) {
-            handle.queue_paused.store(false, Ordering::Release);
-        }
     }
 
     /// Re-evaluate every open chat's commands and queue NOW. Called after an
@@ -1705,7 +1601,6 @@ impl DocHost {
         // user submitted to this live engine. Keep that recovered work frozen
         // until an explicit prompt / Send now / Steer action thaws it. Rows
         // appended after the handle exists retain the normal automatic drain.
-        // A Cloud machine thaws it itself (`thaw_recovered_queue`).
         let recovered_queue_pending = !initial_queue.is_empty();
         let (queue_tx, _) = watch::channel(initial_queue);
 
@@ -1731,7 +1626,6 @@ impl DocHost {
             held_sends: Mutex::new(HashMap::new()),
             stopped_by: Mutex::new(None),
             queue_paused: AtomicBool::new(recovered_queue_pending),
-            queue_frozen_by_recovery: AtomicBool::new(recovered_queue_pending),
             mirror_dirty: AtomicBool::new(true),
             last_access: AtomicI64::new(now_ms()),
             last_focus: AtomicU64::new(0),
@@ -2278,7 +2172,7 @@ impl DocHost {
             issued_by: self.inner.config.device_id.clone(),
             issued_at: now,
             based_on,
-            expires_at: Some(now + self.command_ttl(chat_id)),
+            expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
             status: SessionCommandStatus::Pending,
             resolution: None,
         };
@@ -2942,7 +2836,7 @@ impl DocHost {
     /// One at a time by design: each send changes the status this reads.
     pub async fn drain_queue(&self, handle: &Arc<ChatDocHandle>) {
         let Some(_dispatch) = self.dispatch_guard() else {
-            return; // quiesced for a Cloud sleep; lifting it re-drains
+            return; // work is held; lifting it re-drains
         };
         let Some(sessions) = self.sessions() else {
             return; // executor not wired yet; the set_sessions kick re-drains
@@ -2954,7 +2848,6 @@ impl DocHost {
         // lock next re-reads the queue and the status, so a drain that became
         // unnecessary while it waited simply finds nothing to do.
         let _drain = handle.drain_lock.lock().await;
-        self.thaw_recovered_queue(handle, &sessions);
         if handle.queue_paused.load(Ordering::Acquire) {
             return;
         }
@@ -3118,7 +3011,6 @@ impl DocHost {
         {
             return Ok(false);
         }
-        handle.queue_frozen_by_recovery.store(false, Ordering::Release);
         handle.queue_paused.store(true, Ordering::Release);
         self.cancel_held_sends(handle);
         match sessions.interrupt(&handle.chat_id).await {
@@ -3620,7 +3512,7 @@ impl DocHost {
                     turn_id: Some(m.id.clone()),
                     frontier: None,
                 }),
-                expires_at: Some(now + self.command_ttl(chat_id)),
+                expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
                 status: SessionCommandStatus::Pending,
                 resolution: None,
             };
@@ -3876,7 +3768,7 @@ impl DocHost {
         } else {
             match self.dispatch_guard() {
                 Some(guard) => Some(guard),
-                None => return, // quiesced for a Cloud sleep; lifting it re-drains
+                None => return, // work is held; lifting it re-drains
             }
         };
         let Some(sessions) = self.sessions() else {

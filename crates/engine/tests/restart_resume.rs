@@ -591,7 +591,7 @@ async fn persistent_session_serves_multiple_turns_on_one_child() {
     core.shutdown().await;
 }
 
-/// A Cloud device's credential broker whose answer the test changes.
+/// An account environment whose credential the test changes.
 struct SwitchableCredential(Arc<Mutex<String>>);
 
 #[async_trait]
@@ -609,7 +609,7 @@ impl vardoger_engine::registry::RunEnvironment for SwitchableCredential {
     }
 }
 
-/// Switching the Cloud account between turns replaces the parked child, so
+/// Switching the account between turns replaces the parked child, so
 /// the next turn runs with the new login; an unchanged one keeps it warm.
 #[tokio::test]
 async fn a_switched_credential_replaces_the_parked_session() {
@@ -626,9 +626,11 @@ async fn a_switched_credential_replaces_the_parked_session() {
         side_chats_only: Default::default(),
         code_mode: Default::default(),
     }));
-    registry.set_run_environment(Arc::new(SwitchableCredential(credential.clone())));
     let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
+    // In place of the accounts the engine keeps (installed at assembly).
+    core.registry
+        .set_account_environment(Arc::new(SwitchableCredential(credential.clone())));
     pre_title(&core);
 
     queue_run(&core, "first", "/tmp", "msg-user-1");
@@ -698,9 +700,10 @@ async fn a_credential_decided_while_preparing_keeps_the_parked_session() {
         side_chats_only: Default::default(),
         code_mode: Default::default(),
     }));
-    registry.set_run_environment(Arc::new(DecidedWhilePreparing(Arc::new(Mutex::new(None)))));
     let core = EngineCore::assemble(&dir, Arc::new(registry), HarnessId::Mock)
         .expect("engine core assembles");
+    core.registry
+        .set_account_environment(Arc::new(DecidedWhilePreparing(Arc::new(Mutex::new(None)))));
     pre_title(&core);
 
     queue_run(&core, "first", "/tmp", "msg-user-1");

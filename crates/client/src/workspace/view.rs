@@ -72,8 +72,6 @@ pub struct SessionRow {
     pub device_id: String,
     pub device_name: Option<String>,
     pub device_online: bool,
-    /// Runs on its own Cloud machine (which a send wakes).
-    pub is_cloud: bool,
     pub harness: Option<String>,
     pub harness_label: Option<String>,
     pub model: Option<String>,
@@ -141,10 +139,7 @@ pub struct ProjectView {
     pub device_id: String,
     pub device_name: Option<String>,
     pub device_online: bool,
-    /// Lives on Cloud alone: a GitHub repository each session clones.
-    pub is_cloud: bool,
-    /// The GitHub repository (`owner/name`) behind it, when known: Cloud
-    /// can run its sessions when it reaches it.
+    /// The GitHub repository (`owner/name`) behind it, when known.
     pub github_repo: Option<String>,
     pub git_detected: bool,
     pub created_at_ms: i64,
@@ -221,9 +216,6 @@ pub struct WorkspaceSnapshot {
     pub pull_requests: PullRequestGroups,
     pub archived: Vec<Arc<SessionRow>>,
     pub devices: Vec<DeviceView>,
-    /// Cloud's per-session machines: never listed, but a chat hosted on one
-    /// still needs its version and capabilities.
-    cloud_machines: Vec<DeviceView>,
     /// Every chat row (archived and children included), by id.
     pub sessions: HashMap<String, Arc<SessionRow>>,
     children: HashMap<String, Vec<Arc<SessionRow>>>,
@@ -239,12 +231,9 @@ impl WorkspaceSnapshot {
         self.projects.iter().find(|p| p.id == space_id)
     }
 
-    /// Any device by id, a Cloud session machine included.
+    /// Any device by id.
     pub fn device(&self, device_id: &str) -> Option<&DeviceView> {
-        self.devices
-            .iter()
-            .chain(&self.cloud_machines)
-            .find(|d| d.id == device_id)
+        self.devices.iter().find(|d| d.id == device_id)
     }
 
     /// Execution hosts (new-session / new-project pickers).
@@ -357,14 +346,6 @@ pub(crate) fn device_display_name(device: &Device) -> Option<String> {
     (!name.is_empty() && name != "unknown-device").then(|| name.to_owned())
 }
 
-const CLOUD_NAME: &str = "Cloud";
-
-/// A Cloud device: the logical one Cloud projects belong to, or a session's
-/// own machine.
-pub(crate) fn is_cloud_device(device_id: &str) -> bool {
-    device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX)
-}
-
 fn is_execution_host(device: &Device) -> bool {
     !matches!(device.platform.as_str(), "ios" | "android" | "ipados")
 }
@@ -422,7 +403,6 @@ fn hash_row(row: &SessionRow) -> u64 {
     row.device_id.hash(&mut h);
     row.device_name.hash(&mut h);
     row.device_online.hash(&mut h);
-    row.is_cloud.hash(&mut h);
     row.harness.hash(&mut h);
     row.model.hash(&mut h);
     row.reasoning.hash(&mut h);
@@ -521,14 +501,8 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
             .filter(|p| !p.is_empty()),
         project,
         device_id: chat.device_id.clone(),
-        device_name: if is_cloud_device(&chat.device_id) {
-            Some(CLOUD_NAME.to_owned())
-        } else {
-            device.and_then(|d| device_display_name(d))
-        },
-        device_online: is_cloud_device(&chat.device_id)
-            || device_online(&chat.device_id, cx.presence, cx.self_device_id, now_ms),
-        is_cloud: is_cloud_device(&chat.device_id),
+        device_name: device.and_then(|d| device_display_name(d)),
+        device_online: device_online(&chat.device_id, cx.presence, cx.self_device_id, now_ms),
         harness_label: harness.as_deref().map(catalog::harness_label),
         model_label: match (harness.as_deref(), model.as_deref()) {
             (Some(h), Some(m)) => Some(catalog::model_label(h, m)),
@@ -682,16 +656,11 @@ pub(crate) fn derive(
                 path: space.path.clone(),
                 color_index: project_color_index(&representative.path),
                 device_id: space.device_id.clone(),
-                device_name: if is_cloud_device(&space.device_id) {
-                    Some(CLOUD_NAME.to_owned())
-                } else {
-                    rc.devices
-                        .get(space.device_id.as_str())
-                        .and_then(|d| device_display_name(d))
-                },
-                device_online: is_cloud_device(&space.device_id)
-                    || device_online(&space.device_id, cx.presence, cx.self_device_id, now_ms),
-                is_cloud: is_cloud_device(&space.device_id),
+                device_name: rc
+                    .devices
+                    .get(space.device_id.as_str())
+                    .and_then(|d| device_display_name(d)),
+                device_online: device_online(&space.device_id, cx.presence, cx.self_device_id, now_ms),
                 github_repo: space.github_repo.clone(),
                 git_detected: space.git_detected,
                 created_at_ms: space.created_at.timestamp_millis(),
@@ -741,7 +710,7 @@ pub(crate) fn derive(
         }
     }
 
-    let (cloud_machines, mut devices): (Vec<DeviceView>, Vec<DeviceView>) = state
+    let mut devices: Vec<DeviceView> = state
         .devices
         .iter()
         .map(|device| DeviceView {
@@ -760,14 +729,7 @@ pub(crate) fn derive(
             is_self: device.id == cx.self_device_id,
             session_count: active.iter().filter(|c| c.device_id == device.id).count() as u32,
         })
-        // Cloud's per-session machines aren't devices to pick or list; Cloud
-        // is offered on its own.
-        .partition(|device| {
-            device
-                .capabilities
-                .iter()
-                .any(|c| c == vardoger_proto::CLOUD_SESSION_CAPABILITY)
-        });
+        .collect();
     devices.sort_by(|a, b| {
         b.is_execution_host
             .cmp(&a.is_execution_host)
@@ -790,7 +752,6 @@ pub(crate) fn derive(
         pull_requests,
         archived,
         devices,
-        cloud_machines,
         sessions: rows,
         children,
         content_hash: 0,
@@ -826,14 +787,13 @@ fn snapshot_hash(s: &WorkspaceSnapshot) -> u64 {
         project.group_name.hash(&mut h);
         project.device_name.hash(&mut h);
         project.device_online.hash(&mut h);
-        project.is_cloud.hash(&mut h);
         project.github_repo.hash(&mut h);
         project.git_detected.hash(&mut h);
         ids(&mut h, &project.sessions);
     }
     ids(&mut h, &s.projectless);
     ids(&mut h, &s.archived);
-    for device in s.devices.iter().chain(&s.cloud_machines) {
+    for device in &s.devices {
         device.hash(&mut h);
     }
     let mut all: Vec<(&String, u64)> = s.sessions.iter().map(|(k, v)| (k, v.revision)).collect();
@@ -869,53 +829,4 @@ mod tests {
         assert_eq!(relative_time_label(now - 2 * 86_400_000, now), "2d");
     }
 
-    #[test]
-    fn cloud_projects_and_sessions_read_as_cloud_and_its_machines_arent_devices() {
-        let state: WorkspaceState = serde_json::from_value(serde_json::json!({
-            "devices": [
-                {"id": "mac", "name": "Studio", "platform": "macos", "lastSeenAt": null},
-                {"id": "cloud-s1", "name": "Cloud session", "platform": "linux",
-                 "lastSeenAt": null, "capabilities": ["cloud-session"]}
-            ],
-            "spaces": [
-                {"id": "web", "deviceId": "cloud-acct", "path": "/home/user/web",
-                 "githubRepo": "acme/web", "gitDetected": true,
-                 "createdAt": "2026-10-19T12:00:00Z"}
-            ],
-            "chats": [
-                {"id": "c", "deviceId": "cloud-s1", "spaceId": "web", "archived": false,
-                 "createdAt": "2026-10-19T12:00:00Z"}
-            ],
-            "sessions": []
-        }))
-        .unwrap();
-        let presence = HashMap::new();
-        let snapshot = derive(
-            &state,
-            None,
-            &DeriveContext {
-                self_device_id: "phone",
-                now: Utc::now(),
-                presence: &presence,
-                change_requests: &[],
-                send_states: &HashMap::new(),
-                synced: true,
-                previous: None,
-            },
-        );
-        let project = &snapshot.projects[0];
-        assert!(project.is_cloud && project.device_online);
-        assert_eq!(project.device_name.as_deref(), Some("Cloud"));
-        let row = &project.sessions[0];
-        assert!(
-            row.is_cloud && row.device_online,
-            "a send wakes the machine"
-        );
-        assert_eq!(row.device_name.as_deref(), Some("Cloud"));
-        let devices: Vec<&str> = snapshot.devices.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(devices, ["mac"]);
-        // Unlisted, but its chats still read what it can do.
-        let machine = snapshot.device("cloud-s1").expect("a Cloud machine is still found by id");
-        assert_eq!(machine.capabilities, ["cloud-session"]);
-    }
 }

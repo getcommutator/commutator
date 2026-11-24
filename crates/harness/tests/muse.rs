@@ -81,7 +81,6 @@ fn controls(answers: Vec<UserInputAnswer>) -> (RunControls, Controls) {
     let turn = TurnControl::default();
     (
         RunControls {
-            realtime: None,
             execution_lease: None,
             steering,
             interrupt: interrupt.clone(),

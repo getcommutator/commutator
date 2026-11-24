@@ -196,11 +196,6 @@ impl LocalHost {
         }
     }
 
-    /// The engine's connection, for callers that hold it (voice).
-    pub(crate) async fn rpc_client(&self) -> Result<Arc<RpcClient>> {
-        self.rpc().await
-    }
-
     /// Any host call, straight to the engine.
     pub(crate) async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let rpc = self.rpc().await?;

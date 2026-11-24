@@ -66,7 +66,6 @@ pub mod capabilities {
         ZGX_INTERFACE_V1,
         UPDATE_ABILITY_V1,
         ATTACHMENT_STORE_V1,
-        crate::voice::remote::CAPABILITY,
     ];
 
     pub fn current() -> Vec<String> {
@@ -186,8 +185,7 @@ mod tests {
                     "background-tasks-v1",
                     "zgx-interface-v1",
                     "update-ability-v1",
-                    "attachment-store-v1",
-                    "voice-client-media-v1"
+                    "attachment-store-v1"
                 ],
             })
         );

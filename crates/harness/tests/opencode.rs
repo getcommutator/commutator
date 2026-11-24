@@ -291,7 +291,6 @@ fn controls() -> (RunControls, mpsc::Sender<SteerMessage>, CancellationToken) {
     let (steer_tx, steering) = mpsc::channel(8);
     let token = CancellationToken::new();
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |questions| {
             let (tx, rx) = oneshot::channel();

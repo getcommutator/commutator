@@ -66,7 +66,6 @@ pub(crate) mod catalog;
 mod elicitation;
 mod normalize;
 pub mod npm_repair;
-pub mod realtime;
 mod subagents;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -895,7 +894,7 @@ impl Harness for CodexHarness {
         request: RunRequest,
         controls: RunControls,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
-        self.run_with_mode(request, controls, false, false, None).await
+        self.run_with_mode(request, controls, false, None).await
     }
 
     /// An app-server waits for its client once `initialize` is answered:
@@ -971,7 +970,7 @@ impl Harness for CodexHarness {
             }
             None => None,
         };
-        self.run_with_mode(request, controls, false, false, server).await
+        self.run_with_mode(request, controls, false, server).await
     }
 
     /// Ends once the app-server has.
@@ -980,14 +979,6 @@ impl Harness for CodexHarness {
         if let Some(warm) = warm {
             retire(warm, self.kill_grace).await;
         }
-    }
-
-    async fn start_idle(
-        &self,
-        request: RunRequest,
-        controls: RunControls,
-    ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
-        self.run_with_mode(request, controls, false, true, None).await
     }
 
     async fn run_title(
@@ -1005,7 +996,7 @@ impl Harness for CodexHarness {
         request.auto_approve = false;
         request.access = AccessMode::Supervised;
         request.plan = false;
-        self.run_with_mode(request, controls, true, false, None).await
+        self.run_with_mode(request, controls, true, None).await
     }
 }
 
@@ -1041,7 +1032,6 @@ impl CodexHarness {
         mut request: RunRequest,
         controls: RunControls,
         title_only: bool,
-        idle: bool,
         warm: Option<AppServer>,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         let native = command_request(&request.prompt, "")?;
@@ -1077,7 +1067,6 @@ impl CodexHarness {
         let (event_tx, event_rx) = mpsc::channel::<Result<AgentEvent, HarnessError>>(256);
         tokio::spawn(run_session(Session {
             title_only,
-            idle,
             initialized,
             executable: exe,
             child,
@@ -1321,7 +1310,6 @@ async fn resume_thread(client: &RpcClient, params: Value) -> Result<Value, Harne
 struct Session {
     executable: PathBuf,
     title_only: bool,
-    idle: bool,
     /// Its app-server answered `initialize` already (a warm start).
     initialized: bool,
     child: Child,
@@ -1531,7 +1519,6 @@ async fn run_session(session: Session) {
     let Session {
         executable,
         title_only,
-        idle,
         initialized,
         mut child,
         mut client,
@@ -1544,7 +1531,6 @@ async fn run_session(session: Session) {
         mut stderr_tail,
     } = session;
     let RunControls {
-        realtime,
         execution_lease: _execution_lease,
         request_input,
         mut steering,
@@ -1753,16 +1739,6 @@ async fn run_session(session: Session) {
 
     // ---- thread + first turn (interruptible) ------------------------------
     let setup = async {
-        if realtime.is_some() {
-            // Codex's first account/read announces the initial auth snapshot
-            // via account/updated. Load it before attaching the voice router,
-            // which must keep aborting media on subsequent identity updates.
-            // A failed warmup must not block text; voice probes still verify auth.
-            let _ = client
-                .request("account/read", json!({"refreshToken": false}))
-                .await;
-        }
-
         let mut start_params = start_params.clone();
         if title_only {
             // Disable each configured MCP server explicitly: an empty table
@@ -1820,18 +1796,14 @@ async fn run_session(session: Session) {
         let thread_id = thread["thread"]["id"].as_str().unwrap_or("").to_owned();
         let mut children = subagents::Subagents::new(thread_id.clone());
         children.restore(&thread["thread"]);
-        let voice_context = realtime::ThreadContext {
-            cwd: thread["cwd"].as_str().unwrap_or(&request.cwd).to_owned(),
-            model_provider: thread["modelProvider"].as_str().map(str::to_owned),
-        };
         let thread_mode = ThreadMode {
             model: thread["model"].as_str().unwrap_or_default().to_owned(),
             effort: thread["reasoningEffort"].as_str().map(str::to_owned),
             plan: thread.pointer("/collaborationMode/mode") == Some(&json!("plan")),
         };
-        Ok::<_, HarnessError>((thread_id, children, voice_context, restore_notice, thread_mode))
+        Ok::<_, HarnessError>((thread_id, children, restore_notice, thread_mode))
     };
-    let (thread_id, mut children, voice_context, restore_notice, thread_mode) = tokio::select! {
+    let (thread_id, mut children, restore_notice, thread_mode) = tokio::select! {
         res = setup => match res {
             Ok(thread_id) => thread_id,
             Err(e) => {
@@ -1943,32 +1915,21 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
-    let _voice_bridge = realtime.map(|controls| {
-        realtime::attach(
-            client.clone(),
-            thread_id.clone(),
-            executable,
-            voice_context,
-            controls,
-        )
-    });
-    if !idle {
-        match start_turn(&client, turn_params(&live, &request.prompt)).await {
-            Ok(id) => router.adopt_started(id),
-            Err(e) => {
-                let error = setup_failure(e, &client, &mut child, &stderr_tail).await;
-                let _ = event_tx
-                    .send(Ok(AgentEvent::Done {
-                        status: DoneStatus::Errored,
-                        result: None,
-                        error: Some(error),
-                        session_id: Some(thread_id.clone()),
-                    }))
-                    .await;
-                client.close_stdin_for_teardown();
-                shutdown_child(&mut child, kill_grace).await;
-                return;
-            }
+    match start_turn(&client, turn_params(&live, &request.prompt)).await {
+        Ok(id) => router.adopt_started(id),
+        Err(e) => {
+            let error = setup_failure(e, &client, &mut child, &stderr_tail).await;
+            let _ = event_tx
+                .send(Ok(AgentEvent::Done {
+                    status: DoneStatus::Errored,
+                    result: None,
+                    error: Some(error),
+                    session_id: Some(thread_id.clone()),
+                }))
+                .await;
+            client.close_stdin_for_teardown();
+            shutdown_child(&mut child, kill_grace).await;
+            return;
         }
     }
 
@@ -2026,7 +1987,7 @@ async fn run_session(session: Session) {
     // as Interrupted and the app-server stays up for the next turn.
     let mut stopping = false;
     // A Done has been emitted for the turn currently/last in flight.
-    let mut done_current = idle;
+    let mut done_current = false;
     let mut current_native = command_request(&request.prompt, &thread_id)
         .ok()
         .flatten()

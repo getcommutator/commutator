@@ -41,16 +41,6 @@ enum AttachmentRoute {
 }
 
 impl DocHost {
-    /// How long a command to this chat may wait before it expires: a week for a
-    /// Cloud machine, which may be asleep or waiting on its person for days, a
-    /// day elsewhere.
-    pub(super) fn command_ttl(&self, chat_id: &str) -> i64 {
-        let cloud = self
-            .workspace()
-            .and_then(|ws| ws.chat(chat_id).ok().flatten())
-            .is_some_and(|chat| vardoger_proto::is_cloud_device(&chat.device_id, ""));
-        vardoger_doc::command_ttl_ms(cloud)
-    }
 
     /// A chat's messages not yet taken by its agent: unresolved runs and steers
     /// in its doc, then what this device still holds for it.
@@ -533,7 +523,7 @@ impl DocHost {
                         // The clock of a message starts when it goes out.
                         issued_at: now,
                         based_on,
-                        expires_at: Some(now + self.command_ttl(&send.chat_id)),
+                        expires_at: Some(now + vardoger_doc::COMMAND_DEFAULT_TTL_MS),
                         status: SessionCommandStatus::Pending,
                         resolution: None,
                     };

@@ -61,8 +61,6 @@
 
 mod agent_gate;
 mod device_stats;
-mod voice_chat;
-mod voice_remote;
 use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
@@ -801,11 +799,6 @@ enum MutateParams {
         name: Option<String>,
         #[serde(default)]
         git_detected: bool,
-        /// A Cloud project (`deviceId` the logical Cloud device): the GitHub
-        /// repository (`owner/name`) its sessions clone. Ignored elsewhere —
-        /// a device stamps its own folders.
-        #[serde(default)]
-        github_repo: Option<String>,
     },
     /// LWW display-name set; `name: None` clears back to basename(path).
     #[serde(rename_all = "camelCase")]
@@ -896,7 +889,6 @@ enum MutateParams {
 
 #[derive(Clone)]
 pub struct EngineRpc {
-    voice: crate::voice::VoiceManager,
     sessions: SessionsEngine,
     doc_host: DocHost,
     workspace: WorkspaceHost,
@@ -919,7 +911,6 @@ pub struct EngineRpc {
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<vardoger_update::Updater>,
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
-    local_import: Option<crate::local_import::LocalImporter>,
     /// Viewports' window focus, for desktop banners.
     viewport_focus: crate::desktop_notify::ViewportFocus,
     engine_info: EngineInfo,
@@ -959,7 +950,6 @@ impl EngineRpc {
         };
         let github = GitHubCli::new().with_store(repos.data_dir());
         Self {
-            voice: sessions.voice_manager(),
             sessions,
             doc_host,
             workspace,
@@ -981,7 +971,6 @@ impl EngineRpc {
             links: None,
             updater: None,
             harness_updates: None,
-            local_import: None,
             viewport_focus: Default::default(),
             engine_info,
         }
@@ -1086,12 +1075,6 @@ impl EngineRpc {
         self
     }
 
-    /// Attach the local→synced profile importer (synced runtimes only).
-    pub fn with_local_import(mut self, importer: crate::local_import::LocalImporter) -> Self {
-        self.local_import = Some(importer);
-        self
-    }
-
     #[cfg(test)]
     pub(crate) fn with_github(mut self, github: GitHubCli) -> Self {
         self.github = github;
@@ -1137,12 +1120,6 @@ impl EngineRpc {
         self.harness_updates
             .as_ref()
             .ok_or_else(|| RpcError::Failed("agent updates unavailable".into()))
-    }
-
-    fn local_importer(&self) -> Result<&crate::local_import::LocalImporter, RpcError> {
-        self.local_import
-            .as_ref()
-            .ok_or_else(|| RpcError::Failed("local import requires a synced workspace".into()))
     }
 
     fn local_project_action_space(&self, space_id: &str) -> Result<Space, RpcError> {
@@ -1804,42 +1781,6 @@ impl EngineRpc {
         }
     }
 
-    async fn prepare_voice_bridge(
-        &self,
-        chat: &str,
-    ) -> Result<
-        (
-            vardoger_harness::codex::realtime::RealtimeHandle,
-            tokio::sync::broadcast::Receiver<vardoger_proto::voice::VoiceEvent>,
-            std::sync::Arc<crate::sessions::VoiceActivity>,
-        ),
-        vardoger_proto::voice::VoiceRejection,
-    > {
-        use vardoger_proto::voice::VoiceRejection;
-        // Without Codex here a retry can never connect: ask for an install.
-        if !self
-            .registry
-            .resolve(HarnessId::Codex)
-            .is_ok_and(|codex| codex.installed())
-        {
-            return Err(VoiceRejection::NativeRuntimeUnavailable);
-        }
-        let mut request = self
-            .doc_host
-            .request_from_chat_row(chat, "")
-            .ok_or(VoiceRejection::Unsupported)?;
-        if request.cwd.is_empty() {
-            request.cwd = "~".into();
-        }
-        self.sessions
-            .start_idle(chat, request)
-            .await
-            .map_err(|_| VoiceRejection::Unsupported)?;
-        self.sessions
-            .take_voice_bridge(chat)
-            .ok_or(VoiceRejection::Unsupported)
-    }
-
     fn mutate(&self, params: MutateParams) -> Result<(), RpcError> {
         let failed = |e: crate::EngineError| RpcError::Failed(e.to_string());
         match params {
@@ -1854,10 +1795,6 @@ impl EngineRpc {
                 child_kind,
             } => {
                 tracing::debug!(target: "first_word", chat = %chat_id, "create chat");
-                // A voice orchestrator is hidden, so the chats it creates are
-                // the user's top-level sessions rather than its side chats.
-                let parent_chat_id = parent_chat_id
-                    .filter(|parent| !vardoger_proto::voice::is_orchestrator_chat(parent));
                 self.workspace
                     .create_chat_hosted(
                         &chat_id,
@@ -1883,17 +1820,10 @@ impl EngineRpc {
                 path,
                 name,
                 git_detected,
-                github_repo,
-            } => match github_repo {
-                Some(repo) if device_id.starts_with(vardoger_proto::CLOUD_DEVICE_PREFIX) => self
-                    .workspace
-                    .create_cloud_space(&space_id, &device_id, &path, name, &repo)
-                    .map_err(failed),
-                _ => self
-                    .workspace
-                    .create_space(&space_id, &device_id, &path, name, git_detected)
-                    .map_err(failed),
-            },
+            } => self
+                .workspace
+                .create_space(&space_id, &device_id, &path, name, git_detected)
+                .map_err(failed),
             MutateParams::RenameSpace { space_id, name } => self
                 .workspace
                 .rename_space(&space_id, name.as_deref())
@@ -1939,7 +1869,6 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::SetChatCwd { chat_id, cwd } => {
-                self.voice.retire_chat(&chat_id);
                 self.workspace
                     .set_chat_cwd(&chat_id, &cwd)
                     .map_err(failed)
@@ -1955,7 +1884,6 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::SetChatHost { chat_id, device_id } => {
-                self.voice.retire_chat(&chat_id);
                 self.workspace
                     .set_chat_host(&chat_id, &device_id)
                     .map_err(failed)
@@ -1993,7 +1921,6 @@ impl EngineRpc {
                         "This chat's computer needs a newer Vardoger to switch provider".into(),
                     ));
                 }
-                self.voice.retire_chat(&chat_id);
                 self.workspace
                     .set_chat_config(&chat_id, &config)
                     .map_err(failed)
@@ -2005,11 +1932,9 @@ impl EngineRpc {
                 // yet keeps its doc and maybe a live run. (Their runs end with
                 // their rows: see `SessionsEngine::follow_chat_deletions`.)
                 let children = chat_descendants(&self.workspace.read_chats().unwrap_or_default(), &chat_id);
-                self.voice.retire_chat(&chat_id);
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
                 for child in &children {
-                    self.voice.retire_chat(child);
                     if let Err(err) = self.workspace.delete_chat(child) {
                         tracing::warn!(chat = %child, error = %err, "deleting a deleted chat's child failed");
                     }
@@ -2025,23 +1950,6 @@ impl EngineRpc {
             MutateParams::RemoveDevice { device_id } => {
                 if device_id == self.workspace.device_id() {
                     return Err(RpcError::BadParams("this_device".into()));
-                }
-                // (Cloud's machines are the edge's to retire, with their sessions.)
-                let row = self
-                    .workspace
-                    .read_devices()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|d| d.id == device_id);
-                let cloud = vardoger_proto::is_cloud_device(&device_id, "")
-                    || row.as_ref().is_some_and(|d| {
-                        vardoger_proto::is_cloud_device(&d.id, &d.platform)
-                            || d.capabilities.iter().any(|c| {
-                                c == vardoger_proto::CLOUD_SESSION_CAPABILITY || c == vardoger_proto::CLOUD_ACCOUNT_CAPABILITY
-                            })
-                    });
-                if cloud {
-                    return Err(RpcError::BadParams("cloud_device".into()));
                 }
                 if self.workspace.peer_liveness(&device_id) == vardoger_rpc::PeerLiveness::Live {
                     return Err(RpcError::Failed("device_online".into()));
@@ -2189,8 +2097,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<(), vardoger_harness::HarnessError>>,
 {
-    // A Cloud device registers only Codex + Claude Code; installing anything
-    // else would put a CLI on it that nothing may run (or probe).
+    // A harness this device doesn't register would be a CLI nothing may run.
     if !registry.is_registered(harness) {
         return Err(RpcError::Failed(format!(
             "{harness:?} is not available on this device"
@@ -2288,9 +2195,6 @@ fn warm_signed_out(
 }
 
 fn forwardable(method: &str) -> bool {
-    if voice_remote::handles(method) {
-        return true;
-    }
     matches!(
         method,
         methods::FORK_SIDE_CHAT
@@ -2335,7 +2239,6 @@ fn forwardable(method: &str) -> bool {
             | methods::LIST_REPOS
             | methods::ADD_REPO
             | methods::CLONE_REPO
-            // Answered by the Cloud device, which holds the GitHub grant.
             | methods::CREATE_REPO
             | methods::LIST_BRANCHES
             | methods::LIST_REFS
@@ -2854,7 +2757,7 @@ async fn opening_doc_messages_stream(
 }
 
 /// The sign-in surface, answered before the profile opens: `AuthStatus`
-/// (stream) and `SignOut`. Signing in is `vardoger login`.
+/// (stream), `SignIn` (`{server?}` → `{url}` to open) and `SignOut`.
 #[derive(Clone)]
 pub struct AuthRpc {
     auth: Auth,
@@ -2866,15 +2769,24 @@ impl AuthRpc {
     }
 
     pub fn handles(method: &str) -> bool {
-        matches!(method, methods::AUTH_STATUS | methods::SIGN_OUT)
+        matches!(method, methods::AUTH_STATUS | methods::SIGN_IN | methods::SIGN_OUT)
     }
 }
 
 #[async_trait]
 impl RpcService for AuthRpc {
-    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<RpcReply, RpcError> {
+    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
         match method {
             methods::AUTH_STATUS => Ok(RpcReply::Stream(watch_stream(self.auth.watch_state()))),
+            methods::SIGN_IN => {
+                let server = params["server"].as_str().map(str::to_owned);
+                let url = self
+                    .auth
+                    .sign_in(server)
+                    .await
+                    .map_err(|err| RpcError::Failed(format!("{err:#}")))?;
+                RpcReply::value(&serde_json::json!({ "url": url }))
+            }
             methods::SIGN_OUT => {
                 self.auth.sign_out();
                 RpcReply::value(&serde_json::json!({ "ok": true }))
@@ -2974,18 +2886,6 @@ impl RpcService for EngineRpc {
                 return Ok(started);
             }
             return self.forward(&target, method, params).await;
-        }
-        if matches!(
-            method,
-            methods::SIGN_OUT
-                | methods::COMPLETE_AGENT_LOGIN
-                | methods::ACTIVATE_AGENT_ACCOUNT
-                | methods::FORGET_AGENT_ACCOUNT
-        ) {
-            self.voice.retire();
-        }
-        if voice_remote::handles(method) {
-            return self.voice_remote(method, params).await;
         }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
@@ -3920,42 +3820,6 @@ impl RpcService for EngineRpc {
             }
             methods::LOCAL_DEVICE => {
                 RpcReply::value(&serde_json::json!({ "deviceId": self.doc_host.device_id() }))
-            }
-            methods::LOCAL_IMPORT_STATUS => {
-                let importer = self.local_importer()?.clone();
-                let status = tokio::task::spawn_blocking(move || importer.status())
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&status)
-            }
-            methods::IMPORT_LOCAL_WORKSPACE => {
-                let importer = self.local_importer()?.clone();
-                // Progress rides an unbounded channel: the importer is
-                // blocking (sqlite + fs) and must never wedge on a slow
-                // viewer; items are tiny and bounded by the chat count.
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
-                tokio::task::spawn_blocking(move || {
-                    let emit = |event: crate::local_import::ImportEvent| {
-                        if let Ok(item) = serde_json::to_value(&event) {
-                            let _ = tx.send(item);
-                        }
-                    };
-                    if let Err(err) = importer.run(emit) {
-                        tracing::error!(error = %err, "local import failed");
-                        let _ = tx.send(serde_json::json!({
-                            "kind": "summary",
-                            "importedChats": 0, "importedSpaces": 0,
-                            "skippedChats": 0, "skippedSpaces": 0,
-                            "journalsCopied": 0, "ledgerRowsMerged": 0,
-                            "errors": [format!("{err}")],
-                        }));
-                    }
-                    // tx drops here — the stream ends after the summary item.
-                });
-                Ok(RpcReply::Stream(Box::pin(futures::stream::poll_fn(
-                    move |cx| rx.poll_recv(cx),
-                ))))
             }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {
@@ -5334,7 +5198,6 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&snapshot)
             }
             methods::ACTIVATE_AGENT_ACCOUNT => {
-                self.voice.retire();
                 let p: AgentAccountParams = parse_params(params)?;
                 let snapshot = self
                     .agent_accounts
@@ -5344,7 +5207,6 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&snapshot)
             }
             methods::FORGET_AGENT_ACCOUNT => {
-                self.voice.retire();
                 let p: AgentAccountParams = parse_params(params)?;
                 let snapshot = self
                     .agent_accounts
@@ -5756,58 +5618,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn voice_owner_is_shared_across_services_and_shutdown_retires_it() {
-        let temp = tempfile::tempdir().unwrap();
-        let core = crate::EngineCore::assemble_with_profile(
-            crate::EngineProfile::local(temp.path()).unwrap(),
-            std::sync::Arc::new(HarnessRegistry::new()),
-            HarnessId::Codex,
-        )
-        .unwrap();
-        let first = core.rpc_service();
-        let second = core.rpc_service();
-        let lease = first.voice.reserve("chat").unwrap();
-        assert!(second.voice.owns_chat("chat"));
-        assert_eq!(
-            second.voice.reserve("other").unwrap_err(),
-            vardoger_proto::voice::VoiceRejection::Busy
-        );
-        let owner = second.voice.own(lease).unwrap();
-        core.sessions.shutdown().await;
-        assert!(!first.voice.owns_chat("chat"));
-        drop(owner);
-    }
-
-    #[tokio::test]
-    async fn chats_created_by_a_voice_orchestrator_are_top_level() {
-        let temp = tempfile::tempdir().unwrap();
-        let core = crate::EngineCore::assemble_with_profile(
-            crate::EngineProfile::local(temp.path()).unwrap(),
-            std::sync::Arc::new(HarnessRegistry::new()),
-            HarnessId::Codex,
-        )
-        .unwrap();
-        let rpc = core.rpc_service();
-        let orchestrator = format!("{}1", vardoger_proto::voice::ORCHESTRATOR_CHAT_PREFIX);
-        for (chat, parent, expected) in [
-            ("worker", orchestrator.as_str(), None),
-            ("side", "ordinary", Some("ordinary")),
-        ] {
-            rpc.handle(
-                methods::MUTATE,
-                serde_json::json!({"op":"createChat", "chatId":chat,
-                    "parentChatId":parent, "deviceId":core.device_id,
-                    "config":{"harness":"codex","sandbox":"workspace-write"}}),
-            )
-            .await
-            .unwrap();
-            let row = core.workspace.chat(chat).unwrap().unwrap();
-            assert_eq!(row.parent_chat_id.as_deref(), expected);
-        }
-        core.sessions.shutdown().await;
-    }
-
-    #[tokio::test]
     async fn a_child_s_kind_is_recorded_only_with_a_parent() {
         let temp = tempfile::tempdir().unwrap();
         let core = crate::EngineCore::assemble_with_profile(
@@ -5840,44 +5650,6 @@ mod tests {
             let row = core.workspace.chat(chat).unwrap().unwrap();
             assert_eq!(row.child_kind, expected, "{chat}");
         }
-        core.sessions.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn voice_origin_uses_normal_remote_routing() {
-        let temp = tempfile::tempdir().unwrap();
-        let core = crate::EngineCore::assemble_with_profile(
-            crate::EngineProfile::local(temp.path()).unwrap(),
-            std::sync::Arc::new(HarnessRegistry::new()),
-            HarnessId::Codex,
-        )
-        .unwrap();
-        let rpc = core.rpc_service();
-        let lease = rpc.voice.reserve("voice-origin").unwrap();
-        let owner = rpc.voice.own(lease).unwrap();
-        for method in [methods::QUEUE_COMMAND, methods::QUEUE_MESSAGE] {
-            let error = match rpc.handle(method, serde_json::json!({"originChatId":"voice-origin","targetDeviceId":"remote","chatId":"other"})).await {
-                Err(error) => error,
-                Ok(_) => panic!("offline remote routing unexpectedly succeeded"),
-            };
-            assert!(
-                matches!(error, RpcError::Failed(ref message) if message == "cannot reach device remote: remote routing unavailable (offline)")
-            );
-        }
-        // Voice origin follows the same forwarding boundary as ordinary MCP
-        // calls; this fixture has no relay configured.
-        rpc.handle(
-            methods::MUTATE,
-            serde_json::json!({"op":"createChat", "chatId":"remote-grok",
-                "originChatId":"voice-origin", "deviceId":"remote",
-                "config":{"harness":"grok","sandbox":"workspace-write"}}),
-        )
-        .await
-        .unwrap();
-        let chat = core.workspace.chat("remote-grok").unwrap().unwrap();
-        assert_eq!(chat.device_id, "remote");
-        assert_eq!(chat.config.unwrap().harness, HarnessId::Grok);
-        drop(owner);
         core.sessions.shutdown().await;
     }
 
@@ -6344,7 +6116,7 @@ mod tests {
         assert!(!forwardable(methods::ENGINE_INFO));
         assert!(!forwardable(methods::ENGINE_READY));
         // The bearer is for local clients only, never a remote device's ask.
-        assert!(!forwardable(methods::ACCESS_TOKEN));
+        assert!(!forwardable(methods::SIGN_IN));
         // An API key never leaves the device it was typed on: not forwarded,
         // not served to a peer through the relay, not an agent's to call.
         assert!(!forwardable(methods::ADD_AGENT_API_KEY));

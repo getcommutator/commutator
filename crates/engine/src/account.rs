@@ -29,6 +29,16 @@ pub struct Account {
     pub name: Option<String>,
 }
 
+/// The server to sign in to: the one named, else `VARDOGER_SERVER_URL`,
+/// else the one this machine signed in to before.
+pub fn server_url(named: Option<String>, saved: Option<&Account>) -> Option<String> {
+    named
+        .or_else(|| std::env::var("VARDOGER_SERVER_URL").ok())
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| saved.map(|account| account.server_url.clone()))
+        .map(|url| url.trim().trim_end_matches('/').to_owned())
+}
+
 pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join("account.json")
 }

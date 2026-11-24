@@ -58,7 +58,6 @@ fn request(cwd: &Path) -> RunRequest {
 fn controls() -> RunControls {
     let (_steer_tx, steering) = mpsc::channel(1);
     RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(|_: Vec<UserInputQuestion>| {
             let (tx, rx) = oneshot::channel::<Vec<UserInputAnswer>>();

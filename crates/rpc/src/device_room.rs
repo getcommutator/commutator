@@ -1441,13 +1441,13 @@ mod tests {
 
         let reached = Arc::new(AtomicUsize::new(0));
         let guard = super::RelayGuard { inner: Arc::new(Echo(reached.clone())), device: None };
-        assert!(crate::local_only(methods::ACCESS_TOKEN));
+        assert!(crate::local_only(methods::ADD_AGENT_API_KEY));
         match guard
-            .handle(methods::ACCESS_TOKEN, serde_json::json!({}))
+            .handle(methods::ADD_AGENT_API_KEY, serde_json::json!({}))
             .await
         {
             Err(crate::RpcError::Failed(message)) => assert!(message.contains("local IPC")),
-            _ => panic!("a peer must never get the device's bearer"),
+            _ => panic!("a peer must never store a key here"),
         }
         assert_eq!(
             reached.load(Ordering::SeqCst),
@@ -1455,10 +1455,11 @@ mod tests {
             "refused before the service"
         );
 
+        assert!(crate::local_only(methods::SIGN_IN));
         for method in [
             methods::LIST_HARNESSES,
             methods::AUTH_STATUS,
-            methods::SIGN_IN,
+            methods::SIGN_OUT,
         ] {
             assert!(!crate::local_only(method));
             match guard.handle(method, serde_json::json!({})).await {

@@ -393,24 +393,6 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
-    /// Dedicated ephemeral call handle; never uses durable commands or RPC retries.
-    pub async fn voice_transport(
-        &self,
-        device_id: &str,
-    ) -> Result<Arc<vardoger_voice_session::RpcTransport>> {
-        let local = self.inner.local().ok_or_else(|| {
-            ClientError::Unsupported("voice needs an engine".into())
-        })?;
-        Ok(Arc::new(vardoger_voice_session::RpcTransport {
-            client: local.rpc_client().await?,
-            host: device_id.into(),
-        }))
-    }
-    /// Sign-out/shutdown closes every call created by this client.
-    pub fn voice_cancellation(&self) -> CancellationToken {
-        self.inner.cancel.child_token()
-    }
-
     /// Build and start. Never blocks on the network: an engine connects in
     /// the background; Demo seeds its dataset.
     pub fn new(

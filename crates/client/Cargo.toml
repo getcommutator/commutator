@@ -11,7 +11,6 @@ publish.workspace = true
 # this crate stays usable from any frontend (iOS, Android, tests, CLIs).
 
 [dependencies]
-vardoger-voice-session.workspace = true
 vardoger-proto.workspace = true
 vardoger-doc.workspace = true
 vardoger-sync.workspace = true

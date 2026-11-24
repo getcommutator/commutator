@@ -176,8 +176,6 @@ struct Rig {
     mac: Option<MacRig>,
     /// A Windows install: its folder and the new exe's.
     windows: Option<(PathBuf, PathBuf)>,
-    /// `VARDOGER_DEVICE_PLATFORM` for the engine's starts.
-    platform: Option<&'static str>,
 }
 
 struct MacRig {
@@ -204,7 +202,7 @@ impl Rig {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let data = root.join(".vardoger");
         let app = data.join("app");
-        let rig = Self { _dir: dir, data, app, mac: None, windows: None, platform: None };
+        let rig = Self { _dir: dir, data, app, mac: None, windows: None };
         std::fs::create_dir_all(docs(&rig.data).parent().unwrap()).unwrap();
         std::fs::write(docs(&rig.data), ORIGINAL).unwrap();
         std::fs::write(docs(&rig.data).with_file_name("docs.sqlite3-wal"), "the wal").unwrap();
@@ -314,11 +312,7 @@ impl Rig {
             .args(["--exact", "fake_engine", "--test-threads=1", "--nocapture"])
             .env(DATA_ENV, &self.data)
             .env_remove("VARDOGER_UPDATE_CRASH_AT")
-            .env_remove("VARDOGER_DEVICE_PLATFORM")
             .stdout(std::process::Stdio::null());
-        if let Some(platform) = self.platform {
-            command.env("VARDOGER_DEVICE_PLATFORM", platform);
-        }
         if let Some(step) = crash_at {
             command.env("VARDOGER_UPDATE_CRASH_AT", step);
         }
@@ -463,8 +457,8 @@ mod versioned {
                 names.sort();
                 names
             };
-            // The engine's own later tidy, as this platform has it.
-            let kept = if self.platform == Some("cloud") { 0 } else { 1 };
+            // The engine's own later tidy.
+            let kept = vardoger_update::older_versions_kept();
             let record = self.record();
             let abandoned = matches!(record.phase, Phase::RolledBack | Phase::Failed)
                 .then_some(record.target.as_str());
@@ -473,40 +467,29 @@ mod versioned {
                 std::thread::sleep(Duration::from_millis(100));
                 vardoger_update::prune_installed_versions(&self.app, kept, abandoned);
             }
-            assert_eq!(left(), expected, "platform {:?}", self.platform);
+            assert_eq!(left(), expected);
         }
     }
 
-    /// Every version a machine ever ran used to stay on its disk. A Cloud machine's
-    /// disk is copied back in on every wake, with all of it read in beside the
-    /// engine that's starting, so each one kept slowed every wake after.
+    /// A settled update keeps the version before it, to go back to by hand.
     #[test]
-    fn a_settled_update_keeps_the_version_before_except_on_cloud() {
-        for (platform, expected) in [
-            (None, &["1.0.0", "2.0.0", "current"][..]),
-            (Some("cloud"), &["2.0.0", "current"][..]),
-        ] {
-            let mut rig = Rig::new("ok");
-            rig.platform = platform;
-            rig.install_old(&["0.8.0", "0.9.0"]);
-            // The engine `vardoger headless` runs, as the release ships it.
-            for version in ["1.0.0", "2.0.0"] {
-                std::fs::write(rig.app.join(version).join("vardoger-engine"), "desktop").unwrap();
-            }
-            let id = rig.request(Rig::service(), 60);
-            rig.run_until_settled();
-            rig.assert_updated(&id);
-            rig.app_settles_to(expected);
-            // Kept everywhere, Cloud too: `vardoger headless` runs it (a Cloud
-            // machine once left it out, and never came online).
-            assert!(rig.app.join("2.0.0/vardoger-engine").exists(), "platform {platform:?}");
+    fn a_settled_update_keeps_the_version_before() {
+        let rig = Rig::new("ok");
+        rig.install_old(&["0.8.0", "0.9.0"]);
+        // The engine `vardoger headless` runs, as the release ships it.
+        for version in ["1.0.0", "2.0.0"] {
+            std::fs::write(rig.app.join(version).join("vardoger-engine"), "desktop").unwrap();
         }
+        let id = rig.request(Rig::service(), 60);
+        rig.run_until_settled();
+        rig.assert_updated(&id);
+        rig.app_settles_to(&["1.0.0", "2.0.0", "current"]);
+        assert!(rig.app.join("2.0.0/vardoger-engine").exists());
     }
 
     #[test]
     fn a_release_it_went_back_from_is_removed() {
-        let mut rig = Rig::new("exit-1");
-        rig.platform = Some("cloud");
+        let rig = Rig::new("exit-1");
         let id = rig.request(Rig::service(), 60);
         rig.run_until_settled();
         rig.assert_back_on_the_old_version(&id, Phase::RolledBack);
@@ -516,15 +499,14 @@ mod versioned {
     /// Machines that piled versions up before this get tidied on their next start.
     #[test]
     fn a_start_after_a_settled_update_removes_what_piled_up() {
-        let mut rig = Rig::new("ok");
-        rig.platform = Some("cloud");
+        let rig = Rig::new("ok");
         let id = rig.request(Rig::service(), 60);
         rig.run_until_settled();
         rig.assert_updated(&id);
-        rig.app_settles_to(&["2.0.0", "current"]);
-        rig.install_old(&["0.8.0", "1.0.0"]);
+        rig.app_settles_to(&["1.0.0", "2.0.0", "current"]);
+        rig.install_old(&["0.8.0"]);
         rig.start(None);
-        rig.app_settles_to(&["2.0.0", "current"]);
+        rig.app_settles_to(&["1.0.0", "2.0.0", "current"]);
     }
 
     /// A wake updates before it answers. A bad release's rollback has to end with

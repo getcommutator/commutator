@@ -120,7 +120,6 @@ fn request(mode: &str, work: &Path) -> RunRequest {
 fn controls() -> RunControls {
     let (_steer, steering) = tokio::sync::mpsc::channel(1);
     RunControls {
-        realtime: None,
         execution_lease: None,
         steering,
         interrupt: CancellationToken::new(),

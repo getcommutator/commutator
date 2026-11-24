@@ -120,7 +120,6 @@ fn controls(
     let (steer_tx, steer_rx) = mpsc::channel(8);
     let token = CancellationToken::new();
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |questions| {
             let (tx, rx) = oneshot::channel();
@@ -672,7 +671,6 @@ async fn approvals_round_trip_as_input_requests() {
     let token = CancellationToken::new();
     let seen = asked.clone();
     let controls = RunControls {
-        realtime: None,
         execution_lease: None,
         request_input: Box::new(move |questions| {
             seen.lock().unwrap().extend(questions.iter().cloned());
@@ -2317,73 +2315,6 @@ async fn a_stopped_turn_keeps_the_app_server_for_the_next_prompt() {
 }
 
 #[tokio::test]
-async fn idle_voice_runtime_has_no_initial_turn_and_preserves_mcp() {
-    let dir = tempfile::tempdir().unwrap();
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice.py");
-    let driver = CodexHarness::new()
-        .with_executable(fixture)
-        .with_graces(Duration::from_millis(10), Duration::from_millis(100));
-    let mut req = request("must never be submitted");
-    req.cwd = dir.path().display().to_string();
-    req.mcp = Some(vardoger_proto::McpServer {
-        name: "vardoger".into(),
-        command: "vardoger".into(),
-        args: vec!["mcp".into()],
-        env: Default::default(),
-        http: None,
-    });
-    let (mut controls, steer, token) = controls("Yes");
-    let (voice, bridge, _events) = vardoger_harness::codex::realtime::channel();
-    controls.realtime = Some(bridge);
-    let mut stream = driver.start_idle(req, controls).await.unwrap();
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(3), stream.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap(),
-        AgentEvent::SessionStarted { .. }
-    ));
-    let (reply, receive) = oneshot::channel();
-    voice
-        .commands
-        .send(vardoger_harness::codex::realtime::VoiceCommand::Start {
-            voice: None,
-            session_id: "fixture-voice".into(),
-            generation: 1,
-            reply,
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        receive.await.unwrap(),
-        Err(vardoger_proto::voice::VoiceRejection::NativeRuntimeUnavailable)
-    );
-    let calls = std::fs::read_to_string(dir.path().join("voice-wire.jsonl")).unwrap();
-    assert!(!calls.contains("turn/start"));
-    assert!(!calls.contains("thread/realtime/start"));
-    assert!(calls.contains("mcp_servers"));
-    steer
-        .send(SteerMessage::text("text remains usable"))
-        .await
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while let Some(event) = stream.next().await {
-            if matches!(event.unwrap(), AgentEvent::Done { .. }) {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
-    token.cancel();
-    drop(stream);
-}
-
-/// A run whose Vardoger server is side-chats-only starts its thread without
-/// Codex's agent tools, as a title run does; any other run keeps them.
-#[tokio::test]
 async fn a_side_chats_only_thread_starts_without_agent_tools() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice.py");
@@ -2494,92 +2425,6 @@ async fn code_mode_thread_starts_with_feature_flag() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn external_voice_keeps_canonical_events_without_any_local_helper() {
-    use std::os::unix::fs::PermissionsExt;
-    use vardoger_harness::codex::realtime::{VoiceCommand, channel};
-    use vardoger_proto::voice::{VoiceEvent, remote::Sdp};
-    let dir = tempfile::tempdir().unwrap();
-    let binary = dir.path().join("bin/codex");
-    std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
-    std::fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice-native.py"),
-        &binary,
-    )
-    .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let driver = CodexHarness::new().with_executable(binary);
-    let mut req = request("");
-    req.cwd = dir.path().display().to_string();
-    req.mcp = Some(vardoger_proto::McpServer {
-        name: "vardoger".into(),
-        command: "vardoger".into(),
-        args: vec!["mcp".into()],
-        env: Default::default(),
-        http: None,
-    });
-    let (mut controls, _steer, token) = controls("Yes");
-    let (voice, bridge, mut events) = channel();
-    controls.realtime = Some(bridge);
-    let mut stream = driver.start_idle(req, controls).await.unwrap();
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(3), stream.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap(),
-        AgentEvent::SessionStarted { .. }
-    ));
-    let pump = tokio::spawn(async move { while stream.next().await.is_some() {} });
-    assert!(voice.probe_external().await.unwrap().available);
-    assert_eq!(
-        voice.probe().await.unwrap_err(),
-        vardoger_proto::voice::VoiceRejection::NativeRuntimeUnavailable
-    );
-    let (reply, answer) = oneshot::channel();
-    voice
-        .commands
-        .send(VoiceCommand::External {
-            voice: None,
-            session_id: "external-session".into(),
-            generation: 1,
-            offer: Sdp::new("fixture-offer".into()).unwrap(),
-            reply,
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(3), answer)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-            .expose(),
-        "fixture-answer"
-    );
-    // Re-emission occurs after negotiation has completed, when there is no NativeHost.
-    std::fs::write(dir.path().join("replay-transcripts"), "true").unwrap();
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if let VoiceEvent::Final { transcript } = events.recv().await.unwrap() {
-                assert_eq!(transcript.session_id, "external-session");
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
-    voice.stop().await.unwrap();
-    assert!(!dir.path().join("helper-wire.jsonl").exists());
-    let wire = std::fs::read_to_string(dir.path().join("voice-wire.jsonl")).unwrap();
-    assert!(wire.contains("mcp_servers"));
-    assert!(!wire.contains("appendAudio"));
-    token.cancel();
-    pump.abort();
-}
-
-/// A wrapper around the fake app-server that dies (printing `reason`) on its
-/// first `fail` launches, then runs the fake. Counts launches in `count`.
 fn flaky_app_server(dir: &std::path::Path, fail: u32, reason: &str) -> (PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let count = dir.join("launches");

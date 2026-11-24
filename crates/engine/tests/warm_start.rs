@@ -760,7 +760,7 @@ async fn a_changed_credential_is_never_run_on_the_old_one() {
     }
     let rig = rig(true);
     let account = Arc::new(Switchable(Mutex::new("account-a".into())));
-    rig.core.registry.set_run_environment(account.clone());
+    rig.core.registry.set_account_environment(account.clone());
     rig.warm(CHAT, "mock-1", true).await;
     *account.0.lock().unwrap() = "account-b".into();
     rig.send(CHAT, "mock-1", "on account b").await;
