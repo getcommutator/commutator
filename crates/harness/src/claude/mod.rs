@@ -1674,6 +1674,9 @@ async fn run_session(session: Session) {
     // Top-level tool calls in flight: a steer must not abort them (see
     // `wire::steer_message_line`).
     let mut open_tools = std::collections::HashSet::new();
+    // A top-level tool call is streaming its input: not open yet, but a
+    // `now` steer would abort it all the same.
+    let mut tool_streaming = false;
     let mut steering_open = true;
     let mut interrupted = false;
     let mut interrupt_sent = false;
@@ -1970,6 +1973,15 @@ async fn run_session(session: Session) {
                         );
                         continue;
                     }
+                    // A top-level tool call starts streaming its input here,
+                    // but is only known (`ToolCall`) once that input is whole.
+                    if let Frame::StreamEvent(f) = &frame
+                        && f.parent_tool_use_id.is_none()
+                        && f.event.kind == "content_block_start"
+                        && f.event.content_block.kind == "tool_use"
+                    {
+                        tool_streaming = true;
+                    }
                     let events = norm.normalize(frame, interrupted || stopping.is_some());
                     // The session is the CLI's now: nothing left to replay.
                     if norm.started() {
@@ -1980,11 +1992,15 @@ async fn run_session(session: Session) {
                         match &ev {
                             AgentEvent::ToolCall { id, .. } => {
                                 open_tools.insert(id.clone());
+                                tool_streaming = false;
                             }
                             AgentEvent::ToolResult { id, .. } => {
                                 open_tools.remove(id);
                             }
-                            AgentEvent::Done { .. } => open_tools.clear(),
+                            AgentEvent::Done { .. } => {
+                                open_tools.clear();
+                                tool_streaming = false;
+                            }
                             _ => {}
                         }
                         let is_done = matches!(ev, AgentEvent::Done { .. });
@@ -2112,7 +2128,7 @@ async fn run_session(session: Session) {
                     let line = wire::steer_message_line_with_images(
                         &apply_ultrathink(config.reasoning, &msg.prompt),
                         &id,
-                        open_tools.is_empty(),
+                        open_tools.is_empty() && !tool_streaming,
                         &images,
                     );
                     pending_steers.push_back(id.clone());
@@ -2190,6 +2206,7 @@ async fn run_session(session: Session) {
                     // The turn's tools ended with it, as on a normalized
                     // Done: none may hold the next message back (`next`).
                     open_tools.clear();
+                    tool_streaming = false;
                     turn_open = false;
                     stop_done_at = Some(tokio::time::Instant::now());
                     active_since_stop = false;

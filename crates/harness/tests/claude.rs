@@ -1741,6 +1741,33 @@ async fn a_stopped_turns_delayed_duplicate_result_is_dropped() {
     );
 }
 
+/// A steer sent while a tool call is still streaming its input goes `next`:
+/// the call isn't a `ToolCall` yet, and `now` would abort it.
+#[tokio::test]
+async fn a_steer_while_tool_input_streams_does_not_abort_the_call() {
+    let (controls, steer, _token) = controls("A");
+    let mut stream = harness()
+        .run(request("scenario:tool-input-streaming-steer"), controls)
+        .await
+        .expect("run starts");
+    let mut next = async || {
+        tokio::time::timeout(Duration::from_secs(10), stream.next())
+            .await
+            .expect("event in time")
+            .expect("stream open")
+            .expect("stream event")
+    };
+    // The fake's marker follows the block's start: by then it has been read.
+    while !matches!(next().await, AgentEvent::TextDelta { ref text } if text == "input-streaming") {}
+    steer.send(steer_msg("Wait.")).await.unwrap();
+    loop {
+        if let AgentEvent::TextDelta { text } = next().await {
+            assert_eq!(text, "priority:next");
+            break;
+        }
+    }
+}
+
 /// A typed fork in flight when a stop goes unreported (answered, but no
 /// result before the settle window closes) settles with the turn the driver
 /// ends itself. Otherwise its chip runs on in the parked session, and keeps

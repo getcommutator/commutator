@@ -365,6 +365,24 @@ case "$first" in
   cat >/dev/null
   ;;
 
+*scenario:tool-input-streaming-steer*)
+  # A tool call streams its input before its `assistant` frame names it; a
+  # `now` steer here would abort it. The steer says its priority back.
+  emit '{"type":"system","subtype":"init","model":"claude-fable-5","tools":["Bash"],"cwd":"/tmp","session_id":"sess-tis"}'
+  emit '{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-1","name":"Bash","input":{}}}}'
+  emit '{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\"comm"}}}'
+  # An ordering marker for the test: the frames above have been read.
+  emit '{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"input-streaming"}}}'
+  read -r steer || exit 1
+  case "$steer" in
+    *'"priority":"now"'*) priority=now ;;
+    *'"priority":"next"'*) priority=next ;;
+    *) priority=none ;;
+  esac
+  emit "{\"type\":\"stream_event\",\"parent_tool_use_id\":null,\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"priority:$priority\"}}}"
+  cat >/dev/null
+  ;;
+
 *scenario:typed-fork-replay*)
   # The typed `/fanout` capture (claude/live-2.1.310-typed-forked-command.jsonl)
   # in two parts, for crates/engine/tests/claude_subagents.rs: the fork's start

@@ -503,6 +503,13 @@ pub fn current(cx: &App) -> UiSettings {
         .unwrap_or_default()
 }
 
+/// Whether a send during a live turn queues by default (see
+/// [`UiSettings::queue_follow_ups`]), read on every composer frame.
+pub fn queue_follow_ups(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_some_and(|store| store.current.queue_follow_ups)
+}
+
 /// Read the picker preference without cloning the full settings for each model row.
 pub fn compact_model_picker(cx: &App) -> bool {
     cx.try_global::<SettingsStore>()
@@ -1002,6 +1009,10 @@ pub struct UiSettings {
     pub window_geometry: Option<WindowGeometry>,
     /// Submit using Enter or the platform modifier plus Enter.
     pub composer_send_behavior: ComposerSendBehavior,
+    /// While the agent works, a send queues for the turn's end instead of
+    /// steering the live turn (t3code's "Follow-up behavior"). The send
+    /// shortcut with the platform modifier does the other.
+    pub queue_follow_ups: bool,
     /// Legacy global opt-in; per-harness preferences take precedence.
     pub skills_in_slash_menu: bool,
     pub skill_completion_by_harness:
@@ -1244,6 +1255,7 @@ impl Default for UiSettings {
             escape_stops_active_agent: false,
             settings_section: crate::shell::SettingsSection::default(),
             composer_send_behavior: ComposerSendBehavior::default(),
+            queue_follow_ups: false,
             skills_in_slash_menu: false,
             skill_completion_by_harness: Default::default(),
             compact_model_picker: true,
@@ -1845,6 +1857,7 @@ impl UiSettings {
         merge!(
             window_geometry,
             composer_send_behavior,
+            queue_follow_ups,
             skills_in_slash_menu,
             skill_completion_by_harness,
             compact_model_picker,
@@ -2239,6 +2252,7 @@ mod tests {
 
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.composer_send_behavior, ComposerSendBehavior::Enter);
+        assert!(!loaded.queue_follow_ups, "a send into a live turn steers by default");
         assert!(loaded.open_web_links_in_commutator);
         assert!(loaded.new_thread_composer_background.is_none());
         assert_eq!(
@@ -2953,6 +2967,7 @@ mod tests {
             escape_stops_active_agent: true,
             settings_section: crate::shell::SettingsSection::Shortcuts,
             composer_send_behavior: ComposerSendBehavior::ModEnter,
+            queue_follow_ups: true,
             skills_in_slash_menu: true,
             skill_completion_by_harness: Default::default(),
             compact_model_picker: true,
