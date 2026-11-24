@@ -47,7 +47,7 @@ import dev.freethinkel.commutator.android.core.AppModel
 fun SignInScreen(model: AppModel) {
     val context = LocalContext.current
     val error by model.signInError.collectAsState()
-    var server by rememberSaveable { mutableStateOf(model.credentials.lastServerUrl ?: "") }
+    var server by rememberSaveable { mutableStateOf(model.credentials.lastServerUrl ?: "https://commutator.freethinkel.dev") }
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

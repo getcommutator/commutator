@@ -46,7 +46,8 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
         tagline.textAlignment = .center
         tagline.numberOfLines = 0
 
-        server.text = AppModel.lastServerURL
+        // ponytail: our hosted server as the default; the field still takes any other.
+        server.text = AppModel.lastServerURL ?? "https://commutator.freethinkel.dev"
         server.placeholder = "https://commutator.example.com"
         server.font = Fonts.ui(.sans, 16)
         server.textColor = Palette.text
