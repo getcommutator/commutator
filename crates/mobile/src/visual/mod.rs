@@ -670,8 +670,10 @@ impl Worker {
                 } => {
                     self.listener = Some(listener);
                     self.reduce_motion = reduce_motion;
-                    if self.palette.dark != dark {
-                        self.palette = Palette::new(dark);
+                    // The palette also changes with the theme, not only with dark.
+                    let palette = Palette::new(dark);
+                    if self.palette != palette {
+                        self.palette = palette;
                         relayout = true;
                     }
                     self.display_dirty = true;
@@ -683,8 +685,10 @@ impl Worker {
                     self.listener = None;
                 }
                 Cmd::Appearance { dark } => {
-                    if self.palette.dark != dark {
-                        self.palette = Palette::new(dark);
+                    // The palette also changes with the theme, not only with dark.
+                    let palette = Palette::new(dark);
+                    if self.palette != palette {
+                        self.palette = palette;
                         relayout = true;
                     }
                 }

@@ -128,3 +128,8 @@ fn ffi_palette_falls_back() {
         phone_palette(variant_or_default("commutator-dark", true))
     );
 }
+
+#[test]
+fn ffi_color_roles_are_the_role_table_order() {
+    assert_eq!(crate::client_ffi::themes::color_roles(), ColorRole::ALL.to_vec());
+}

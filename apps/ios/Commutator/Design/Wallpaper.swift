@@ -238,7 +238,7 @@ final class WallpaperView: UIView {
         layer.mask = maskLayer
         alpha = 0
         observer = NotificationCenter.default.addObserver(forName: WallpaperStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: WallpaperView, _) in self.reload() }
+        registerForTraitChanges(Palette.colorTraits) { (self: WallpaperView, _) in self.reload() }
         accessibilityIdentifier = "wallpaper"
     }
 

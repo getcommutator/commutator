@@ -1438,6 +1438,28 @@ uint64_t uniffi_commutator_mobile_fn_func_server_sign_out(RustBuffer server_url,
 RustBuffer uniffi_commutator_mobile_fn_func_agent_login_rules(RustBuffer harness, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_COLOR_ROLES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_COLOR_ROLES
+RustBuffer uniffi_commutator_mobile_fn_func_color_roles(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SET_THEME_SELECTION
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SET_THEME_SELECTION
+void uniffi_commutator_mobile_fn_func_set_theme_selection(RustBuffer light_id, RustBuffer dark_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_THEME_FAMILIES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_THEME_FAMILIES
+RustBuffer uniffi_commutator_mobile_fn_func_theme_families(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_THEME_PALETTE
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_THEME_PALETTE
+RustBuffer uniffi_commutator_mobile_fn_func_theme_palette(RustBuffer variant_id, int8_t dark, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_FILE_MENTION_LINK
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_FILE_MENTION_LINK
 RustBuffer uniffi_commutator_mobile_fn_func_file_mention_link(RustBuffer path, int8_t is_dir, RustCallStatus *_Nonnull out_status
@@ -1816,6 +1838,30 @@ uint16_t uniffi_commutator_mobile_checksum_func_server_sign_out(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_AGENT_LOGIN_RULES
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_AGENT_LOGIN_RULES
 uint16_t uniffi_commutator_mobile_checksum_func_agent_login_rules(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_COLOR_ROLES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_COLOR_ROLES
+uint16_t uniffi_commutator_mobile_checksum_func_color_roles(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SET_THEME_SELECTION
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SET_THEME_SELECTION
+uint16_t uniffi_commutator_mobile_checksum_func_set_theme_selection(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_THEME_FAMILIES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_THEME_FAMILIES
+uint16_t uniffi_commutator_mobile_checksum_func_theme_families(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_THEME_PALETTE
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_THEME_PALETTE
+uint16_t uniffi_commutator_mobile_checksum_func_theme_palette(void
     
 );
 #endif

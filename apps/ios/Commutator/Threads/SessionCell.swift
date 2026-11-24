@@ -91,7 +91,7 @@ final class SessionCell: UICollectionViewListCell {
         bg.backgroundColor = .clear
         backgroundConfiguration = bg
         // The project tile is a rasterized attachment: redraw it in the new tone.
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: SessionCell, _) in
+        registerForTraitChanges(Palette.colorTraits) { (cell: SessionCell, _) in
             if let vm = cell.vm { cell.configure(vm) }
         }
     }
