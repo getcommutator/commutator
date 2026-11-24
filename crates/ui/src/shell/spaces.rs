@@ -2113,6 +2113,17 @@ struct ActiveChatRow {
     group: Option<(String, String)>,
 }
 
+/// The Agents panel's order (t3code's): what waits on you, then finished
+/// and not seen, then under way, then the rest. Latest first within each.
+fn agents_rank(status: ChatIndicator) -> u8 {
+    match status {
+        ChatIndicator::AwaitingInput | ChatIndicator::Errored => 0,
+        ChatIndicator::Completed => 1,
+        ChatIndicator::Working | ChatIndicator::Waiting => 2,
+        ChatIndicator::Idle => 3,
+    }
+}
+
 pub(super) fn compare_sidebar_chats(
     sort: SidebarSort,
     left: &commutator_proto::Chat,
@@ -5414,7 +5425,7 @@ impl Shell {
     }
 
     /// The Projects sidebar's bottom panel (Shepherd's Agents): every active
-    /// chat, latest first, each naming its project or worktree.
+    /// chat in `agents_rank` order, each naming its project or worktree.
     pub(super) fn render_agents_panel(
         &mut self,
         theme: &Theme,
@@ -5434,7 +5445,11 @@ impl Shell {
                     (status, chat.clone(), place)
                 })
                 .collect();
-            chats.sort_by(|a, b| compare_sidebar_chats(SidebarSort::LastUpdated, &a.1, &b.1));
+            chats.sort_by(|a, b| {
+                agents_rank(a.0)
+                    .cmp(&agents_rank(b.0))
+                    .then_with(|| compare_sidebar_chats(SidebarSort::LastUpdated, &a.1, &b.1))
+            });
             (chats, state.selected_chat.clone())
         };
         if chats.is_empty() {
@@ -8802,6 +8817,14 @@ mod tests {
         let beta = chat("beta");
         assert!(compare_sidebar_chats(SidebarSort::Created, &alpha, &beta).is_lt());
         assert!(compare_sidebar_chats(SidebarSort::LastUpdated, &alpha, &beta).is_lt());
+    }
+
+    #[test]
+    fn agents_panel_puts_input_then_unseen_then_working_first() {
+        use commutator_proto::ChatIndicator as S;
+        let mut list = [S::Idle, S::Working, S::Completed, S::AwaitingInput];
+        list.sort_by_key(|s| super::agents_rank(*s));
+        assert_eq!(list, [S::AwaitingInput, S::Completed, S::Working, S::Idle]);
     }
 
     #[test]
