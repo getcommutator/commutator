@@ -1,5 +1,6 @@
 import SafariServices
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// How transcripts show LaTeX math, local to this phone: rendered (in one of
 /// the core's bundled math faces) or as its TeX source.
@@ -289,6 +290,10 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
             self.tintColor = Palette.accent.resolvedColor(with: self.traitCollection)
         }
         panGestureRecognizer.addTarget(self, action: #selector(panned(_:)))
+        // Code blocks and tables scroll sideways through `sideDrag` (their
+        // scroll views don't take touches, so text there stays selectable).
+        sideDrag.accepts = { [weak self] point in self?.codeScroller(at: point) != nil }
+        addGestureRecognizer(sideDrag)
         delegate = self
         // Display models are a pure cache (rebuilt from the frame on demand).
         memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
@@ -296,6 +301,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
             self?.cacheOrder.removeAll()
             self?.pool.forEach { $0.removeFromSuperview() }
             self?.pool.removeAll()
+            self?.lengths.removeAll()
         }
         // Rebuilt rows get new versions, so stale models just stop matching.
         MathSettings.apply(to: engine)
@@ -796,7 +802,18 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         current?.indexOf(key: key).flatMap(display)
     }
 
-    private func length(_ i: UInt32) -> Int { display(i).map { ($0.text as NSString).length } ?? 0 }
+    /// Text lengths by row key at a version: document-wide questions
+    /// (`endOfDocument`, `offset(from:to:)`) would otherwise build the
+    /// display of every row they cross, each time.
+    private var lengths: [UInt64: (version: UInt64, length: Int)] = [:]
+
+    private func length(_ i: UInt32) -> Int {
+        guard let p = current?.placement(index: i) else { return 0 }
+        if let hit = lengths[p.key], hit.version == p.version { return hit.length }
+        let n = display(i).map { ($0.text as NSString).length } ?? 0
+        lengths[p.key] = (p.version, n)
+        return n
+    }
 
     private func position(_ i: UInt32, _ offset: Int) -> TranscriptPosition? {
         current?.placement(index: i).map { TranscriptPosition(key: $0.key, offset: offset) }
@@ -806,6 +823,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         guard selection != nil else { return }
         selection = nil
         selectionGeometryChanged()
+        restoreFocus()
     }
 
     /// Rows moved or were realized: UIKit re-asks for the selection rects.
@@ -913,15 +931,115 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
     /// Rows' own controls (buttons, scrollers, visuals) still get theirs.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        return hit is RowView ? self : hit
+        if hit is RowView { return self }
+        // A code/table scroller too: the list's pan scrolls it for it.
+        if let hit = hit as? UIScrollView, hit.superview is RowView { return self }
+        return hit
     }
 
+    // MARK: Code block scrolling
+    //
+    // Touches on code blocks and tables reach the list (UIKit's selection
+    // needs them there), so a sideways drag that starts on one scrolls that
+    // block, with a UIScrollView-like glide. Not a UIPanGestureRecognizer:
+    // UIKit's long press waits on the view's pans and never selected.
+
+    private lazy var sideDrag: SideDragRecognizer = {
+        let g = SideDragRecognizer(target: self, action: #selector(sideDragged(_:)))
+        return g
+    }()
+    private var codeDrag: (view: UIScrollView, startX: CGFloat)?
+    private weak var gliding: UIScrollView?
+    private var glide: CADisplayLink?
+    private var glideVelocity: CGFloat = 0
+    private var lastGlideTick: CFTimeInterval = 0
+
+    /// The horizontally scrollable code/table block under `point` (list coordinates).
+    private func codeScroller(at point: CGPoint) -> UIScrollView? {
+        guard let row = visible.values.first(where: { !$0.isHidden && $0.frame.contains(point) }),
+              let s = row.scroller(at: convert(point, to: row)),
+              s.contentSize.width > s.bounds.width + 0.5 else { return nil }
+        return s
+    }
+
+    @objc private func sideDragged(_ g: SideDragRecognizer) {
+        switch g.state {
+        case .began:
+            stopGlide()
+            codeDrag = codeScroller(at: g.start).map { ($0, $0.contentOffset.x) }
+            fallthrough
+        case .changed:
+            guard let d = codeDrag else { return }
+            setCodeOffset(d.view, d.startX - g.translationX)
+        case .ended:
+            guard let d = codeDrag else { return }
+            codeDrag = nil
+            gliding = d.view
+            glideVelocity = -g.velocityX
+            lastGlideTick = CACurrentMediaTime()
+            let link = CADisplayLink(target: self, selector: #selector(glideTick(_:)))
+            link.add(to: .main, forMode: .common)
+            glide = link
+        default:
+            codeDrag = nil
+        }
+    }
+
+    /// Clamped to the content; true when it hit an end.
+    @discardableResult
+    private func setCodeOffset(_ s: UIScrollView, _ x: CGFloat) -> Bool {
+        let maxX = max(0, s.contentSize.width - s.bounds.width)
+        let clamped = min(maxX, max(0, x))
+        s.contentOffset.x = clamped
+        if selection != nil { selectionGeometryChanged() }
+        return clamped != x
+    }
+
+    @objc private func glideTick(_ link: CADisplayLink) {
+        let now = link.targetTimestamp
+        let dt = min(1 / 30, max(0, now - lastGlideTick))
+        lastGlideTick = now
+        guard let s = gliding, abs(glideVelocity) > 8 else { return stopGlide() }
+        // UIScrollView's normal deceleration: 0.998 per millisecond.
+        glideVelocity *= CGFloat(pow(0.998, dt * 1000))
+        if setCodeOffset(s, s.contentOffset.x + glideVelocity * CGFloat(dt)) { stopGlide() }
+    }
+
+    private func stopGlide() {
+        glide?.invalidate()
+        glide = nil
+        gliding = nil
+    }
+
+    // UIKit shows a selection only on the first responder, so selecting
+    // takes focus from the composer and its keyboard drops (as with any
+    // UITextView). Remembered here, the composer gets it back once the
+    // selection is gone.
     override var canBecomeFirstResponder: Bool { true }
+
+    private weak var restoreResponder: UIResponder?
+
+    override func becomeFirstResponder() -> Bool {
+        let previous = UIResponder.firstResponder
+        let became = super.becomeFirstResponder()
+        if became, let previous, previous !== self, previous is UITextInput { restoreResponder = previous }
+        return became
+    }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { clearSelection() }
+        if resigned {
+            restoreResponder = nil
+            clearSelection()
+        }
         return resigned
+    }
+
+    /// The selection is gone: focus (and the keyboard) back to the composer.
+    private func restoreFocus() {
+        guard let responder = restoreResponder, isFirstResponder else { return }
+        restoreResponder = nil
+        responder.becomeFirstResponder()
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
@@ -1084,6 +1202,11 @@ extension TranscriptListView: UITextInput {
         set {
             guard let r = newValue as? TranscriptRange, !r.isEmpty else {
                 selection = nil
+                // UIKit may pass through an empty range mid-gesture: only a
+                // selection that stays gone hands focus back.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    if self?.selection == nil { self?.restoreFocus() }
+                }
                 return
             }
             selection = (r.lo, r.hi)
@@ -1206,5 +1329,86 @@ final class SelectTextViewController: UIViewController {
             self?.dismiss(animated: true)
         })
         if !mono { DispatchQueue.main.async { tv.selectAll(nil) } }
+    }
+}
+
+extension UIResponder {
+    private nonisolated(unsafe) static weak var found: UIResponder?
+
+    /// The window's first responder (the nil-targeted action lands on it).
+    static var firstResponder: UIResponder? {
+        found = nil
+        UIApplication.shared.sendAction(#selector(captureFirstResponder), to: nil, from: nil, for: nil)
+        return found
+    }
+
+    @objc private func captureFirstResponder() { UIResponder.found = self }
+}
+
+/// A one-finger sideways drag that starts where `accepts` says. It fails
+/// at once anywhere else, on a vertical move, or when the finger rests (so
+/// a long press there still selects text).
+final class SideDragRecognizer: UIGestureRecognizer {
+    var accepts: (CGPoint) -> Bool = { _ in false }
+    private(set) var start: CGPoint = .zero
+    private(set) var translationX: CGFloat = 0
+    private(set) var velocityX: CGFloat = 0
+    private var last: (x: CGFloat, time: TimeInterval) = (0, 0)
+    private var rest: Timer?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard touches.count == 1, numberOfTouches == 1, let touch = touches.first, let view else {
+            state = .failed
+            return
+        }
+        start = touch.location(in: view)
+        guard accepts(start) else {
+            state = .failed
+            return
+        }
+        last = (start.x, touch.timestamp)
+        rest = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                if self?.state == .possible { self?.state = .failed }
+            }
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch = touches.first, let view else { return }
+        let p = touch.location(in: view)
+        let dx = p.x - start.x, dy = p.y - start.y
+        let dt = touch.timestamp - last.time
+        if dt > 0 { velocityX = (p.x - last.x) / dt }
+        last = (p.x, touch.timestamp)
+        translationX = dx
+        switch state {
+        case .possible:
+            if abs(dy) > 10, abs(dy) >= abs(dx) {
+                state = .failed
+            } else if abs(dx) > 10 {
+                rest?.invalidate()
+                state = .began
+            }
+        case .began, .changed:
+            state = .changed
+        default:
+            break
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .began || state == .changed ? .ended : .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .began || state == .changed ? .cancelled : .failed
+    }
+
+    override func reset() {
+        rest?.invalidate()
+        rest = nil
+        translationX = 0
+        velocityX = 0
     }
 }
