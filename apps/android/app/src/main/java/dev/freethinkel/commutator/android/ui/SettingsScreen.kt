@@ -58,7 +58,14 @@ fun SettingsScreen(
     val groupByProject by model.groupByProject.collectAsState()
     var confirmSignOut by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val workspace by model.workspace.collectAsState()
-    val devices = workspace?.devices.orEmpty()
+    // The account's machines (its server's list), online first; fetched each time Settings opens.
+    var devices by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(emptyList<uniffi.commutator_core.ServerDevice>()) }
+    var switchTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<uniffi.commutator_core.ServerDevice?>(null) }
+    LaunchedEffect(Unit) {
+        if (!model.isDemo) runCatching { model.machines() }.onSuccess { all ->
+            devices = all.filter { it.isMachine }.sortedWith(compareBy({ !it.online }, { it.name }))
+        }
+    }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -99,20 +106,6 @@ fun SettingsScreen(
                 }
             }
         }
-        // The machine this phone drives; the account's others are a tap away.
-        model.host?.takeIf { !model.isDemo }?.let { host ->
-            section("Machine")
-            item {
-                SegmentedListItem(
-                    onClick = { model.leaveMachine() },
-                    shapes = segmentedShapes(0, 1),
-                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                    leadingContent = { IconTile(ZIcons.Laptop) },
-                    supportingContent = { Text("Switch to another machine") },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                ) { Text(host.name) }
-            }
-        }
         section("Display")
         item {
             SegmentedListItem(
@@ -149,36 +142,34 @@ fun SettingsScreen(
         if (devices.isNotEmpty()) {
             section("Devices")
             item {
+                val rows = devices.size
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                     devices.forEachIndexed { i, device ->
+                        val driving = device.id == model.host?.id
                         SegmentedListItem(
-                            onClick = {},
-                            shapes = segmentedShapes(i, devices.size),
+                            onClick = { if (!driving) switchTo = device },
+                            shapes = segmentedShapes(i, rows),
                             colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                            leadingContent = {
-                                IconTile(
+                            leadingContent = { IconTile(ZIcons.Laptop) },
+                            supportingContent = {
+                                Text(
                                     when {
-                                        !device.isExecutionHost -> ZIcons.Phone
-                                        device.platform == "linux" -> ZIcons.Server
-                                        else -> ZIcons.Laptop
+                                        driving -> "Connected"
+                                        device.online -> "Online"
+                                        else -> "Offline · last seen ${uniffi.commutator_core.relativeTimeLabel(device.lastSeen * 1000, System.currentTimeMillis())}"
                                     },
                                 )
                             },
-                            supportingContent = {
-                                Text(
-                                    listOfNotNull(
-                                        if (device.isSelf) "This device" else if (device.online) "Online" else "Offline",
-                                        device.version?.let { "v$it" },
-                                        if (device.sessionCount > 0u) "${device.sessionCount} sessions" else null,
-                                    ).joinToString(" · "),
-                                )
-                            },
                             trailingContent = {
-                                Box(
-                                    Modifier.size(10.dp).clip(CircleShape).background(
-                                        if (device.online || device.isSelf) successColor() else MaterialTheme.colorScheme.outlineVariant,
-                                    ),
-                                )
+                                if (driving) {
+                                    ZIcon(ZIcons.Check, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                } else {
+                                    Box(
+                                        Modifier.size(10.dp).clip(CircleShape).background(
+                                            if (device.online) successColor() else MaterialTheme.colorScheme.outlineVariant,
+                                        ),
+                                    )
+                                }
                             },
                         ) { Text(device.name) }
                     }
@@ -222,6 +213,20 @@ fun SettingsScreen(
         }
     }
     StatusBarScrim(list)
+    }
+    switchTo?.let { device ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { switchTo = null },
+            title = { Text("Switch to ${device.name}?") },
+            text = if (device.online) null else ({ Text("It's offline: its chats load once it's back.") }),
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    switchTo = null
+                    model.switchMachine(device)
+                }) { Text("Switch") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { switchTo = null }) { Text("Cancel") } },
+        )
     }
     if (confirmSignOut) {
         androidx.compose.material3.AlertDialog(

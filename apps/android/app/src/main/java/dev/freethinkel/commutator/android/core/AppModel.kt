@@ -383,10 +383,16 @@ class AppModel(private val app: Application) {
         start(Credentials.Remote(a.serverUrl, a.token, machine.id))
     }
 
+    /** Settings › Devices: drive another of the account's machines. */
+    fun switchMachine(machine: ServerDevice) {
+        leaveMachine()
+        choose(machine)
+    }
+
     /** The machine driven now. */
     val host: CredentialStore.Host? get() = credentials.host
 
-    /** Back to the machine picker (Settings › Machine): the account stays. */
+    /** Back to the machine picker: the account stays. */
     fun leaveMachine() {
         terminals.signOut()
         _client.value?.shutdown()

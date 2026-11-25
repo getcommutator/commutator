@@ -351,8 +351,19 @@ final class AppModel {
         }
     }
 
-    /// Back to the machine picker (Settings › Machine): the account stays.
+    /// Back to the machine picker: the account stays.
     @MainActor func leaveMachine() {
+        dropMachine()
+        onSignedIn?()
+    }
+
+    /// Settings › Devices: drive another of the account's machines.
+    @MainActor func switchMachine(to machine: ServerDevice) {
+        dropMachine()
+        choose(machine)
+    }
+
+    @MainActor private func dropMachine() {
         terminals.signOut()
         client?.shutdown()
         client = nil
@@ -360,7 +371,6 @@ final class AppModel {
         SavedHost.clear()
         host = nil
         resetState()
-        onSignedIn?()
     }
 
     /// The user signing out: this device forgets the account's local docs.

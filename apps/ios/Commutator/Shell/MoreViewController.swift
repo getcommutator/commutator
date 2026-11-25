@@ -1,6 +1,6 @@
 import UIKit
 
-/// Settings & utilities: account and machine, devices, appearance, math, activity.
+/// Settings & utilities: account, devices, appearance, math, activity.
 final class MoreViewController: SettingsListController {
     private let app: AppModel
 
@@ -15,8 +15,21 @@ final class MoreViewController: SettingsListController {
     override func viewDidLoad() {
         super.viewDidLoad()
         themeObserver = NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
-        // Devices go on/offline after opening.
         appToken = app.observe { [weak self] in self?.reload() }
+    }
+
+    /// The account's machines (devices running an engine), online first.
+    private var devices: [ServerDevice] = []
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // ponytail: fetched on each appearance, not live; a device going on/offline shows on the next visit
+        guard !app.isDemo else { return }
+        Task { @MainActor in
+            guard let all = try? await app.machines() else { return }
+            devices = all.filter(\.isMachine).sorted { ($0.online ? 0 : 1, $0.name) < ($1.online ? 0 : 1, $1.name) }
+            reload()
+        }
     }
 
     override func toggled(_ id: String, _ on: Bool) {
@@ -33,11 +46,20 @@ final class MoreViewController: SettingsListController {
         var out: [(title: String, rows: [Row])] = [
             ("Account", [Row(id: "account", title: app.accountName, subtitle: app.accountDetail, symbol: "person.crop.circle", accessory: .none)]),
         ]
-        // The machine this phone drives; the account's others are a tap away.
-        if !app.isDemo, let host = app.host {
-            out.append(("Machine", [Row(id: "machine", title: host.name, subtitle: "Switch to another machine", symbol: "desktopcomputer")]))
+        // The account's machines (its server's list): the one this phone drives checked, a tap on another switches.
+        if !devices.isEmpty {
+            out.append(("Devices", devices.map { d in
+                let driving = d.id == app.host?.id
+                let seen = relativeTimeLabel(atMs: d.lastSeen * 1000, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+                return Row(
+                    id: "device:\(d.id)",
+                    title: d.name,
+                    subtitle: driving ? "Connected" : d.online ? "Online" : "Offline · last seen \(seen)",
+                    symbol: "desktopcomputer",
+                    accessory: driving ? .check(true) : .dot(d.online)
+                )
+            }))
         }
-        out.append(("Devices", app.hostOptions.map { Row(id: "device:\($0.id)", title: $0.name, subtitle: $0.online ? "Online" : "Offline", symbol: "desktopcomputer", accessory: .dot($0.online)) }))
         out.append(("Display", [Row(id: "appearance", title: "Appearance", subtitle: AppearanceViewController.summary(traits: traitCollection), symbol: "paintpalette")]))
         var math = [Row(id: "math:render", title: "Render Math", subtitle: "Off shows LaTeX as its source", symbol: "function", accessory: .toggle(MathSettings.render))]
         if MathSettings.render {
@@ -55,9 +77,10 @@ final class MoreViewController: SettingsListController {
 
     override func didSelect(_ row: Row, at path: IndexPath) {
         switch row.id {
-        case "machine":
-            let alert = UIAlertController(title: "Switch machine?", message: "You'll pick another of your machines.", preferredStyle: .actionSheet)
-            alert.addAction(UIAlertAction(title: "Switch", style: .default) { [weak self] _ in self?.app.leaveMachine() })
+        case let id where id.hasPrefix("device:"):
+            guard let d = devices.first(where: { "device:\($0.id)" == id }), d.id != app.host?.id else { return }
+            let alert = UIAlertController(title: "Switch to \(d.name)?", message: d.online ? nil : "It's offline: its chats load once it's back.", preferredStyle: .actionSheet)
+            alert.addAction(UIAlertAction(title: "Switch", style: .default) { [weak self] _ in self?.app.switchMachine(to: d) })
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
             alert.popoverPresentationController?.sourceView = collectionView.cellForItem(at: path)
             present(alert, animated: true)
