@@ -300,6 +300,10 @@ pub struct PullRequestsPage {
     initial_scope_task: Option<Task<()>>,
     resolving_project: Option<ProjectRef>,
     project_repositories: HashMap<ProjectRef, String>,
+    /// GitLab projects (lowercase path) by the checkout their list is asked
+    /// through: the engine lists merge requests by `cwd`, not by name.
+    // ponytail: keyed by path only; two devices with one GitLab project share the last checkout seen.
+    gitlab_checkouts: HashMap<String, String>,
     project_icons: crate::shell::project_icon::ProjectIcons,
     /// The project the board was last opened from. Opening it from another
     /// project follows that project; an explicit choice stands until then.
@@ -568,6 +572,7 @@ impl PullRequestsPage {
             initial_scope_task: None,
             resolving_project: None,
             project_repositories: HashMap::new(),
+            gitlab_checkouts: HashMap::new(),
             project_icons: Default::default(),
             seen_context: None,
             _repository_events: repository_events,
@@ -683,6 +688,7 @@ impl PullRequestsPage {
                 let target = (project.device != local).then(|| project.device.clone());
                 let mut params = params_for_target(target.as_deref());
                 params["cwd"] = project.path.clone().into();
+                params["gitlab"] = true.into();
                 let request = engine.client().call(methods::GET_CHANGE_REQUEST_REPOSITORY, params);
                 let deadline = cx.background_executor().timer(std::time::Duration::from_secs(3));
                 futures::pin_mut!(request, deadline);
@@ -691,13 +697,8 @@ impl PullRequestsPage {
                     futures::future::Either::Right(_) => Err(RpcError::Failed("Repository detection timed out".into())),
                 };
                 discovery_failed |= result.is_err();
-                if let Some(repository) = result
-                    .ok()
-                    .and_then(|value| serde_json::from_value::<Option<String>>(value).ok())
-                    .flatten()
-                    .filter(|repo| valid_repository_filter(repo))
-                {
-                    found = Some((repository, target, project));
+                if let Some(scope) = result.ok().and_then(detected_scope) {
+                    found = Some((scope, target, project));
                     break;
                 }
             }
@@ -708,8 +709,8 @@ impl PullRequestsPage {
                     return;
                 }
                 page.load_state = PullRequestsLoadState::Idle;
-                let found = found.map(|(repo, target, project)| {
-                    page.project_repositories.insert(project, repo.clone());
+                let found = found.map(|(scope, target, project)| {
+                    let repo = page.adopt_scope(scope, &project);
                     (repo, target)
                 });
                 if let Some((repo, target)) = found.or(fallback) {
@@ -869,7 +870,8 @@ impl PullRequestsPage {
             .text()
             .trim()
             .to_ascii_lowercase();
-        if !valid_repository_filter(&repository) {
+        let gitlab = self.gitlab_checkouts.contains_key(&repository);
+        if !gitlab && !valid_repository_filter(&repository) {
             crate::toast::error(cx, "Enter a repository as owner/name.");
             cx.notify();
             return;
@@ -879,10 +881,13 @@ impl PullRequestsPage {
         self.initial_scope_attempted = true;
         let saved_repository = repository.clone();
         let saved_device = self.target_device.clone();
-        crate::settings::update(crate::settings::SavePolicy::Debounced, cx, |settings| {
-            settings.last_pull_request_repository = Some(saved_repository);
-            settings.last_pull_request_device = saved_device;
-        });
+        // The saved repository is reopened by name, which only GitHub lists by.
+        if !gitlab {
+            crate::settings::update(crate::settings::SavePolicy::Debounced, cx, |settings| {
+                settings.last_pull_request_repository = Some(saved_repository);
+                settings.last_pull_request_device = saved_device;
+            });
+        }
         // GitHub's casing, adopted after a load, names the same repository.
         if !self
             .repository
@@ -1020,6 +1025,7 @@ impl PullRequestsPage {
         let project = ProjectRef { path, device };
         let mut params = params_for_target(target.as_deref());
         params["cwd"] = project.path.clone().into();
+        params["gitlab"] = true.into();
         self.initial_scope_attempted = true;
         self.project_repositories.remove(&project);
         self.resolving_project = Some(project.clone());
@@ -1032,12 +1038,8 @@ impl PullRequestsPage {
                 .timer(std::time::Duration::from_secs(3));
             futures::pin_mut!(request, deadline);
             let repository = match futures::future::select(request, deadline).await {
-                futures::future::Either::Left((Ok(value), _)) => {
-                    serde_json::from_value::<Option<String>>(value)
-                        .map_err(|_| "The device returned an unreadable repository. Try again.")
-                        .and_then(|repo| repo.filter(|repo| valid_repository_filter(repo))
-                            .ok_or("This project has no GitHub remote. Enter owner/repository to open it directly."))
-                }
+                futures::future::Either::Left((Ok(value), _)) => detected_scope(value)
+                    .ok_or("This project has no GitHub or GitLab remote. Enter owner/repository to open it directly."),
                 futures::future::Either::Left((Err(_), _)) => Err("Couldn’t read this project’s repository. Check the device connection and try again."),
                 futures::future::Either::Right(_) => Err("Repository detection timed out. Try again or enter owner/repository."),
             };
@@ -1048,8 +1050,8 @@ impl PullRequestsPage {
                 page.initial_scope_task = None;
                 page.resolving_project = None;
                 match repository {
-                    Ok(repository) => {
-                        page.project_repositories.insert(project, repository.clone());
+                    Ok(scope) => {
+                        let repository = page.adopt_scope(scope, &project);
                         if page.target_device != target {
                             page.reset_for_target(target.clone(), cx);
                         }
@@ -1062,6 +1064,30 @@ impl PullRequestsPage {
             });
         }));
         cx.notify();
+    }
+
+    /// Record a detected scope for `project`; returns the board's repository.
+    fn adopt_scope(&mut self, scope: DetectedScope, project: &ProjectRef) -> String {
+        let repository = match scope {
+            DetectedScope::GitHub(repository) => repository,
+            DetectedScope::GitLab(path) => {
+                let path = path.to_ascii_lowercase();
+                self.gitlab_checkouts.insert(path.clone(), project.path.clone());
+                path
+            }
+        };
+        self.project_repositories.insert(project.clone(), repository.clone());
+        repository
+    }
+
+    /// The list request's scope: a GitHub repository by name, a GitLab one
+    /// by its checkout.
+    fn scope_params(&self, params: &mut serde_json::Value) {
+        let repository = self.repository.clone().unwrap_or_default();
+        match self.gitlab_checkouts.get(&repository.to_ascii_lowercase()) {
+            Some(cwd) => params["cwd"] = cwd.clone().into(),
+            None => params["repository"] = repository.into(),
+        }
     }
 
     fn project_is_selected(&self, project: &ProjectRef, local: Option<&str>) -> bool {
@@ -1635,7 +1661,7 @@ impl PullRequestsPage {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         let mut params = params_for_target(self.target_device.as_deref());
-        params["repository"] = self.repository.clone().unwrap().into();
+        self.scope_params(&mut params);
         params["refresh"] = refresh.into();
         params["cached"] = cached.into();
         params["filter"] = serde_json::to_value(self.filter).unwrap();
@@ -1691,6 +1717,7 @@ impl PullRequestsPage {
                 }
                 if succeeded {
                     if let Some(first) = page.items.first()
+                        && first.provider != "gitlab"
                         && valid_repository_filter(&first.repository)
                         && page
                             .items
@@ -1765,7 +1792,7 @@ impl PullRequestsPage {
         let target_name = selected_device_name(&self.state.read(cx), self.target_device.as_deref());
         let generation = self.generation;
         let mut params = params_for_target(self.target_device.as_deref());
-        params["repository"] = self.repository.clone().unwrap().into();
+        self.scope_params(&mut params);
         params["filter"] = serde_json::to_value(self.filter).unwrap();
         params["after"] = cursor.into();
         // Pages after a refreshed first page must be as fresh as it is.
@@ -2964,6 +2991,8 @@ fn render_table_row(
 ) -> AnyElement {
     let star = star_button(&item.url, theme, cx);
     let url = item.url.clone();
+    // ponytail: no GitLab detail screen yet; its merge requests open in the browser.
+    let gitlab = item.provider == "gitlab";
     let row = table_row_shell(layout, first, last, theme)
         .id(SharedString::from(format!(
             "pull-request-row-{}",
@@ -2984,7 +3013,11 @@ fn render_table_row(
         .hover(|style| style.bg(theme.glass_hover()))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            crate::pull_request_detail::open(&url, window, cx);
+            if gitlab {
+                cx.open_url(&url);
+            } else {
+                crate::pull_request_detail::open(&url, window, cx);
+            }
         });
     let (date_label, timestamp) = if sort_field == PullRequestSortField::Opened {
         ("Opened", item.created_at)
@@ -3430,6 +3463,27 @@ fn toast_page_error(error: &PullRequestsPageError, suffix: Option<&str>, cx: &mu
     crate::toast::error(cx, message);
 }
 
+enum DetectedScope {
+    GitHub(String),
+    GitLab(String),
+}
+
+/// `GetChangeRequestRepository`'s answer: `{github, gitlab}`, or a bare
+/// GitHub name (or null) from an engine that predates GitLab.
+fn detected_scope(value: serde_json::Value) -> Option<DetectedScope> {
+    let (github, gitlab) = match value {
+        serde_json::Value::Object(map) => (
+            map.get("github").and_then(|v| v.as_str()).map(str::to_owned),
+            map.get("gitlab").and_then(|v| v.as_str()).map(str::to_owned),
+        ),
+        other => (serde_json::from_value::<Option<String>>(other).ok().flatten(), None),
+    };
+    github
+        .filter(|repo| valid_repository_filter(repo))
+        .map(DetectedScope::GitHub)
+        .or(gitlab.filter(|path| !path.is_empty()).map(DetectedScope::GitLab))
+}
+
 fn valid_repository_filter(value: &str) -> bool {
     let parts: Vec<_> = value.split('/').collect();
     parts.len() == 2
@@ -3607,6 +3661,21 @@ mod tests {
     use super::*;
     use crate::pull_request_test_support::{self as fixture, ScriptedRpc};
     use chrono::{TimeDelta, TimeZone};
+
+    #[test]
+    fn detected_scope_reads_github_gitlab_and_old_engines() {
+        use serde_json::json;
+        let scope = |value| match detected_scope(value) {
+            Some(DetectedScope::GitHub(repo)) => format!("github:{repo}"),
+            Some(DetectedScope::GitLab(path)) => format!("gitlab:{path}"),
+            None => "none".into(),
+        };
+        assert_eq!(scope(json!("owner/repo")), "github:owner/repo");
+        assert_eq!(scope(json!(null)), "none");
+        assert_eq!(scope(json!({"github": "owner/repo", "gitlab": null})), "github:owner/repo");
+        assert_eq!(scope(json!({"github": null, "gitlab": "acme/platform/app"})), "gitlab:acme/platform/app");
+        assert_eq!(scope(json!({"github": null, "gitlab": null})), "none");
+    }
 
     fn device(id: &str, platform: &str) -> Device {
         Device {
@@ -4283,7 +4352,7 @@ mod tests {
             assert!(
                 crate::toast::messages(cx)
                     .iter()
-                    .any(|message| message.contains("no GitHub remote"))
+                    .any(|message| message.contains("no GitHub or GitLab remote"))
             );
             assert_eq!(page.repository.as_deref(), Some("owner/next"));
         });

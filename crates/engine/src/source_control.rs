@@ -2412,6 +2412,27 @@ mod tests {
 
     const PR: &str = "https://github.com/acme/commutator/pull/7";
 
+    #[tokio::test]
+    async fn gitlab_lists_are_cached_in_memory_and_on_disk() {
+        use commutator_proto::ChangeRequestFilter::All;
+        let mr = br#"{"data":{"currentUser":{"username":"me"},"project":{"mergeRequests":{"nodes":[{"iid":"7","title":"Fix","webUrl":"https://git.acme.dev/a/b/-/merge_requests/7","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z"}]}}}}"#;
+        // One auth check and one list call: every later read is cached.
+        let runner = FakeProcessRunner::with_responses([command_success(Vec::new()), command_success(mr.to_vec())]);
+        let dir = tempfile::tempdir().unwrap();
+        let github = GitHubCli::with_runner(runner.clone()).with_store(dir.path());
+        let project = gitlab::GitLabProject { host: "git.acme.dev".into(), path: "a/b".into() };
+        assert!(github.is_gitlab(&project).await);
+        assert!(github.is_gitlab(&project).await);
+        let first = github.list_gitlab_page(&project, All, None, false, false).await.unwrap();
+        let again = github.list_gitlab_page(&project, All, None, false, false).await.unwrap();
+        assert_eq!((first.items.len(), again), (1, first.clone()));
+        assert_eq!(runner.requests().len(), 2);
+        // A new engine (empty memory, same data directory) answers from disk.
+        let restarted = GitHubCli::with_runner(FakeProcessRunner::with_responses([])).with_store(dir.path());
+        let stored = restarted.list_gitlab_page(&project, All, None, false, true).await.unwrap();
+        assert_eq!(stored.items[0].url, first.items[0].url);
+    }
+
     fn line(path: &str, line: u64, side: &str, commit: &str) -> ReviewLine {
         ReviewLine { path: path.into(), line, side: side.into(), commit_id: commit.into() }
     }

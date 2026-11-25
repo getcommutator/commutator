@@ -48,6 +48,16 @@ pub enum PullRequestCi {
     None,
 }
 
+/// The review decision, for the Review filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PullRequestReview {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+    /// No decision reported.
+    None,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PullRequestItem {
     pub url: String,
@@ -67,6 +77,12 @@ pub struct PullRequestItem {
     pub additions: u64,
     pub deletions: u64,
     pub updated_at_ms: i64,
+    pub created_at_ms: i64,
+    /// Opened by you (the Authored group).
+    pub authored: bool,
+    /// Your review is asked for (the Reviewing group).
+    pub review_requested: bool,
+    pub review: PullRequestReview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -176,6 +192,15 @@ fn item(p: &ChangeRequestListItem) -> PullRequestItem {
         additions: p.additions,
         deletions: p.deletions,
         updated_at_ms: p.updated_at.timestamp_millis(),
+        created_at_ms: p.created_at.timestamp_millis(),
+        authored: p.viewer_did_author == Some(true),
+        review_requested: p.viewer_review_requested == Some(true),
+        review: match p.review_decision {
+            ChangeRequestReviewDecision::Approved => PullRequestReview::Approved,
+            ChangeRequestReviewDecision::ChangesRequested => PullRequestReview::ChangesRequested,
+            ChangeRequestReviewDecision::ReviewRequired => PullRequestReview::ReviewRequired,
+            ChangeRequestReviewDecision::Unknown => PullRequestReview::None,
+        },
     }
 }
 

@@ -317,6 +317,23 @@ impl Shell {
             .into_any_element()
     }
 
+    /// [`Self::render_project_group_icon`] for a project row with no chat.
+    pub(super) fn render_space_icon(
+        &self,
+        space: &commutator_proto::Space,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let art = self.project_icons.render(
+            &self.state,
+            Some(space),
+            self.active_sidebar_pin_profile_key(cx),
+            false,
+            cx,
+        );
+        div().size(px(size)).flex_none().child(art).into_any_element()
+    }
+
     /// Artwork for a chat's project, shared by every space of the project:
     /// the representative's name and color, read from this device's checkout
     /// when there is one (no round trip), else from the representative.

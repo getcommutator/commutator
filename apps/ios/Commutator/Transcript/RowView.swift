@@ -125,38 +125,27 @@ final class RowView: UIView {
         addSubview(fresh)
         fresh.isHidden = true
         clipsToBounds = false
-        highlights[0].fillColor = Self.highlightColor
-        layer.addSublayer(highlights[0])
     }
 
-    // MARK: Selection
+    // MARK: Selection geometry (UIKit paints the highlight)
 
-    /// Selection tint: over the text (a bubble's fill is painted on the canvas).
-    private static let highlightColor = Palette.accent.withAlphaComponent(0.28).cgColor
-    /// Index 0 paints over the canvas; n over scroller n-1's content.
-    private var highlights = [CAShapeLayer()]
-    private var selected: (range: Range<Int>, model: RowModel)?
-
-    /// Paint `range` of the row text as selected (nil clears).
-    func setSelection(_ range: Range<Int>?) {
-        guard let model, let range, !range.isEmpty else {
-            if selected != nil { highlights.forEach { $0.path = nil } }
-            selected = nil
-            return
-        }
-        if let s = selected, s.range == range, s.model === model { return }
-        selected = (range, model)
-        let paths = highlights.map { _ in CGMutablePath() }
+    /// Highlight rects for `range` of the row text, in row coordinates: the
+    /// run's horizontal extent over its full line band (`selectionLineBox`),
+    /// clipped to a code/table scroller's visible frame.
+    func selectionRects(_ range: Range<Int>) -> [CGRect] {
+        guard let model, !range.isEmpty else { return [] }
+        var rects: [CGRect] = []
         for i in model.textOrder {
             let r = model.display.runs[i]
             let lo = max(range.lowerBound, Int(r.start)), hi = min(range.upperBound, Int(r.start + r.len))
             guard lo < hi else { continue }
-            let box = model.runBox(i)
+            let box = model.selectionLineBox(i)
             let x0 = model.runX(i, lo), x1 = model.runX(i, hi)
-            let layer = r.scroller.map { Int($0) + 1 } ?? 0
-            if layer < paths.count { paths[layer].addRect(CGRect(x: x0, y: box.minY, width: x1 - x0, height: box.height)) }
+            var rect = rowRect(CGRect(x: x0, y: box.minY, width: x1 - x0, height: box.height), r.scroller)
+            if let s = r.scroller, Int(s) < scrollers.count { rect = rect.intersection(scrollers[Int(s)].frame) }
+            if !rect.isNull, rect.width > 0 { rects.append(rect) }
         }
-        for (layer, path) in zip(highlights, paths) { layer.path = path }
+        return rects
     }
 
     /// Row point → the coordinates runs of `scroller` are placed in.
@@ -187,18 +176,17 @@ final class RowView: UIView {
         return best.map { ($0.offset, hypot($0.dx, $0.dy)) }
     }
 
-    /// Caret at `offset` in row coordinates: on the run it starts (or, for
-    /// the selection's end, the run it ends).
-    func caret(at offset: Int, end: Bool) -> CGRect? {
+    /// Caret at `offset` in row coordinates, over the line band of the run
+    /// it falls in (the one starting there, else the last one before).
+    func caret(at offset: Int) -> CGRect? {
         guard let model else { return nil }
         let runs = model.display.runs
         let order = model.textOrder
-        let pick = end
-            ? order.last { Int(runs[$0].start) < offset } ?? order.first
-            : order.first { Int(runs[$0].start + runs[$0].len) > offset } ?? order.last
+        let pick = order.first { Int(runs[$0].start) <= offset && Int(runs[$0].start + runs[$0].len) > offset }
+            ?? order.last { Int(runs[$0].start) < offset } ?? order.first
         guard let i = pick else { return nil }
-        let box = model.runBox(i)
-        return rowRect(CGRect(x: model.runX(i, offset), y: box.minY, width: 0, height: box.height), runs[i].scroller)
+        let box = model.selectionLineBox(i)
+        return rowRect(CGRect(x: model.runX(i, offset), y: box.minY, width: 2, height: box.height), runs[i].scroller)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -264,14 +252,9 @@ final class RowView: UIView {
             s.clipsToBounds = true
             let c = RowCanvas()
             s.addSubview(c)
-            let h = CAShapeLayer()
-            h.fillColor = Self.highlightColor
-            s.layer.addSublayer(h)
-            highlights.append(h)
             addSubview(s)
             scrollers.append(s)
         }
-        setSelection(nil)
         for (i, s) in scrollers.enumerated() {
             guard i < d.scrollers.count else {
                 s.isHidden = true

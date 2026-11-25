@@ -90,6 +90,31 @@ final class RowModel: @unchecked Sendable {
         return CGRect(x: CGFloat(r.x), y: CGFloat(r.baseline) - ascent, width: CGFloat(r.width), height: ascent + descent)
     }
 
+    /// Full vertical band for the visual line containing run `i`. Inline
+    /// styles can have different font metrics; use the line's outer metrics
+    /// and meet adjacent lines halfway so selection bands touch without
+    /// changing their horizontal extent.
+    func selectionLineBox(_ i: Int) -> CGRect {
+        let run = display.runs[i]
+        let lineRuns = display.runs.indices.filter {
+            let candidate = display.runs[$0]
+            return candidate.len > 0 && candidate.baseline == run.baseline && candidate.scroller == run.scroller
+        }
+        guard !lineRuns.isEmpty else { return runBox(i) }
+        let boxes = lineRuns.map(runBox)
+        let fallbackTop = boxes.map(\.minY).min() ?? runBox(i).minY
+        let fallbackBottom = boxes.map(\.maxY).max() ?? runBox(i).maxY
+        let baselines = Set(display.runs.compactMap { candidate -> Float? in
+            guard candidate.len > 0, candidate.scroller == run.scroller else { return nil }
+            return candidate.baseline
+        }).sorted()
+        let previous = baselines.last { $0 < run.baseline }
+        let next = baselines.first { $0 > run.baseline }
+        let top = previous.map { (CGFloat($0) + CGFloat(run.baseline)) / 2 } ?? fallbackTop
+        let bottom = next.map { (CGFloat($0) + CGFloat(run.baseline)) / 2 } ?? fallbackBottom
+        return CGRect(x: 0, y: top, width: 0, height: max(0, bottom - top))
+    }
+
     /// x of text offset `offset` (clamped into the run).
     func runX(_ i: Int, _ offset: Int) -> CGFloat {
         let r = display.runs[i]
@@ -335,6 +360,20 @@ extension RowDisplay {
         if let found { return found }
         let c = ns.rangeOfComposedCharacterSequence(at: o)
         return c.location..<NSMaxRange(c)
+    }
+
+    /// The visual line under an offset, including adjacent styled runs. A
+    /// long press in the painted transcript selects the line as a whole.
+    func lineRange(at offset: Int) -> Range<Int> {
+        guard let run = runs.first(where: { offset >= Int($0.start) && offset < Int($0.start + $0.len) }) else {
+            return wordRange(at: offset)
+        }
+        let lineRuns = runs.filter { $0.baseline == run.baseline && $0.scroller == run.scroller && $0.len > 0 }
+        guard let lo = lineRuns.map({ Int($0.start) }).min(),
+              let hi = lineRuns.map({ Int($0.start + $0.len) }).max(), lo < hi else {
+            return wordRange(at: offset)
+        }
+        return lo..<hi
     }
 }
 

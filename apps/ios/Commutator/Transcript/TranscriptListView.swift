@@ -275,11 +275,14 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
         tap.cancelsTouchesInView = false
         addGestureRecognizer(tap)
-        addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:))))
-        addInteraction(editMenu)
-        for handle in [startHandle, endHandle] {
-            handle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(draggedHandle(_:))))
-            addSubview(handle)
+        // System selection: UIKit's own long press, handles, loupe and edit
+        // menu, driven through the UITextInput adapter below.
+        textInteraction.textInput = self
+        addInteraction(textInteraction)
+        // The selection highlight takes the tint; resolve it per theme.
+        tintColor = Palette.accent.resolvedColor(with: traitCollection)
+        registerForTraitChanges(Palette.colorTraits) { (self: TranscriptListView, _) in
+            self.tintColor = Palette.accent.resolvedColor(with: self.traitCollection)
         }
         panGestureRecognizer.addTarget(self, action: #selector(panned(_:)))
         delegate = self
@@ -362,17 +365,13 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         switch pan.state {
         case .began:
             setFollowing(false)
-            editMenu.dismissMenu()
         case .ended, .cancelled:
             // Finger moving up (negative y) scrolls toward the tail.
             if distanceFromBottom < 70, pan.velocity(in: self).y <= 50 { setFollowing(true) }
-            if !isDecelerating { showSelectionMenu() }
         default:
             break
         }
     }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { showSelectionMenu() }
 
     /// Status-bar tap: the user is going to the top, not the tail.
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
@@ -486,16 +485,20 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         let placements = frame.rowsIn(y0: Float(y0), y1: Float(y1))
         var seen = Set<UInt64>(minimumCapacity: placements.count)
         let width = frame.width()
+        // Selection rects follow realized rows: re-ask UIKit when they change.
+        var geometryChanged = false
         for p in placements {
             seen.insert(p.key)
             let view: RowView
             if let v = visible[p.key] {
                 view = v
             } else {
+                geometryChanged = true
                 view = pool.popLast() ?? { TranscriptPerf.viewsCreated += 1; return RowView() }()
                 view.delegate = self
                 visible[p.key] = view
-                if view.superview !== self { addSubview(view) }
+                // Rows stay below UIKit's selection highlight and handles.
+                if view.superview !== self { insertSubview(view, at: 0) }
                 view.isHidden = false
             }
             let stale = view.model == nil || view.version != p.version || view.model?.display.width != width || view.key != p.key
@@ -505,6 +508,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
                 // current model and build the new one off the main thread.
                 upgradeAsync(p, frame: frame)
             } else if stale {
+                geometryChanged = true
                 view.configure(model(for: p, frame: frame), kind: p.kind)
                 view.uploadProgress = uploadProgress
                 if !knownKeys.contains(p.key) {
@@ -515,6 +519,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
             }
             let rect = CGRect(x: 0, y: CGFloat(p.y), width: layoutWidth, height: CGFloat(p.height))
             if view.frame != rect {
+                geometryChanged = true
                 // Existing rows tween with the animation; new ones just land.
                 if animation != nil, !view.frame.isEmpty, !stale || view.key == p.key {
                     moves.append((view, rect))
@@ -525,7 +530,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         }
         for (key, view) in visible where !seen.contains(key) {
             visible[key] = nil
-            view.setSelection(nil)
+            geometryChanged = true
             view.isHidden = true
             view.layer.removeAllAnimations()
             view.alpha = 1
@@ -539,7 +544,13 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         } else {
             for (view, rect) in moves { view.frame = rect }
         }
-        if selAnchor != nil { updateSelection() }
+        if selection != nil {
+            if selection.map({ index($0.lo) == nil || index($0.hi) == nil }) == true {
+                clearSelection()
+            } else if geometryChanged {
+                selectionGeometryChanged()
+            }
+        }
         prefetch(frame: frame, around: y0...y1)
     }
 
@@ -586,7 +597,7 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
                    let i = current.indexOf(key: p.key), current.placement(index: i)?.version == p.version {
                     view.configure(model, kind: p.kind)
                     view.uploadProgress = self.uploadProgress
-                    if self.selAnchor != nil { self.updateSelection() }
+                    if self.selection != nil { self.selectionGeometryChanged() }
                 }
             }
         }
@@ -681,10 +692,8 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
         let point = tap.location(in: self)
-        if selAnchor != nil {
-            if !startHandle.hitFrame.contains(point), !endHandle.hitFrame.contains(point) { clearSelection() }
-            return
-        }
+        // A tap over a selection only dismisses it (UITextInteraction does).
+        guard selection == nil else { return }
         guard let row = visible.values.first(where: { !$0.isHidden && $0.frame.contains(point) }),
               let url = row.link(at: tap.location(in: row))
         else { return }
@@ -758,245 +767,322 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
 
     // MARK: Text selection
     //
-    // The transcript is painted, so selection is ours: a long press selects
-    // the word under the finger and keeps extending while the finger moves;
-    // handles adjust either end, across rows; a tap clears.
+    // The transcript is painted, so UIKit can't see its text: the list is a
+    // non-editable `UITextInput` instead, and `UITextInteraction` brings the
+    // system long press, handles, loupe and edit menu. Positions are
+    // (row key, UTF-16 offset in the row's text); geometry comes from the
+    // realized rows, so ends in rows scrolled out have no handle.
 
-    private struct TextPoint {
-        var key: UInt64
-        var offset: Int
-    }
-    private var selAnchor: TextPoint?
-    private var selFocus: TextPoint?
-    /// The long-pressed word, while that press extends the selection.
-    private var pressWord: (key: UInt64, range: Range<Int>)?
-    /// Finger → caret offset of the handle being dragged.
-    private var grab: CGPoint = .zero
-    private let startHandle = SelectionHandle(start: true)
-    private let endHandle = SelectionHandle(start: false)
-    private lazy var editMenu = UIEditMenuInteraction(delegate: self)
+    private let textInteraction = UITextInteraction(for: .nonEditable)
+    private var selection: (lo: TranscriptPosition, hi: TranscriptPosition)?
+    weak var inputDelegate: UITextInputDelegate?
+    private(set) lazy var tokenizer: UITextInputTokenizer = TranscriptTokenizer(list: self)
 
-    private func index(_ p: TextPoint) -> UInt32? { current?.indexOf(key: p.key) }
+    private func index(_ p: TranscriptPosition) -> UInt32? { current?.indexOf(key: p.key) }
 
-    /// a < b in reading order (nil when either row is gone).
-    private func precedes(_ a: TextPoint, _ b: TextPoint) -> Bool? {
-        guard let ia = index(a), let ib = index(b) else { return nil }
-        return (ia, a.offset) < (ib, b.offset)
+    private func order(_ p: TranscriptPosition) -> (UInt32, Int)? { index(p).map { ($0, p.offset) } }
+
+    /// Row `i`'s display: the realized model when there is one.
+    fileprivate func display(_ i: UInt32) -> RowDisplay? {
+        guard let frame = current, let p = frame.placement(index: i) else { return nil }
+        return visible[p.key]?.model?.display ?? frame.display(index: i)
     }
 
-    /// The selection's ends in reading order, with their row indices.
-    private func ordered() -> (lo: TextPoint, loIndex: UInt32, hi: TextPoint, hiIndex: UInt32)? {
-        guard let a = selAnchor, let f = selFocus, let ia = index(a), let iff = index(f) else { return nil }
-        return (ia, a.offset) <= (iff, f.offset) ? (a, ia, f, iff) : (f, iff, a, ia)
+    fileprivate func display(key: UInt64) -> RowDisplay? {
+        current?.indexOf(key: key).flatMap(display)
+    }
+
+    private func length(_ i: UInt32) -> Int { display(i).map { ($0.text as NSString).length } ?? 0 }
+
+    private func position(_ i: UInt32, _ offset: Int) -> TranscriptPosition? {
+        current?.placement(index: i).map { TranscriptPosition(key: $0.key, offset: offset) }
     }
 
     private func clearSelection() {
-        selAnchor = nil
-        selFocus = nil
-        pressWord = nil
-        editMenu.dismissMenu()
-        startHandle.isHidden = true
-        endHandle.isHidden = true
-        visible.values.forEach { $0.setSelection(nil) }
+        guard selection != nil else { return }
+        selection = nil
+        selectionGeometryChanged()
     }
 
-    private func updateSelection() {
-        guard let o = ordered() else { return clearSelection() }
-        for view in visible.values where !view.isHidden {
-            guard let i = current?.indexOf(key: view.key), i >= o.loIndex, i <= o.hiIndex else {
-                view.setSelection(nil)
-                continue
-            }
-            view.setSelection((i == o.loIndex ? o.lo.offset : 0)..<(i == o.hiIndex ? o.hi.offset : Int.max))
-        }
-        for (handle, point, end) in [(startHandle, o.lo, false), (endHandle, o.hi, true)] {
-            if let row = visible[point.key], !row.isHidden, let caret = row.caret(at: point.offset, end: end) {
-                handle.place(caret: row.convert(caret, to: self))
-                handle.isHidden = false
-                bringSubviewToFront(handle)
-            } else {
-                handle.isHidden = true
-            }
-        }
+    /// Rows moved or were realized: UIKit re-asks for the selection rects.
+    private func selectionGeometryChanged() {
+        inputDelegate?.selectionWillChange(self)
+        inputDelegate?.selectionDidChange(self)
     }
 
     /// The text position nearest `point` (list coordinates) within `limit`.
-    private func hitText(_ point: CGPoint, within limit: CGFloat = .infinity) -> TextPoint? {
-        var best: (point: TextPoint, distance: CGFloat)?
+    private func hitText(_ point: CGPoint, within limit: CGFloat = .infinity) -> TranscriptPosition? {
+        var best: (point: TranscriptPosition, distance: CGFloat)?
         for view in visible.values where !view.isHidden {
             let rowDistance = max(0, view.frame.minY - point.y, point.y - view.frame.maxY)
             if let b = best, rowDistance >= b.distance { continue }
             guard let hit = view.textOffset(at: convert(point, to: view)) else { continue }
             if best == nil || hit.distance < best!.distance {
-                best = (TextPoint(key: view.key, offset: hit.offset), hit.distance)
+                best = (TranscriptPosition(key: view.key, offset: hit.offset), hit.distance)
             }
         }
         return best.flatMap { $0.distance <= limit ? $0.point : nil }
     }
 
-    private func selectedText() -> String {
-        guard let o = ordered(), let frame = current else { return "" }
+    private func text(from lo: TranscriptPosition, to hi: TranscriptPosition) -> String {
+        guard let li = index(lo), let hiIndex = index(hi), li <= hiIndex else { return "" }
         var parts: [String] = []
-        for i in o.loIndex...o.hiIndex {
-            let display: RowDisplay?
-            if let p = frame.placement(index: i), let v = visible[p.key], let m = v.model { display = m.display } else { display = frame.display(index: i) }
-            guard let display else { continue }
-            let text = display.selectedText(from: i == o.loIndex ? o.lo.offset : 0, to: i == o.hiIndex ? o.hi.offset : Int.max)
+        for i in li...hiIndex {
+            guard let display = display(i) else { continue }
+            let text = display.selectedText(from: i == li ? lo.offset : 0, to: i == hiIndex ? hi.offset : Int.max)
             if !text.isEmpty { parts.append(text) }
         }
         return parts.joined(separator: "\n\n")
     }
 
-    @objc private func longPressed(_ g: UILongPressGestureRecognizer) {
-        let point = g.location(in: self)
-        switch g.state {
-        case .began:
-            guard let hit = hitText(point, within: 24), let display = visible[hit.key]?.model?.display else { return }
-            let word = display.wordRange(at: hit.offset)
-            pressWord = (hit.key, word)
-            selAnchor = TextPoint(key: hit.key, offset: word.lowerBound)
-            selFocus = TextPoint(key: hit.key, offset: word.upperBound)
-            editMenu.dismissMenu()
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            updateSelection()
-        case .changed:
-            guard let word = pressWord, let hit = hitText(point) else { return }
-            let start = TextPoint(key: word.key, offset: word.range.lowerBound)
-            let end = TextPoint(key: word.key, offset: word.range.upperBound)
-            // Before the word: grow back from its end; else forward from its start.
-            if precedes(hit, start) == true {
-                selAnchor = end
-                selFocus = hit
+    // MARK: Responder (copy from the system edit menu)
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { clearSelection() }
+        return resigned
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(copy(_:)) { return selection.map { $0.lo != $0.hi } ?? false }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func copy(_ sender: Any?) {
+        guard let s = selection else { return }
+        UIPasteboard.general.string = text(from: s.lo, to: s.hi)
+        clearSelection()
+    }
+}
+
+/// A place in the transcript: a row and a UTF-16 offset in its text.
+final class TranscriptPosition: UITextPosition {
+    let key: UInt64
+    let offset: Int
+
+    init(key: UInt64, offset: Int) {
+        self.key = key
+        self.offset = offset
+    }
+
+    static func == (a: TranscriptPosition, b: TranscriptPosition) -> Bool { a.key == b.key && a.offset == b.offset }
+    static func != (a: TranscriptPosition, b: TranscriptPosition) -> Bool { !(a == b) }
+}
+
+final class TranscriptRange: UITextRange {
+    let lo: TranscriptPosition
+    let hi: TranscriptPosition
+
+    init(_ lo: TranscriptPosition, _ hi: TranscriptPosition) {
+        self.lo = lo
+        self.hi = hi
+    }
+
+    override var start: UITextPosition { lo }
+    override var end: UITextPosition { hi }
+    override var isEmpty: Bool { lo == hi }
+}
+
+final class TranscriptSelectionRect: UITextSelectionRect {
+    private let _rect: CGRect
+    private let _start: Bool
+    private let _end: Bool
+
+    init(_ rect: CGRect, start: Bool, end: Bool) {
+        _rect = rect
+        _start = start
+        _end = end
+    }
+
+    override var rect: CGRect { _rect }
+    override var writingDirection: NSWritingDirection { .natural }
+    override var containsStart: Bool { _start }
+    override var containsEnd: Bool { _end }
+    override var isVertical: Bool { false }
+}
+
+/// Words as the old long press picked them (`RowDisplay.wordRange`: within
+/// one run, so edge words of back-to-back paragraphs don't merge).
+final class TranscriptTokenizer: UITextInputStringTokenizer {
+    private weak var list: TranscriptListView?
+
+    init(list: TranscriptListView) {
+        self.list = list
+        super.init(textInput: list)
+    }
+
+    override func rangeEnclosingPosition(_ position: UITextPosition, with granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
+        if granularity == .word, let p = position as? TranscriptPosition, let display = list?.display(key: p.key) {
+            let word = display.wordRange(at: p.offset)
+            return TranscriptRange(TranscriptPosition(key: p.key, offset: word.lowerBound), TranscriptPosition(key: p.key, offset: word.upperBound))
+        }
+        return super.rangeEnclosingPosition(position, with: granularity, inDirection: direction)
+    }
+}
+
+extension TranscriptListView: UITextInput {
+    // MARK: Document and positions
+
+    var beginningOfDocument: UITextPosition {
+        position(0, 0) ?? TranscriptPosition(key: 0, offset: 0)
+    }
+
+    var endOfDocument: UITextPosition {
+        guard let n = current?.rowCount(), n > 0 else { return beginningOfDocument }
+        return position(n - 1, length(n - 1)) ?? beginningOfDocument
+    }
+
+    func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
+        guard let a = fromPosition as? TranscriptPosition, let b = toPosition as? TranscriptPosition,
+              let oa = order(a), let ob = order(b) else { return nil }
+        return oa <= ob ? TranscriptRange(a, b) : TranscriptRange(b, a)
+    }
+
+    /// Rows join end to start: a row's end and the next row's start are the
+    /// same place, `offset` 0 apart.
+    func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
+        guard let p = position as? TranscriptPosition, let n = current?.rowCount(), var i = index(p) else { return nil }
+        var o = p.offset + offset
+        while true {
+            if o < 0 {
+                guard i > 0 else { return nil }
+                i -= 1
+                o += length(i)
+            } else if o > length(i) {
+                guard i + 1 < n else { return nil }
+                o -= length(i)
+                i += 1
             } else {
-                selAnchor = start
-                selFocus = precedes(hit, end) == true ? end : hit
+                return self.position(i, o)
             }
-            updateSelection()
-        case .ended, .cancelled:
-            guard pressWord != nil else { return }
-            pressWord = nil
-            showSelectionMenu()
-        default:
-            break
         }
     }
 
-    @objc private func draggedHandle(_ g: UIPanGestureRecognizer) {
-        guard let handle = g.view as? SelectionHandle, let o = ordered() else { return }
-        let start = handle === startHandle
-        switch g.state {
-        case .began:
-            editMenu.dismissMenu()
-            selAnchor = start ? o.hi : o.lo
-            selFocus = start ? o.lo : o.hi
-            let touch = g.location(in: self)
-            grab = CGPoint(x: handle.caret.midX - touch.x, y: handle.caret.midY - touch.y)
-        case .changed:
-            let touch = g.location(in: self)
-            guard let anchor = selAnchor,
-                  let hit = hitText(CGPoint(x: touch.x + grab.x, y: touch.y + grab.y)),
-                  // The ends don't cross (the handles would swap under the finger).
-                  (start ? precedes(hit, anchor) : precedes(anchor, hit)) == true
-            else { return }
-            if hit.key != selFocus?.key || hit.offset != selFocus?.offset {
-                selFocus = hit
-                UISelectionFeedbackGenerator().selectionChanged()
-                updateSelection()
+    // ponytail: up/down step by characters, not visual lines; nothing in a
+    // non-editable selection moves by line.
+    func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+        self.position(from: position, offset: direction == .left || direction == .up ? -offset : offset)
+    }
+
+    func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
+        guard let a = position as? TranscriptPosition, let b = other as? TranscriptPosition,
+              let oa = order(a), let ob = order(b) else { return .orderedSame }
+        return oa < ob ? .orderedAscending : oa > ob ? .orderedDescending : .orderedSame
+    }
+
+    // ponytail: sums the lengths of the rows between, O(rows); fine for a
+    // selection, a running prefix sum if UIKit ever asks across the whole doc.
+    func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
+        guard let a = from as? TranscriptPosition, let b = toPosition as? TranscriptPosition,
+              let ia = index(a), let ib = index(b) else { return 0 }
+        if ia == ib { return b.offset - a.offset }
+        if ia > ib { return -offset(from: b, to: a) }
+        var n = length(ia) - a.offset
+        for i in (ia + 1)..<ib { n += length(i) }
+        return n + b.offset
+    }
+
+    func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
+        direction == .left || direction == .up ? range.start : range.end
+    }
+
+    func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
+        let other = self.position(from: position, in: direction, offset: 1) ?? position
+        return textRange(from: position, to: other)
+    }
+
+    // MARK: Text
+
+    func text(in range: UITextRange) -> String? {
+        guard let r = range as? TranscriptRange else { return nil }
+        return text(from: r.lo, to: r.hi)
+    }
+
+    var selectedTextRange: UITextRange? {
+        get { selection.map { TranscriptRange($0.lo, $0.hi) } }
+        set {
+            guard let r = newValue as? TranscriptRange, !r.isEmpty else {
+                selection = nil
+                return
             }
-        case .ended, .cancelled:
-            showSelectionMenu()
-        default:
-            break
+            selection = (r.lo, r.hi)
         }
     }
 
-    /// No scrolling while a press extends the selection or a handle moves.
-    override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        if g === panGestureRecognizer {
-            if pressWord != nil { return false }
-            let p = g.location(in: self)
-            if startHandle.hitFrame.insetBy(dx: -12, dy: -12).contains(p) || endHandle.hitFrame.insetBy(dx: -12, dy: -12).contains(p) { return false }
+    /// The system menu, plus copying the whole message the selection starts in.
+    func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let r = textRange as? TranscriptRange, let i = index(r.lo),
+              let message = current?.messageText(index: i), !message.isEmpty
+        else { return UIMenu(children: suggestedActions) }
+        return UIMenu(children: suggestedActions + [UIAction(title: "Copy Message") { [weak self] _ in
+            UIPasteboard.general.string = message
+            self?.clearSelection()
+        }])
+    }
+
+    // MARK: Geometry (list coordinates)
+
+    func caretRect(for position: UITextPosition) -> CGRect {
+        guard let p = position as? TranscriptPosition, let row = visible[p.key], !row.isHidden,
+              let caret = row.caret(at: p.offset) else { return .null }
+        return row.convert(caret, to: self)
+    }
+
+    func firstRect(for range: UITextRange) -> CGRect {
+        selectionRects(for: range).first?.rect ?? .null
+    }
+
+    func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
+        guard let r = range as? TranscriptRange, let li = index(r.lo), let hiIndex = index(r.hi) else { return [] }
+        var rects: [CGRect] = []
+        var start = false, end = false
+        for view in visible.values.sorted(by: { $0.frame.minY < $1.frame.minY }) where !view.isHidden {
+            guard let i = current?.indexOf(key: view.key), i >= li, i <= hiIndex else { continue }
+            let found = view.selectionRects((i == li ? r.lo.offset : 0)..<(i == hiIndex ? r.hi.offset : Int.max))
+            guard !found.isEmpty else { continue }
+            if i == li { start = true }
+            if i == hiIndex { end = true }
+            rects += found.map { view.convert($0, to: self) }
         }
-        return super.gestureRecognizerShouldBegin(g)
-    }
-
-    private var selectionRect: CGRect? {
-        let rects = [startHandle, endHandle].filter { !$0.isHidden }.map(\.caret)
-        guard let first = rects.first else { return nil }
-        return rects.dropFirst().reduce(first) { $0.union($1) }
-    }
-
-    private func showSelectionMenu() {
-        guard selAnchor != nil, pressWord == nil, let rect = selectionRect else { return }
-        editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: CGPoint(x: rect.midX, y: rect.minY)))
-    }
-}
-
-extension TranscriptListView: UIEditMenuInteractionDelegate {
-    func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration, suggestedActions: [UIMenuElement]) -> UIMenu? {
-        guard let o = ordered(), let frame = current else { return nil }
-        var actions: [UIMenuElement] = [UIAction(title: "Copy") { [weak self] _ in
-            guard let self else { return }
-            UIPasteboard.general.string = self.selectedText()
-            self.clearSelection()
-        }]
-        if let message = frame.messageText(index: o.loIndex), !message.isEmpty {
-            actions.append(UIAction(title: "Copy Message") { [weak self] _ in
-                UIPasteboard.general.string = message
-                self?.clearSelection()
-            })
+        return rects.enumerated().map { n, rect in
+            TranscriptSelectionRect(rect, start: start && n == 0, end: end && n == rects.count - 1)
         }
-        return UIMenu(children: actions)
     }
 
-    func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
-        selectionRect ?? .null
-    }
-}
+    func closestPosition(to point: CGPoint) -> UITextPosition? { hitText(point) }
 
-/// One end of a transcript selection: a caret bar with a knob above (start)
-/// or below (end); the view is wider than it draws, to be easy to grab.
-final class SelectionHandle: UIView {
-    private let start: Bool
-    /// The caret it marks, in the superview's coordinates.
-    private(set) var caret: CGRect = .zero
-    private static let knob: CGFloat = 10
-    private static let width: CGFloat = 36
-
-    init(start: Bool) {
-        self.start = start
-        super.init(frame: .zero)
-        isOpaque = false
-        backgroundColor = .clear
-        isHidden = true
+    func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
+        guard let p = hitText(point) else { return nil }
+        if compare(p, to: range.start) == .orderedAscending { return range.start }
+        if compare(p, to: range.end) == .orderedDescending { return range.end }
+        return p
     }
 
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// Generous touch target around the drawn handle.
-    var hitFrame: CGRect { isHidden ? .null : frame.insetBy(dx: 0, dy: -8) }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: 0, dy: -8).contains(point)
+    func characterRange(at point: CGPoint) -> UITextRange? {
+        guard let p = hitText(point), let display = display(key: p.key) else { return nil }
+        let ns = display.text as NSString
+        guard ns.length > 0 else { return nil }
+        let c = ns.rangeOfComposedCharacterSequence(at: max(0, min(ns.length - 1, p.offset)))
+        return TranscriptRange(TranscriptPosition(key: p.key, offset: c.location), TranscriptPosition(key: p.key, offset: NSMaxRange(c)))
     }
 
-    func place(caret: CGRect) {
-        guard caret != self.caret || frame.isEmpty else { return }
-        self.caret = caret
-        let extra = Self.knob + 2
-        frame = CGRect(x: caret.midX - Self.width / 2, y: caret.minY - (start ? extra : 0), width: Self.width, height: caret.height + extra)
-        setNeedsDisplay()
-    }
+    // MARK: Editing (non-editable: no-ops)
 
-    override func draw(_ rect: CGRect) {
-        guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        ctx.setFillColor(Palette.accent.cgColor)
-        let extra = Self.knob + 2
-        let barTop = start ? extra : 0
-        ctx.fill(CGRect(x: bounds.midX - 1, y: barTop, width: 2, height: caret.height))
-        let knobY = start ? 0 : caret.height + 2
-        ctx.fillEllipse(in: CGRect(x: bounds.midX - Self.knob / 2, y: knobY, width: Self.knob, height: Self.knob))
+    var markedTextRange: UITextRange? { nil }
+    var markedTextStyle: [NSAttributedString.Key: Any]? {
+        get { nil }
+        set {}
     }
+    func setMarkedText(_ markedText: String?, selectedRange: NSRange) {}
+    func unmarkText() {}
+    func replace(_ range: UITextRange, withText text: String) {}
+    func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection { .natural }
+    func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {}
+    var hasText: Bool { (current?.rowCount() ?? 0) > 0 }
+    func insertText(_ text: String) {}
+    func deleteBackward() {}
 }
 
 extension UIView {

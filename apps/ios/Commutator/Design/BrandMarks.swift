@@ -83,6 +83,7 @@ enum BrandMark {
         switch harness {
         case "claude-code", "mock": return UIColor(hex: 0xD97757)
         case "muse": return UIColor(hex: 0x0081FB)
+        case "opencode": return .black
         default: return nil
         }
     }

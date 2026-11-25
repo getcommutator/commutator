@@ -2307,14 +2307,12 @@ const SIDEBAR_VIEW_GROUPS: [(&str, std::ops::Range<usize>); 4] = [
 
 /// The Compact toggle's index in the view menu's top-level item space.
 const SIDEBAR_VIEW_COMPACT: usize = SIDEBAR_VIEW_GROUPS.len();
-/// "New project", the menu's first row.
-const SIDEBAR_VIEW_NEW_PROJECT: usize = SIDEBAR_VIEW_GROUPS.len() + 1;
 
 /// Top-level view-menu items in order. Organize, Sort and Show only shape
 /// the Chats sidebar, so the Projects sidebar offers just the view switch.
 fn sidebar_view_menu_items(view: SidebarView) -> &'static [usize] {
     match view {
-        SidebarView::Projects => &[SIDEBAR_VIEW_NEW_PROJECT, 0, SIDEBAR_VIEW_COMPACT],
+        SidebarView::Projects => &[0, SIDEBAR_VIEW_COMPACT],
         _ => &[0, 1, 2, 3, SIDEBAR_VIEW_COMPACT],
     }
 }
@@ -4421,11 +4419,7 @@ impl Shell {
                     }
                 } else {
                     let group = menu.active.unwrap_or(0);
-                    if group == SIDEBAR_VIEW_NEW_PROJECT {
-                        if key != "right" && !event.is_held {
-                            self.sidebar_view_new_project(cx);
-                        }
-                    } else if group == SIDEBAR_VIEW_COMPACT {
+                    if group == SIDEBAR_VIEW_COMPACT {
                         if key != "right" && !event.is_held {
                             self.activate_sidebar_view_row(SidebarViewRow::Compact, cx);
                         }
@@ -4437,11 +4431,6 @@ impl Shell {
             _ => return,
         }
         cx.stop_propagation();
-    }
-
-    fn sidebar_view_new_project(&mut self, cx: &mut Context<Self>) {
-        self.close_sidebar_view_menu(cx);
-        self.open_add_space(cx);
     }
 
     fn render_sidebar_view_menu(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -4522,52 +4511,6 @@ impl Shell {
             labels[5 + selected[5..7].iter().position(|v| *v).unwrap_or(0)].to_string(),
         ];
         let mut groups: Vec<AnyElement> = Vec::new();
-        // The Projects sidebar opens with "New project".
-        if view == SidebarView::Projects {
-            groups.push(
-                div()
-                    .id("sidebar-view-new-project-hover")
-                    .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                        if *hovered {
-                            this.hover_sidebar_view_group(
-                                SIDEBAR_VIEW_NEW_PROJECT,
-                                window.mouse_position(),
-                                false,
-                                cx,
-                            );
-                        } else if let Some(menu) = this.sidebar_view_menu.open_mut() {
-                            menu.hover_intent.leave(&SIDEBAR_VIEW_NEW_PROJECT);
-                        }
-                    }))
-                    .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-                        this.hover_sidebar_view_group(
-                            SIDEBAR_VIEW_NEW_PROJECT,
-                            event.position,
-                            true,
-                            cx,
-                        );
-                    }))
-                    .child(
-                        popover::menu_row_nav(
-                            theme,
-                            false,
-                            active == Some(SIDEBAR_VIEW_NEW_PROJECT),
-                            "sidebar-view-new-project",
-                        )
-                        .id("sidebar-view-new-project")
-                        .h(px(30.0))
-                        .py(px(0.0))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.sidebar_view_new_project(cx);
-                        }))
-                        .child(icon(icons::PLUS).size(px(14.0)).text_color(theme.text_muted))
-                        .child(div().flex_1().child("New project")),
-                    )
-                    .into_any_element(),
-            );
-            groups.push(popover::menu_separator().into_any_element());
-        }
         let items = sidebar_view_menu_items(view);
         for (group, (label, range)) in SIDEBAR_VIEW_GROUPS.iter().enumerate() {
             if !items.contains(&group) {
@@ -5718,8 +5661,8 @@ impl Shell {
         // folds them away (Shepherd's project fold).
         fold_open: Option<bool>,
         icon_chat: Option<String>,
-        // A worktree's chat, for a project with none of its own.
-        stand_in: Option<commutator_proto::Chat>,
+        // The project's space, for a project row with no chat of its own.
+        space: Option<commutator_proto::Space>,
         selected: Option<&str>,
         // The sidebar's project order, for dragging a project row.
         project_order: Option<&std::sync::Arc<Vec<String>>>,
@@ -5776,9 +5719,17 @@ impl Shell {
                     .into_any_element(),
             )
         } else {
-            icon_chat.map(|chat_id| {
-                self.render_project_group_icon(&chat_id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, cx)
-            })
+            match (icon_chat, space.as_ref()) {
+                (Some(chat_id), _) => Some(self.render_project_group_icon(
+                    &chat_id,
+                    SIDEBAR_ACTIVE_HARNESS_ICON_SIZE,
+                    cx,
+                )),
+                (None, Some(space)) if self.settings.sidebar_show_project_icon => Some(
+                    self.render_space_icon(space, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, cx),
+                ),
+                _ => None,
+            }
         };
         let subline = (!compact)
             .then(|| rows.iter().find_map(|row| row.branch.clone()))
@@ -5810,11 +5761,7 @@ impl Shell {
         );
         // A project's menu: New chat, Create worktree…, Reveal in Finder; a
         // worktree's swaps Create for Delete worktree…, as a faint one's.
-        let menu_chat = rows
-            .first()
-            .map(|row| &row.chat)
-            .or(stand_in.as_ref().filter(|_| !nested));
-        let menu = menu_chat.and_then(|chat| {
+        let menu = rows.first().map(|row| &row.chat).and_then(|chat| {
             let mut menu = self.project_row_menu(chat, cx)?;
             if nested {
                 let worktree_path = chat.cwd.clone()?;
@@ -5831,6 +5778,12 @@ impl Shell {
                 ));
             }
             Some(menu)
+        });
+        let menu = menu.or_else(|| {
+            space
+                .as_ref()
+                .filter(|_| !nested)
+                .map(super::worktree_cleanup::space_row_menu)
         });
         // A project with no chat of its own starts one on a click.
         let new_in = latest
@@ -6359,23 +6312,16 @@ impl Shell {
                 .iter()
                 .map(commutator_proto::view::project_key)
                 .collect();
-            // A project whose own folder has no chat left still heads its
-            // worktrees, rather than leaving them on their own.
-            let missing: Vec<(String, String)> = regular_groups
-                .iter()
-                .filter_map(|(group, _)| {
-                    let (key, label) = group.as_ref()?;
-                    let parent = worktree_parents.get(key)?;
-                    let project = label.rsplit_once(" / ").map_or(label.as_str(), |(p, _)| p);
-                    Some((parent.clone(), project.to_string()))
-                })
-                .collect();
-            for (parent, label) in missing {
+            // Every project gets its row, with chats or without (one whose
+            // own folder has none still heads its worktrees).
+            for space in &state.spaces {
+                let key = commutator_proto::view::project_key(space);
                 if !regular_groups
                     .iter()
-                    .any(|(group, _)| group.as_ref().is_some_and(|(key, _)| *key == parent))
+                    .any(|(group, _)| group.as_ref().is_some_and(|(k, _)| *k == key))
                 {
-                    regular_groups.push((Some((parent, label)), Vec::new()));
+                    let label = state.representative_space(space).display_name().to_string();
+                    regular_groups.push((Some((key, label)), Vec::new()));
                 }
             }
             let manual = &self.settings.space_order;
@@ -6536,7 +6482,11 @@ impl Shell {
             }
         }
 
-        let selected = self.state.read(cx).selected_chat.clone();
+        // Only the page that's open is highlighted: none of the rows while
+        // Pull requests or Settings is.
+        let selected = matches!(self.route, Route::Chat)
+            .then(|| self.state.read(cx).selected_chat.clone())
+            .flatten();
         // Re-checked at render so the chips drop the FRAME a popover opens,
         // not on the next modifier event — the jumps are suppressed under it.
         let jump_hints = self.jump_hints && !self.overlay_owns_keyboard(cx);
@@ -6564,18 +6514,19 @@ impl Shell {
                     })
             })
             .collect();
-        // A project with no chat of its own: one of its worktrees' chats
-        // stands in for its icon, menu and space.
-        let mut stand_ins: HashMap<String, commutator_proto::Chat> = HashMap::new();
-        for ((group, rows), root) in sections.iter().zip(&section_roots) {
-            if let (Some((key, _)), Some(root), Some(row)) = (group, root, rows.first())
-                && key != root
-            {
-                stand_ins
-                    .entry(root.clone())
-                    .or_insert_with(|| row.chat.clone());
-            }
-        }
+        // Each project's space, this device's checkout first: a project row
+        // with no chat of its own takes its icon, menu and new chats from it.
+        let project_spaces: HashMap<String, commutator_proto::Space> = {
+            let state = self.state.read(cx);
+            state
+                .spaces
+                .iter()
+                .filter_map(|space| {
+                    let first = state.project_members(space).into_iter().next()?;
+                    Some((commutator_proto::view::project_key(space), first.clone()))
+                })
+                .collect()
+        };
         let mut slot = 0usize;
         let mut rendered = Vec::new();
         let mut moving_row = None;
@@ -6594,14 +6545,12 @@ impl Shell {
                 self.sidebar_organization(),
                 SidebarOrganization::ByProject | SidebarOrganization::ByWorktree
             ) && group.is_some();
-            let stand_in = group.as_ref().and_then(|(key, _)| stand_ins.get(key)).cloned();
+            let project_space = group
+                .as_ref()
+                .and_then(|(key, _)| project_spaces.get(key))
+                .cloned();
             let header_icon_chat = (project_group && self.settings.sidebar_show_project_icon)
-                .then(|| {
-                    rows.first()
-                        .map(|row| &row.chat)
-                        .or(stand_in.as_ref())
-                        .map(|chat| chat.id.clone())
-                })
+                .then(|| rows.first().map(|row| row.chat.id.clone()))
                 .flatten();
             // The Projects sidebar lists projects and worktrees only; their
             // chats are tabs above the conversation.
@@ -6629,7 +6578,7 @@ impl Shell {
                         nested,
                         (!nested && has_worktrees).then_some(!folded),
                         header_icon_chat,
-                        stand_in,
+                        project_space,
                         selected.as_deref(),
                         Some(&project_order),
                         theme,

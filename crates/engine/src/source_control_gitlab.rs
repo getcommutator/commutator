@@ -2,9 +2,10 @@
 //! (the GitLab CLI, signed in on this device) — GitHub's `gh` counterpart.
 
 use chrono::{DateTime, Utc};
+use commutator_proto::change_request_assessment::{ChangeRequestCi, CiState};
 use commutator_proto::{
     ChangeRequestActor, ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability,
-    ChangeRequestPage, ChangeRequestState,
+    ChangeRequestPage, ChangeRequestReviewDecision, ChangeRequestState,
 };
 use serde::Deserialize;
 
@@ -57,9 +58,66 @@ pub fn parse_remote(remote_url: &str) -> Option<GitLabProject> {
     })
 }
 
+/// One page of a project's open merge requests, most recently updated
+/// first, with what the board shows of each — as Shepherd's list asks it.
+const MERGE_REQUESTS: &str = "query($path: ID!, $after: String, $author: String, $reviewer: String) {
+  currentUser { username }
+  project(fullPath: $path) {
+    mergeRequests(state: opened, first: 50, after: $after, sort: UPDATED_DESC, authorUsername: $author, reviewerUsername: $reviewer) {
+      count
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        iid title webUrl draft createdAt updatedAt approved conflicts detailedMergeStatus diffHeadSha
+        author { username }
+        reviewers { nodes { username mergeRequestInteraction { reviewState } } }
+        headPipeline { status jobs { count } }
+        diffStatsSummary { additions deletions }
+      }
+    }
+  }
+}";
+
 #[derive(Deserialize)]
+struct Graphql<T> {
+    data: Option<T>,
+    #[serde(default)]
+    errors: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListData {
+    current_user: Option<User>,
+    project: Option<Project>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Project {
+    merge_requests: Connection<MergeRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Connection<T> {
+    #[serde(default)]
+    count: Option<u64>,
+    #[serde(default)]
+    page_info: Option<PageInfo>,
+    nodes: Vec<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageInfo {
+    has_next_page: bool,
+    end_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MergeRequest {
-    iid: u64,
+    iid: String,
     title: String,
     web_url: String,
     #[serde(default)]
@@ -69,11 +127,19 @@ struct MergeRequest {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     #[serde(default)]
-    has_conflicts: bool,
+    approved: bool,
+    #[serde(default)]
+    conflicts: bool,
     #[serde(default)]
     detailed_merge_status: Option<String>,
     #[serde(default)]
-    sha: Option<String>,
+    diff_head_sha: Option<String>,
+    #[serde(default)]
+    reviewers: Option<Connection<Reviewer>>,
+    #[serde(default)]
+    head_pipeline: Option<Pipeline>,
+    #[serde(default)]
+    diff_stats_summary: Option<Stats>,
 }
 
 #[derive(Deserialize)]
@@ -81,9 +147,44 @@ struct User {
     username: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Reviewer {
+    username: String,
+    #[serde(default)]
+    merge_request_interaction: Option<Interaction>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Interaction {
+    #[serde(default)]
+    review_state: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Pipeline {
+    status: String,
+    #[serde(default)]
+    jobs: Option<Count>,
+}
+
+#[derive(Deserialize)]
+struct Count {
+    #[serde(default)]
+    count: u64,
+}
+
+#[derive(Deserialize)]
+struct Stats {
+    additions: u64,
+    deletions: u64,
+}
+
 impl GitHubCli {
     /// Whether `project`'s host is a GitLab this device can reach: named so,
     /// or signed in to with `glab`.
+    /// The `glab auth status` answer is kept with the list requests (5 min).
     pub async fn is_gitlab(&self, project: &GitLabProject) -> bool {
         if project.host.contains("gitlab") {
             return true;
@@ -94,55 +195,132 @@ impl GitHubCli {
             "--hostname".into(),
             project.host.clone(),
         ]);
-        self.runner
-            .run(request)
-            .await
-            .is_ok_and(|output| output.success)
+        let runner = self.runner.clone();
+        self.cached_pr_request(format!("gitlab:auth:{}", project.host), false, async move {
+            let signed_in = runner.run(request).await.is_ok_and(|output| output.success);
+            Ok(serde_json::Value::Bool(signed_in))
+        })
+        .await
+        .is_ok_and(|value| value == serde_json::Value::Bool(true))
     }
 
-    /// The open merge requests of `project`, most recently updated first.
-    // ponytail: first 50 only, no CI/approval state (the list endpoint has none).
+    /// The open merge requests of `project`, cached as GitHub's list is: in
+    /// memory (shared in-flight reads, 5 min; 15 s after a refresh) and the
+    /// first page on disk, which `cached` answers whatever its age.
     pub async fn list_gitlab_page(
         &self,
         project: &GitLabProject,
         filter: ChangeRequestFilter,
+        after: Option<&str>,
+        refresh: bool,
+        cached: bool,
     ) -> Result<ChangeRequestPage, ChangeRequestError> {
-        let scope = match filter {
-            ChangeRequestFilter::Authored => "&scope=created_by_me".to_owned(),
-            ChangeRequestFilter::All => "&scope=all".to_owned(),
-            ChangeRequestFilter::Reviewing => {
-                let me: User = self.glab_json(project, "user".into()).await?;
-                format!("&scope=all&reviewer_username={}", me.username)
-            }
-        };
-        let endpoint = format!(
-            "projects/{}/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50{scope}",
-            project.path.replace('/', "%2F"),
-        );
-        let requests: Vec<MergeRequest> = self.glab_json(project, endpoint).await?;
-        let items = requests
-            .into_iter()
-            .map(|mr| item(project, filter, mr))
-            .collect();
-        Ok(ChangeRequestPage {
-            items,
-            next_cursor: None,
-            total_count: None,
-            fetched_at: Some(Utc::now()),
-        })
+        if after.is_some_and(|cursor| !super::valid_page_cursor(cursor)) {
+            return Err(ChangeRequestError::Decode);
+        }
+        // ponytail: stored per host, not per glab account; key by the viewer if accounts get switched.
+        let account = format!("gitlab:{}", project.host);
+        let store = self.store.clone().filter(|_| after.is_none());
+        if cached
+            && !refresh
+            && let Some(store) = &store
+            && let Some(page) = store.load(&account, &project.path, filter).await
+        {
+            return Ok(page);
+        }
+        let github = self.clone();
+        let fetched = project.clone();
+        let cursor = after.map(str::to_owned);
+        // ponytail: a GitLab 429 also pauses GitHub reads for 15 min (one shared rate-limit flag).
+        let value = self
+            .cached_pr_request(
+                format!(
+                    "gitlab:list:{}/{}:{filter:?}:{}",
+                    project.host,
+                    project.path.to_ascii_lowercase(),
+                    after.unwrap_or_default()
+                ),
+                refresh,
+                async move {
+                    let page = github.fetch_gitlab_page(&fetched, filter, cursor.as_deref()).await?;
+                    serde_json::to_value(page).map_err(|_| ChangeRequestError::Decode)
+                },
+            )
+            .await?;
+        let page: ChangeRequestPage =
+            serde_json::from_value(value).map_err(|_| ChangeRequestError::Decode)?;
+        if let Some(store) = store {
+            store.save(&account, &project.path, filter, &page).await;
+        }
+        Ok(page)
+    }
+
+    /// The signed-in `glab` user on `project`'s host, which Mine and
+    /// Reviewing filter by; kept with the list requests (5 min).
+    async fn gitlab_viewer(&self, project: &GitLabProject) -> Result<String, ChangeRequestError> {
+        let github = self.clone();
+        let project = project.clone();
+        let key = format!("gitlab:viewer:{}", project.host);
+        let value = self
+            .cached_pr_request(key, false, async move {
+                let data: ListData = github
+                    .glab_graphql(&project, "query { currentUser { username } }", &[])
+                    .await?;
+                let me = data.current_user.ok_or(ChangeRequestError::Authentication)?;
+                Ok(serde_json::Value::String(me.username))
+            })
+            .await?;
+        value.as_str().map(str::to_owned).ok_or(ChangeRequestError::Decode)
+    }
+
+    async fn fetch_gitlab_page(
+        &self,
+        project: &GitLabProject,
+        filter: ChangeRequestFilter,
+        after: Option<&str>,
+    ) -> Result<ChangeRequestPage, ChangeRequestError> {
+        let mut vars = vec![("path", project.path.clone())];
+        if let Some(after) = after {
+            vars.push(("after", after.to_owned()));
+        }
+        match filter {
+            ChangeRequestFilter::Authored => vars.push(("author", self.gitlab_viewer(project).await?)),
+            ChangeRequestFilter::Reviewing => vars.push(("reviewer", self.gitlab_viewer(project).await?)),
+            ChangeRequestFilter::All => {}
+        }
+        let data: ListData = self.glab_graphql(project, MERGE_REQUESTS, &vars).await?;
+        page(project, data)
+    }
+
+    async fn glab_graphql<T: serde::de::DeserializeOwned>(
+        &self,
+        project: &GitLabProject,
+        query: &str,
+        vars: &[(&str, String)],
+    ) -> Result<T, ChangeRequestError> {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            "graphql".into(),
+            "--hostname".into(),
+            project.host.clone(),
+            "-f".into(),
+            format!("query={query}"),
+        ];
+        for (name, value) in vars {
+            args.extend(["-f".into(), format!("{name}={value}")]);
+        }
+        let response: Graphql<T> = self.glab_json(args).await?;
+        if !response.errors.is_empty() {
+            return Err(ChangeRequestError::CommandFailed);
+        }
+        response.data.ok_or(ChangeRequestError::Decode)
     }
 
     async fn glab_json<T: serde::de::DeserializeOwned>(
         &self,
-        project: &GitLabProject,
-        endpoint: String,
+        args: Vec<String>,
     ) -> Result<T, ChangeRequestError> {
-        let request = glab_request(vec![
-            "api".into(),
-            "--hostname".into(),
-            project.host.clone(),
-            endpoint,
-        ]);
+        let request = glab_request(args);
         let output = self.runner.run(request).await.map_err(classify_run_error)?;
         if !output.success {
             return Err(classify_failure(&output.stderr));
@@ -181,39 +359,87 @@ fn classify_failure(stderr: &[u8]) -> ChangeRequestError {
     }
 }
 
-fn item(
-    project: &GitLabProject,
-    filter: ChangeRequestFilter,
-    mr: MergeRequest,
-) -> ChangeRequestListItem {
-    ChangeRequestListItem {
-        provider: "gitlab".into(),
-        author: ChangeRequestActor {
-            login: mr.author.map(|a| a.username).unwrap_or_default(),
+/// The board's page from a `MERGE_REQUESTS` answer.
+fn page(project: &GitLabProject, data: ListData) -> Result<ChangeRequestPage, ChangeRequestError> {
+    // No project: it doesn't exist, or this account can't see it.
+    let requests = data.project.ok_or(ChangeRequestError::UnsupportedRepository)?.merge_requests;
+    let me = data.current_user.map(|user| user.username);
+    let next_cursor = requests
+        .page_info
+        .filter(|info| info.has_next_page)
+        .and_then(|info| info.end_cursor);
+    Ok(ChangeRequestPage {
+        items: requests
+            .nodes
+            .into_iter()
+            .filter_map(|mr| item(project, me.as_deref(), mr))
+            .collect(),
+        next_cursor,
+        total_count: requests.count,
+        fetched_at: Some(Utc::now()),
+    })
+}
+
+fn item(project: &GitLabProject, me: Option<&str>, mr: MergeRequest) -> Option<ChangeRequestListItem> {
+    let author = mr.author.map(|a| a.username).unwrap_or_default();
+    let reviewers = mr.reviewers.map(|r| r.nodes).unwrap_or_default();
+    let changes_requested = reviewers.iter().any(|r| {
+        r.merge_request_interaction
+            .as_ref()
+            .and_then(|i| i.review_state.as_deref())
+            == Some("REQUESTED_CHANGES")
+    });
+    let review_decision = if changes_requested {
+        ChangeRequestReviewDecision::ChangesRequested
+    } else if mr.approved {
+        ChangeRequestReviewDecision::Approved
+    } else if !reviewers.is_empty() {
+        ChangeRequestReviewDecision::ReviewRequired
+    } else {
+        ChangeRequestReviewDecision::Unknown
+    };
+    let ci = match mr.head_pipeline {
+        None => ChangeRequestCi { state: CiState::NoChecks, total_count: 0 },
+        Some(pipeline) => ChangeRequestCi {
+            state: match pipeline.status.as_str() {
+                "SUCCESS" => CiState::Passed,
+                "FAILED" | "CANCELED" => CiState::Failed,
+                "SKIPPED" => CiState::Skipped,
+                "RUNNING" | "PENDING" | "CREATED" | "PREPARING" | "WAITING_FOR_RESOURCE"
+                | "SCHEDULED" | "MANUAL" => CiState::Pending,
+                _ => CiState::Unknown,
+            },
+            total_count: pipeline.jobs.map_or(0, |jobs| jobs.count),
         },
+    };
+    let stats = mr.diff_stats_summary;
+    Some(ChangeRequestListItem {
+        provider: "gitlab".into(),
+        viewer_did_author: me.map(|me| me == author),
+        viewer_review_requested: me.map(|me| reviewers.iter().any(|r| r.username == me)),
+        author: ChangeRequestActor { login: author },
         repository: project.path.clone(),
-        head_ref_oid: mr.sha.unwrap_or_default(),
-        ci: Default::default(),
-        viewer_did_author: (filter == ChangeRequestFilter::Authored).then_some(true),
-        viewer_review_requested: (filter == ChangeRequestFilter::Reviewing).then_some(true),
-        number: mr.iid,
+        head_ref_oid: mr.diff_head_sha.unwrap_or_default(),
+        ci,
+        number: mr.iid.parse().ok()?,
         title: mr.title.split_whitespace().collect::<Vec<_>>().join(" "),
         url: mr.web_url,
         state: ChangeRequestState::Open,
         is_draft: mr.draft,
-        review_decision: Default::default(),
-        additions: 0,
-        deletions: 0,
-        mergeability: if mr.has_conflicts {
+        review_decision,
+        additions: stats.as_ref().map_or(0, |s| s.additions),
+        deletions: stats.as_ref().map_or(0, |s| s.deletions),
+        // `conflicts` is the last check; the detailed status says CONFLICT once the target moves on.
+        mergeability: if mr.conflicts || mr.detailed_merge_status.as_deref() == Some("CONFLICT") {
             ChangeRequestMergeability::Conflicting
-        } else if mr.detailed_merge_status.as_deref() == Some("mergeable") {
+        } else if mr.detailed_merge_status.as_deref() == Some("MERGEABLE") {
             ChangeRequestMergeability::Mergeable
         } else {
             ChangeRequestMergeability::Unknown
         },
         created_at: mr.created_at,
         updated_at: mr.updated_at,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -237,22 +463,37 @@ mod tests {
 
     #[test]
     fn merge_requests_become_list_items() {
-        let mr: MergeRequest = serde_json::from_value(serde_json::json!({
-            "iid": 7, "title": "Fix  it", "web_url": "https://gitlab.com/a/b/-/merge_requests/7",
-            "draft": false, "author": { "username": "ann" },
-            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-02T00:00:00.000+03:00",
-            "has_conflicts": true, "detailed_merge_status": "broken_status", "sha": "abc",
+        let data: ListData = serde_json::from_value(serde_json::json!({
+            "currentUser": { "username": "me" },
+            "project": { "mergeRequests": {
+                "count": 51,
+                "pageInfo": { "hasNextPage": true, "endCursor": "eyJpZCI6IjEifQ" },
+                "nodes": [{
+                    "iid": "7", "title": "Fix  it", "webUrl": "https://gitlab.com/a/b/-/merge_requests/7",
+                    "draft": false, "author": { "username": "ann" },
+                    "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00.000+03:00",
+                    "approved": true, "conflicts": false, "detailedMergeStatus": "CONFLICT", "diffHeadSha": "abc",
+                    "reviewers": { "nodes": [
+                        { "username": "me", "mergeRequestInteraction": { "reviewState": "REQUESTED_CHANGES" } }
+                    ] },
+                    "headPipeline": { "status": "RUNNING", "jobs": { "count": 17 } },
+                    "diffStatsSummary": { "additions": 3, "deletions": 1 }
+                }]
+            } }
         }))
         .unwrap();
         let project = parse_remote("git@gitlab.com:a/b.git").unwrap();
-        let item = item(&project, ChangeRequestFilter::Authored, mr);
+        let page = page(&project, data).unwrap();
+        assert_eq!((page.next_cursor.as_deref(), page.total_count), (Some("eyJpZCI6IjEifQ"), Some(51)));
+        let item = &page.items[0];
         assert_eq!(
-            (item.number, item.title.as_str(), item.author.login.as_str()),
-            (7, "Fix it", "ann")
+            (item.number, item.title.as_str(), item.author.login.as_str(), item.repository.as_str()),
+            (7, "Fix it", "ann", "a/b")
         );
-        assert_eq!(item.repository, "a/b");
-        assert_eq!(item.provider, "gitlab");
+        assert_eq!((item.viewer_did_author, item.viewer_review_requested), (Some(false), Some(true)));
         assert_eq!(item.mergeability, ChangeRequestMergeability::Conflicting);
-        assert_eq!(item.viewer_did_author, Some(true));
+        assert_eq!(item.review_decision, ChangeRequestReviewDecision::ChangesRequested);
+        assert_eq!((item.ci.state, item.ci.total_count), (CiState::Pending, 17));
+        assert_eq!((item.additions, item.deletions, item.head_ref_oid.as_str()), (3, 1, "abc"));
     }
 }

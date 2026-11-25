@@ -31,6 +31,16 @@ pub(super) struct NewWorktree {
     _events: gpui::Subscription,
 }
 
+/// A project row's menu, for its space.
+pub(super) fn space_row_menu(space: &commutator_proto::Space) -> RowMenu {
+    RowMenu {
+        space_id: space.id.clone(),
+        device_id: space.device_id.clone(),
+        folder: space.path.clone(),
+        worktree: None,
+    }
+}
+
 /// What the dialog's field becomes: spaces to dashes, so "login fix" works.
 fn worktree_name(text: &str) -> String {
     text.trim().split_whitespace().collect::<Vec<_>>().join("-")
@@ -98,13 +108,7 @@ fn orphaned_worktree<'a>(chats: &[Chat], deleted: &'a Chat, space_path: &str) ->
 impl Shell {
     /// A project row's menu: its space, when it has one (not "No project").
     pub(super) fn project_row_menu(&self, chat: &Chat, cx: &App) -> Option<RowMenu> {
-        let space = self.state.read(cx).space_for_chat(chat)?;
-        Some(RowMenu {
-            space_id: space.id.clone(),
-            device_id: space.device_id.clone(),
-            folder: space.path.clone(),
-            worktree: None,
-        })
+        Some(space_row_menu(self.state.read(cx).space_for_chat(chat)?))
     }
 
     /// Start a chat in `space_id`, in the worktree that has `branch` checked

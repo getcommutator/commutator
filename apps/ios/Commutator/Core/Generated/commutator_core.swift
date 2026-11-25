@@ -9340,6 +9340,16 @@ public struct PullRequestItem: Equatable, Hashable {
     public var additions: UInt64
     public var deletions: UInt64
     public var updatedAtMs: Int64
+    public var createdAtMs: Int64
+    /**
+     * Opened by you (the Authored group).
+     */
+    public var authored: Bool
+    /**
+     * Your review is asked for (the Reviewing group).
+     */
+    public var reviewRequested: Bool
+    public var review: PullRequestReview
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9352,7 +9362,13 @@ public struct PullRequestItem: Equatable, Hashable {
          */provider: String, number: UInt64, title: String, author: String, section: PullRequestSection, tone: PullRequestTone, isDraft: Bool, 
         /**
          * "Changes requested · Your review requested"; empty when nothing to say.
-         */status: String, ci: PullRequestCi, additions: UInt64, deletions: UInt64, updatedAtMs: Int64) {
+         */status: String, ci: PullRequestCi, additions: UInt64, deletions: UInt64, updatedAtMs: Int64, createdAtMs: Int64, 
+        /**
+         * Opened by you (the Authored group).
+         */authored: Bool, 
+        /**
+         * Your review is asked for (the Reviewing group).
+         */reviewRequested: Bool, review: PullRequestReview) {
         self.url = url
         self.repository = repository
         self.provider = provider
@@ -9367,6 +9383,10 @@ public struct PullRequestItem: Equatable, Hashable {
         self.additions = additions
         self.deletions = deletions
         self.updatedAtMs = updatedAtMs
+        self.createdAtMs = createdAtMs
+        self.authored = authored
+        self.reviewRequested = reviewRequested
+        self.review = review
     }
 
     
@@ -9398,7 +9418,11 @@ public struct FfiConverterTypePullRequestItem: FfiConverterRustBuffer {
                 ci: FfiConverterTypePullRequestCi.read(from: &buf), 
                 additions: FfiConverterUInt64.read(from: &buf), 
                 deletions: FfiConverterUInt64.read(from: &buf), 
-                updatedAtMs: FfiConverterInt64.read(from: &buf)
+                updatedAtMs: FfiConverterInt64.read(from: &buf), 
+                createdAtMs: FfiConverterInt64.read(from: &buf), 
+                authored: FfiConverterBool.read(from: &buf), 
+                reviewRequested: FfiConverterBool.read(from: &buf), 
+                review: FfiConverterTypePullRequestReview.read(from: &buf)
         )
     }
 
@@ -9417,6 +9441,10 @@ public struct FfiConverterTypePullRequestItem: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.additions, into: &buf)
         FfiConverterUInt64.write(value.deletions, into: &buf)
         FfiConverterInt64.write(value.updatedAtMs, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterBool.write(value.authored, into: &buf)
+        FfiConverterBool.write(value.reviewRequested, into: &buf)
+        FfiConverterTypePullRequestReview.write(value.review, into: &buf)
     }
 }
 
@@ -14815,6 +14843,92 @@ public func FfiConverterTypePullRequestFilter_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypePullRequestFilter_lower(_ value: PullRequestFilter) -> RustBuffer {
     return FfiConverterTypePullRequestFilter.lower(value)
+}
+
+
+
+/**
+ * The review decision, for the Review filter.
+ */
+
+public enum PullRequestReview: Equatable, Hashable {
+    
+    case approved
+    case changesRequested
+    case reviewRequired
+    /**
+     * No decision reported.
+     */
+    case none
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PullRequestReview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePullRequestReview: FfiConverterRustBuffer {
+    typealias SwiftType = PullRequestReview
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PullRequestReview {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .approved
+        
+        case 2: return .changesRequested
+        
+        case 3: return .reviewRequired
+        
+        case 4: return .none
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PullRequestReview, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .approved:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .changesRequested:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .reviewRequired:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .none:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestReview_lift(_ buf: RustBuffer) throws -> PullRequestReview {
+    return try FfiConverterTypePullRequestReview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestReview_lower(_ value: PullRequestReview) -> RustBuffer {
+    return FfiConverterTypePullRequestReview.lower(value)
 }
 
 

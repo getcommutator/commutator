@@ -3992,6 +3992,10 @@ impl RpcService for EngineRpc {
                     cwd: String,
                     #[serde(default)]
                     repository: Option<String>,
+                    /// Answer `{github, gitlab}`, naming a GitLab project
+                    /// when the checkout has no GitHub remote.
+                    #[serde(default)]
+                    gitlab: bool,
                 }
                 let p: P = parse_params(params)?;
                 // Only a chat or project checkout on this device: a caller
@@ -4007,7 +4011,25 @@ impl RpcService for EngineRpc {
                     }
                     None => resolver.repository_for_checkout(cwd).await,
                 };
-                RpcReply::value(&repository)
+                if !p.gitlab {
+                    return RpcReply::value(&repository);
+                }
+                let mut gitlab = None;
+                if repository.is_none() {
+                    let project = resolver
+                        .inspect_checkout(cwd)
+                        .await
+                        .ok()
+                        .and_then(|source| source.branch.remote_url)
+                        .as_deref()
+                        .and_then(crate::source_control::gitlab::parse_remote);
+                    if let Some(project) = project
+                        && self.github.is_gitlab(&project).await
+                    {
+                        gitlab = Some(project.path);
+                    }
+                }
+                RpcReply::value(&serde_json::json!({ "github": repository, "gitlab": gitlab }))
             }
             methods::LIST_CHANGE_REQUEST_PAGE => {
                 #[derive(Deserialize)]
@@ -4041,7 +4063,7 @@ impl RpcService for EngineRpc {
                         Some(project) if self.github.is_gitlab(&project).await => {
                             let page = self
                                 .github
-                                .list_gitlab_page(&project, p.filter)
+                                .list_gitlab_page(&project, p.filter, p.after.as_deref(), p.refresh, p.cached)
                                 .await
                                 .map_err(change_request_rpc_error)?;
                             return RpcReply::value(&page);

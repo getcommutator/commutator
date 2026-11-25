@@ -46,9 +46,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
             self?.saveDraft()
         }
         navigationItem.largeTitleDisplayMode = .never
-        // The title and "project @ device" head the ⋯ menu instead of
-        // crowding the bar.
-        navigationItem.titleView = UIView()
+        // `render` fills in the chat title from the session's current chrome.
         navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), menu: sessionMenu(title: "", subtitle: ""))
         navigationItem.rightBarButtonItem?.accessibilityIdentifier = "session-menu"
         companionsItem = UIBarButtonItem(image: UIImage(systemName: "square.stack.3d.up"), primaryAction: UIAction { [weak self] _ in
