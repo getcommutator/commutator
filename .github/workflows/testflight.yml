@@ -1,7 +1,8 @@
 # A TestFlight build of the iOS app, by hand from the Actions tab (any branch) or as part of a release. It archives a Release device build (the
 # Rust core builds in the archive's "Rust core" phase, profile mobile-dist), signs it automatically through an App Store
-# Connect API key, and uploads it. Build numbers are UTC minutes (YYYYMMDDHHMM), the scheme local uploads use, so they
-# only grow and need no App Store Connect lookup.
+# Connect API key, and uploads it. Build numbers count up per version (1, 2, 3…): the archive carries the project's
+# CURRENT_PROJECT_VERSION (1) and the export's manageAppVersionAndBuildNumber lets App Store Connect bump it past the
+# version's last upload, local or CI.
 #
 # Secrets: AC_API_KEY_P8 (the .p8 file's contents), AC_API_KEY_ID, AC_API_ISSUER_ID. The key needs the Admin or App
 # Manager role for cloud-managed signing.
@@ -38,7 +39,6 @@ jobs:
           KEY="$RUNNER_TEMP/keys/AuthKey_$AC_API_KEY_ID.p8"
           printf '%s\n' "$AC_API_KEY_P8" > "$KEY"
           echo "AC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
-          echo "BUILD_NUMBER=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_ENV"
       - name: Archive
         working-directory: apps/ios
         env:
@@ -52,7 +52,7 @@ jobs:
             -authenticationKeyPath "$AC_KEY_PATH" \
             -authenticationKeyID "$AC_API_KEY_ID" \
             -authenticationKeyIssuerID "$AC_API_ISSUER_ID" \
-            DEVELOPMENT_TEAM=Z7PK4B5KU2 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" archive | tail -n 200
+            DEVELOPMENT_TEAM=Z7PK4B5KU2 archive | tail -n 200
           exit "${PIPESTATUS[0]}"
       - name: Upload
         env:
@@ -68,7 +68,7 @@ jobs:
             <key>destination</key><string>upload</string>
             <key>teamID</key><string>Z7PK4B5KU2</string>
             <key>signingStyle</key><string>automatic</string>
-            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>manageAppVersionAndBuildNumber</key><true/>
             <key>uploadSymbols</key><true/>
           </dict>
           </plist>
@@ -81,4 +81,4 @@ jobs:
             -authenticationKeyPath "$AC_KEY_PATH" \
             -authenticationKeyID "$AC_API_KEY_ID" \
             -authenticationKeyIssuerID "$AC_API_ISSUER_ID"
-          echo "Uploaded build $BUILD_NUMBER" >> "$GITHUB_STEP_SUMMARY"
+          echo "Uploaded a TestFlight build (its number is set by App Store Connect)" >> "$GITHUB_STEP_SUMMARY"

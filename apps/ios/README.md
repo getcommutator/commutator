@@ -162,7 +162,10 @@ A release tag runs it on its own when the iOS app changed since the previous tag
 `release.yml`). By hand: run the **testflight** workflow (`.github/workflows/testflight.yml`) from
 GitHub Actions, on `main` or any branch. It installs the Rust iOS target,
 archives (device, Release — the Rust core builds in the archive) with
-automatic signing for team `Z7PK4B5KU2`, and uploads a TestFlight build. The
-build number is the UTC minute (`YYYYMMDDHHMM`), as for local uploads.
+automatic signing for team `Z7PK4B5KU2`, and uploads a TestFlight build. Build
+numbers count up per `MARKETING_VERSION` (1, 2, 3…): archives keep
+`CURRENT_PROJECT_VERSION = 1` and the export's `manageAppVersionAndBuildNumber`
+moves it past the version's last upload, CI or local (Xcode Organizer's
+"Manage Version and Build Number" does the same).
 Secrets: `AC_API_KEY_P8` (the `.p8` file's contents), `AC_API_KEY_ID`,
 `AC_API_ISSUER_ID`; the key needs the Admin or App Manager role.
