@@ -643,7 +643,7 @@ mod tests {
             });
             page.body = Some(crate::markdown::parse_full(""));
             page.error = None;
-            page.tab = Tab::Activity;
+            page.tab = Tab::Timeline;
             page
         });
         page.update(cx, |page, cx| {

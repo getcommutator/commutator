@@ -780,7 +780,8 @@ impl PullRequestsPage {
     }
 
     pub fn fixture_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        self.search.update(cx, |input, cx| input.set_text(query, cx));
+        self.search
+            .update(cx, |input, cx| input.set_text(query, cx));
         self.query = query.to_owned();
         self.rebuild();
         cx.notify();

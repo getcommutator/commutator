@@ -228,7 +228,7 @@ fn main() -> anyhow::Result<()> {
                     let shot = |cx: &mut AsyncApp, name: &str| capture(any, cx, &output, name);
                     pause(cx, 900).await;
                     shot(cx, "01-board-loading")?;
-                    pause(cx, 6000).await;
+                    pause(cx, 15000).await;
                     set_delay(0)?;
                     shot(cx, "02-board")?;
                     let board = window

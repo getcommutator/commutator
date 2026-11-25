@@ -5,11 +5,15 @@ mod code;
 mod handoff;
 #[path = "pull_request_interactions.rs"]
 mod interactions;
+use crate::icons::{self, icon};
 use crate::{
     settings::{self, PullRequestDestination, widgets},
     state::AppState,
     theme::Theme,
 };
+use commutator_proto::change_request_assessment::{CiState, Facts, check_failed, check_status};
+use commutator_proto::{ChangeRequestDetail, ChangeRequestListItem, ChangeRequestState};
+use commutator_rpc::methods;
 use gpui::{
     Action, AnyElement, App, Context, Entity, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, Window, div, prelude::*, px,
@@ -17,9 +21,6 @@ use gpui::{
 #[cfg(test)]
 use std::time::Duration;
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Instant};
-use commutator_proto::change_request_assessment::{CiState, Facts, check_failed, check_status};
-use commutator_proto::{ChangeRequestDetail, ChangeRequestListItem};
-use commutator_rpc::methods;
 
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
@@ -122,54 +123,30 @@ pub fn open_on_device(url: &str, device: Option<String>, window: &mut Window, cx
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// The view's tabs under the pull request's head, as Shepherd's review
+/// panel has them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
     Summary,
+    Timeline,
     Code,
-    Activity,
+    Checks,
 }
 
-/// Navigation segments in display order: (tab, label, element id, glyph).
-const TABS: [(Tab, &str, &str, &str); 3] = [
-    (
-        Tab::Summary,
-        "Summary",
-        "pr-summary",
-        crate::icons::DOCUMENT,
-    ),
-    (Tab::Code, "Code", "pr-code", crate::icons::FILE_CODE),
-    (
-        Tab::Activity,
-        "Activity",
-        "pr-activity",
-        crate::icons::CHAT_ROUND_LINE,
-    ),
+const TABS: [(Tab, &str); 4] = [
+    (Tab::Summary, "Summary"),
+    (Tab::Timeline, "Timeline"),
+    (Tab::Code, "Code"),
+    (Tab::Checks, "Checks"),
 ];
 
-/// Slot of `tab` in the navigation pill, in segments from the leading edge.
-fn tab_slot(tab: Tab) -> f32 {
-    TABS.iter()
-        .position(|(candidate, ..)| *candidate == tab)
-        .unwrap_or(0) as f32
-}
-
-const NAV_PADDING: f32 = 2.0;
-/// Each segment's fill sits this far inside its slot, so a hovered segment
-/// and the thumb beside it keep a gap instead of touching.
-const NAV_SEGMENT_INSET: f32 = 2.0;
-const NAV_SEGMENT_HEIGHT: f32 = 36.0;
-/// Room above the window edge for the floating section navigation: its 16px
-/// inset, its height, and 16px of air. The diff and the comment dock end here.
-const NAV_CLEARANCE: f32 = 16.0 + NAV_HEIGHT + 16.0;
-/// The pill's outer height: segment, its inset and the tray's padding on
-/// both sides, and the composer-style 1px edge.
-const NAV_HEIGHT: f32 = NAV_SEGMENT_HEIGHT + 2.0 * (NAV_SEGMENT_INSET + NAV_PADDING) + 2.0;
+/// The body's side padding.
+const PAD: f32 = 16.0;
+/// Room under the Code tab's stream and the comment dock.
+const NAV_CLEARANCE: f32 = 12.0;
 /// Below this page width (a side pane at its narrowest) the content column
 /// tightens its gutters.
 const NARROW_PAGE: f32 = 480.0;
-/// Below this page width the section navigation shows glyphs and counts
-/// only; the labels no longer fit three equal segments.
-const COMPACT_NAV_PAGE: f32 = 440.0;
 /// The content column's gutter on narrow pages.
 const NARROW_PAD_X: f32 = 16.0;
 
@@ -428,9 +405,13 @@ pub struct PullRequestDetailPage {
     /// a diff load succeeds, including across errors and reopening.
     diff_refresh_owed: bool,
     tab: Tab,
-    checks_expanded: bool,
-    tab_slide: crate::motion::IndicatorSlide,
-    tab_focus: [gpui::FocusHandle; 3],
+    /// The footer's or menu's action under way: `approve`, `merge`, ….
+    acting: Option<&'static str>,
+    act_task: Option<Task<()>>,
+    /// Merge was pressed once: a second press within three seconds merges.
+    merge_armed: Option<Instant>,
+    merge_disarm: Option<Task<()>>,
+    menu: crate::popover::Popup<()>,
     /// The file tree is one Tab stop; arrow keys move between files.
     tree_focus: gpui::FocusHandle,
     /// The narrow layout's file picker trigger, refocused when it closes.
@@ -451,7 +432,6 @@ pub struct PullRequestDetailPage {
     submission: Option<Entity<CommentSubmission>>,
     submission_subscription: Option<Subscription>,
     comment_error: Option<String>,
-    verification_platform: handoff::VerificationPlatform,
     handoff_task: Option<Task<()>>,
     handoff_error: Option<String>,
     handoff_device: Option<String>,
@@ -506,9 +486,11 @@ impl PullRequestDetailPage {
             diff_error: None,
             diff_refresh_owed: false,
             tab: Tab::Summary,
-            checks_expanded: false,
-            tab_slide: crate::motion::IndicatorSlide::at(tab_slot(Tab::Summary), Instant::now()),
-            tab_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
+            acting: None,
+            act_task: None,
+            merge_armed: None,
+            merge_disarm: None,
+            menu: crate::popover::Popup::default(),
             tree_focus: cx.focus_handle().tab_stop(true),
             files_focus: cx.focus_handle().tab_stop(true),
             return_focus: None,
@@ -541,7 +523,6 @@ impl PullRequestDetailPage {
             submission: None,
             submission_subscription: None,
             comment_error: None,
-            verification_platform: handoff::VerificationPlatform::Relevant,
             handoff_task: None,
             handoff_error: None,
             handoff_device: None,
@@ -1012,177 +993,6 @@ impl PullRequestDetailPage {
         self.rebuild_stream(cx);
     }
 
-    /// Floating pill nav. One raised thumb glides between equal-width segments
-    /// (positioned as a fraction of the track, so it stays aligned at any label
-    /// length or text scale) while each segment's icon and label fade with the
-    /// thumb's coverage. The pill sizes to its content and only shrinks when
-    /// the window is narrower than that.
-    fn navigation(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let slots = TABS.len() as f32;
-        let compact = self
-            .page_width
-            .is_some_and(|width| width < COMPACT_NAV_PAGE);
-        let position = self.tab_slide.value_at(Instant::now());
-        let thumb = div()
-            .debug_selector(|| "pr-detail-nav-thumb".into())
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(gpui::relative(position / slots))
-            .w(gpui::relative(1.0 / slots))
-            .p(px(NAV_SEGMENT_INSET))
-            .child(
-                div()
-                    .size_full()
-                    .rounded_full()
-                    .bg(theme.glass_hover())
-                    .shadow(crate::theme::card_selected_shadows()),
-            );
-        let counts = self.detail.as_ref().map(|detail| {
-            [
-                None,
-                Some(detail.files.len()),
-                Some(detail.activity_comments().count()),
-            ]
-        });
-        let segments = TABS
-            .into_iter()
-            .enumerate()
-            .map(|(slot, (tab, label, id, glyph))| {
-                // 1 while the thumb sits on this slot, 0 once it is a slot away.
-                let covered = (1.0 - (position - slot as f32).abs()).clamp(0.0, 1.0);
-                let hover_key = format!("pr-detail-{}-{id}", cx.entity_id());
-                let hover = crate::motion::hover_t(&hover_key);
-                let emphasis = covered.max(hover);
-                let selected = tab == self.tab;
-                let count = counts
-                    .and_then(|counts| counts[slot])
-                    .filter(|count| *count > 0);
-                div()
-                    .id(id)
-                    .debug_selector(move || id.into())
-                    .role(gpui::Role::Tab)
-                    .aria_label(match count {
-                        Some(count) => format!("{label}, {count}"),
-                        None => label.to_owned(),
-                    })
-                    .aria_selected(selected)
-                    .track_focus(&self.tab_focus[slot].clone().tab_stop(selected))
-                    .tab_index(0)
-                    .min_w_0()
-                    .p(px(NAV_SEGMENT_INSET))
-                    .cursor_pointer()
-                    .on_hover(crate::motion::hover_listener(hover_key))
-                    .child(
-                        div()
-                            .h(px(NAV_SEGMENT_HEIGHT))
-                            .px(px(if compact { 10.0 } else { 14.0 }))
-                            .rounded_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(6.0))
-                            .text_size(crate::typography::ui_rems(12.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(crate::motion::mix(theme.text_muted, theme.text, emphasis))
-                            .bg(crate::motion::mix(
-                                theme.glass_hover().opacity(0.0),
-                                theme.glass_hover(),
-                                hover * (1.0 - covered) * 0.6,
-                            ))
-                            .child(
-                                crate::icons::icon(glyph)
-                                    .size(px(14.0))
-                                    .flex_none()
-                                    .text_color(crate::motion::mix(
-                                        theme.text_muted,
-                                        theme.text,
-                                        emphasis,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex()
-                                    .items_baseline()
-                                    .gap(px(6.0))
-                                    .line_height(crate::typography::ui_rems(16.0))
-                                    .when(!compact, |el| {
-                                        el.child(div().min_w_0().truncate().child(label))
-                                    })
-                                    .children(count.map(|count| {
-                                        div()
-                                            .flex_none()
-                                            .text_size(crate::typography::ui_rems(11.0))
-                                            .font_weight(gpui::FontWeight::NORMAL)
-                                            .text_color(theme.text_muted)
-                                            .child(count.to_string())
-                                    })),
-                            ),
-                    )
-                    .rounded_full()
-                    .when(compact, |el| {
-                        el.tooltip(crate::settings::widgets::text_tooltip(label))
-                    })
-                    .on_click(cx.listener(move |page, _, _, cx| page.select_tab(tab, cx)))
-                    .on_key_down(cx.listener(
-                        move |page, event: &gpui::KeyDownEvent, window, cx| {
-                            let next = match event.keystroke.key.as_str() {
-                                "left" => (slot + TABS.len() - 1) % TABS.len(),
-                                "right" => (slot + 1) % TABS.len(),
-                                "home" => 0,
-                                "end" => TABS.len() - 1,
-                                _ => return,
-                            };
-                            cx.stop_propagation();
-                            page.select_tab(TABS[next].0, cx);
-                            window.focus(&page.tab_focus[next], cx);
-                        },
-                    ))
-            });
-        let tabs = div()
-            .id("pr-detail-nav")
-            .debug_selector(|| "pr-detail-nav".into())
-            .role(gpui::Role::TabList)
-            .aria_label("Pull request sections")
-            .occlude()
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_up(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .p(px(NAV_PADDING))
-            .rounded_full()
-            // The composer's material, so the two floating controls read as
-            // one family.
-            .border_1()
-            .border_color(theme.composer_surface_border())
-            .bg(theme.composer_surface_bg())
-            .when(!theme.is_frost(), |el| el.shadow_lg())
-            .flex_none()
-            .child(
-                div()
-                    .relative()
-                    .grid()
-                    .grid_cols(TABS.len() as u16)
-                    .child(thumb)
-                    .children(segments),
-            );
-        // Concentric: the pill radius is the segment radius plus the padding.
-        let radius = NAV_SEGMENT_HEIGHT / 2.0 + NAV_SEGMENT_INSET + NAV_PADDING + 1.0;
-        div()
-            .absolute()
-            .bottom(px(16.0))
-            .left_0()
-            .right_0()
-            .px(px(16.0))
-            .flex()
-            .justify_center()
-            .child(div().max_w_full().child(crate::frost::frosted(
-                radius,
-                crate::frost::MENU_BLUR,
-                tabs,
-            )))
-            .into_any_element()
-    }
-
     fn toggle_files(&mut self, cx: &mut Context<Self>) {
         self.files_expanded = !self.files_expanded;
         cx.notify();
@@ -1192,11 +1002,6 @@ impl PullRequestDetailPage {
         if self.tab == tab {
             return;
         }
-        self.tab_slide.retarget(
-            tab_slot(tab),
-            crate::motion::reduced_motion(cx),
-            Instant::now(),
-        );
         crate::markdown::render::clear_selection_surface(&self.selection_prefix);
         self.tab = tab;
         self.scroll.scroll.set_offset(gpui::Point::default());
@@ -1205,11 +1010,1446 @@ impl PullRequestDetailPage {
         }
         cx.notify();
     }
+
+    /// Approve, merge, mark ready, close or reopen, then read it again.
+    fn act(
+        &mut self,
+        action: serde_json::Value,
+        busy: &'static str,
+        done: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.acting.is_some() {
+            return;
+        }
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            crate::toast::error(cx, "Connect to the pull request’s device first.");
+            return;
+        };
+        let mut params = action;
+        params["url"] = self
+            .detail
+            .as_ref()
+            .map_or(&self.url, |d| &d.url)
+            .clone()
+            .into();
+        if let Some(target) = &self.target {
+            params["targetDeviceId"] = target.clone().into();
+        }
+        self.acting = Some(busy);
+        self.merge_armed = None;
+        self.act_task = Some(cx.spawn(async move |page, cx| {
+            let result = engine
+                .client()
+                .call(methods::ACT_ON_CHANGE_REQUEST, params)
+                .await;
+            let _ = page.update(cx, |page, cx| {
+                page.acting = None;
+                match result {
+                    Ok(_) => crate::toast::success(cx, done),
+                    Err(commutator_rpc::RpcError::Failed(why)) => crate::toast::error(cx, why),
+                    Err(commutator_rpc::RpcError::UnknownMethod(_)) => crate::toast::error(
+                        cx,
+                        "Update Commutator on the pull request’s device to do this here.",
+                    ),
+                    Err(error) => crate::toast::error(cx, failure_reason(&error)),
+                }
+                page.refresh(cx);
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    /// The head: the project and number (a click opens it on the web) with
+    /// its state; the title; the author, when it last changed and the
+    /// command that checks it out (a click copies it); the branches and how
+    /// much it changes.
+    fn render_head(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let (detail, preview) = (self.detail.clone(), self.preview.clone());
+        let (detail, preview) = (detail.as_ref(), preview.as_ref());
+        let (number, title) = self.identity();
+        let number = number.map(|n| format!("#{n}")).unwrap_or_default();
+        let url = detail.map_or(self.url.clone(), |d| d.url.clone());
+        let repo = handoff::repository(&url);
+        let state = detail.map(|d| d.state.to_ascii_uppercase());
+        let state = match state.as_deref() {
+            Some("MERGED") => ChangeRequestState::Merged,
+            Some("CLOSED") => ChangeRequestState::Closed,
+            Some(_) => ChangeRequestState::Open,
+            None => preview.map_or(ChangeRequestState::Open, |p| p.state),
+        };
+        let draft = detail.map_or(preview.is_some_and(|p| p.is_draft), |d| d.is_draft);
+        let (glyph_path, color, label) = crate::pull_requests::state_glyph(state, draft, theme);
+        let open = state == ChangeRequestState::Open;
+        let conflicts = detail.is_some_and(|d| d.mergeable.eq_ignore_ascii_case("CONFLICTING"));
+        let approved = detail.is_some_and(|d| d.review_decision.eq_ignore_ascii_case("APPROVED"));
+        let (text, accent) = (theme.text, theme.accent);
+        let project = div()
+            .id("pr-head-project")
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .cursor_pointer()
+            .text_size(px(12.0))
+            .text_color(theme.text_muted)
+            .hover(move |s| s.text_color(text))
+            .child(div().min_w_0().truncate().child(repo))
+            .child(div().flex_none().text_color(accent).child(number.clone()))
+            .child(
+                icon(icons::LUCIDE_SQUARE_ARROW_OUT_UP_RIGHT)
+                    .size(px(12.0))
+                    .flex_none()
+                    .text_color(accent),
+            )
+            .tooltip(widgets::text_tooltip("Open in the browser"))
+            .on_click(move |_, _, cx| cx.open_url(&url));
+        let menu_open = self.menu.is_open();
+        let mut menu_button = div()
+            .id("pr-head-menu")
+            .debug_selector(|| "pr-head-menu".into())
+            .size(px(24.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .when(menu_open, |el| el.bg(theme.element_hover))
+            .hover({
+                let hover = theme.element_hover;
+                move |s| s.bg(hover)
+            })
+            .tooltip(widgets::text_tooltip("More"))
+            .child(
+                icon(icons::MORE_HORIZONTAL)
+                    .size(px(14.0))
+                    .text_color(theme.text_muted),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|page, _, _, _| page.menu.note_trigger_press()),
+            )
+            .on_click(cx.listener(|page, _, _, cx| {
+                cx.stop_propagation();
+                if page.menu.take_press_was_open() {
+                    page.close_menu(cx);
+                } else {
+                    page.menu.open(());
+                }
+                cx.notify();
+            }));
+        if self.menu.get().is_some() {
+            let card = self.render_menu(theme, cx);
+            menu_button = menu_button.child(crate::popover::anchored_menu_below_end(
+                "pr-head-menu-card",
+                card,
+                self.menu.closing_since(),
+            ));
+        }
+        let states = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .when(open && conflicts, |el| {
+                el.child(pill(
+                    icons::LUCIDE_TRIANGLE_ALERT,
+                    "Conflicts",
+                    theme.danger,
+                ))
+            })
+            .when(open && approved, |el| {
+                el.child(pill(icons::LUCIDE_CIRCLE_CHECK, "Approved", theme.success))
+            })
+            .child(pill(glyph_path, label, color))
+            .child(menu_button);
+        let author = detail
+            .map(|d| &d.author)
+            .or(preview.map(|p| &p.author))
+            .cloned()
+            .unwrap_or_default();
+        let provider = preview.map_or("github", |p| p.provider.as_str()).to_owned();
+        let updated = detail
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(&d.updated_at).ok())
+            .map(|at| at.with_timezone(&chrono::Utc))
+            .or(preview.map(|p| p.updated_at))
+            .map(|at| {
+                format!(
+                    "· updated {}",
+                    crate::pull_requests::ago(at, chrono::Utc::now())
+                )
+            });
+        let checkout = detail.map(|d| handoff::checkout_command(d, &self.url));
+        let mono = theme.font_mono.clone();
+        let byline = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .min_w_0()
+            .text_size(px(12.0))
+            .text_color(theme.text_faint)
+            .when(!author.login.is_empty(), |el| {
+                el.child(crate::pull_requests::avatar(
+                    author.avatar(&provider),
+                    &author.login,
+                    18.0,
+                    theme,
+                ))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text)
+                        .child(author.login.clone()),
+                )
+            })
+            .children(updated.map(|u| div().flex_none().child(u)))
+            .child(div().flex_1())
+            .children(checkout.map(|command| {
+                let shown = command.clone();
+                div()
+                    .id("pr-head-checkout")
+                    .flex_none()
+                    .max_w(px(260.0))
+                    .truncate()
+                    .font_family(mono.clone())
+                    .text_color(theme.text_muted)
+                    .cursor_pointer()
+                    .hover(move |s| s.text_color(text))
+                    .tooltip(widgets::text_tooltip("Copy"))
+                    .child(shown)
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(command.clone()));
+                        crate::toast::info(cx, "Copied the checkout command");
+                    })
+            }));
+        let branches = detail.map(|d| {
+            let stats = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    icon(icons::LUCIDE_FILE_TEXT)
+                        .size(px(13.0))
+                        .text_color(theme.text_faint),
+                )
+                .child(div().text_color(theme.text_muted).child(format!(
+                    "{} file{}",
+                    crate::pull_requests::thousands(d.files.len() as u64),
+                    if d.files.len() == 1 { "" } else { "s" }
+                )))
+                .child(
+                    div()
+                        .font_family(mono.clone())
+                        .text_color(theme.success)
+                        .child(format!("+{}", crate::pull_requests::thousands(d.additions))),
+                )
+                .child(
+                    div()
+                        .font_family(mono.clone())
+                        .text_color(theme.danger)
+                        .child(format!("−{}", crate::pull_requests::thousands(d.deletions))),
+                );
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .text_size(px(12.0))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .font_family(mono.clone())
+                        .text_color(theme.text_faint)
+                        .child(branch_chip("pr-head-base", &d.base_ref_name, theme).flex_none())
+                        .when(!d.head_ref_name.is_empty(), |el| {
+                            el.child(div().flex_none().child("←")).child(
+                                branch_chip("pr-head-branch", &d.head_ref_name, theme).min_w_0(),
+                            )
+                        }),
+                )
+                .child(stats)
+        });
+        div()
+            .id("pr-head")
+            .debug_selector(|| "pr-head".into())
+            .flex_none()
+            .px(px(PAD))
+            .pt(px(12.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(project)
+                    .child(states),
+            )
+            .child(
+                div()
+                    .id("pr-detail-title")
+                    .debug_selector(|| "pr-detail-title".into())
+                    .text_size(px(15.0))
+                    .line_height(px(20.0))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.text)
+                    .child(if title.is_empty() { number } else { title }),
+            )
+            .child(byline)
+            .children(branches)
+            .into_any_element()
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.menu.begin_close() {
+            crate::popover::reap_popup(cx, |page: &mut Self| &mut page.menu);
+        }
+        cx.notify();
+    }
+
+    /// The "…" menu: the web, copies, an agent's session, closing.
+    fn render_menu(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let item = |id: &'static str, glyph: &'static str, label: String| {
+            let hover = theme.element_hover;
+            div()
+                .id(id)
+                .h(px(28.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .rounded(px(6.0))
+                .text_size(px(13.0))
+                .text_color(theme.text)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .child(
+                    icon(glyph)
+                        .size(px(14.0))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(label))
+        };
+        let url = self
+            .detail
+            .as_ref()
+            .map_or(self.url.clone(), |d| d.url.clone());
+        let (web, link) = (url.clone(), url.clone());
+        let mut card = crate::popover::popover_card(theme)
+            .w(px(240.0))
+            .flex()
+            .flex_col()
+            .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_menu(cx)))
+            .child(
+                item(
+                    "pr-menu-web",
+                    icons::LUCIDE_SQUARE_ARROW_OUT_UP_RIGHT,
+                    "Open in the browser".into(),
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    cx.open_url(&web);
+                    page.close_menu(cx);
+                })),
+            )
+            .child(
+                item("pr-menu-link", icons::COPY, "Copy link".into()).on_click(cx.listener(
+                    move |page, _, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(link.clone()));
+                        page.close_menu(cx);
+                    },
+                )),
+            );
+        if let Some(detail) = self.detail.clone() {
+            let kinds = handoff::handoffs(&detail);
+            if !kinds.is_empty() {
+                card = card
+                    .child(crate::popover::menu_separator())
+                    .child(crate::popover::menu_heading(theme, "Hand off to an agent"));
+            }
+            for kind in kinds {
+                let prompt = handoff::prompt(kind, &detail, &self.url);
+                card = card.child(
+                    item(kind.id(), kind.glyph(), kind.label().into())
+                        .tooltip(widgets::text_tooltip(kind.summary()))
+                        .on_click(cx.listener(move |page, _, window, cx| {
+                            page.close_menu(cx);
+                            page.prepare_handoff(prompt.clone(), window, cx);
+                        })),
+                );
+            }
+            let state = detail.state.to_ascii_uppercase();
+            if state == "OPEN" {
+                card = card.child(crate::popover::menu_separator()).child(
+                    item(
+                        "pr-menu-close",
+                        icons::LUCIDE_GIT_PULL_REQUEST_CLOSED,
+                        "Close pull request".into(),
+                    )
+                    .text_color(theme.danger)
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.close_menu(cx);
+                        page.act(
+                            serde_json::json!({"action": "close"}),
+                            "close",
+                            "Closed",
+                            cx,
+                        );
+                    })),
+                );
+            } else if state == "CLOSED" {
+                card = card.child(crate::popover::menu_separator()).child(
+                    item(
+                        "pr-menu-reopen",
+                        icons::LUCIDE_GIT_PULL_REQUEST_ARROW,
+                        "Reopen pull request".into(),
+                    )
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.close_menu(cx);
+                        page.act(
+                            serde_json::json!({"action": "reopen"}),
+                            "reopen",
+                            "Reopened",
+                            cx,
+                        );
+                    })),
+                );
+            }
+        }
+        card.into_any_element()
+    }
+
+    /// The tabs as one segmented control, and how the checks went beside
+    /// them (a click shows them).
+    fn render_tabs(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let (text, muted, on) = (theme.text, theme.text_muted, theme.surface_raised);
+        let tray = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .p(px(2.0))
+            .rounded(px(8.0))
+            .bg(theme.element_hover)
+            .children(TABS.iter().map(|&(tab, label)| {
+                let selected = self.tab == tab;
+                div()
+                    .id(SharedString::from(format!("pr-tab-{label}")))
+                    .debug_selector(move || format!("pr-tab-{label}"))
+                    .role(gpui::Role::Tab)
+                    .aria_selected(selected)
+                    .h(px(24.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .text_size(px(12.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .map(|el| {
+                        if selected {
+                            el.bg(on)
+                                .text_color(text)
+                                .shadow(crate::theme::card_selected_shadows())
+                        } else {
+                            el.text_color(muted)
+                                .cursor_pointer()
+                                .hover(move |s| s.text_color(text))
+                        }
+                    })
+                    .child(label)
+                    .on_click(cx.listener(move |page, _, _, cx| page.select_tab(tab, cx)))
+            }));
+        let ci = self.detail.as_ref().and_then(|d| ci_line(d, theme));
+        div()
+            .flex_none()
+            .px(px(PAD))
+            .py(px(8.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(tray)
+            .child(div().flex_1())
+            .children(ci.map(|(glyph, color, words)| {
+                div()
+                    .id("pr-ci")
+                    .debug_selector(|| "pr-ci".into())
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .hover(move |s| s.text_color(text))
+                    .child(icon(glyph).size(px(14.0)).flex_none().text_color(color))
+                    .child(div().min_w_0().truncate().child(words))
+                    .on_click(cx.listener(|page, _, _, cx| page.select_tab(Tab::Checks, cx)))
+            }))
+            .into_any_element()
+    }
+
+    /// The Summary: who reviews it and what they said, its labels, its open
+    /// threads; then the description.
+    fn render_summary(
+        &mut self,
+        detail: &ChangeRequestDetail,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let none = || {
+            div()
+                .text_color(theme.text_faint)
+                .child("None")
+                .into_any_element()
+        };
+        let row = |glyph: &'static str, name: &'static str, value: AnyElement| {
+            div()
+                .flex()
+                .items_start()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .w(px(96.0))
+                        .h(px(22.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .text_color(theme.text_muted)
+                        .child(
+                            icon(glyph)
+                                .size(px(14.0))
+                                .flex_none()
+                                .text_color(theme.text_faint),
+                        )
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h(px(22.0))
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(value),
+                )
+        };
+        let reviewers = reviewers(detail);
+        let reviewers = if reviewers.is_empty() {
+            none()
+        } else {
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(10.0))
+                .children(reviewers.into_iter().map(|(name, verdict)| {
+                    let (glyph, color, said) = match verdict {
+                        Verdict::Approved => {
+                            (icons::LUCIDE_CIRCLE_CHECK, theme.success, "approved")
+                        }
+                        Verdict::Changes => {
+                            (icons::LUCIDE_CIRCLE_X, theme.danger, "requested changes")
+                        }
+                        Verdict::Commented => {
+                            (icons::LUCIDE_MESSAGE_SQUARE, theme.text_muted, "commented")
+                        }
+                        Verdict::Pending => {
+                            (icons::CLOCK_CIRCLE, theme.text_faint, "hasn’t reviewed yet")
+                        }
+                    };
+                    div()
+                        .id(SharedString::from(format!("pr-reviewer-{name}")))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_color(theme.text)
+                        .tooltip(widgets::text_tooltip(format!("{name} {said}")))
+                        .child(icon(glyph).size(px(14.0)).flex_none().text_color(color))
+                        .child(name)
+                }))
+                .into_any_element()
+        };
+        let labels = if detail.labels.is_empty() {
+            none()
+        } else {
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(4.0))
+                .children(
+                    detail
+                        .labels
+                        .iter()
+                        .map(|l| crate::pull_requests::chip(&l.name, theme).h(px(20.0))),
+                )
+                .into_any_element()
+        };
+        let threads = detail.review_threads.as_ref().map(|threads| {
+            match threads.iter().filter(|t| !t.is_resolved).count() {
+                0 if threads.is_empty() => div().text_color(theme.text_faint).child("None"),
+                0 => div().text_color(theme.text_faint).child("All resolved"),
+                n => div()
+                    .text_color(theme.warning)
+                    .child(format!("{n} unresolved")),
+            }
+        });
+        let description = match self
+            .body
+            .as_ref()
+            .filter(|_| !detail.body.trim().is_empty())
+        {
+            Some(body) => rich_text(
+                body,
+                format!("{}description", self.selection_prefix),
+                &self.url,
+                theme,
+                crate::settings::math_style(cx),
+                window,
+                cx.weak_entity(),
+            ),
+            None => div()
+                .text_color(theme.text_muted)
+                .child("No description provided.")
+                .into_any_element(),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(
+                div()
+                    .id("pr-summary")
+                    .debug_selector(|| "pr-summary".into())
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .text_size(px(12.0))
+                    .child(row(icons::LUCIDE_USERS, "Reviewers", reviewers))
+                    .child(row(icons::TAG, "Labels", labels))
+                    .children(threads.map(|value| {
+                        row(
+                            icons::LUCIDE_MESSAGE_SQUARE,
+                            "Threads",
+                            value.into_any_element(),
+                        )
+                    })),
+            )
+            .child(
+                div()
+                    .id("pr-description")
+                    .debug_selector(|| "pr-description".into())
+                    .text_size(px(13.0))
+                    .child(description),
+            )
+            .into_any_element()
+    }
+
+    /// The Timeline: what happened, oldest first. A comment, or a review
+    /// that says something, is a card with its text; the rest are a line
+    /// each, a push with its commits under it.
+    fn render_timeline(
+        &mut self,
+        detail: &ChangeRequestDetail,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mono = theme.font_mono.clone();
+        let events = timeline(detail);
+        if events.is_empty() {
+            return div()
+                .id("pr-activity-empty")
+                .py(px(32.0))
+                .flex()
+                .justify_center()
+                .text_color(theme.text_muted)
+                .child("Nothing yet: no comments, reviews or commits.")
+                .into_any_element();
+        }
+        let mut column = div()
+            .id("pr-timeline")
+            .debug_selector(|| "pr-timeline".into())
+            .flex()
+            .flex_col()
+            .gap(px(14.0));
+        for (n, event) in events.into_iter().enumerate() {
+            let (glyph, color, said): (&'static str, gpui::Hsla, String) = match &event.what {
+                Happened::Opened => (
+                    icons::LUCIDE_GIT_PULL_REQUEST_ARROW,
+                    theme.success,
+                    "opened this".into(),
+                ),
+                Happened::Commented(_) => (
+                    icons::LUCIDE_MESSAGE_SQUARE,
+                    theme.text_muted,
+                    "commented".into(),
+                ),
+                Happened::Reviewed(_, state) => match state.as_str() {
+                    "APPROVED" => (icons::LUCIDE_CIRCLE_CHECK, theme.success, "approved".into()),
+                    "CHANGES_REQUESTED" => (
+                        icons::LUCIDE_CIRCLE_X,
+                        theme.danger,
+                        "requested changes".into(),
+                    ),
+                    _ => (icons::EYE, theme.text_muted, "reviewed".into()),
+                },
+                Happened::Commits(c) => (
+                    icons::LUCIDE_GIT_COMMIT,
+                    theme.text_muted,
+                    format!(
+                        "pushed {} commit{}",
+                        c.len(),
+                        if c.len() == 1 { "" } else { "s" }
+                    ),
+                ),
+                Happened::Merged => (
+                    icons::LUCIDE_GIT_MERGE,
+                    crate::pull_requests::merged_color(theme),
+                    "merged this".into(),
+                ),
+                Happened::Closed => (
+                    icons::LUCIDE_GIT_PULL_REQUEST_CLOSED,
+                    theme.danger,
+                    "closed this".into(),
+                ),
+            };
+            let body = match &event.what {
+                Happened::Commented(i) | Happened::Reviewed(i, _) => self
+                    .activity_bodies
+                    .get(*i)
+                    .filter(|_| {
+                        detail
+                            .activity_comments()
+                            .nth(*i)
+                            .is_some_and(|c| !c.body.trim().is_empty())
+                    })
+                    .map(|body| (*i, body.clone())),
+                _ => None,
+            };
+            let card = body.is_some();
+            let who = if event.who.is_empty() {
+                String::new()
+            } else {
+                format!("{} ", event.who)
+            };
+            let name = gpui::HighlightStyle {
+                color: Some(theme.text),
+                font_weight: Some(gpui::FontWeight::MEDIUM),
+                ..Default::default()
+            };
+            let line = div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .text_size(px(12.0))
+                .text_color(theme.text_muted)
+                .child(if card {
+                    crate::pull_requests::avatar(event.avatar.clone(), &event.who, 20.0, theme)
+                } else {
+                    div()
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(glyph).size(px(14.0)).text_color(color))
+                        .into_any_element()
+                })
+                .child(
+                    div().flex_1().min_w_0().truncate().child(
+                        gpui::StyledText::new(format!("{who}{said}"))
+                            .with_highlights([(0..who.len(), name)]),
+                    ),
+                )
+                .when(
+                    card && !matches!(event.what, Happened::Commented(_)),
+                    |el| el.child(icon(glyph).size(px(14.0)).flex_none().text_color(color)),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.text_faint)
+                        .child(event.ago.clone()),
+                );
+            let commits = match &event.what {
+                Happened::Commits(c) => Some(
+                    div()
+                        .pl(px(28.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .text_size(px(12.0))
+                        .children(c.iter().map(|(sha, headline)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .font_family(mono.clone())
+                                        .text_color(theme.text_faint)
+                                        .child(sha.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(theme.text)
+                                        .child(headline.clone()),
+                                )
+                        })),
+                ),
+                _ => None,
+            };
+            let thread = match &event.what {
+                Happened::Commented(i) => inline_thread(detail, *i).map(|t| {
+                    let location = t
+                        .line
+                        .or(t.original_line)
+                        .map(|l| format!("{}:{l}", t.path))
+                        .unwrap_or_else(|| t.path.clone());
+                    let mut words = vec![if t.is_resolved {
+                        "Resolved"
+                    } else {
+                        "Unresolved"
+                    }];
+                    if t.is_outdated {
+                        words.push("Outdated");
+                    }
+                    let i = *i;
+                    div()
+                        .debug_selector(move || format!("pr-inline-thread-{i}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .text_size(px(11.5))
+                        .text_color(theme.text_muted)
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(mono.clone())
+                                .child(location),
+                        )
+                        .child(div().flex_none().child(words.join(" · ")))
+                }),
+                _ => None,
+            };
+            column = column.child(
+                div()
+                    .id(SharedString::from(format!("pr-message-{n}")))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .child(line)
+                    .children(commits)
+                    .children(body.map(|(i, body)| {
+                        div()
+                            .ml(px(28.0))
+                            .p(px(10.0))
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.surface_card)
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .text_size(px(13.0))
+                            .text_color(theme.text)
+                            .children(thread)
+                            .child(rich_text(
+                                &body,
+                                format!("{}activity-{i}", self.selection_prefix),
+                                &self.url,
+                                theme,
+                                crate::settings::math_style(cx),
+                                window,
+                                cx.weak_entity(),
+                            ))
+                    })),
+            );
+        }
+        column.into_any_element()
+    }
+
+    /// The Checks: how many failed, run and passed, then each, its state and
+    /// a click to its page.
+    fn render_checks(&self, detail: &ChangeRequestDetail, theme: &Theme) -> AnyElement {
+        let checks = &detail.status_check_rollup;
+        if checks.is_empty() {
+            let why = match Facts::from_detail(detail).assess().ci.state {
+                CiState::Unknown => "Checks couldn’t be read. Refresh to try again.",
+                _ => "Nothing has run on this branch yet.",
+            };
+            return div()
+                .py(px(32.0))
+                .flex()
+                .justify_center()
+                .text_color(theme.text_muted)
+                .child(why)
+                .into_any_element();
+        }
+        let states: Vec<CiState> = checks.iter().map(check_state).collect();
+        let count = |s: CiState| states.iter().filter(|x| **x == s).count();
+        let summary: Vec<String> = [
+            (CiState::Failed, "failed"),
+            (CiState::Pending, "running"),
+            (CiState::Passed, "passed"),
+        ]
+        .into_iter()
+        .filter(|(s, _)| count(*s) > 0)
+        .map(|(s, what)| format!("{} {what}", count(s)))
+        .collect();
+        let hover = theme.element_hover;
+        div()
+            .id("pr-checks")
+            .debug_selector(|| "pr-checks".into())
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .text_size(px(12.0))
+            .child(
+                div()
+                    .pb(px(4.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(theme.text_faint)
+                    .child(div().flex_1().child("Checks"))
+                    .child(summary.join(" · ")),
+            )
+            .children(
+                checks
+                    .iter()
+                    .zip(states)
+                    .enumerate()
+                    .map(|(i, (check, state))| {
+                        let name = if check.name.is_empty() {
+                            check.context.clone()
+                        } else {
+                            check.name.clone()
+                        };
+                        let link = [&check.details_url, &check.target_url]
+                            .into_iter()
+                            .find(|u| !u.is_empty())
+                            .and_then(|u| url::Url::parse(u).ok())
+                            .filter(|u| {
+                                u.scheme() == "https"
+                                    && u.username().is_empty()
+                                    && u.password().is_none()
+                            })
+                            .map(String::from);
+                        let status = [&check.conclusion, &check.state, &check.status]
+                            .into_iter()
+                            .find(|v| !v.is_empty())
+                            .map(|v| v.replace('_', " ").to_lowercase())
+                            .unwrap_or_else(|| "pending".into());
+                        let (glyph, color) = ci_glyph(state, theme);
+                        div()
+                            .id(SharedString::from(format!("pr-check-{i}")))
+                            .debug_selector(move || format!("pr-check-{i}"))
+                            .h(px(28.0))
+                            .px(px(6.0))
+                            .mx(px(-6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .rounded(px(6.0))
+                            .child(icon(glyph).size(px(14.0)).flex_none().text_color(color))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.text)
+                                    .child(name),
+                            )
+                            .child(div().flex_none().text_color(theme.text_faint).child(status))
+                            .when_some(link, |el, link| {
+                                el.cursor_pointer()
+                                    .hover(move |s| s.bg(hover))
+                                    .on_click(move |_, _, cx| cx.open_url(&link))
+                            })
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// The bar under an open pull request: Approve and Merge, or a draft's
+    /// Mark as ready. A button that is off says why.
+    fn render_footer(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let detail = self.detail.as_ref()?;
+        if !detail.state.eq_ignore_ascii_case("OPEN") {
+            return None;
+        }
+        let bar = div()
+            .flex_none()
+            .px(px(PAD))
+            .py(px(10.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .border_t_1()
+            .border_color(theme.border)
+            .text_size(px(12.0));
+        let acting = self.acting;
+        let hover = theme.element_hover;
+        if detail.is_draft {
+            let busy = acting == Some("ready");
+            let ready = footer_button(
+                "pr-ready",
+                icons::CHECK,
+                if busy { "Marking…" } else { "Mark as ready" },
+                theme.text,
+                None,
+                busy,
+            )
+            .border_1()
+            .border_color(theme.border)
+            .when(acting.is_none(), |el| {
+                el.hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.act(
+                            serde_json::json!({"action": "ready"}),
+                            "ready",
+                            "Marked as ready for review",
+                            cx,
+                        )
+                    }))
+            });
+            return Some(
+                bar.child(div().flex_1().text_color(theme.text_faint).child("Draft"))
+                    .child(ready)
+                    .into_any_element(),
+            );
+        }
+        let viewer = detail.viewer_login.as_deref();
+        let approved_by_viewer = viewer.is_some_and(|me| {
+            latest_reviews(detail)
+                .iter()
+                .any(|(who, state)| who.eq_ignore_ascii_case(me) && state == "APPROVED")
+        });
+        let no_approve = if approved_by_viewer {
+            Some("You approved it; dismiss the review on GitHub to take it back")
+        } else if detail.viewer_did_author == Some(true) {
+            Some("You can’t approve your own pull request")
+        } else {
+            None
+        };
+        let approving = acting == Some("approve");
+        let (glyph, ink, edge) = if approved_by_viewer {
+            (
+                icons::LUCIDE_CIRCLE_CHECK,
+                theme.success,
+                theme.success.opacity(0.5),
+            )
+        } else {
+            (icons::CHECK, theme.text, theme.border)
+        };
+        let approve = footer_button(
+            "pr-approve",
+            glyph,
+            match (approved_by_viewer, approving) {
+                (true, _) => "Approved",
+                (false, true) => "Approving…",
+                (false, false) => "Approve",
+            },
+            ink,
+            no_approve.filter(|_| !approved_by_viewer),
+            approving,
+        )
+        .border_1()
+        .border_color(edge)
+        .when(approved_by_viewer, |el| {
+            el.bg(theme.success.opacity(0.12))
+                .tooltip(widgets::text_tooltip(no_approve.unwrap_or_default()))
+        })
+        .when(no_approve.is_none() && acting.is_none(), |el| {
+            el.hover(move |s| s.bg(hover))
+                .on_click(cx.listener(|page, _, _, cx| {
+                    page.act(
+                        serde_json::json!({"action": "approve"}),
+                        "approve",
+                        "Approved",
+                        cx,
+                    )
+                }))
+        });
+        let merging = acting == Some("merge");
+        let running = Facts::from_detail(detail).assess().ci.state == CiState::Pending;
+        let merge = if detail.auto_merge_request.is_some() {
+            footer_button(
+                "pr-merge",
+                icons::CLOCK_CIRCLE,
+                if merging {
+                    "Cancelling…"
+                } else {
+                    "Auto-merge on"
+                },
+                theme.success,
+                None,
+                merging,
+            )
+            .border_1()
+            .border_color(theme.success.opacity(0.5))
+            .bg(theme.success.opacity(0.12))
+            .when(acting.is_none(), |el| {
+                el.hover(move |s| s.bg(hover))
+                    .tooltip(widgets::text_tooltip("Cancel auto-merge"))
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.act(
+                            serde_json::json!({"action": "disableAutoMerge"}),
+                            "merge",
+                            "Auto-merge cancelled",
+                            cx,
+                        )
+                    }))
+            })
+        } else {
+            let conflicts = detail.mergeable.eq_ignore_ascii_case("CONFLICTING");
+            let armed = self
+                .merge_armed
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(3));
+            let label = match (merging, armed, running) {
+                (true, _, _) => "Merging…",
+                (false, true, _) => "Confirm merge",
+                (false, false, true) => "Auto-merge",
+                (false, false, false) => "Squash and merge",
+            };
+            footer_button(
+                "pr-merge",
+                if running { icons::CLOCK_CIRCLE } else { icons::LUCIDE_GIT_MERGE },
+                label,
+                theme.on_accent,
+                conflicts.then_some("Resolve the conflicts first"),
+                merging,
+            )
+            .bg(theme.success)
+            .when(running && !conflicts && !armed, |el| el.tooltip(widgets::text_tooltip("Merge once the checks pass")))
+            .when(!conflicts && acting.is_none(), |el| {
+                el.on_click(cx.listener(move |page, _, _, cx| {
+                    // A second press within three seconds merges: t3code's
+                    // inline confirm.
+                    if page.merge_armed.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(3)) {
+                        page.act(serde_json::json!({"action": "merge", "method": "squash", "auto": running}), "merge", if running { "Merges once the checks pass" } else { "Merged" }, cx);
+                    } else {
+                        page.merge_armed = Some(Instant::now());
+                        page.merge_disarm = Some(cx.spawn(async move |page, cx| {
+                            cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+                            let _ = page.update(cx, |page, cx| {
+                                page.merge_armed = None;
+                                cx.notify();
+                            });
+                        }));
+                        cx.notify();
+                    }
+                }))
+            })
+        };
+        Some(
+            bar.child(div().flex_1())
+                .child(approve)
+                .child(merge)
+                .into_any_element(),
+        )
+    }
+}
+
+/// A footer button: icon and label in `ink`, dimmed with `off` (its reason,
+/// as the tooltip) or while busy.
+fn footer_button(
+    id: &'static str,
+    glyph: &'static str,
+    label: &'static str,
+    ink: gpui::Hsla,
+    off: Option<&'static str>,
+    busy: bool,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.to_owned())
+        .role(gpui::Role::Button)
+        .h(px(28.0))
+        .px(px(10.0))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .rounded(px(8.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(ink)
+        .child(icon(glyph).size(px(13.0)).flex_none().text_color(ink))
+        .child(label)
+        .map(|el| match off {
+            Some(why) => el.opacity(0.45).tooltip(widgets::text_tooltip(why)),
+            None if busy => el.opacity(0.7),
+            None => el.cursor_pointer(),
+        })
+}
+
+/// A state pill: its icon and label in `color`, on a wash of it.
+fn pill(glyph: &'static str, label: &'static str, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .flex_none()
+        .h(px(22.0))
+        .px(px(8.0))
+        .flex()
+        .items_center()
+        .gap(px(5.0))
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(color.opacity(0.35))
+        .bg(color.opacity(0.1))
+        .text_color(color)
+        .text_size(px(12.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .child(icon(glyph).size(px(13.0)).text_color(color))
+        .child(label)
+}
+
+/// A branch's name; a click copies it.
+fn branch_chip(id: &'static str, name: &str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let (text, name) = (theme.text, name.to_owned());
+    div()
+        .id(id)
+        .truncate()
+        .cursor_pointer()
+        .hover(move |s| s.text_color(text))
+        .tooltip(widgets::text_tooltip("Copy branch name"))
+        .child(name.clone())
+        .on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(name.clone()));
+            crate::toast::info(cx, format!("Copied {name}"));
+        })
+}
+
+/// A check's state, from whichever of its fields the provider filled.
+fn check_state(check: &commutator_proto::ChangeRequestCheck) -> CiState {
+    let status = check_status(check);
+    match status.as_str() {
+        s if check_failed(s) => CiState::Failed,
+        "SUCCESS" | "COMPLETED" | "NEUTRAL" => CiState::Passed,
+        "SKIPPED" => CiState::Skipped,
+        _ => CiState::Pending,
+    }
+}
+
+fn ci_glyph(state: CiState, theme: &Theme) -> (&'static str, gpui::Hsla) {
+    match state {
+        CiState::Passed => (icons::LUCIDE_CIRCLE_CHECK, theme.success),
+        CiState::Failed => (icons::LUCIDE_CIRCLE_X, theme.danger),
+        CiState::Pending => (icons::LUCIDE_CIRCLE_DOT, theme.warning),
+        _ => (icons::LUCIDE_CIRCLE_SLASH, theme.text_faint),
+    }
+}
+
+/// How the checks went, as the tabs' line says it.
+fn ci_line(
+    detail: &ChangeRequestDetail,
+    theme: &Theme,
+) -> Option<(&'static str, gpui::Hsla, String)> {
+    let state = Facts::from_detail(detail).assess().ci.state;
+    let states: Vec<CiState> = detail.status_check_rollup.iter().map(check_state).collect();
+    let some = |s: CiState, what: &str| {
+        let n = states.iter().filter(|x| **x == s).count();
+        format!("{n} check{} {what}", if n == 1 { "" } else { "s" })
+    };
+    let words = match state {
+        CiState::Passed => "All checks passed".to_owned(),
+        CiState::Failed => some(CiState::Failed, "failed"),
+        CiState::Pending => some(CiState::Pending, "running"),
+        CiState::Skipped => "Checks skipped".to_owned(),
+        CiState::NoChecks | CiState::Unknown => return None,
+    };
+    let (glyph, color) = ci_glyph(state, theme);
+    Some((glyph, color, words))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Approved,
+    Changes,
+    Commented,
+    Pending,
+}
+
+/// Each reviewer's latest review state, in the order they first reviewed.
+fn latest_reviews(detail: &ChangeRequestDetail) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for review in &detail.reviews {
+        let who = &review.author.login;
+        if who.is_empty() || review.state.eq_ignore_ascii_case("PENDING") {
+            continue;
+        }
+        let state = review.state.to_ascii_uppercase();
+        match out.iter_mut().find(|(w, _)| w == who) {
+            // A comment after a verdict doesn't take the verdict back.
+            Some((_, last)) if state == "COMMENTED" && last != "COMMENTED" => {}
+            Some((_, last)) => *last = state,
+            None => out.push((who.clone(), state)),
+        }
+    }
+    out
+}
+
+/// Who reviews it: those who did, with their latest verdict, then those
+/// asked who haven't yet.
+fn reviewers(detail: &ChangeRequestDetail) -> Vec<(String, Verdict)> {
+    let mut out: Vec<(String, Verdict)> = latest_reviews(detail)
+        .into_iter()
+        .filter(|(who, _)| !who.eq_ignore_ascii_case(&detail.author.login))
+        .map(|(who, state)| {
+            let verdict = match state.as_str() {
+                "APPROVED" => Verdict::Approved,
+                "CHANGES_REQUESTED" => Verdict::Changes,
+                _ => Verdict::Commented,
+            };
+            (who, verdict)
+        })
+        .collect();
+    for asked in &detail.review_requests {
+        let name = if asked.login.is_empty() {
+            asked.name.clone()
+        } else {
+            asked.login.clone()
+        };
+        if !name.is_empty() && !out.iter().any(|(who, _)| *who == name) {
+            out.push((name, Verdict::Pending));
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Happened {
+    Opened,
+    /// An activity comment, by its index in `activity_comments`.
+    Commented(usize),
+    Reviewed(usize, String),
+    /// Short sha and headline of each commit in one push.
+    Commits(Vec<(String, String)>),
+    Merged,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Event {
+    who: String,
+    avatar: Option<String>,
+    at: String,
+    ago: String,
+    what: Happened,
+}
+
+/// The pull request's events, oldest first; commits by one author in a row
+/// make one push.
+fn timeline(detail: &ChangeRequestDetail) -> Vec<Event> {
+    let ago = |raw: &str| {
+        chrono::DateTime::parse_from_rfc3339(raw)
+            .map(|t| crate::pull_requests::ago(t.with_timezone(&chrono::Utc), chrono::Utc::now()))
+            .unwrap_or_default()
+    };
+    let event = |who: &commutator_proto::ChangeRequestActor, at: &str, what: Happened| Event {
+        who: who.login.clone(),
+        avatar: who.avatar("github"),
+        at: at.to_owned(),
+        ago: ago(at),
+        what,
+    };
+    let mut events = Vec::new();
+    if !detail.created_at.is_empty() {
+        events.push(event(&detail.author, &detail.created_at, Happened::Opened));
+    }
+    let reviews = detail.comments.len();
+    for (i, comment) in detail.activity_comments().enumerate() {
+        let at = if comment.created_at.is_empty() {
+            &comment.submitted_at
+        } else {
+            &comment.created_at
+        };
+        let review = i >= reviews && i < reviews + detail.reviews.len();
+        // A review with nothing to say beyond its comments on lines.
+        if review
+            && comment.body.trim().is_empty()
+            && comment.state.eq_ignore_ascii_case("COMMENTED")
+        {
+            continue;
+        }
+        let what = if review {
+            Happened::Reviewed(i, comment.state.to_ascii_uppercase())
+        } else {
+            Happened::Commented(i)
+        };
+        events.push(event(&comment.author, at, what));
+    }
+    for commit in &detail.commits {
+        let author = commit.authors.first().cloned().unwrap_or_default();
+        let sha: String = commit.oid.chars().take(7).collect();
+        let line = (sha, commit.message_headline.clone());
+        events.push(event(
+            &author,
+            &commit.committed_date,
+            Happened::Commits(vec![line]),
+        ));
+    }
+    if !detail.merged_at.is_empty() {
+        events.push(Event {
+            who: String::new(),
+            avatar: None,
+            at: detail.merged_at.clone(),
+            ago: ago(&detail.merged_at),
+            what: Happened::Merged,
+        });
+    } else if !detail.closed_at.is_empty() {
+        events.push(Event {
+            who: String::new(),
+            avatar: None,
+            at: detail.closed_at.clone(),
+            ago: ago(&detail.closed_at),
+            what: Happened::Closed,
+        });
+    }
+    // RFC 3339 in UTC sorts as text; the stable sort keeps a review's
+    // comments after it.
+    events.sort_by(|a, b| a.at.cmp(&b.at));
+    let mut out: Vec<Event> = Vec::new();
+    for e in events {
+        if let (Some(last), Happened::Commits(more)) = (out.last_mut(), &e.what)
+            && let Happened::Commits(run) = &mut last.what
+            && last.who == e.who
+        {
+            run.extend(more.iter().cloned());
+            last.at = e.at.clone();
+            last.ago = e.ago.clone();
+            continue;
+        }
+        out.push(e);
+    }
+    out
 }
 
 #[cfg(feature = "pull-request-fixture")]
 impl PullRequestDetailPage {
-    /// 0 Summary, 1 Code, 2 Activity.
+    /// 0 Summary, 1 Timeline, 2 Code, 3 Checks.
     pub fn fixture_select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         self.select_tab(TABS[index.min(TABS.len() - 1)].0, cx);
     }
@@ -1280,14 +2520,6 @@ fn inline_thread(
     None
 }
 
-fn activity_time(raw: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .map(|time| {
-            crate::pull_requests::ago(time.with_timezone(&chrono::Utc), chrono::Utc::now())
-        })
-        .unwrap_or_else(|_| raw.to_owned())
-}
-
 fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     let icon_only = matches!(
         id,
@@ -1347,263 +2579,6 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         .when(!icon_only, |el| el.child(label))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StatusTone {
-    Neutral,
-    Positive,
-    Warning,
-    Negative,
-    Merged,
-}
-
-fn ci_status(detail: &ChangeRequestDetail) -> &'static str {
-    match Facts::from_detail(detail).assess().ci.state {
-        CiState::Unknown => "CI unavailable",
-        CiState::NoChecks => "No checks reported",
-        CiState::Failed => "FAILURE",
-        CiState::Pending => "PENDING",
-        CiState::Passed => "SUCCESS",
-        CiState::Skipped => "SKIPPED",
-    }
-}
-
-fn assessment_ci_empty_copy(detail: &ChangeRequestDetail) -> &'static str {
-    if Facts::from_detail(detail).assess().ci.state == CiState::Unknown {
-        "CI metadata is unavailable. Refresh to try again."
-    } else if Facts::from_detail(detail).assess().ci.state == CiState::NoChecks {
-        "No checks reported."
-    } else {
-        "Check details are unavailable. Open this pull request on GitHub."
-    }
-}
-
-fn status_style(raw: &str) -> (String, &'static str, StatusTone) {
-    use crate::icons;
-    match raw.to_ascii_uppercase().replace(' ', "_").as_str() {
-        "OPEN" => ("Open".into(), icons::PULL_REQUEST, StatusTone::Positive),
-        "MERGED" => ("Merged".into(), icons::PULL_REQUEST, StatusTone::Merged),
-        "CLOSED" => ("Closed".into(), icons::CLOSE_CIRCLE, StatusTone::Negative),
-        "DRAFT" => ("Draft".into(), icons::DOCUMENT, StatusTone::Neutral),
-        "APPROVED" => ("Approved".into(), icons::CHECK, StatusTone::Positive),
-        "SUCCESS" => ("Passed".into(), icons::CHECK, StatusTone::Positive),
-        "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" => {
-            (humanize(raw), icons::CLOSE_CIRCLE, StatusTone::Negative)
-        }
-        "CHANGES_REQUESTED" => (
-            "Changes requested".into(),
-            icons::DANGER_TRIANGLE,
-            StatusTone::Warning,
-        ),
-        "REVIEW_REQUIRED" => (
-            "Awaiting review".into(),
-            icons::CLOCK_CIRCLE,
-            StatusTone::Warning,
-        ),
-        "IN_PROGRESS" | "PENDING" | "QUEUED" | "WAITING" => {
-            (humanize(raw), icons::CLOCK_CIRCLE, StatusTone::Warning)
-        }
-        _ => (humanize(raw), icons::DOCUMENT, StatusTone::Neutral),
-    }
-}
-
-fn humanize(raw: &str) -> String {
-    let text = raw.replace('_', " ").to_lowercase();
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
-        .unwrap_or_else(|| "Not reported".into())
-}
-
-fn status_chip(raw: &str, theme: &Theme) -> AnyElement {
-    let (label, glyph, tone) = status_style(raw);
-    let color = match tone {
-        StatusTone::Neutral => theme.text_muted,
-        StatusTone::Positive => theme.success,
-        StatusTone::Warning => theme.warning,
-        StatusTone::Negative => theme.danger,
-        StatusTone::Merged => theme.code_text,
-    };
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(6.0))
-        .bg(color.opacity(0.08))
-        .text_color(theme.text)
-        .text_size(crate::typography::ui_rems(12.0))
-        .child(crate::icons::icon(glyph).size(px(14.0)).text_color(color))
-        .child(label)
-        .into_any_element()
-}
-
-/// Space between the Summary's stacked cards; the header sits 2× further.
-const CARD_GAP: f32 = 12.0;
-
-/// Title and metadata line; shared by the loaded page and its placeholder.
-fn detail_header(
-    title: &str,
-    author: &str,
-    repository: String,
-    number: u64,
-    fetched: Option<Instant>,
-    theme: &Theme,
-) -> gpui::Div {
-    div()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .child(
-            // `page_header` keeps one line; a PR title wraps instead.
-            div()
-                .id("pr-detail-title")
-                .debug_selector(|| "pr-detail-title".into())
-                .px(px(8.0))
-                .min_w_0()
-                .text_size(crate::typography::ui_rems(20.0))
-                .line_height(crate::typography::ui_rems(26.0))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme.text)
-                .child(title.to_owned()),
-        )
-        .child(
-            div()
-                .id("pr-detail-meta")
-                .debug_selector(|| "pr-detail-meta".into())
-                .flex_none()
-                .mt(px(12.0))
-                .px(px(8.0))
-                .text_size(crate::typography::ui_rems(12.0))
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_color(theme.text_muted)
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(super::pull_request_media::avatar(
-                            author,
-                            "pr-author".into(),
-                            20.0,
-                            theme,
-                        ))
-                        .child(if author.is_empty() {
-                            "Deleted account".to_owned()
-                        } else {
-                            author.to_owned()
-                        }),
-                )
-                .child(meta_item(
-                    crate::icons::FOLDER_WITH_FILES,
-                    repository,
-                    theme,
-                ))
-                .child(meta_item(
-                    crate::icons::PULL_REQUEST,
-                    number.to_string(),
-                    theme,
-                ))
-                .when_some(fetched, |el, fetched| {
-                    let age = if fetched.elapsed().as_secs() < 60 {
-                        "just now".into()
-                    } else {
-                        format!("{}m ago", fetched.elapsed().as_secs() / 60)
-                    };
-                    el.child(meta_item(
-                        crate::icons::CLOCK_CIRCLE,
-                        format!("Loaded {age}"),
-                        theme,
-                    ))
-                }),
-        )
-}
-
-/// One muted icon-and-text item of the header's metadata line.
-fn meta_item(glyph: &'static str, text: String, theme: &Theme) -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(4.0))
-        .text_color(theme.text_muted)
-        .child(
-            crate::icons::icon(glyph)
-                .size(px(13.0))
-                .flex_none()
-                .text_color(theme.text_muted),
-        )
-        .child(text)
-}
-
-fn field(label: &str, value: String, first: bool, theme: &Theme) -> AnyElement {
-    let content = if matches!(label, "Status" | "Review" | "CI") {
-        status_chip(&value, theme)
-    } else if label == "Changes" {
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(px(6.0))
-            .children(value.split_whitespace().map(|word| {
-                div()
-                    .text_color(if word.starts_with('+') {
-                        theme.success_muted
-                    } else if word.starts_with('−') {
-                        theme.danger_muted
-                    } else {
-                        theme.text_muted
-                    })
-                    .child(word.to_owned())
-            }))
-            .into_any_element()
-    } else {
-        // Wraps rather than truncates: long branch names would hide the base.
-        div()
-            .min_w_0()
-            .font_family(theme.font_mono.clone())
-            .text_size(crate::typography::ui_rems(12.0))
-            .child(value)
-            .into_any_element()
-    };
-    field_row(label, content, first, theme)
-}
-
-pub(crate) fn field_row(
-    label: &str,
-    content: AnyElement,
-    first: bool,
-    theme: &Theme,
-) -> AnyElement {
-    let id = format!("pr-field-{label}");
-    widgets::card_row(theme, first)
-        .id(SharedString::from(id.clone()))
-        .debug_selector(move || id.clone())
-        .min_h(px(44.0))
-        .py(px(8.0))
-        .child(
-            div()
-                .w(px(80.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .child(widgets::row_title(theme, label)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(120.0))
-                .flex()
-                .items_center()
-                .child(content),
-        )
-        .into_any_element()
-}
-
 impl crate::popover::ScrollRailHost for PullRequestDetailPage {
     fn rail_bar(&mut self) -> &mut crate::popover::MenuScrollbarState {
         self.scroll.rail_bar()
@@ -1618,669 +2593,70 @@ impl Render for PullRequestDetailPage {
         if let Some(focus) = self.return_focus.take() {
             window.focus(&focus, cx);
         }
+        crate::toast::take_error(&mut self.handoff_error, cx);
         let theme = Theme::of(cx).clone();
-        let narrow = self.page_width.is_some_and(|width| width < NARROW_PAGE);
-        let empty_activity = self.tab == Tab::Activity
-            && self
-                .detail
-                .as_ref()
-                .is_some_and(|detail| detail.activity_comments().next().is_none());
-        let content = {
-            let mut column = widgets::page_column()
-                .id("pr-content-column")
-                .debug_selector(|| "pr-content-column".into())
-                .max_w(px(760.0))
-                .when(narrow, |el| el.px(px(NARROW_PAD_X)))
-                .when(empty_activity, |el| el.min_h_full())
-                .when(self.tab == Tab::Code, |el| {
-                    el.max_w_full().px(px(24.0)).h_full().min_h_0()
-                })
-                .pt(px(24.0))
-                .pb(px(match self.tab {
-                    // The comment dock sits below the scroll, not over it.
-                    Tab::Activity => 32.0,
-                    // The workspace reserves its own room for the navigation.
-                    Tab::Code => 0.0,
-                    Tab::Summary => 76.0,
-                }))
-                .text_size(crate::typography::ui_rems(13.0))
-                .text_color(theme.text);
-            if let Some(error) = &self.error {
-                column = column
-                    .child(widgets::error_strip(&theme, error.clone()))
-                    .child(
-                        div().mt(px(8.0)).flex().child(
-                            action("pr-retry", "Try again", &theme)
-                                .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
-                        ),
-                    );
-            }
-            if let Some(detail) = &self.detail {
-                let repository = self
-                    .url
-                    .split('/')
-                    .skip(3)
-                    .take(2)
-                    .collect::<Vec<_>>()
-                    .join("/");
-                column = column
-                    .when(self.tab != Tab::Code, |column| {
-                        column.child(
-                            detail_header(
-                                &detail.title,
-                                &detail.author.login,
-                                repository,
-                                detail.number,
-                                self.fetched,
-                                &theme,
-                            )
-                            .when(empty_activity, |el| el.flex_none()),
-                        )
-                    })
-                    .when(self.tab == Tab::Summary, |el| {
-                        el.child(
-                            widgets::section_card(&theme)
-                                .id("pr-overview")
-                                .debug_selector(|| "pr-overview".into())
-                                .mt(px(24.0))
-                                .child(field(
-                                    "Status",
-                                    if detail.is_draft {
-                                        "Draft".into()
-                                    } else {
-                                        detail.state.clone()
-                                    },
-                                    true,
-                                    &theme,
-                                ))
-                                .child(field(
-                                    "Review",
-                                    if detail.review_decision.is_empty() {
-                                        "No review decision".into()
-                                    } else {
-                                        detail.review_decision.clone()
-                                    },
-                                    false,
-                                    &theme,
-                                ))
-                                .child(field(
-                                    "Branch",
-                                    format!("{} → {}", detail.head_ref_name, detail.base_ref_name),
-                                    false,
-                                    &theme,
-                                ))
-                                .child(field(
-                                    "Changes",
-                                    format!(
-                                        "{} {} · +{} −{}",
-                                        detail.files.len(),
-                                        if detail.files.len() == 1 {
-                                            "file"
-                                        } else {
-                                            "files"
-                                        },
-                                        detail.additions,
-                                        detail.deletions
-                                    ),
-                                    false,
-                                    &theme,
-                                )),
-                        )
-                    });
-                match self.tab {
-                    Tab::Summary => {
-                        let mut checks = widgets::section_card(&theme)
-                            .mt_0()
-                            .id("pr-checks-card")
-                            .debug_selector(|| "pr-checks-card".into());
-                        checks = checks.child(
-                            div()
-                                .id("pr-checks-toggle")
-                                .debug_selector(|| "pr-checks-toggle".into())
-                                .role(gpui::Role::Button)
-                                .tab_index(0)
-                                .aria_label(format!(
-                                    "Checks, {}, {}",
-                                    Facts::from_detail(detail)
-                                        .assess()
-                                        .ci
-                                        .total_count
-                                        .max(detail.status_check_rollup.len() as u64),
-                                    status_style(ci_status(detail)).0
-                                ))
-                                .aria_expanded(self.checks_expanded)
-                                .rounded_t(px(12.0))
-                                .when(!self.checks_expanded, |el| el.rounded_b(px(12.0)))
-                                .px(px(16.0))
-                                .py(px(10.0))
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap(px(8.0))
-                                .cursor_pointer()
-                                .hover(|style| style.bg(theme.glass_hover()))
-                                .child(
-                                    crate::icons::icon(if self.checks_expanded {
-                                        crate::icons::ALT_ARROW_DOWN
-                                    } else {
-                                        crate::icons::ALT_ARROW_RIGHT
-                                    })
-                                    .size(px(14.0))
-                                    .flex_none()
-                                    .text_color(theme.text_muted),
-                                )
-                                .child(div().flex_1().child(format!(
-                                        "Checks · {}",
-                                        Facts::from_detail(detail)
-                                            .assess()
-                                            .ci
-                                            .total_count
-                                            .max(detail.status_check_rollup.len() as u64)
-                                    )))
-                                .child(status_chip(ci_status(detail), &theme))
-                                .on_click(cx.listener(|page, _, _, cx| {
-                                    page.checks_expanded = !page.checks_expanded;
-                                    cx.notify();
-                                })),
-                        );
-                        if self.checks_expanded && detail.status_check_rollup.is_empty() {
-                            checks = checks.child(
-                                div()
-                                    .p(px(16.0))
-                                    .text_color(theme.text_muted)
-                                    .child(assessment_ci_empty_copy(detail)),
-                            );
-                        }
-                        for (index, check) in detail
-                            .status_check_rollup
-                            .iter()
-                            .enumerate()
-                            .filter(|_| self.checks_expanded)
-                        {
-                            let name = if check.name.is_empty() {
-                                &check.context
-                            } else {
-                                &check.name
-                            };
-                            let status = [&check.conclusion, &check.state, &check.status]
-                                .into_iter()
-                                .find(|v| !v.is_empty())
-                                .map(|v| v.replace('_', " ").to_lowercase())
-                                .unwrap_or_else(|| "Pending".into());
-                            // Status integrations set these links, so only
-                            // web pages open: never file:, smb: or app schemes.
-                            let link = if check.details_url.is_empty() {
-                                &check.target_url
-                            } else {
-                                &check.details_url
-                            };
-                            let link = url::Url::parse(link)
-                                .ok()
-                                .filter(|url| {
-                                    url.scheme() == "https"
-                                        && url.username().is_empty()
-                                        && url.password().is_none()
-                                })
-                                .map(String::from)
-                                .unwrap_or_default();
-                            checks = checks.child(
-                                widgets::card_row(&theme, false)
-                                    .mx_0()
-                                    .px(px(16.0))
-                                    .min_h(px(36.0))
-                                    .py(px(4.0))
-                                    .flex_nowrap()
-                                    .when(index + 1 == detail.status_check_rollup.len(), |el| {
-                                        el.rounded_b(px(12.0))
-                                    })
-                                    .id(SharedString::from(format!("pr-check-{index}")))
-                                    .debug_selector(move || format!("pr-check-{index}"))
-                                    .child(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "pr-check-name-{index}"
-                                            )))
-                                            .debug_selector(move || {
-                                                format!("pr-check-name-{index}")
-                                            })
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(name.clone()),
-                                    )
-                                    .child(div().flex_none().child(status_chip(&status, &theme)))
-                                    .when(!link.is_empty(), |el| {
-                                        el.cursor_pointer()
-                                            .role(gpui::Role::Link)
-                                            .tab_index(0)
-                                            .aria_label(format!("Open {name}"))
-                                            .hover(|style| style.bg(theme.glass_hover()))
-                                            .on_click(move |_, _, cx| cx.open_url(&link))
-                                    }),
-                            );
-                        }
-                        let assessment = Facts::from_detail(detail).assess();
-                        let assessment_card = widgets::section_card(&theme)
-                            .mt(px(CARD_GAP))
-                            .id("pr-assessment")
-                            .debug_selector(|| "pr-assessment".into())
-                            .child(
-                                widgets::card_row(&theme, true)
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(6.0))
-                                            .child(widgets::row_title(&theme, "Current assessment"))
-                                            .child(
-                                                div()
-                                                    .text_size(crate::typography::ui_rems(12.0))
-                                                    .text_color(theme.text_muted)
-                                                    .child(if assessment.blockers.is_empty() {
-                                                        if assessment.missing.is_empty() {
-                                                            "No blockers reported".to_owned()
-                                                        } else {
-                                                            "Assessment incomplete".to_owned()
-                                                        }
-                                                    } else {
-                                                        assessment
-                                                            .blockers
-                                                            .iter()
-                                                            .map(|blocker| blocker.label())
-                                                            .collect::<Vec<_>>()
-                                                            .join(" · ")
-                                                    }),
-                                            )
-                                            .children(assessment.actions.first().map(|action| {
-                                                div()
-                                                    .text_size(crate::typography::ui_rems(12.0))
-                                                    .text_color(theme.text)
-                                                    .child(format!("Next: {}", action.label()))
-                                            }))
-                                            .children(assessment.missing.iter().map(|missing| {
-                                                div()
-                                                    .text_size(crate::typography::ui_rems(11.0))
-                                                    .text_color(theme.text_muted)
-                                                    .child(missing.label())
-                                            }))
-                                            .child(
-                                                div()
-                                                    .id("pr-head-commit")
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .tooltip(widgets::text_tooltip(
-                                                        if detail.head_ref_oid.is_empty() {
-                                                            "Current commit unavailable".to_owned()
-                                                        } else {
-                                                            detail.head_ref_oid.clone()
-                                                        },
-                                                    ))
-                                                    .text_size(crate::typography::ui_rems(11.0))
-                                                    .font_family(theme.font_mono.clone())
-                                                    .text_color(theme.text_muted)
-                                                    .child(if detail.head_ref_oid.is_empty() {
-                                                        "Commit unavailable".to_owned()
-                                                    } else {
-                                                        format!(
-                                                            "Commit {}",
-                                                            detail
-                                                                .head_ref_oid
-                                                                .chars()
-                                                                .take(7)
-                                                                .collect::<String>()
-                                                        )
-                                                    }),
-                                            ),
-                                    ),
-                            );
-                        column = column
-                            .child(assessment_card)
-                            .child(checks.mt(px(CARD_GAP)))
-                            .child(self.handoff_card(detail, &theme, cx));
-                        let description = div()
-                            .p(px(16.0))
-                            .min_h(px(60.0))
-                            .when(detail.body.is_empty(), |el| {
-                                el.text_color(theme.text_muted)
-                                    .child("No description provided.")
-                            })
-                            .when_some(
-                                self.body.as_ref().filter(|_| !detail.body.is_empty()),
-                                |el, body| {
-                                    el.child(rich_text(
-                                        body,
-                                        format!("{}description", self.selection_prefix),
-                                        &self.url,
-                                        &theme,
-                                        crate::settings::math_style(cx),
-                                        window,
-                                        cx.weak_entity(),
-                                    ))
-                                },
-                            );
-                        column = column.child(
-                            widgets::section_card(&theme)
-                                .id("pr-description")
-                                .debug_selector(|| "pr-description".into())
-                                .mt(px(CARD_GAP))
-                                .child(description),
-                        );
-                    }
-                    Tab::Code => {
-                        if let Some(error) = &self.diff_error {
-                            column = column
-                                .child(widgets::error_strip(&theme, error.clone()))
-                                .child(action("pr-retry-diff", "Retry diff", &theme).on_click(
+        let head = self.render_head(&theme, cx);
+        let tabs = self.detail.is_some().then(|| self.render_tabs(&theme, cx));
+        let mut body = div()
+            .id("pr-content-column")
+            .debug_selector(|| "pr-content-column".into())
+            .w_full()
+            .px(px(PAD))
+            .pt(px(16.0))
+            .pb(px(24.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .text_size(px(13.0))
+            .text_color(theme.text);
+        if let Some(error) = &self.error {
+            body = body
+                .child(widgets::error_strip(&theme, error.clone()))
+                .child(
+                    div().flex().child(
+                        action("pr-retry", "Try again", &theme)
+                            .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
+                    ),
+                );
+        }
+        let code = self.tab == Tab::Code && self.detail.is_some();
+        if let Some(detail) = self.detail.clone() {
+            body =
+                body.child(match self.tab {
+                    Tab::Summary => self.render_summary(&detail, &theme, window, cx),
+                    Tab::Timeline => self.render_timeline(&detail, &theme, window, cx),
+                    Tab::Checks => self.render_checks(&detail, &theme),
+                    Tab::Code => match &self.diff_error {
+                        Some(error) => div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .child(widgets::error_strip(&theme, error.clone()))
+                            .child(div().flex().child(
+                                action("pr-retry-diff", "Retry diff", &theme).on_click(
                                     cx.listener(|page, _, _, cx| page.load_diff(true, cx)),
-                                ));
-                        } else {
-                            // Loading renders the same workspace with placeholders.
-                            column = column.child(self.code_workspace(&theme, window, cx));
-                        }
-                    }
-                    Tab::Activity => {
-                        let mut activity: Vec<_> = detail.activity_comments().enumerate().collect();
-                        activity.sort_by_key(|(_, comment)| {
-                            if comment.created_at.is_empty() {
-                                &comment.submitted_at
-                            } else {
-                                &comment.created_at
-                            }
-                        });
-                        // The thread keeps the same 24px under the header as the
-                        // Summary's first card.
-                        let mut thread = div()
-                            .id("pr-activity-thread")
-                            .debug_selector(|| "pr-activity-thread".into())
-                            .mt(px(24.0))
-                            // Authors line up with the title and metadata above;
-                            // your own replies stay flush with the composer.
-                            .pl(px(8.0))
-                            .flex()
-                            .flex_col()
-                            .when(detail.review_threads.is_none() && !activity.is_empty(), |thread| thread.child(
-                                div().mb(px(16.0)).text_color(theme.text_muted)
-                                    .child("Inline review threads are unavailable. Refresh or open this pull request on GitHub to read them.")));
-                        if activity.is_empty() {
-                            thread = thread
-                                .pl_0()
-                                .flex_1()
-                                .flex_shrink_0()
-                                .min_h(px(160.0))
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                div()
-                                    .id("pr-activity-empty")
-                                    .debug_selector(|| "pr-activity-empty".into())
-                                    .w_full()
-                                    .max_w(px(320.0))
-                                    .flex_none()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .text_center()
-                                    .child(
-                                        div().mb(px(Theme::SPACE_LG)).child(
-                                            crate::icons::icon(crate::icons::CHAT_ROUND_LINE)
-                                                .size(px(24.0))
-                                                .text_color(theme.text_muted),
-                                        ),
-                                    )
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .text_size(crate::typography::ui_rems(15.0))
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child(if detail.review_threads.is_some() { "No activity yet" } else { "No conversation yet" }),
-                                    )
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .mt(px(6.0))
-                                            .text_color(theme.text_muted)
-                                            .child(if detail.review_threads.is_some() { "Comments and reviews will appear here. Start the conversation below." } else { "Inline review threads are unavailable. Refresh or open this pull request on GitHub to read them." }),
-                                    ),
-                            );
-                        }
-                        let viewer_login = detail.viewer_login.as_deref().or_else(|| {
-                            detail
-                                .activity_comments()
-                                .find(|comment| {
-                                    comment.viewer_did_author && !comment.author.login.is_empty()
-                                })
-                                .map(|comment| comment.author.login.as_str())
-                        });
-                        for (index, comment) in activity {
-                            let own = comment.viewer_did_author
-                                || viewer_login.is_some_and(|login| {
-                                    login.eq_ignore_ascii_case(&comment.author.login)
-                                });
-                            thread = thread.child(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .mb(px(24.0))
-                                    .when(own, |el| el.justify_end())
-                                    .child(
-                                        div()
-                                            .id(SharedString::from(format!("pr-message-{index}")))
-                                            .debug_selector(move || format!("pr-message-{index}"))
-                                            .min_w_0()
-                                            .w(gpui::relative(0.9))
-                                            .when(own, |el| {
-                                                el.max_w(gpui::relative(0.8))
-                                                    .px(px(16.0))
-                                                    .py(px(10.0))
-                                                    .rounded(px(Theme::BUBBLE_RADIUS))
-                                                    .bg(crate::theme::user_bubble_bg())
-                                            })
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(8.0))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .items_center()
-                                                    .gap(px(8.0))
-                                                    .child(super::pull_request_media::avatar(
-                                                        &comment.author.login,
-                                                        format!("pr-actor-{index}").into(),
-                                                        24.0,
-                                                        &theme,
-                                                    ))
-                                                    .child(
-                                                        div()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .child(
-                                                                if comment.author.login.is_empty() {
-                                                                    "Deleted account".to_owned()
-                                                                } else {
-                                                                    comment.author.login.clone()
-                                                                },
-                                                            ),
-                                                    )
-                                                    .when(!comment.state.is_empty(), |el| {
-                                                        el.child(status_chip(
-                                                            &comment.state,
-                                                            &theme,
-                                                        ))
-                                                    })
-                                                    .child(
-                                                        div()
-                                                            .text_size(crate::typography::ui_rems(
-                                                                11.0,
-                                                            ))
-                                                            .text_color(theme.text_muted)
-                                                            .child(activity_time(
-                                                                if comment.created_at.is_empty() {
-                                                                    &comment.submitted_at
-                                                                } else {
-                                                                    &comment.created_at
-                                                                },
-                                                            )),
-                                                    ),
-                                            )
-                                            .children(inline_thread(detail, index).map(|review| {
-                                                let location = review
-                                                    .line
-                                                    .or(review.original_line)
-                                                    .map(|line| format!("{}:{line}", review.path))
-                                                    .unwrap_or_else(|| review.path.clone());
-                                                let status = if review.is_resolved {
-                                                    "Resolved"
-                                                } else {
-                                                    "Unresolved"
-                                                };
-                                                // One quiet line: where the comment sits (a link
-                                                // to it on GitHub), then its state.
-                                                let link = url::Url::parse(&comment.url)
-                                                    .ok()
-                                                    .filter(|url| {
-                                                        url.scheme() == "https"
-                                                            && url.host_str() == Some("github.com")
-                                                    });
-                                                let mut details = vec![status];
-                                                if review.is_outdated {
-                                                    details.push("Outdated");
-                                                }
-                                                if comment.reply_to.is_some() {
-                                                    details.push("Reply");
-                                                }
-                                                div()
-                                                    .debug_selector(move || {
-                                                        format!("pr-inline-thread-{index}")
-                                                    })
-                                                    .min_w_0()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(8.0))
-                                                    .text_size(crate::typography::ui_rems(12.0))
-                                                    .text_color(theme.text_muted)
-                                                    .child(
-                                                        div()
-                                                            .id(SharedString::from(format!(
-                                                                "pr-inline-location-{index}"
-                                                            )))
-                                                            .min_w_0()
-                                                            .h(px(22.0))
-                                                            .px(px(6.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap(px(4.0))
-                                                            .rounded(px(6.0))
-                                                            .bg(theme.ink(0.035))
-                                                            .font_family(theme.font_mono.clone())
-                                                            .text_size(px(11.5))
-                                                            .tooltip(widgets::text_tooltip(
-                                                                location.clone(),
-                                                            ))
-                                                            .child(
-                                                                div().min_w_0().truncate().child(location),
-                                                            )
-                                                            .when_some(link, |el, url| {
-                                                                el.debug_selector(move || {
-                                                                    format!("pr-inline-link-{index}")
-                                                                })
-                                                                .role(gpui::Role::Link)
-                                                                .aria_label(
-                                                                    "Open review comment on GitHub",
-                                                                )
-                                                                .tab_index(0)
-                                                                .cursor_pointer()
-                                                                .hover(|style| {
-                                                                    style
-                                                                        .bg(theme.ink(0.07))
-                                                                        .text_color(theme.text)
-                                                                })
-                                                                .child(
-                                                                    crate::icons::icon(
-                                                                        crate::icons::ARROW_UP_RIGHT,
-                                                                    )
-                                                                    .size(px(11.0))
-                                                                    .flex_none()
-                                                                    .text_color(theme.text_muted),
-                                                                )
-                                                                .on_click(move |_, _, cx| {
-                                                                    cx.open_url(url.as_str())
-                                                                })
-                                                            }),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .flex_none()
-                                                            .child(details.join(" · ")),
-                                                    )
-                                            }))
-                                            .children(self.activity_bodies.get(index).map(
-                                                |body| {
-                                                    div().child(rich_text(
-                                                        body,
-                                                        format!(
-                                                            "{}activity-{index}",
-                                                            self.selection_prefix
-                                                        ),
-                                                        &self.url,
-                                                        &theme,
-                                                        crate::settings::math_style(cx),
-                                                        window,
-                                                        cx.weak_entity(),
-                                                    ))
-                                                },
-                                            )),
-                                    ),
-                            );
-                        }
-                        column = column.child(thread);
-                    }
-                }
-            } else if self.loading {
-                // The loaded layout with placeholders, so nothing shifts when
-                // the pull request arrives. The board's row supplies the header.
-                if self.tab != Tab::Code {
-                    column = column.child(match &self.preview {
-                        Some(preview) => detail_header(
-                            &preview.title,
-                            &preview.author.login,
-                            preview.repository.clone(),
-                            preview.number,
-                            None,
-                            &theme,
-                        )
-                        .into_any_element(),
-                        None => div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.0))
-                            .px(px(8.0))
-                            .child(crate::pull_request_skeleton::bar(
-                                gpui::relative(0.6),
-                                20.0,
-                                0,
-                                cx.entity_id(),
-                                &theme,
-                                cx,
-                            ))
-                            .child(crate::pull_request_skeleton::bar(
-                                px(240.0),
-                                10.0,
-                                1,
-                                cx.entity_id(),
-                                &theme,
-                                cx,
+                                ),
                             ))
                             .into_any_element(),
-                    });
-                }
-                column = column.child(crate::pull_request_skeleton::summary(
-                    CARD_GAP,
-                    cx.entity_id(),
-                    &theme,
-                    cx,
-                ));
-            }
+                        // Loading renders the same workspace with placeholders.
+                        None => self.code_workspace(&theme, window, cx),
+                    },
+                });
+        } else if self.loading {
+            body = body.child(div().py(px(48.0)).flex().justify_center().child(
+                crate::loaders::ring_spinner("pr-detail-loading", 18.0, theme.text_muted),
+            ));
+        }
+        let content = if code {
+            // The diff scrolls itself, under its toolbar.
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(body.h_full().min_h_0().pb_0())
+                .into_any_element()
+        } else {
             let scroll = self.scroll.scroll.clone();
             let rail = crate::popover::rail(self, "pr-detail-scrollbar", &theme, cx);
             div()
@@ -2288,9 +2664,8 @@ impl Render for PullRequestDetailPage {
                 .flex_1()
                 .min_h_0()
                 .relative()
-                // Selecting text here leaves no input focused. Take focus on
-                // press so Cmd/Ctrl+C reaches the copy below; the comment
-                // composer is a sibling and keeps its own copy.
+                // Selecting text leaves no input focused: take focus on press
+                // so Cmd/Ctrl+C reaches the copy below.
                 .track_focus(&self.content_focus)
                 .on_mouse_down(
                     gpui::MouseButton::Left,
@@ -2314,29 +2689,20 @@ impl Render for PullRequestDetailPage {
                     }
                 }))
                 .child(
-                    crate::edge_fade::edge_faded(
-                        24.0,
-                        true,
-                        true,
-                        div()
-                            .id("pr-detail-scroll")
-                            .debug_selector(|| "pr-detail-scroll".into())
-                            .size_full()
-                            .when(self.tab != Tab::Code, |el| el.overflow_y_scroll())
-                            .when(self.tab == Tab::Code, |el| el.overflow_hidden())
-                            .track_scroll(&scroll)
-                            .child(column),
-                    )
-                    .fade_overflow_y(&scroll),
+                    div()
+                        .id("pr-detail-scroll")
+                        .debug_selector(|| "pr-detail-scroll".into())
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
+                        .child(body),
                 )
-                .when(self.tab != Tab::Code, |el| el.children(rail))
+                .children(rail)
                 .into_any_element()
         };
-        let navigation = self.navigation(&theme, cx);
-        if self.tab_slide.animating_at(Instant::now()) {
-            window.request_animation_frame();
-        }
-        let composer = (self.tab == Tab::Activity).then(|| self.comment_composer(&theme, cx));
+        let composer = (self.tab == Tab::Timeline && self.detail.is_some())
+            .then(|| self.comment_composer(&theme, cx));
+        let footer = self.render_footer(&theme, cx);
         // The pane sizes the page; layouts that depend on it read last
         // frame's width, like the Code tab's file tree.
         let measure = {
@@ -2367,21 +2733,16 @@ impl Render for PullRequestDetailPage {
             }))
             .flex()
             .flex_col()
+            .overflow_hidden()
             // Paint before Markdown registers this frame's text geometry.
             .child(crate::markdown::render::selection_frame_reset_for(
                 cx.entity_id().as_u64(),
             ))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .child(content)
-                    .children(composer)
-                    .child(navigation),
-            );
+            .child(head)
+            .children(tabs)
+            .child(content)
+            .children(composer)
+            .children(footer);
         if let Some(preview) = &self.image_preview {
             let weak = cx.weak_entity();
             root = root.child(crate::attachments::lightbox(
@@ -2511,10 +2872,12 @@ mod tests {
         );
         cx.simulate_keystrokes("cmd-c");
         assert_eq!(
-            cx.read_from_clipboard().and_then(|item| item.text()).as_deref(),
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
             Some("First")
         );
-        page.update(cx, |page, cx| page.select_tab(Tab::Activity, cx));
+        page.update(cx, |page, cx| page.select_tab(Tab::Timeline, cx));
         assert!(selection::selected_text().is_none());
         assert_eq!(render::selection_test_entry_count(&prefix), 0);
         // A different PR instance has a disjoint namespace, including when
@@ -2653,7 +3016,7 @@ mod tests {
         page.update(cx, |page, cx| {
             assert_eq!(page.activity_bodies.len(), 2);
             assert_eq!(page.detail.as_ref().unwrap().activity_comments().count(), 2);
-            page.select_tab(Tab::Activity, cx);
+            page.select_tab(Tab::Timeline, cx);
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("pr-inline-thread-0").is_some());
@@ -2774,9 +3137,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn pull_request_board_updates_live_tabs_once_and_keeps_drafts(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn pull_request_board_updates_live_tabs_once_and_keeps_drafts(cx: &mut gpui::TestAppContext) {
         let runtime = fixture::runtime();
         let _guard = runtime.enter();
         fixture::init(cx);
@@ -2821,7 +3182,7 @@ mod tests {
         page.update(cx, |page, cx| {
             page.comment_input
                 .update(cx, |input, cx| input.set_text("Keep my draft", cx));
-            page.select_tab(Tab::Activity, cx);
+            page.select_tab(Tab::Timeline, cx);
             page.update_board_preview(board_preview(&"a".repeat(40)), cx);
             page.update_board_preview(board_preview(""), cx);
             assert!(!page.loading);
@@ -2830,10 +3191,12 @@ mod tests {
             // Repeated activation while loading must not start more reads.
             page.update_board_preview(board_preview(&"b".repeat(40)), cx);
         });
-        rpc.settle(cx, &runtime, |cx| page.read_with(cx, |page, _| !page.loading));
+        rpc.settle(cx, &runtime, |cx| {
+            page.read_with(cx, |page, _| !page.loading)
+        });
         assert_eq!(rpc.completed(), 1, "the diff waits for Code");
         page.update(cx, |page, cx| {
-            assert!(page.tab == Tab::Activity);
+            assert!(page.tab == Tab::Timeline);
             assert_eq!(page.comment_input.read(cx).text(), "Keep my draft");
             assert_eq!(page.detail.as_ref().unwrap().head_ref_oid, "c".repeat(40));
             for _ in 0..3 {
@@ -2845,7 +3208,9 @@ mod tests {
             }
             page.select_tab(Tab::Code, cx);
         });
-        rpc.settle(cx, &runtime, |cx| page.read_with(cx, |page, _| page.diff.is_some()));
+        rpc.settle(cx, &runtime, |cx| {
+            page.read_with(cx, |page, _| page.diff.is_some())
+        });
         page.read_with(cx, |page, cx| {
             assert_eq!(page.diff.as_ref().unwrap().patch, "new patch");
             assert_eq!(page.comment_input.read(cx).text(), "Keep my draft");
@@ -2854,9 +3219,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn pull_request_board_revision_during_a_read_is_not_lost(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn pull_request_board_revision_during_a_read_is_not_lost(cx: &mut gpui::TestAppContext) {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let runtime = fixture::runtime();
         let _guard = runtime.enter();
@@ -3239,55 +3602,81 @@ mod tests {
     }
 
     #[test]
-    fn ci_summary_handles_mixed_and_unreported_checks() {
-        let check = |conclusion: &str, state: &str, status: &str| commutator_proto::ChangeRequestCheck {
+    fn pr_view_reads_checks_reviewers_and_timeline() {
+        use commutator_proto::{
+            ChangeRequestActor, ChangeRequestCheck, ChangeRequestComment, ChangeRequestCommit,
+        };
+        let actor = |login: &str| ChangeRequestActor {
+            login: login.into(),
+            ..Default::default()
+        };
+        let check = |conclusion: &str, status: &str| ChangeRequestCheck {
+            name: "ci".into(),
             conclusion: conclusion.into(),
-            state: state.into(),
             status: status.into(),
             ..Default::default()
         };
-        let ci_status = |checks: &[commutator_proto::ChangeRequestCheck]| {
-            super::ci_status(&ChangeRequestDetail {
-                ci: commutator_proto::change_request_assessment::ChangeRequestCi::from_checks(checks),
-                status_check_rollup: checks.to_vec(),
-                ..Default::default()
-            })
+        assert_eq!(check_state(&check("FAILURE", "COMPLETED")), CiState::Failed);
+        assert_eq!(check_state(&check("SUCCESS", "COMPLETED")), CiState::Passed);
+        assert_eq!(check_state(&check("", "IN_PROGRESS")), CiState::Pending);
+        let review = |who: &str, state: &str, at: &str| ChangeRequestComment {
+            author: actor(who),
+            state: state.into(),
+            submitted_at: at.into(),
+            ..Default::default()
         };
+        let commit = |oid: &str, at: &str| ChangeRequestCommit {
+            oid: oid.into(),
+            message_headline: format!("commit {oid}"),
+            committed_date: at.into(),
+            authors: vec![actor("ann")],
+        };
+        let detail = ChangeRequestDetail {
+            author: actor("ann"),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            reviews: vec![
+                review("bob", "CHANGES_REQUESTED", "2026-01-02T00:00:00Z"),
+                review("bob", "COMMENTED", "2026-01-03T00:00:00Z"),
+                review("cy", "APPROVED", "2026-01-04T00:00:00Z"),
+            ],
+            review_requests: vec![actor("dee"), actor("cy")],
+            commits: vec![
+                commit("aaaaaaaa", "2026-01-01T01:00:00Z"),
+                commit("bbbbbbbb", "2026-01-01T02:00:00Z"),
+            ],
+            merged_at: "2026-01-05T00:00:00Z".into(),
+            status_check_rollup: vec![check("FAILURE", "COMPLETED"), check("SUCCESS", "COMPLETED")],
+            ..Default::default()
+        };
+        // A comment after a verdict doesn't take it back; asked reviewers who
+        // already reviewed aren't listed twice.
         assert_eq!(
-            super::ci_status(&ChangeRequestDetail::default()),
-            "CI unavailable"
+            reviewers(&detail),
+            [
+                ("bob".into(), Verdict::Changes),
+                ("cy".into(), Verdict::Approved),
+                ("dee".into(), Verdict::Pending)
+            ]
         );
-        assert_eq!(ci_status(&[]), "No checks reported");
+        let events = timeline(&detail);
+        let kinds: Vec<_> = events
+            .iter()
+            .map(|e| std::mem::discriminant(&e.what))
+            .collect();
         assert_eq!(
-            ci_status(&[
-                check("SUCCESS", "", "COMPLETED"),
-                check("SKIPPED", "", "COMPLETED")
-            ]),
-            "SUCCESS"
+            events.len(),
+            5,
+            "opened, one push, two verdicts, merged: {events:?}"
         );
+        assert_eq!(kinds[0], std::mem::discriminant(&Happened::Opened));
         assert_eq!(
-            ci_status(&[check("", "SUCCESS", ""), check("", "", "IN_PROGRESS")]),
-            "PENDING"
+            events[1].what,
+            Happened::Commits(vec![
+                ("aaaaaaa".into(), "commit aaaaaaaa".into()),
+                ("bbbbbbb".into(), "commit bbbbbbbb".into()),
+            ])
         );
-        assert_eq!(
-            ci_status(&[check("FAILURE", "", "COMPLETED"), check("", "", "QUEUED")]),
-            "FAILURE"
-        );
-        assert_eq!(ci_status(&[check("CANCELLED", "", "COMPLETED")]), "FAILURE");
-        assert_eq!(ci_status(&[check("SKIPPED", "", "COMPLETED")]), "SKIPPED");
-        assert_eq!(ci_status(&[check("", "", "")]), "PENDING");
-    }
-
-    #[test]
-    fn status_cues_distinguish_passed_pending_failed_and_skipped() {
-        assert_eq!(status_style("SUCCESS").2, StatusTone::Positive);
-        assert_eq!(status_style("IN_PROGRESS").2, StatusTone::Warning);
-        assert_eq!(status_style("FAILURE").2, StatusTone::Negative);
-        assert_eq!(status_style("SKIPPED").2, StatusTone::Neutral);
-        assert_eq!(status_style("CANCELLED").2, StatusTone::Neutral);
-        assert_eq!(status_style("MERGED").2, StatusTone::Merged);
-        assert_eq!(status_style("CHANGES_REQUESTED").0, "Changes requested");
-        assert_eq!(status_style("REVIEW_REQUIRED").0, "Awaiting review");
+        assert_eq!(events[4].what, Happened::Merged);
     }
 
     #[test]
@@ -3414,9 +3803,8 @@ mod tests {
             cx.run_until_parked();
             let viewport = cx.debug_bounds("pr-code-viewport").unwrap();
             let toolbar = cx.debug_bounds("pr-file-navigation").unwrap();
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
             assert!(viewport.size.height >= px(60.0), "{viewport:?}");
-            assert!(viewport.bottom() <= nav.top());
+            assert!(viewport.bottom() <= px(height));
             assert!(toolbar.bottom() <= viewport.top());
             assert_eq!(
                 toolbar.left(),
@@ -3530,7 +3918,7 @@ mod tests {
             ] {
                 let control = cx.debug_bounds(selector).unwrap();
                 assert!(
-                    control.left() >= px(24.0) && control.right() <= px(width - 24.0),
+                    control.left() >= px(PAD) && control.right() <= px(width - PAD),
                     "{selector}: {control:?}"
                 );
             }
@@ -3622,172 +4010,6 @@ mod tests {
         );
     }
 
-    struct NavigationHitHost {
-        page: Entity<PullRequestDetailPage>,
-        presses: usize,
-        clicks: usize,
-        raw_presses: Rc<std::cell::Cell<usize>>,
-    }
-
-    impl Render for NavigationHitHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let theme = Theme::of(cx).clone();
-            let navigation = self.page.update(cx, |page, cx| page.navigation(&theme, cx));
-            let raw = self.raw_presses.clone();
-            div()
-                .size_full()
-                .relative()
-                .child(
-                    div()
-                        .id("under-tabs")
-                        .size_full()
-                        .relative()
-                        .child(
-                            gpui::canvas(
-                                |_, _, _| (),
-                                move |bounds, _, window, _| {
-                                    window.on_mouse_event(
-                                        move |event: &gpui::MouseDownEvent, phase, _, _| {
-                                            if phase == gpui::DispatchPhase::Bubble
-                                                && bounds.contains(&event.position)
-                                            {
-                                                raw.set(raw.get() + 1);
-                                            }
-                                        },
-                                    );
-                                },
-                            )
-                            .absolute()
-                            .inset_0(),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(|host, _, _, _| host.presses += 1),
-                        )
-                        .on_click(cx.listener(|host, _, _, _| host.clicks += 1)),
-                )
-                .child(div().absolute().inset_0().child(navigation))
-        }
-    }
-
-    #[gpui::test]
-    fn pull_request_navigation_occludes_underlying_press_and_click(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-        fixture::init(cx);
-        let (host, cx) = cx.add_window_view(|window, cx| {
-            let state = fixture::state(cx, None);
-            let page = cx.new(|cx| {
-                PullRequestDetailPage::new(
-                    state,
-                    "https://github.com/a/b/pull/1".into(),
-                    None,
-                    Default::default(),
-                    None,
-                    window,
-                    cx,
-                )
-            });
-            NavigationHitHost {
-                page,
-                presses: 0,
-                clicks: 0,
-                raw_presses: Default::default(),
-            }
-        });
-        cx.simulate_resize(gpui::size(px(600.0), px(400.0)));
-        cx.run_until_parked();
-        let tab = cx.debug_bounds("pr-code").unwrap();
-        let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-        for point in [
-            tab.center(),
-            gpui::point(nav.left() + px(2.0), nav.center().y),
-        ] {
-            cx.simulate_mouse_down(point, gpui::MouseButton::Left, gpui::Modifiers::default());
-            cx.simulate_mouse_up(point, gpui::MouseButton::Left, gpui::Modifiers::default());
-        }
-        host.read_with(cx, |host, cx| {
-            assert_eq!(
-                host.presses, 0,
-                "tabs and glass padding must block selection starts beneath them"
-            );
-            assert_eq!(host.clicks, 0, "tabs must block underlying links/images");
-            assert_eq!(
-                host.raw_presses.get(),
-                0,
-                "raw text-selection listeners must not receive tab presses"
-            );
-            assert!(host.page.read(cx).tab == Tab::Code);
-        });
-        let outside = gpui::point(nav.center().x, nav.bottom() + px(10.0));
-        cx.simulate_mouse_down(outside, gpui::MouseButton::Left, gpui::Modifiers::default());
-        cx.simulate_mouse_up(outside, gpui::MouseButton::Left, gpui::Modifiers::default());
-        host.read_with(cx, |host, _| {
-            assert_eq!(
-                host.presses, 1,
-                "only the glass footprint should intercept input"
-            );
-            assert_eq!(host.clicks, 1);
-            assert_eq!(host.raw_presses.get(), 1);
-        });
-    }
-
-    #[gpui::test]
-    fn pull_request_navigation_thumb_slides_onto_the_selected_tab(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-        fixture::init(cx);
-        let (host, cx) = cx.add_window_view(|window, cx| {
-            let state = fixture::state(cx, None);
-            let page = cx.new(|cx| {
-                PullRequestDetailPage::new(
-                    state,
-                    "https://github.com/a/b/pull/1".into(),
-                    None,
-                    Default::default(),
-                    None,
-                    window,
-                    cx,
-                )
-            });
-            NavigationHitHost {
-                page,
-                presses: 0,
-                clicks: 0,
-                raw_presses: Default::default(),
-            }
-        });
-        let page = host.read_with(cx, |host, _| host.page.clone());
-        cx.update(|_, cx| crate::motion::set_reduced_motion(cx, true));
-        for width in [320.0, 900.0] {
-            cx.simulate_resize(gpui::size(px(width), px(400.0)));
-            cx.run_until_parked();
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-            assert!(
-                nav.left() >= px(16.0) && nav.right() <= px(width - 16.0),
-                "{nav:?}"
-            );
-            let segments: Vec<_> = TABS
-                .iter()
-                .map(|(_, _, id, _)| cx.debug_bounds(id).unwrap())
-                .collect();
-            for pair in segments.windows(2) {
-                assert!(
-                    (pair[0].size.width - pair[1].size.width).abs() <= px(1.0),
-                    "{segments:?}"
-                );
-            }
-            for (tab, slot) in [(Tab::Code, 1), (Tab::Activity, 2), (Tab::Summary, 0)] {
-                page.update(cx, |page, cx| page.select_tab(tab, cx));
-                cx.run_until_parked();
-                let thumb = cx.debug_bounds("pr-detail-nav-thumb").unwrap();
-                assert!(
-                    (thumb.origin.x - segments[slot].origin.x).abs() <= px(1.0),
-                    "{thumb:?}"
-                );
-                assert!((thumb.size.width - segments[slot].size.width).abs() <= px(1.0));
-            }
-        }
-    }
-
     struct DetailHost {
         page: Entity<PullRequestDetailPage>,
         _subscription: Subscription,
@@ -3796,7 +4018,24 @@ mod tests {
 
     impl DetailHost {
         fn new(window: &mut Window, cx: &mut Context<Self>, loaded: bool) -> Self {
-            let state = fixture::state(cx, None);
+            Self::build(window, cx, loaded, None)
+        }
+
+        fn with_client(
+            window: &mut Window,
+            cx: &mut Context<Self>,
+            client: Option<commutator_rpc::RpcClient>,
+        ) -> Self {
+            Self::build(window, cx, true, client)
+        }
+
+        fn build(
+            window: &mut Window,
+            cx: &mut Context<Self>,
+            loaded: bool,
+            client: Option<commutator_rpc::RpcClient>,
+        ) -> Self {
+            let state = fixture::state(cx, client);
             let page = cx.new(|cx| {
                 let mut page = PullRequestDetailPage::new(
                     state, "https://github.com/a/b/pull/1".into(),
@@ -3807,7 +4046,8 @@ mod tests {
                     page.error = None;
                     page.detail = Some(ChangeRequestDetail {
                         title: "Inspect a pull request with a very long title that must leave room for all actions".into(),
-                        number: 1, body: "A description".into(),
+                        number: 1, body: "A description".into(), state: "OPEN".into(),
+                        url: "https://github.com/a/b/pull/1".into(),
                         status_check_rollup: vec![commutator_proto::ChangeRequestCheck {
                             name: "linux-browser".into(), conclusion: "SUCCESS".into(),
                             details_url: "https://github.com/a/b/actions/runs/1".into(),
@@ -3860,368 +4100,53 @@ mod tests {
     }
 
     #[gpui::test]
-    fn pull_request_detail_fits_a_side_pane(cx: &mut gpui::TestAppContext) {
+    fn pr_view_tabs_switch_and_the_footer_approves(cx: &mut gpui::TestAppContext) {
         fixture::init(cx);
-        let (host, cx) = cx.add_window_view(|window, cx| DetailHost::new(window, cx, true));
+        let runtime = fixture::runtime();
+        let _guard = runtime.enter();
+        let acted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = acted.clone();
+        let rpc = ScriptedRpc::new(move |method, params| {
+            let seen = seen.clone();
+            async move {
+                if method == methods::ACT_ON_CHANGE_REQUEST {
+                    seen.lock().unwrap().push(params);
+                    return commutator_rpc::RpcReply::value(&serde_json::json!({}));
+                }
+                Err(commutator_rpc::RpcError::Failed("offline".into()))
+            }
+        });
+        let client = rpc.client();
+        let (host, cx) =
+            cx.add_window_view(|window, cx| DetailHost::with_client(window, cx, Some(client)));
         let page = host.read_with(cx, |host, _| host.page.clone());
-        for (width, compact) in [(360.0, true), (460.0, false)] {
-            cx.simulate_resize(gpui::size(px(width), px(800.0)));
-            // The page reads its width a frame late.
-            for _ in 0..2 {
-                cx.run_until_parked();
-                cx.update(|window, cx| window.draw(cx).clear());
-            }
-            let column = cx.debug_bounds("pr-content-column").unwrap();
-            let card = cx.debug_bounds("pr-detail-title").unwrap();
-            assert!(
-                card.left() - column.left() <= px(NARROW_PAD_X + 8.5),
-                "the column keeps a narrow gutter at {width}: {column:?} {card:?}"
-            );
-            page.read_with(cx, |page, _| {
-                assert_eq!(
-                    page.page_width.is_some_and(|w| w < COMPACT_NAV_PAGE),
-                    compact
-                )
-            });
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-            assert!(nav.left() >= px(0.0) && nav.right() <= px(width));
-            for selector in ["pr-summary", "pr-code", "pr-activity"] {
-                let segment = cx.debug_bounds(selector).unwrap();
-                assert!(nav.left() <= segment.left() && segment.right() <= nav.right());
-            }
-        }
-    }
-
-    #[gpui::test]
-    fn pull_request_detail_actions_fit_and_tabs_switch(cx: &mut gpui::TestAppContext) {
-        fixture::init(cx);
-        let (host, cx) = cx.add_window_view(|window, cx| DetailHost::new(window, cx, true));
-        let page = host.read_with(cx, |host, _| host.page.clone());
-        page.read_with(cx, |page, _| {
-            assert_eq!(page.params(false)["targetDeviceId"], "remote-device")
-        });
-        for width in [240.0, 320.0, 600.0, 900.0] {
-            cx.simulate_resize(gpui::size(px(width), px(800.0)));
-            cx.run_until_parked();
-            let mut previous_right = px(0.0);
-            for selector in [
-                "pr-toolbar-title",
-                "pr-detail-refresh",
-                "pr-copy-url",
-                "pr-external",
-            ] {
-                let bounds = cx.debug_bounds(selector).unwrap();
-                assert!(
-                    bounds.left() >= previous_right && bounds.right() <= px(width),
-                    "{selector}: {bounds:?}"
-                );
-                assert!(
-                    bounds.top() >= px(0.0) && bounds.bottom() <= px(Theme::TITLEBAR_HEIGHT),
-                    "{selector} at {width}: {bounds:?}"
-                );
-                previous_right = bounds.right();
-            }
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-            assert_eq!(nav.bottom(), px(784.0));
-            assert_eq!(nav.size.height, px(NAV_HEIGHT));
-            for selector in ["pr-summary", "pr-code", "pr-activity"] {
-                let bounds = cx.debug_bounds(selector).unwrap();
-                assert!(
-                    bounds.left() >= px(0.0) && bounds.right() <= px(width),
-                    "{selector}: {bounds:?}"
-                );
-            }
-        }
-        let checks = cx.debug_bounds("pr-checks-toggle").unwrap();
-        cx.simulate_mouse_down(
-            checks.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            checks.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
+        cx.simulate_resize(gpui::size(px(520.0), px(800.0)));
         cx.run_until_parked();
-        page.read_with(cx, |page, _| {
-            assert!(page.tab == Tab::Summary && page.checks_expanded)
-        });
-        let check = cx.debug_bounds("pr-check-0").unwrap();
-        let check_name = cx.debug_bounds("pr-check-name-0").unwrap();
-        let card = cx.debug_bounds("pr-checks-card").unwrap();
-        assert_eq!(check.left(), card.left());
-        assert_eq!(check_name.left() - check.left(), px(16.0));
-        assert!(check.size.height <= px(40.0));
-        assert!(check_name.top() > check.top() && check_name.bottom() < check.bottom());
-        for scale in [16.0, 20.0] {
-            cx.update(|window, _| window.set_rem_size(px(scale)));
-            cx.run_until_parked();
-            for (control, label) in [
-                (
-                    "pr-verification-Relevant platforms",
-                    "pr-verification-label-Relevant platforms",
-                ),
-                ("pr-verification-Windows", "pr-verification-label-Windows"),
-            ] {
-                let control = cx.debug_bounds(control).unwrap();
-                let label = cx.debug_bounds(label).unwrap();
-                assert!(label.left() - control.left() >= px(10.0));
-                assert!(control.right() - label.right() >= px(10.0));
-                assert!(label.top() >= control.top() && label.bottom() <= control.bottom());
-            }
-        }
-        cx.update(|window, _| window.set_rem_size(px(16.0)));
-        cx.run_until_parked();
-        let platform = cx.debug_bounds("pr-verification-Windows").unwrap();
-        cx.simulate_mouse_down(
-            platform.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            platform.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.run_until_parked();
-        page.read_with(cx, |page, _| {
-            assert_eq!(
-                page.verification_platform,
-                handoff::VerificationPlatform::Windows
-            )
-        });
-        let code = cx.debug_bounds("pr-code").unwrap();
-        cx.simulate_mouse_down(
-            code.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            code.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.run_until_parked();
-        page.read_with(cx, |page, _| assert!(page.tab == Tab::Code));
-        assert!(cx.debug_bounds("pr-copy-patch").is_some());
-        for (width, height) in [(320.0, 600.0), (900.0, 400.0), (1200.0, 900.0)] {
-            cx.simulate_resize(gpui::size(px(width), px(height)));
-            cx.run_until_parked();
-            let viewport = cx.debug_bounds("pr-code-viewport").unwrap();
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-            assert!(viewport.size.height > px(60.0), "{viewport:?}");
-            assert!(
-                viewport.bottom() <= nav.top(),
-                "diff must clear floating navigation"
-            );
-            assert_eq!(
-                viewport.size.width,
-                px(width - 48.0 - if width - 48.0 >= 760.0 { 276.0 } else { 0.0 }),
-                "Code shares available width with the file navigator"
-            );
-            assert!(nav.size.width <= px(width));
-            assert_eq!(nav.size.height, px(NAV_HEIGHT));
-            page.read_with(cx, |page, _| {
-                assert_eq!(
-                    page.scroll.scroll.max_offset().y,
-                    px(0.0),
-                    "Code has one vertical scroller"
-                );
-            });
-        }
-        cx.simulate_resize(gpui::size(px(900.0), px(800.0)));
-        cx.run_until_parked();
-        let copy = cx.debug_bounds("pr-copy-url").unwrap();
-        cx.simulate_mouse_down(
-            copy.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            copy.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard().unwrap().text().unwrap(),
-                "https://github.com/a/b/pull/1"
-            )
-        });
-        page.read_with(cx, |page, _| {
-            assert!(page.review.horizontal.max_offset().x > px(0.0))
-        });
-        cx.simulate_resize(gpui::size(px(600.0), px(800.0)));
-        cx.run_until_parked();
-        let files = cx.debug_bounds("pr-files").unwrap();
-        cx.simulate_mouse_down(
-            files.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            files.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        page.read_with(cx, |page, _| assert!(page.files_expanded));
-        let activity = cx.debug_bounds("pr-activity").unwrap();
-        cx.simulate_mouse_down(
-            activity.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            activity.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.run_until_parked();
-        page.read_with(cx, |page, _| assert!(page.tab == Tab::Activity));
-        assert!(cx.debug_bounds("pr-rich-text").is_some());
-        for width in [320.0, 900.0, 1200.0] {
-            cx.simulate_resize(gpui::size(px(width), px(800.0)));
-            cx.run_until_parked();
-            let column = cx.debug_bounds("pr-content-column").unwrap();
-            let composer = cx.debug_bounds("pr-comment-surface").unwrap();
-            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-            let meta = cx.debug_bounds("pr-detail-meta").unwrap();
-            let thread = cx.debug_bounds("pr-activity-thread").unwrap();
-            assert_eq!(
-                thread.top() - meta.bottom(),
-                px(24.0),
-                "header gap matches Summary"
-            );
-            let mine = cx.debug_bounds("pr-message-0").unwrap();
-            let other = cx.debug_bounds("pr-message-1").unwrap();
-            // The column's gutter: narrow below 480px.
-            let gutter = px(if width < NARROW_PAGE {
-                NARROW_PAD_X
-            } else {
-                40.0
-            });
-            assert_eq!(composer.left(), column.left() + gutter);
-            assert_eq!(composer.right(), column.right() - gutter);
-            assert_eq!(nav.center().x, composer.center().x);
-            assert_eq!(
-                nav.top() - composer.bottom(),
-                px(16.0),
-                "docked above the navigation"
-            );
-            let scroll = cx.debug_bounds("pr-detail-scroll").unwrap();
-            assert!(
-                scroll.bottom() <= composer.top(),
-                "the thread never scrolls behind it"
-            );
-            if width >= 900.0 {
-                assert_eq!(
-                    composer.size.height,
-                    px(crate::composer::COMPACT_TOTAL_HEIGHT),
-                    "one line matches the chat composer's compact pill"
-                );
-                let send = cx.debug_bounds("pr-send-comment").unwrap();
-                assert_eq!(send.center().y, composer.center().y);
-                assert_eq!(composer.right() - send.right(), px(9.0));
-            }
-            assert_eq!(mine.right(), composer.right());
-            assert_eq!(other.left(), composer.left() + px(8.0), "title's text edge");
-            assert!(mine.left() > other.left());
-        }
-        // Yours even when GitHub marks none of your comments: the engine
-        // reports who you are, which covers reviews too.
-        page.update(cx, |page, cx| {
-            let detail = page.detail.as_mut().unwrap();
-            detail.comments[0].viewer_did_author = false;
-            detail.viewer_login = Some("Viewer".into());
-            cx.notify();
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            cx.debug_bounds("pr-message-0").unwrap().right(),
-            cx.debug_bounds("pr-comment-surface").unwrap().right()
-        );
-
-        cx.simulate_resize(gpui::size(px(900.0), px(400.0)));
-        cx.run_until_parked();
-        let nav = cx.debug_bounds("pr-detail-nav").unwrap();
-        page.update(cx, |page, cx| {
-            page.scroll
-                .scroll
-                .set_offset(gpui::point(px(0.0), px(-150.0)));
-            cx.notify();
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            cx.debug_bounds("pr-detail-nav").unwrap(),
-            nav,
-            "navigation must not move with content"
-        );
-        page.read_with(cx, |page, _| {
-            assert!(page.scroll.scroll.offset().y < px(0.0))
-        });
-        page.update(cx, |page, cx| {
-            let detail = page.detail.as_mut().unwrap();
-            detail.comments.clear();
-            detail.reviews.clear();
-            page.activity_bodies.clear();
-            page.scroll.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
-            cx.notify();
-        });
-        for (width, height) in [
-            (320.0, 600.0),
-            (900.0, 400.0),
-            (1200.0, 900.0),
-            (320.0, 400.0),
+        for selector in [
+            "pr-head",
+            "pr-detail-title",
+            "pr-summary",
+            "pr-description",
+            "pr-approve",
+            "pr-merge",
         ] {
-            cx.simulate_resize(gpui::size(px(width), px(height)));
-            cx.run_until_parked();
-            let composer = cx.debug_bounds("pr-comment-surface").unwrap();
-            page.update(cx, |page, cx| {
-                // In short windows the header and empty state can scroll;
-                // the composer stays in its dock.
-                let offset = page.scroll.scroll.max_offset().y;
-                page.scroll.scroll.set_offset(gpui::point(px(0.0), -offset));
-                cx.notify();
-            });
-            cx.run_until_parked();
-            let empty = cx.debug_bounds("pr-activity-empty").unwrap();
-            let thread = cx.debug_bounds("pr-activity-thread").unwrap();
-            let meta = cx.debug_bounds("pr-detail-meta").unwrap();
-            assert!(
-                (empty.center().y - thread.center().y).abs() <= px(1.0),
-                "empty state is vertically centered: {empty:?}, {thread:?}",
-            );
-            assert_eq!(empty.center().x, composer.center().x);
-            assert_eq!(
-                thread.bottom(),
-                cx.debug_bounds("pr-detail-scroll").unwrap().bottom() - px(32.0),
-                "empty thread uses the available height",
-            );
-            assert!(empty.top() >= meta.bottom() + px(24.0));
-            assert!(
-                empty.bottom() <= composer.top(),
-                "composer remains reachable"
-            );
-            assert!(empty.size.width <= thread.size.width);
-            assert!(cx.debug_bounds("pr-message-0").is_none());
-            assert_eq!(cx.debug_bounds("pr-comment-surface").unwrap(), composer);
+            assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let title = cx.debug_bounds("pr-detail-title").unwrap();
-        assert!(title.size.width > px(100.0));
-        cx.simulate_mouse_down(
-            title.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        cx.simulate_mouse_up(
-            title.center(),
-            gpui::MouseButton::Left,
-            gpui::Modifiers::default(),
-        );
-        host.read_with(cx, |host, _| {
-            assert!(!host.returned, "the title is a header, not a back button")
-        });
+        let click = |cx: &mut gpui::VisualTestContext, selector: &'static str| {
+            let at = cx.debug_bounds(selector).unwrap().center();
+            cx.simulate_click(at, gpui::Modifiers::default());
+            cx.run_until_parked();
+        };
+        click(cx, "pr-tab-Timeline");
+        page.read_with(cx, |page, _| assert_eq!(page.tab, Tab::Timeline));
+        click(cx, "pr-tab-Checks");
+        assert!(cx.debug_bounds("pr-check-0").is_some());
+        click(cx, "pr-approve");
+        rpc.settle(cx, &runtime, |_| !acted.lock().unwrap().is_empty());
+        let params = acted.lock().unwrap()[0].clone();
+        assert_eq!(params["action"], "approve");
+        assert_eq!(params["url"], "https://github.com/a/b/pull/1");
+        assert_eq!(params["targetDeviceId"], "remote-device");
     }
 
     #[gpui::test]
