@@ -837,6 +837,14 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
 
     // MARK: Responder (copy from the system edit menu)
 
+    /// Painted text belongs to the list: UIKit's text gestures only take
+    /// touches that land on the text input view itself, not a row under it.
+    /// Rows' own controls (buttons, scrollers, visuals) still get theirs.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit is RowView ? self : hit
+    }
+
     override var canBecomeFirstResponder: Bool { true }
 
     override func resignFirstResponder() -> Bool {
