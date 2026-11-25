@@ -54,6 +54,20 @@ const GITHUB_AVATAR_TIMEOUT: Duration = Duration::from_secs(6);
 pub const GIT_HISTORY_DEFAULT_LIMIT: usize = 100;
 pub const GIT_HISTORY_MAX_LIMIT: usize = 200;
 
+/// A worktree name the user picked: one folder and one `commutator/<name>`
+/// branch segment, so letters, digits, `-`, `_` and `.` only, and none of
+/// git's ref-name traps (a leading `.`/`-`, `..`, a `.lock` ending).
+fn valid_worktree_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.starts_with(['.', '-'])
+        && !name.contains("..")
+        && !name.ends_with(".lock")
+}
+
 const ADJECTIVES: &[&str] = &[
     "swift", "calm", "bright", "bold", "keen", "brave", "clever", "lucky", "quiet", "warm", "cool",
     "sharp", "gentle", "vivid", "amber", "cobalt",
@@ -1420,6 +1434,17 @@ impl Repos {
         repo_path: &Path,
         branch: &str,
     ) -> Result<Worktree, EngineError> {
+        self.create_named_worktree(repo_path, branch, None).await
+    }
+
+    /// [`Self::create_worktree`] under `name` when given (the sidebar's
+    /// "Create worktree…"), else a generated one.
+    pub async fn create_named_worktree(
+        &self,
+        repo_path: &Path,
+        branch: &str,
+        name: Option<&str>,
+    ) -> Result<Worktree, EngineError> {
         let repo_name = repo_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -1448,8 +1473,29 @@ impl Repos {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        let mut name = None;
+        let taken = |candidate: &str| {
+            base.join(candidate).exists() || existing.contains(&format!("commutator/{candidate}"))
+        };
+        let mut name = match name {
+            Some(name) => {
+                if !valid_worktree_name(name) {
+                    return Err(EngineError::Other(format!(
+                        "“{name}” isn’t a valid worktree name: use letters, digits, “-”, “_” and “.”"
+                    )));
+                }
+                if taken(name) {
+                    return Err(EngineError::Other(format!(
+                        "A worktree or branch named “{name}” already exists"
+                    )));
+                }
+                Some(name.to_string())
+            }
+            None => None,
+        };
         for attempt in 0..50u64 {
+            if name.is_some() {
+                break;
+            }
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos() as u64)
@@ -1460,8 +1506,7 @@ impl Repos {
                 ADJECTIVES[(seed % ADJECTIVES.len() as u64) as usize],
                 NOUNS[((seed / 31) % NOUNS.len() as u64) as usize]
             );
-            if !base.join(&candidate).exists() && !existing.contains(&format!("commutator/{candidate}"))
-            {
+            if !taken(&candidate) {
                 name = Some(candidate);
                 break;
             }
@@ -2749,6 +2794,23 @@ mod tests {
             Repos::with_worktrees_root(&tmp.path().join("data2"), "test", code.join("wt"));
         let worktree = sibling.create_worktree(&repo, "main").await.unwrap();
         assert!(Path::new(&worktree.path).starts_with(code.join("wt").join("comet")));
+
+        // A picked name is used as-is, once; a bad or taken one is refused.
+        let named = sibling
+            .create_named_worktree(&repo, "main", Some("login-fix"))
+            .await
+            .unwrap();
+        assert_eq!(named.name, "login-fix");
+        assert_eq!(named.branch, "commutator/login-fix");
+        assert!(named.path.ends_with("login-fix"));
+        let taken = sibling
+            .create_named_worktree(&repo, "main", Some("login-fix"))
+            .await
+            .unwrap_err();
+        assert!(taken.to_string().contains("already exists"), "{taken}");
+        for bad in ["", "../up", "a/b", ".hidden", "-flag", "x.lock", "a..b", "with space"] {
+            assert!(!valid_worktree_name(bad), "{bad:?}");
+        }
     }
 
     async fn two_step_fixture(hook_exit: u8) -> (tempfile::TempDir, Repos, PathBuf) {

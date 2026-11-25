@@ -118,6 +118,38 @@ pub async fn server_devices(server_url: String, token: String) -> CoreResult<Vec
         .collect())
 }
 
+/// This phone's session notifications: its push token (APNs, hex), which
+/// APNs it belongs to (`sandbox` or `production`), and the kinds it wants.
+#[uniffi::export]
+pub async fn server_set_push_target(
+    server_url: String,
+    token: String,
+    push_token: String,
+    environment: String,
+    done: bool,
+    input: bool,
+    failed: bool,
+) -> CoreResult<()> {
+    on_runtime(async move {
+        let prefs = commutator_account::PushPrefs { done, input, failed };
+        commutator_account::set_push_target(&server_url, &token, &push_token, &environment, prefs)
+            .await
+            .map_err(|e| zc::ClientError::Network(e.to_string()))
+    })
+    .await
+}
+
+/// This phone stops getting session notifications.
+#[uniffi::export]
+pub async fn server_remove_push_target(server_url: String, token: String) -> CoreResult<()> {
+    on_runtime(async move {
+        commutator_account::remove_push_target(&server_url, &token)
+            .await
+            .map_err(|e| zc::ClientError::Network(e.to_string()))
+    })
+    .await
+}
+
 /// Sign out: remove this device from the account. The platform forgets
 /// the saved sign-in whether or not the server could be reached.
 #[uniffi::export]

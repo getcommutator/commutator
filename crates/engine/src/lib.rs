@@ -885,8 +885,10 @@ impl Engine {
             core.start_account_relay(&account)
         });
 
-        let notifier = desktop_notify::enabled()
-            .then(|| desktop_notify::spawn(&core, config.data_dir.clone()));
+        // Desktops show banners; any machine signed in to a server also
+        // notifies the account's phones.
+        let notifier = (desktop_notify::enabled() || auth.account().is_some())
+            .then(|| desktop_notify::spawn(&core, config.data_dir.clone(), auth.clone()));
         Ok(EngineRuntime {
             core,
             host_relay: std::sync::Mutex::new(host_relay),

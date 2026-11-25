@@ -77,6 +77,8 @@ final class SessionCell: UICollectionViewListCell {
     var isCurrent = false { didSet { if isCurrent != oldValue { setNeedsUpdateConfiguration() } } }
     /// The desktop sidebar's Compact: the title line alone. Set before `configure`.
     var compact = false
+    /// Inside a project's own list: the tile and name would repeat the page title.
+    var hidesProject = false
     /// The Projects page's rows (a 44 pt list cell).
     static var compactHeight: CGFloat { (44 * TypeScale.factor).rounded() }
 
@@ -93,6 +95,8 @@ final class SessionCell: UICollectionViewListCell {
         // The project tile is a rasterized attachment: redraw it in the new tone.
         registerForTraitChanges(Palette.colorTraits) { (cell: SessionCell, _) in
             if let vm = cell.vm { cell.configure(vm) }
+            // A reused cell sat out the theme change in the pool: its labels kept the old colours.
+            cell.contentView.repaintThemedText()
         }
     }
 
@@ -147,8 +151,8 @@ final class SessionCell: UICollectionViewListCell {
         self.vm = vm
         harness.image = BrandMarks.image(for: vm.harness ?? "claude-code", side: Self.markSide)
         title.text = vm.title
-        // Compact matches the Projects page's rows (Agents): regular 15.
-        title.font = compact ? Fonts.ui(.sans, TypeScale.size(15)) : Fonts.ui(vm.unseen ? .sansSemibold : .sansMedium, TypeScale.size(16.5))
+        // Compact matches the Projects page's rows (Agents): regular 16.5, the composer's size.
+        title.font = compact ? Fonts.ui(.sans, TypeScale.size(16.5)) : Fonts.ui(vm.unseen ? .sansSemibold : .sansMedium, TypeScale.size(16.5))
         title.textColor = vm.unseen || vm.status != .idle ? Palette.text : Palette.text.withAlphaComponent(0.88)
         // The project tile rides the meta line as an attachment, so the text
         // system itself centers it on the name's x-height and starts it at
@@ -158,8 +162,11 @@ final class SessionCell: UICollectionViewListCell {
         let art = vm.projectId.flatMap { ProjectArt.tile(spaceId: $0, side: tileSide) }
         let tile = NSTextAttachment(image: art ?? ProjectTile.image(name: vm.hasProject ? vm.projectName : "Home", colorIndex: vm.colorIndex, side: tileSide))
         tile.bounds = CGRect(x: 0, y: (metaFont.xHeight - tileSide) / 2, width: tileSide, height: tileSide)
-        let metaText = NSMutableAttributedString(attachment: tile)
-        metaText.append(NSAttributedString(string: "  " + vm.projectName, attributes: [.font: metaFont, .foregroundColor: Palette.secondary]))
+        let metaText = NSMutableAttributedString()
+        if !hidesProject {
+            metaText.append(NSAttributedString(attachment: tile))
+            metaText.append(NSAttributedString(string: "  " + vm.projectName, attributes: [.font: metaFont, .foregroundColor: Palette.secondary]))
+        }
         if let b = vm.branch, !b.isEmpty, let icon = BranchIcon.image?.withTintColor(Palette.subline, renderingMode: .alwaysOriginal) {
             // Desktop line 3: git-branch icon + branch in the subline tone.
             let font = Fonts.ui(.sans, TypeScale.size(12.5))
@@ -192,7 +199,7 @@ final class SessionCell: UICollectionViewListCell {
             status.kind = .none
             status.isHidden = true
         }
-        accessibilityLabel = [vm.title, vm.projectName, corner?.word, prBadge.isHidden ? nil : prBadge.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
+        accessibilityLabel = [vm.title, hidesProject ? nil : vm.projectName, corner?.word, prBadge.isHidden ? nil : prBadge.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
         accessibilityIdentifier = "session-\(vm.id)"
         setNeedsLayout()
     }

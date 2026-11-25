@@ -564,10 +564,10 @@ impl Shell {
                             .group_hover(group, |style| style.visible())
                             .hover(|style| style.bg(crate::theme::ink(0.08)))
                             .tooltip(crate::settings::widgets::text_tooltip("Edit action"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.close_session_info_overlay(cx);
-                                this.open_project_action_editor(Some(edit.clone()), None, cx)
+                                this.open_project_action_editor(Some(edit.clone()), None, window, cx)
                             }))
                             .child(
                                 icon(icons::SETTINGS_MINIMALISTIC)
@@ -584,9 +584,9 @@ impl Shell {
             rows.push(
                 popover::picker_row(theme, false, false, row_id.clone())
                     .id(row_id)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.close_session_info_overlay(cx);
-                        this.open_project_action_editor(None, Some(import.clone()), cx)
+                        this.open_project_action_editor(None, Some(import.clone()), window, cx)
                     }))
                     .child(popover::picker_icon_slot(row_glyph(
                         action_icon(draft.icon),
@@ -615,9 +615,9 @@ impl Shell {
         rows.push(
             popover::picker_row(theme, false, false, "session-info-add-action")
                 .id("session-info-add-action")
-                .on_click(cx.listener(|this, _, _, cx| {
+                .on_click(cx.listener(|this, _, window, cx| {
                     this.close_session_info_overlay(cx);
-                    this.open_project_action_editor(None, None, cx)
+                    this.open_project_action_editor(None, None, window, cx)
                 }))
                 .child(popover::picker_icon_slot(row_glyph(icons::PLUS, theme)))
                 .child("Add action")

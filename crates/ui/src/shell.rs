@@ -91,6 +91,7 @@ mod session_lanes;
 mod side_chats;
 mod sidebar_pins;
 mod worktree_cleanup;
+mod project_reorder;
 mod search_warm;
 pub(crate) mod spaces;
 mod thread_search;
@@ -1916,8 +1917,13 @@ pub struct Shell {
     delete_confirm: Option<String>,
     /// The offer to remove a worktree nothing active runs in any more.
     worktree_cleanup: Option<worktree_cleanup::WorktreeCleanup>,
-    /// A faint worktree row's context menu.
-    worktree_menu: Option<(worktree_cleanup::WorktreeTarget, Point<Pixels>)>,
+    /// A Projects sidebar project or worktree row's context menu.
+    worktree_menu: Option<(worktree_cleanup::RowMenu, Point<Pixels>)>,
+    /// The Create worktree dialog, off a project row's menu.
+    new_worktree: Option<worktree_cleanup::NewWorktree>,
+    /// A Projects sidebar project being dragged to a new place, and its
+    /// rows springing around it.
+    project_reorder: std::rc::Rc<std::cell::RefCell<project_reorder::ProjectReorder>>,
     /// Global confirmation/error dialog for the Changes-pane trash action. The
     /// RPC task is retained separately so rerenders do not cancel it.
     discard_working_tree: Option<DiscardWorkingTreeFlow>,
@@ -2411,6 +2417,8 @@ impl Shell {
             delete_confirm: None,
             worktree_cleanup: None,
             worktree_menu: None,
+            new_worktree: None,
+            project_reorder: Default::default(),
             discard_working_tree: None,
             discard_working_tree_task: None,
             space_menu: popover::Popup::default(),
@@ -8661,7 +8669,14 @@ impl Shell {
             .map(|(row, height)| self.render_moving_sidebar_session(row, height, theme));
         let pinned_count = session_rows.pinned_count;
         let regular_start = pinned_count;
-        let keyed = session_rows.rows;
+        let mut keyed = session_rows.rows;
+        // In one list the Working group is its own section under Activity,
+        // not a row inside it.
+        let working_key = self.sidebar_working_row_key();
+        let working_section = (keyed.len() > regular_start
+            && keyed.last().is_some_and(|(key, _, _)| *key == working_key))
+            .then(|| keyed.pop())
+            .flatten();
         let regular_count = session_rows.regular_count;
         let ungrouped = self.sidebar_organization() == SidebarOrganization::InOneList;
         let regular_body_height = spaces::SIDEBAR_DISCLOSURE_BODY_INSET
@@ -8733,12 +8748,20 @@ impl Shell {
             }
             order.push((key.clone(), *height));
         }
+        if let Some((key, height, _)) = &working_section {
+            order.push((key.clone(), *height));
+        }
         if self.pinned_session_drag.is_none()
             && self.sidebar_session_transfer.is_none()
             && self.sidebar_prev_order != order
         {
             let key_order_changed = sidebar_key_order_changed(&self.sidebar_prev_order, &order);
-            if !self.sidebar_prev_order.is_empty() {
+            // A dragged project moves its rows itself (`project_reorder`).
+            let reordering = self
+                .project_reorder
+                .borrow()
+                .busy(self.render_time.unwrap_or_else(std::time::Instant::now));
+            if !self.sidebar_prev_order.is_empty() && !reordering {
                 // A disclosure already animates its own body height. Applying
                 // FLIP offsets when only keyed heights change double-counts
                 // that movement, leaving gaps and momentary overlaps between
@@ -8846,7 +8869,10 @@ impl Shell {
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
         let filter_row = self.render_spaces_filter(theme, cx);
-        let active_list = if !list_items.is_empty() {
+        let working_section = working_section.map(|(_, _, element)| element);
+        let active_list = if working_section.is_some() && list_items.is_empty() {
+            div().into_any_element()
+        } else if !list_items.is_empty() {
             let mut pinned_items = list_items;
             let regular_items = pinned_items.split_off(pinned_count);
             let regular_empty = regular_items.is_empty();
@@ -9002,6 +9028,7 @@ impl Shell {
                     // is the whole column; a little air stands in.
                     .pt(px(SIDEBAR_LIST_PAD_TOP))
                     .child(active_list)
+                    .children(working_section)
                     .children(archived_section)
                     .children(moving_row),
             )),
@@ -9869,6 +9896,10 @@ impl Shell {
             cx.notify();
             return true;
         }
+        if self.new_worktree.is_some() {
+            self.dismiss_new_worktree(cx);
+            return true;
+        }
         if self.discard_working_tree.is_some() {
             self.discard_working_tree = None;
             cx.notify();
@@ -10144,7 +10175,7 @@ impl Shell {
         }
 
         overlays.extend(self.render_space_overlays(viewport, window, cx));
-        overlays.extend(self.render_worktree_cleanup_overlays(viewport, cx));
+        overlays.extend(self.render_worktree_cleanup_overlays(viewport, window, cx));
         if let Some(overlay) = self.render_command_palette(viewport, window, cx) {
             overlays.push(overlay);
         }

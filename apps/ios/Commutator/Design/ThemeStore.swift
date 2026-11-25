@@ -63,7 +63,10 @@ enum ThemeStore {
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
             for window in scene.windows {
                 window.traitOverrides[ThemeRevisionTrait.self] = revision
-                refreshTitles(in: window)
+                window.repaintThemedText()
+                // Other tabs and covered screens aren't in the window: reach them through the
+                // controllers, or their labels and large titles keep the old theme.
+                window.rootViewController.map(repaint)
             }
         }
         NotificationCenter.default.post(name: didChange, object: nil)
@@ -71,17 +74,31 @@ enum ThemeStore {
 
     private static var revision = 0
 
-    /// Navigation bars resolve their title colours once, when the attributes are set, so a theme
-    /// change would keep the old theme's title: set them again (nil first, or an equal value is skipped).
-    private static func refreshTitles(in view: UIView) {
-        if let bar = view as? UINavigationBar {
+    private static func repaint(_ vc: UIViewController) {
+        if vc.isViewLoaded, vc.view.window == nil { vc.view.repaintThemedText() }
+        if let nav = vc as? UINavigationController, nav.navigationBar.window == nil { nav.navigationBar.repaintThemedText() }
+        vc.children.forEach(repaint)
+        (vc as? UITabBarController)?.viewControllers?.forEach { if $0.parent == nil { repaint($0) } }
+        vc.presentedViewController.map(repaint)
+    }
+}
+
+extension UIView {
+    /// Labels and navigation bars resolve their colours once, when they're set, and setting an
+    /// equal value is skipped, so a theme change (the colour objects don't change, only what
+    /// they resolve to) would keep the old theme's text. Set them again, nil first.
+    func repaintThemedText() {
+        if let label = self as? UILabel, let text = label.attributedText {
+            label.attributedText = nil
+            label.attributedText = text
+        } else if let bar = self as? UINavigationBar {
             let title = bar.titleTextAttributes, large = bar.largeTitleTextAttributes
             bar.titleTextAttributes = nil
             bar.largeTitleTextAttributes = nil
             bar.titleTextAttributes = title
             bar.largeTitleTextAttributes = large
         }
-        for sub in view.subviews { refreshTitles(in: sub) }
+        for sub in subviews { sub.repaintThemedText() }
     }
 }
 

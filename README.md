@@ -84,5 +84,3 @@ and pass its URL to `commutator login`.
 ## License
 
 MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Created in [T3 Code](https://t3.codes).

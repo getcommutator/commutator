@@ -337,6 +337,16 @@ fn update_key(device: &str, status: &HarnessUpdateStatus) -> Option<String> {
 }
 
 type Post = Box<dyn Fn(&str, &str, Option<&str>) + Send>;
+/// A session ping for the account's phones: (ping, title, body, chat).
+type Phone = Box<dyn Fn(Ping, &str, &str, &str) + Send>;
+
+fn ping_body(ping: Ping) -> &'static str {
+    match ping {
+        Ping::Done => "Run finished",
+        Ping::Request => "Waiting on your input",
+        Ping::Attention => "Run failed",
+    }
+}
 
 /// The decision state, separate from the watches so it can be driven by tests.
 struct Notifier {
@@ -344,6 +354,9 @@ struct Notifier {
     device: String,
     focus: ViewportFocus,
     post: Post,
+    /// Signed in to a server: the same pings go to the account's phones,
+    /// whatever the desktop's banner settings (the phone has its own).
+    phone: Option<Phone>,
     baselines: HashMap<String, SessionNotificationState>,
     /// Finishes waiting to stand ([`DONE_SETTLE`]): chat → its title and
     /// when it rings.
@@ -359,6 +372,7 @@ impl Notifier {
             device,
             focus,
             post,
+            phone: None,
             baselines: HashMap::new(),
             settling: HashMap::new(),
             connectivity: ConnectivityNotificationState::default(),
@@ -439,15 +453,16 @@ impl Notifier {
     }
 
     fn post_due(&mut self, due: Vec<(String, Ping, String)>) {
+        if let Some(phone) = &self.phone {
+            for (title, ping, chat_id) in &due {
+                phone(*ping, title, ping_body(*ping), chat_id);
+            }
+        }
         if due.is_empty() || self.allowed().is_none() {
             return;
         }
         for (title, ping, chat_id) in due {
-            let body = match ping {
-                Ping::Done => "Run finished",
-                Ping::Request => "Waiting on your input",
-                Ping::Attention => "Run failed",
-            };
+            let body = ping_body(ping);
             tracing::info!(chat = %chat_id, body, "desktop banner");
             (self.post)(&title, body, Some(&chat_id));
         }
@@ -513,7 +528,11 @@ impl Notifier {
 
 /// Watch this engine's sessions, connectivity and agent updates and post
 /// banners for them until the runtime shuts down.
-pub(crate) fn spawn(core: &crate::EngineCore, data_dir: PathBuf) -> tokio::task::JoinHandle<()> {
+pub(crate) fn spawn(
+    core: &crate::EngineCore,
+    data_dir: PathBuf,
+    auth: crate::Auth,
+) -> tokio::task::JoinHandle<()> {
     let mut sessions = core
         .workspace
         .merged_sessions_watch(core.sessions.watch_sessions());
@@ -524,8 +543,14 @@ pub(crate) fn spawn(core: &crate::EngineCore, data_dir: PathBuf) -> tokio::task:
         data_dir,
         core.device_id.clone(),
         core.viewport_focus.clone(),
-        Box::new(commutator_notify::post),
+        // A headless machine only notifies phones.
+        if enabled() {
+            Box::new(commutator_notify::post)
+        } else {
+            Box::new(|_: &str, _: &str, _: Option<&str>| {})
+        },
     );
+    notifier.phone = Some(phone_push(auth));
     tokio::spawn(async move {
         const UPDATE_DEBOUNCE: Duration = Duration::from_secs(1);
         // Seed every baseline silently.
@@ -583,6 +608,27 @@ pub(crate) fn spawn(core: &crate::EngineCore, data_dir: PathBuf) -> tokio::task:
                 }
             }
         }
+    })
+}
+
+/// Hands pings to the server for the account's phones (`POST /push`), as
+/// whoever is signed in when one is due; signed out, nothing goes.
+fn phone_push(auth: crate::Auth) -> Phone {
+    Box::new(move |ping, title, body, chat_id| {
+        let Some(account) = auth.account() else { return };
+        let kind = match ping {
+            Ping::Done => "done",
+            Ping::Request => "input",
+            Ping::Attention => "failed",
+        };
+        let (title, body, chat_id) = (title.to_owned(), body.to_owned(), chat_id.to_owned());
+        tokio::spawn(async move {
+            if let Err(err) =
+                commutator_account::push(&account.server_url, &account.token, &chat_id, kind, &title, &body).await
+            {
+                tracing::debug!(error = %err, "phone push not sent");
+            }
+        });
     })
 }
 
@@ -968,6 +1014,28 @@ mod tests {
         notifier.sessions(&[asking], &chats, now);
         assert_eq!(posted.lock().unwrap().len(), 1);
         assert_eq!(posted.lock().unwrap()[0].1, "Waiting on your input");
+    }
+
+    /// Phones get the pings even with the desktop's banners off or a window
+    /// in front: they have their own settings.
+    #[test]
+    fn phones_hear_every_ping_whatever_the_desktop_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut notifier, posted, focus) = notifier(dir.path());
+        let phoned: Arc<Mutex<Vec<(Ping, String, String)>>> = Arc::default();
+        let sink = phoned.clone();
+        notifier.phone = Some(Box::new(move |ping, title, _, chat| {
+            sink.lock().unwrap().push((ping, title.into(), chat.into()));
+        }));
+        std::fs::write(dir.path().join("ui-settings.json"), r#"{"notificationsEnabled": false}"#).unwrap();
+        focus.set("window", true);
+        let chats = [chat("a", "Fix the build", None), chat("side", "Side", Some("a"))];
+        let now = chrono::Utc::now();
+        notifier.sessions(&[session("a", Some("t1"), now), session("side", Some("s1"), now)], &chats, now);
+        notifier.sessions(&[session("a", Some("t2"), now), session("side", Some("s2"), now)], &chats, now);
+        notifier.flush(now + DONE_SETTLE);
+        assert!(posted.lock().unwrap().is_empty());
+        assert_eq!(*phoned.lock().unwrap(), vec![(Ping::Done, "Fix the build".into(), "a".into())]);
     }
 
     #[test]

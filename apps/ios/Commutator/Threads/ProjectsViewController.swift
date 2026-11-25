@@ -123,7 +123,7 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
     private func configure(_ cell: UICollectionViewListCell, _ item: Item) {
         var c = UIListContentConfiguration.cell()
         // Compact rows, as the desktop sidebar's.
-        c.textProperties.font = Fonts.ui(.sans, TypeScale.size(15))
+        c.textProperties.font = Fonts.ui(.sans, TypeScale.size(16.5))
         c.textProperties.color = Palette.text
         c.textProperties.numberOfLines = 1
         c.imageToTextPadding = 10
@@ -349,6 +349,7 @@ final class ProjectChatsViewController: SessionListController {
 
     override var compactRows: Bool { compact }
     override var activityActions: Bool { false }
+    override var showsProject: Bool { false }
 
     init(app: AppModel, project: AppModel.ProjectTreeVM, checkout: FolderRowVM) {
         self.project = project

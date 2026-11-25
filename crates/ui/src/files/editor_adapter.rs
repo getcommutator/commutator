@@ -119,7 +119,7 @@ impl InputHighlighter for CommutatorInputHighlighter {
     }
 }
 
-pub(super) fn editor_style(theme: &Theme) -> InputEditorStyle {
+pub(crate) fn editor_style(theme: &Theme) -> InputEditorStyle {
     InputEditorStyle {
         foreground: theme.text.opacity(0.93),
         muted_foreground: theme.text_faint,
@@ -154,6 +154,63 @@ pub(super) fn install_highlighter(
             cx,
         );
     });
+}
+
+/// Re-highlights the whole text on every edit, for small fields (a project
+/// Action's command) where the Files surface's async pass isn't worth it.
+/// ponytail: full reparse per keystroke; fine for commands, not for files.
+pub(crate) struct LiveHighlighter {
+    fence_tag: &'static str,
+    inner: CommutatorInputHighlighter,
+}
+
+impl LiveHighlighter {
+    pub(crate) fn new(fence_tag: &'static str) -> Self {
+        Self {
+            fence_tag,
+            inner: CommutatorInputHighlighter {
+                language: fence_tag.into(),
+                spans: Vec::new(),
+            },
+        }
+    }
+}
+
+impl InputHighlighter for LiveHighlighter {
+    fn language(&self) -> SharedString {
+        self.fence_tag.into()
+    }
+
+    fn update(
+        &mut self,
+        _edit: Option<InputEdit>,
+        text: &Rope,
+        _folding: bool,
+        _window: &mut Window,
+        _cx: &mut Context<FileEditorState>,
+    ) {
+        let source = text.to_string();
+        let request = commutator_syntax::HighlightRequest {
+            source: &source,
+            path: None,
+            fence_tag: Some(self.fence_tag),
+        };
+        self.inner.spans = commutator_syntax::highlight(request)
+            .map(|document| absolute_spans(&source, &document))
+            .unwrap_or_default();
+    }
+
+    fn styles(
+        &self,
+        range: &Range<usize>,
+        resolver: &dyn HighlightStyleResolver,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
+        self.inner.styles(range, resolver)
+    }
+
+    fn fold_ranges(&self, _text: &Rope) -> Vec<FoldRange> {
+        Vec::new()
+    }
 }
 
 fn highlight_source_matches_editor(highlight_source: &str, editor_source: &str) -> bool {

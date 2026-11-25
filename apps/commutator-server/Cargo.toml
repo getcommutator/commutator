@@ -14,7 +14,10 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
-reqwest.workspace = true
+# http2: APNs speaks nothing else.
+reqwest = { workspace = true, features = ["http2"] }
+# ES256 for the APNs provider token (already in the tree through rustls).
+ring = "0.17"
 sha2.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

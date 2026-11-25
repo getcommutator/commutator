@@ -74,6 +74,7 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
         let sessionReg = UICollectionView.CellRegistration<SessionCell, String> { [weak self] cell, path, id in
             guard let self, let vm = self.sessions[id] else { return }
             cell.compact = self.compactRows
+            cell.hidesProject = !self.showsProject
             cell.configure(vm)
             cell.isCurrent = id == self.currentChatId
             cell.accessories = self.reorderable ? [.reorder(displayed: .whenEditing)] : []
@@ -155,6 +156,8 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
 
     /// One-line session rows (a project's chats offer it).
     var compactRows: Bool { false }
+    /// Rows name their project (off on a project's own page).
+    var showsProject: Bool { true }
 
     /// Subclasses build their sections from the app model.
     func buildSections() -> [(id: String, header: String?, folders: [FolderRowVM], sessions: [SessionRowVM])] { [] }

@@ -19282,6 +19282,41 @@ public func serverDevices(serverUrl: String, token: String)async throws  -> [Ser
         )
 }
 /**
+ * This phone stops getting session notifications.
+ */
+public func serverRemovePushTarget(serverUrl: String, token: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_func_server_remove_push_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_void,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_void,
+            freeFunc: ffi_commutator_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+/**
+ * This phone's session notifications: its push token (APNs, hex), which
+ * APNs it belongs to (`sandbox` or `production`), and the kinds it wants.
+ */
+public func serverSetPushTarget(serverUrl: String, token: String, pushToken: String, environment: String, done: Bool, input: Bool, failed: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_func_server_set_push_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token),FfiConverterString.lower(pushToken),FfiConverterString.lower(environment),FfiConverterBool.lower(done),FfiConverterBool.lower(input),FfiConverterBool.lower(failed)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_void,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_void,
+            freeFunc: ffi_commutator_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+/**
  * Sign out: remove this device from the account. The platform forgets
  * the saved sign-in whether or not the server could be reached.
  */
@@ -19499,6 +19534,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_server_devices() != 25073) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_server_remove_push_target() != 10687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_server_set_push_target() != 20080) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_server_sign_out() != 41321) {

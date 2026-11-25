@@ -32,15 +32,15 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         config.backgroundColor = .clear
         config.headerMode = .supplementary
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.backgroundColor = .clear
         collectionView.delegate = self
         collectionView.refreshControl = UIRefreshControl(frame: .zero, primaryAction: UIAction { [weak self] _ in self?.load(refresh: true) })
         view.addSubview(collectionView)
 
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, String> { [weak self] cell, _, url in
+        let cell = UICollectionView.CellRegistration<PullRequestCell, String> { [weak self] cell, _, url in
             guard let pr = self?.items[url] else { return }
-            Self.configure(cell, pr)
+            cell.configure(pr)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, path in
             guard let self, let section = self.dataSource.sectionIdentifier(for: path.section) else { return }
@@ -63,7 +63,20 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
             self.filter = [.authored, .reviewing, .all][picker.selectedSegmentIndex]
             self.load(refresh: false)
         }, for: .valueChanged)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: picker)
+        // Under the title (T3 Code's filter row), not in the bar: pinned, so it's there when a
+        // filter comes back empty.
+        picker.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(picker)
+        setContentScrollView(collectionView)
+        NSLayoutConstraint.activate([
+            picker.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            picker.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            picker.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            collectionView.topAnchor.constraint(equalTo: picker.bottomAnchor, constant: 4),
+            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
 
         empty.font = Fonts.ui(.sans, 15)
         empty.textColor = Palette.secondary
@@ -160,61 +173,119 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private static func tone(_ tone: PullRequestTone) -> UIColor {
-        switch tone {
-        case .open: Palette.success
-        case .draft: Palette.tertiary
-        case .conflict: Palette.danger
-        case .changesRequested: Palette.warning
-        }
-    }
+}
 
-    private static func configure(_ cell: UICollectionViewListCell, _ pr: PullRequestItem) {
-        var c = UIListContentConfiguration.subtitleCell()
-        c.text = pr.title
-        c.textProperties.font = Fonts.ui(.sansMedium, 15)
-        c.textProperties.color = Palette.text
-        c.textProperties.numberOfLines = 2
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        var meta = "\(pr.repository) \(pr.provider == "gitlab" ? "!" : "#")\(pr.number) · \(pr.author) · \(relativeTimeLabel(atMs: pr.updatedAtMs, nowMs: now))"
-        if !pr.status.isEmpty { meta += "\n\(pr.status)" }
-        c.secondaryText = meta
-        c.secondaryTextProperties.font = Fonts.ui(.sans, 13)
-        c.secondaryTextProperties.color = Palette.secondary
-        c.secondaryTextProperties.numberOfLines = 2
-        c.textToSecondaryTextVerticalPadding = 4
-        c.image = PRIcon.image(side: 18)
-        c.imageProperties.tintColor = tone(pr.tone)
-        c.imageProperties.reservedLayoutSize = CGSize(width: 22, height: 22)
-        cell.contentConfiguration = c
+/// A pull request row, laid out like T3 Code's: repository and number over the title, then the
+/// status chips with CI and the diff stats. A conflict is a warning badge on the PR icon.
+final class PullRequestCell: UICollectionViewListCell {
+    private let icon = UIImageView()
+    private let conflict = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
+    private let meta = UILabel()
+    private let time = UILabel()
+    private let title = UILabel()
+    private let chips = UIStackView()
+    private let ci = UIImageView()
+    private let stats = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        conflict.preferredSymbolConfiguration = .init(pointSize: 10, weight: .bold)
+        conflict.tintColor = Palette.danger
+        meta.font = Fonts.ui(.sans, 13)
+        meta.textColor = Palette.secondary
+        time.font = Fonts.ui(.sans, 13)
+        time.textColor = Palette.secondary
+        time.setContentCompressionResistancePriority(.required, for: .horizontal)
+        title.font = Fonts.ui(.sansMedium, 15)
+        title.textColor = Palette.text
+        title.numberOfLines = 2
+        chips.spacing = 6
+        ci.preferredSymbolConfiguration = .init(pointSize: 12, weight: .semibold)
+        stats.font = Fonts.ui(.mono, 12)
+        stats.setContentCompressionResistancePriority(.required, for: .horizontal)
+        ci.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let top = UIStackView(arrangedSubviews: [meta, time])
+        top.spacing = 8
+        let bottom = UIStackView(arrangedSubviews: [chips, UIView(), ci, stats])
+        bottom.spacing = 6
+        bottom.alignment = .center
+        let column = UIStackView(arrangedSubviews: [top, title, bottom])
+        column.axis = .vertical
+        column.spacing = 4
+        column.setCustomSpacing(8, after: title)
+        for v in [icon, conflict, column] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            icon.topAnchor.constraint(equalTo: column.topAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 20),
+            icon.heightAnchor.constraint(equalToConstant: 20),
+            conflict.centerXAnchor.constraint(equalTo: icon.trailingAnchor, constant: -1),
+            conflict.centerYAnchor.constraint(equalTo: icon.bottomAnchor, constant: -1),
+            column.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            column.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            column.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            column.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+        ])
         var bg = UIBackgroundConfiguration.listGroupedCell()
         bg.backgroundColor = Palette.elevated
-        cell.backgroundConfiguration = bg
-        cell.accessories = [.customView(configuration: .init(customView: trailing(pr), placement: .trailing()))]
-        cell.accessibilityIdentifier = "pull-request-\(pr.number)"
+        backgroundConfiguration = bg
     }
 
-    /// CI mark over the diff stats.
-    private static func trailing(_ pr: PullRequestItem) -> UIView {
-        let stats = UILabel()
-        stats.isHidden = pr.additions == 0 && pr.deletions == 0
-        let text = NSMutableAttributedString(string: "+\(pr.additions)", attributes: [.foregroundColor: Palette.success])
-        text.append(NSAttributedString(string: " −\(pr.deletions)", attributes: [.foregroundColor: Palette.danger]))
-        stats.attributedText = text
-        stats.font = Fonts.ui(.mono, 11)
-        let ci = UIImageView()
-        ci.preferredSymbolConfiguration = .init(pointSize: 12, weight: .semibold)
-        switch pr.ci {
-        case .passed: ci.image = UIImage(systemName: "checkmark.circle.fill"); ci.tintColor = Palette.success; ci.accessibilityLabel = "CI passed"
-        case .pending: ci.image = UIImage(systemName: "clock.fill"); ci.tintColor = Palette.warning; ci.accessibilityLabel = "CI pending"
-        case .failed: ci.image = UIImage(systemName: "xmark.circle.fill"); ci.tintColor = Palette.danger; ci.accessibilityLabel = "CI failing"
-        case .none: ci.isHidden = true
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ pr: PullRequestItem) {
+        icon.image = PRIcon.image(side: 20)
+        // The conflict is the badge; the icon keeps the open tone under it.
+        icon.tintColor = switch pr.tone {
+        case .open, .conflict: Palette.success
+        case .draft: Palette.tertiary
+        case .changesRequested: Palette.warning
         }
-        let stack = UIStackView(arrangedSubviews: [ci, stats])
-        stack.axis = .vertical
-        stack.alignment = .trailing
-        stack.spacing = 4
-        stack.frame.size = stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        return stack
+        conflict.isHidden = pr.tone != .conflict
+        meta.text = "\(pr.repository) \(pr.provider == "gitlab" ? "!" : "#")\(pr.number) · \(pr.author)"
+        time.text = relativeTimeLabel(atMs: pr.updatedAtMs, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        title.text = pr.title
+
+        chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for word in pr.status.components(separatedBy: " · ") where !word.isEmpty {
+            chips.addArrangedSubview(Self.chip(word))
+        }
+        switch pr.ci {
+        case .passed: ci.image = UIImage(systemName: "checkmark.circle"); ci.tintColor = Palette.success; ci.accessibilityLabel = "CI passed"
+        case .pending: ci.image = UIImage(systemName: "clock"); ci.tintColor = Palette.warning; ci.accessibilityLabel = "CI pending"
+        case .failed: ci.image = UIImage(systemName: "xmark.circle"); ci.tintColor = Palette.danger; ci.accessibilityLabel = "CI failing"
+        case .none: ci.image = nil
+        }
+        ci.isHidden = ci.image == nil
+        let text = NSMutableAttributedString(string: "+\(pr.additions)", attributes: [.foregroundColor: Palette.success])
+        text.append(NSAttributedString(string: "  −\(pr.deletions)", attributes: [.foregroundColor: Palette.danger]))
+        stats.attributedText = text
+        stats.isHidden = pr.additions == 0 && pr.deletions == 0
+        accessibilityIdentifier = "pull-request-\(pr.number)"
+        accessibilityLabel = [pr.title, meta.text, pr.tone == .conflict ? "Conflicts" : nil, pr.status].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    private static func chip(_ text: String) -> UIView {
+        let label = UILabel()
+        label.text = text
+        label.font = Fonts.ui(.sans, 12)
+        label.textColor = Palette.secondary
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let box = UIView()
+        box.backgroundColor = Palette.chip
+        box.layer.cornerRadius = 6
+        label.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 7),
+            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -7),
+            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 3),
+            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -3),
+        ])
+        return box
     }
 }

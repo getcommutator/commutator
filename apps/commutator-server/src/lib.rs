@@ -34,12 +34,15 @@
 //! - `GET  /install.sh`: `scripts/install.sh` with this server's address, for
 //!   `curl -fsSL {server}/install.sh | sh -s -- --code {pair code}`.
 //! - `GET  /me`, `GET /devices`, `DELETE /devices/{id}` (bearer).
+//! - `PUT|DELETE /push/target`, `POST /push` (bearer): session
+//!   notifications on the account's phones (`push.rs`).
 //! - `GET  /device/{id}/ws?role=host|client[&connId]` (bearer): the relay.
 //! - `GET  /preview/ws?device={id}` (bearer): WebRTC signaling between the
 //!   account's devices (`signal.rs`).
 
 mod relay;
 mod signal;
+mod push;
 mod web;
 
 use std::collections::HashMap;
@@ -87,6 +90,7 @@ pub struct App {
     codes: Mutex<HashMap<String, Grant>>,
     /// Pair codes → (user, expiry).
     pairs: Mutex<HashMap<String, (String, Instant)>>,
+    apns: Option<Arc<push::Apns>>,
     rooms: relay::Rooms,
     signaling: signal::Signaling,
     http: reqwest::Client,
@@ -201,6 +205,7 @@ impl App {
                  expires INTEGER NOT NULL
              );",
         )?;
+        db.execute_batch(push::SCHEMA)?;
         // ponytail: added after launch; fails harmlessly once the column exists.
         let _ = db.execute("ALTER TABLE users ADD COLUMN picture TEXT", []);
         Ok(Arc::new(Self {
@@ -209,6 +214,8 @@ impl App {
             signing_in: Mutex::default(),
             codes: Mutex::default(),
             pairs: Mutex::default(),
+            // ponytail: from the env, not `Config`, so the tests' configs stay as they are.
+            apns: push::Apns::from_env(),
             rooms: relay::Rooms::default(),
             signaling: signal::Signaling::default(),
             http: reqwest::Client::builder()
@@ -345,6 +352,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/:id", delete(remove_device))
         .route("/device/:id/ws", get(relay::device_ws))
         .route("/preview/ws", get(signal::preview_ws))
+        .route("/push/target", axum::routing::put(push::put_target).delete(push::delete_target))
+        .route("/push", post(push::post_push))
         .with_state(app)
 }
 

@@ -15,6 +15,10 @@ const SETUP_ACTION_HINT: &str = "Runs in the new worktree, in its own terminal. 
     Env: COMMUTATOR_PROJECT_ROOT, COMMUTATOR_WORKTREE_PATH, COMMUTATOR_WORKTREE_BRANCH. \
     Example: cp -c -R \"$COMMUTATOR_PROJECT_ROOT/target\" . ; cp \"$COMMUTATOR_PROJECT_ROOT/.env\" .";
 
+/// The command editor's type: monospace a notch under body text.
+const COMMAND_FONT_SIZE: f32 = 12.5;
+const COMMAND_LINE_HEIGHT: f32 = 19.0;
+
 #[derive(Clone)]
 struct ProjectActionContext {
     key: ProjectActionsKey,
@@ -146,6 +150,7 @@ impl Shell {
         &mut self,
         action: Option<ProjectAction>,
         import: Option<ProjectActionDraft>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(key) = self.project_actions.active.clone() else {
@@ -166,15 +171,37 @@ impl Shell {
                 });
         let name = cx.new(|cx| ComposerInput::new("Action name", cx));
         name.update(cx, |input, cx| input.set_text(draft.name, cx));
-        let command = cx.new(|cx| ComposerInput::new("Command", cx));
-        command.update(cx, |input, cx| input.set_text(draft.command, cx));
+        // As Shepherd's worktree hooks: an editor with line numbers and bash
+        // colors, as tall as its lines (see render_project_action_overlay).
+        let theme = Theme::of(cx).clone();
+        let command = cx.new(|cx| {
+            let mut input = gpui_base::input::EditorState::new(window, cx)
+                .language("sh")
+                .line_number(true)
+                .folding(false)
+                .scroll_beyond_last_line(Some(0))
+                .cursor_surrounding_lines(Some(0))
+                .soft_wrap(false)
+                .searchable(false)
+                .placeholder("Command")
+                .default_value(draft.command);
+            input.set_editor_style(crate::files::editor_adapter::editor_style(&theme));
+            input.set_highlighter_factory(
+                std::rc::Rc::new(|_| {
+                    Some(Box::new(crate::files::editor_adapter::LiveHighlighter::new("sh"))
+                        as Box<_>)
+                }),
+                cx,
+            );
+            input
+        });
         let name_events = cx.subscribe(
             &name,
             |_: &mut Shell, _, _: &crate::composer::ComposerInputEvent, cx| cx.notify(),
         );
         let command_events = cx.subscribe(
             &command,
-            |_: &mut Shell, _, _: &crate::composer::ComposerInputEvent, cx| cx.notify(),
+            |_: &mut Shell, _, _: &gpui_base::input::InputEvent, cx| cx.notify(),
         );
         self.project_actions.editor = Some(ProjectActionEditor {
             key,
@@ -208,7 +235,7 @@ impl Shell {
             return;
         }
         let name = editor.name.read(cx).text().trim().to_string();
-        let command = editor.command.read(cx).text().trim().to_string();
+        let command = editor.command.read(cx).value().trim().to_string();
         let error = if name.is_empty() {
             Some("Action name is required".to_string())
         } else if name.chars().count() > 80 {
@@ -563,6 +590,7 @@ impl Shell {
 
         let name = editor.name.clone();
         let command = editor.command.clone();
+        let command_rows = command.read(cx).value().split('\n').count().clamp(3, 16);
         let selected_icon = editor.icon;
         let setup = editor.run_on_worktree_create;
         let editing = editor.action_id.is_some();
@@ -582,11 +610,15 @@ impl Shell {
             .child(popover::dialog_field(name.into_any_element()))
             .child(action_field_label(&theme, "Command"))
             .child(
+                // Grows with its lines (Shepherd's code_field), up to a cap
+                // past which the editor scrolls.
                 popover::dialog_field(
                     div()
-                        .h(px(88.0))
+                        .h(px(command_rows as f32 * COMMAND_LINE_HEIGHT + 8.0))
                         .overflow_hidden()
-                        .child(command)
+                        .text_size(px(COMMAND_FONT_SIZE))
+                        .line_height(px(COMMAND_LINE_HEIGHT))
+                        .child(gpui_base::input::Editor::new(&command))
                         .into_any_element(),
                 )
                 .font_family(theme.font_mono.clone()),

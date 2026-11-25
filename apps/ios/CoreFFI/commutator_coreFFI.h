@@ -1408,6 +1408,16 @@ RustBuffer uniffi_commutator_mobile_fn_func_auth_callback_scheme(RustCallStatus 
 uint64_t uniffi_commutator_mobile_fn_func_server_devices(RustBuffer server_url, RustBuffer token
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_REMOVE_PUSH_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_REMOVE_PUSH_TARGET
+uint64_t uniffi_commutator_mobile_fn_func_server_remove_push_target(RustBuffer server_url, RustBuffer token
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_SET_PUSH_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_SET_PUSH_TARGET
+uint64_t uniffi_commutator_mobile_fn_func_server_set_push_target(RustBuffer server_url, RustBuffer token, RustBuffer push_token, RustBuffer environment, int8_t done, int8_t input, int8_t failed
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_SIGN_OUT
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SERVER_SIGN_OUT
 uint64_t uniffi_commutator_mobile_fn_func_server_sign_out(RustBuffer server_url, RustBuffer token, RustBuffer device_id
@@ -1806,6 +1816,18 @@ uint16_t uniffi_commutator_mobile_checksum_func_auth_callback_scheme(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_DEVICES
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_DEVICES
 uint16_t uniffi_commutator_mobile_checksum_func_server_devices(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_REMOVE_PUSH_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_REMOVE_PUSH_TARGET
+uint16_t uniffi_commutator_mobile_checksum_func_server_remove_push_target(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_SET_PUSH_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_SERVER_SET_PUSH_TARGET
+uint16_t uniffi_commutator_mobile_checksum_func_server_set_push_target(void
     
 );
 #endif

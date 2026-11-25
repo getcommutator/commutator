@@ -289,6 +289,10 @@ struct CreateWorktreeParams {
     branch: String,
     #[serde(default)]
     space_id: Option<String>,
+    /// The worktree's folder and `commutator/<name>` branch; generated when
+    /// absent.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4924,7 +4928,11 @@ impl RpcService for EngineRpc {
                 };
                 let worktree = self
                     .repos
-                    .create_worktree(std::path::Path::new(&p.repo_path), &p.branch)
+                    .create_named_worktree(
+                        std::path::Path::new(&p.repo_path),
+                        &p.branch,
+                        p.name.as_deref(),
+                    )
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 let mut outcome = CreateWorktreeOutcome {

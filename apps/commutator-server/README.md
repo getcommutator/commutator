@@ -24,6 +24,11 @@ COMMUTATOR_SERVER_ADDR=127.0.0.1:8787 \
   sign in to the TURN ones. Without TURN, two devices that are both behind
   symmetric NAT (many cellular networks) can't connect directly: terminals stay on
   the relay, previews don't open.
+- `COMMUTATOR_APNS_KEY_FILE`, `COMMUTATOR_APNS_KEY_ID`, `COMMUTATOR_APNS_TEAM_ID`
+  (optional; `COMMUTATOR_APNS_TOPIC` defaults to `dev.freethinkel.commutator`):
+  the App Store Connect APNs key (`.p8`, Keys → Apple Push Notifications
+  service) that sends session notifications to the iOS app. Without them
+  phones still register, and notifications are dropped with a warning.
 - `COMMUTATOR_SERVER_DB` defaults to `./commutator-server.db`; `COMMUTATOR_SERVER_ADDR` to `127.0.0.1:8787`.
 
 ## Google OAuth client

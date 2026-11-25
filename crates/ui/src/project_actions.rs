@@ -51,7 +51,7 @@ pub struct ProjectActionEditor {
     pub key: ProjectActionsKey,
     pub action_id: Option<String>,
     pub name: Entity<ComposerInput>,
-    pub command: Entity<ComposerInput>,
+    pub command: Entity<gpui_base::input::EditorState>,
     pub icon: ProjectActionIcon,
     pub run_on_worktree_create: bool,
     pub error: Option<String>,

@@ -9,8 +9,7 @@ machine's engine through the server's relay (`commutator-client`'s
 Ported from Zeron's iOS app. Cut, with no backend in Commutator: Cloud (machines,
 GitHub, billing, vault logins, onboarding), the agent-accounts / Providers
 screens (tangled with Cloud; an error card's "Log in" says to sign in on the
-machine), voice and its Live Activity, push notifications (the server has no
-push API yet), and direct WebRTC terminals (terminals run over the relay).
+machine), voice and its Live Activity, and direct WebRTC terminals (terminals run over the relay).
 
 **Rust decides what to paint and where; Swift paints, scrolls and handles
 gestures.** Everything in Rust is platform-neutral — the future Android app
@@ -148,9 +147,13 @@ would run.
 
 ## Session notifications
 
-Not yet: commutator-server has no push API, so the app registers no APNs token
-(Zeron's PushNotifications.swift and the `aps-environment` entitlement were
-cut).
+A machine's engine decides when a session notification is due (run finished,
+waiting on you, run failed: `crates/engine/src/desktop_notify.rs`) and posts
+it to the server, which sends it over APNs to every phone of the account
+(`apps/commutator-server/src/push.rs`). The app asks for permission after the
+first session started from it, hands the server its token
+(`App/PushNotifications.swift`), shows no banner while it's open, and opens the
+session on a tap. The server needs the APNs key (see its README).
 
 ## TestFlight release
 

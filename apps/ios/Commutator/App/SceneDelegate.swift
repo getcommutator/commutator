@@ -16,13 +16,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.overrideUserInterfaceStyle = UIUserInterfaceStyle(rawValue: UserDefaults.standard.integer(forKey: "appearance")) ?? .unspecified
         window.tintColor = Palette.accent
         self.window = window
-        // ponytail: no push yet — commutator-server has no notification API;
-        // Zeron's APNs registration (PushNotifications.swift) was cut.
+        let push = PushNotifications.shared
+        push.install(app: app)
+        push.openChat = { [weak self] chatId in
+            guard let router = self?.window?.rootViewController as? AppRouter else { return false }
+            router.openSession(chatId)
+            return true
+        }
         app.onSignedIn = { [weak self] in
             self?.showRoot(animated: true)
+            self?.shellShown()
         }
         app.onSignOut = { [weak self] in
             guard let self else { return }
+            push.signingOut()
             self.app.signOutLocally()
             self.showRoot(animated: true)
         }
@@ -46,6 +53,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             showRoot(animated: false)
         }
         window.makeKeyAndVisible()
+        if !args.contains("-lab") { shellShown() }
 
         #if DEBUG
         TerminalProbe.runIfAsked(app: app, router: window.rootViewController as? AppRouter)
@@ -59,6 +67,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 if route == "search" { router.showSearch() }
             }
         }
+    }
+
+    /// The signed-in shell is up: refresh this phone's notification
+    /// registration and open a session a notification was tapped for.
+    private func shellShown() {
+        guard app.account != nil else { return }
+        if !app.isDemo { PushNotifications.shared.signedIn() }
+        guard app.isSignedIn else { return }
+        // After the root swap, so the router is the new shell.
+        DispatchQueue.main.async { PushNotifications.shared.shellReady() }
     }
 
     private func showRoot(animated: Bool) {

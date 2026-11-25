@@ -277,6 +277,63 @@ pub async fn remove_device(server_url: &str, token: &str, device_id: &str) -> Re
     }
 }
 
+/// Which session notifications a phone wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct PushPrefs {
+    pub done: bool,
+    pub input: bool,
+    pub failed: bool,
+}
+
+/// A phone's session notifications (`PUT /push/target`): its APNs token
+/// (hex), `sandbox` or `production`, and which kinds it wants.
+pub async fn set_push_target(
+    server_url: &str,
+    token: &str,
+    apns_token: &str,
+    environment: &str,
+    prefs: PushPrefs,
+) -> Result<(), Error> {
+    let body = serde_json::json!({ "token": apns_token, "environment": environment, "prefs": prefs });
+    send(reqwest::Client::new().put(push_url(server_url, "/push/target")).json(&body), token).await
+}
+
+/// This phone stops getting session notifications (`DELETE /push/target`).
+pub async fn remove_push_target(server_url: &str, token: &str) -> Result<(), Error> {
+    send(reqwest::Client::new().delete(push_url(server_url, "/push/target")), token).await
+}
+
+/// A machine's session notification for the account's phones (`POST
+/// /push`); `kind` is `done`, `input` or `failed`.
+pub async fn push(
+    server_url: &str,
+    token: &str,
+    chat_id: &str,
+    kind: &str,
+    title: &str,
+    body: &str,
+) -> Result<(), Error> {
+    let note = serde_json::json!({ "chatId": chat_id, "kind": kind, "title": title, "body": body });
+    send(reqwest::Client::new().post(push_url(server_url, "/push")).json(&note), token).await
+}
+
+fn push_url(server_url: &str, path: &str) -> String {
+    format!("{}{path}", server_url.trim().trim_end_matches('/'))
+}
+
+async fn send(request: reqwest::RequestBuilder, token: &str) -> Result<(), Error> {
+    let response = request
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))?;
+    match response.status() {
+        status if status.is_success() => Ok(()),
+        status => Err(Error::Refused(status.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
