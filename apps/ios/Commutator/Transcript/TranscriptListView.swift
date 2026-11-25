@@ -279,6 +279,10 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
         // menu, driven through the UITextInput adapter below.
         textInteraction.textInput = self
         addInteraction(textInteraction)
+        // Its long press and handle drags: scroll when they reach an edge.
+        for g in textInteraction.gesturesForFailureRequirements {
+            g.addTarget(self, action: #selector(selectionDragged(_:)))
+        }
         // The selection highlight takes the tint; resolve it per theme.
         tintColor = Palette.accent.resolvedColor(with: traitCollection)
         registerForTraitChanges(Palette.colorTraits) { (self: TranscriptListView, _) in
@@ -833,6 +837,73 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
             if !text.isEmpty { parts.append(text) }
         }
         return parts.joined(separator: "\n\n")
+    }
+
+    // MARK: Edge autoscroll
+    //
+    // UIKit doesn't scroll a custom text input while a selection is dragged,
+    // so a finger held near the top or bottom edge scrolls the list and
+    // pulls that end of the selection along (up: its start, down: its end).
+
+    private var selectionDrag: UIGestureRecognizer?
+    private var autoscroll: CADisplayLink?
+    private var lastAutoscrollTick: CFTimeInterval = 0
+
+    @objc private func selectionDragged(_ g: UIGestureRecognizer) {
+        switch g.state {
+        case .began, .changed:
+            selectionDrag = g
+            if autoscrollSpeed() != 0, autoscroll == nil {
+                let link = CADisplayLink(target: self, selector: #selector(autoscrollTick(_:)))
+                link.add(to: .main, forMode: .common)
+                lastAutoscrollTick = CACurrentMediaTime()
+                autoscroll = link
+            }
+        default:
+            stopAutoscroll()
+        }
+    }
+
+    private func stopAutoscroll() {
+        selectionDrag = nil
+        autoscroll?.invalidate()
+        autoscroll = nil
+    }
+
+    /// Points per second: grows as the finger goes deeper into the edge band.
+    private func autoscrollSpeed() -> CGFloat {
+        guard selection != nil, let g = selectionDrag else { return 0 }
+        let y = g.location(in: self).y - contentOffset.y
+        let band: CGFloat = 56
+        let top = adjustedContentInset.top + band
+        let bottom = bounds.height - adjustedContentInset.bottom - band
+        if y < top { return -min(1400, (top - y) * 18) }
+        if y > bottom { return min(1400, (y - bottom) * 18) }
+        return 0
+    }
+
+    @objc private func autoscrollTick(_ link: CADisplayLink) {
+        let now = link.targetTimestamp
+        let dt = min(1 / 30, max(0, now - lastAutoscrollTick))
+        lastAutoscrollTick = now
+        let speed = autoscrollSpeed()
+        guard speed != 0, let g = selectionDrag, let s = selection else { return stopAutoscroll() }
+        let target = min(maxOffsetY, max(-adjustedContentInset.top, contentOffset.y + speed * dt))
+        guard abs(target - contentOffset.y) > 0.1 else { return }
+        setFollowing(false)
+        contentOffset.y = target
+        layoutIfNeeded()
+        // The finger stays put on screen while the text moves under it.
+        guard let hit = hitText(g.location(in: self)), let oh = order(hit),
+              let lo = order(s.lo), let hi = order(s.hi) else { return }
+        if speed < 0, oh < hi, oh != lo {
+            selection = (hit, s.hi)
+        } else if speed > 0, oh > lo, oh != hi {
+            selection = (s.lo, hit)
+        } else {
+            return
+        }
+        selectionGeometryChanged()
     }
 
     // MARK: Responder (copy from the system edit menu)

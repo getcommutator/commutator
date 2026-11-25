@@ -92,26 +92,28 @@ final class RowModel: @unchecked Sendable {
 
     /// Full vertical band for the visual line containing run `i`. Inline
     /// styles can have different font metrics; use the line's outer metrics
-    /// and meet adjacent lines halfway so selection bands touch without
-    /// changing their horizontal extent.
+    /// and meet adjacent lines halfway between their visual centers (not
+    /// baselines: text sits above its baseline), so bands touch and the text
+    /// sits in the middle of its band, without changing horizontal extent.
     func selectionLineBox(_ i: Int) -> CGRect {
         let run = display.runs[i]
-        let lineRuns = display.runs.indices.filter {
-            let candidate = display.runs[$0]
-            return candidate.len > 0 && candidate.baseline == run.baseline && candidate.scroller == run.scroller
+        /// The ink box of the line on `baseline` (all its runs).
+        func lineBox(_ baseline: Float) -> CGRect {
+            display.runs.indices.filter {
+                let candidate = display.runs[$0]
+                return candidate.len > 0 && candidate.baseline == baseline && candidate.scroller == run.scroller
+            }.map(runBox).reduce(CGRect.null) { $0.union($1) }
         }
-        guard !lineRuns.isEmpty else { return runBox(i) }
-        let boxes = lineRuns.map(runBox)
-        let fallbackTop = boxes.map(\.minY).min() ?? runBox(i).minY
-        let fallbackBottom = boxes.map(\.maxY).max() ?? runBox(i).maxY
+        let own = lineBox(run.baseline)
+        guard !own.isNull else { return runBox(i) }
         let baselines = Set(display.runs.compactMap { candidate -> Float? in
             guard candidate.len > 0, candidate.scroller == run.scroller else { return nil }
             return candidate.baseline
         }).sorted()
-        let previous = baselines.last { $0 < run.baseline }
-        let next = baselines.first { $0 > run.baseline }
-        let top = previous.map { (CGFloat($0) + CGFloat(run.baseline)) / 2 } ?? fallbackTop
-        let bottom = next.map { (CGFloat($0) + CGFloat(run.baseline)) / 2 } ?? fallbackBottom
+        let previous = baselines.last { $0 < run.baseline }.map(lineBox)
+        let next = baselines.first { $0 > run.baseline }.map(lineBox)
+        let top = previous.map { ($0.midY + own.midY) / 2 } ?? own.minY
+        let bottom = next.map { ($0.midY + own.midY) / 2 } ?? own.maxY
         return CGRect(x: 0, y: top, width: 0, height: max(0, bottom - top))
     }
 
