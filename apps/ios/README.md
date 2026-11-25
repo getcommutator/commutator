@@ -154,9 +154,10 @@ cut).
 
 ## TestFlight release
 
-Run the **TestFlight** workflow from GitHub Actions on `main`. It installs the
-Rust iOS targets, selects the next build number from App Store Connect,
+Run the **testflight** workflow (`.github/workflows/testflight.yml`) from
+GitHub Actions, on `main` or any branch. It installs the Rust iOS target,
 archives (device, Release — the Rust core builds in the archive) with
-automatic signing, and uploads a TestFlight build (internal, or external with
-beta review). Secrets: `AC_API_KEY_P8`, `AC_API_KEY_ID`,
-`AC_API_ISSUER_ID`.
+automatic signing for team `Z7PK4B5KU2`, and uploads a TestFlight build. The
+build number is the UTC minute (`YYYYMMDDHHMM`), as for local uploads.
+Secrets: `AC_API_KEY_P8` (the `.p8` file's contents), `AC_API_KEY_ID`,
+`AC_API_ISSUER_ID`; the key needs the Admin or App Manager role.

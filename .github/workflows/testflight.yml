@@ -1,0 +1,82 @@
+# A TestFlight build of the iOS app, by hand from the Actions tab (any branch). It archives a Release device build (the
+# Rust core builds in the archive's "Rust core" phase, profile mobile-dist), signs it automatically through an App Store
+# Connect API key, and uploads it. Build numbers are UTC minutes (YYYYMMDDHHMM), the scheme local uploads use, so they
+# only grow and need no App Store Connect lookup.
+#
+# Secrets: AC_API_KEY_P8 (the .p8 file's contents), AC_API_KEY_ID, AC_API_ISSUER_ID. The key needs the Admin or App
+# Manager role for cloud-managed signing.
+name: testflight
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    # IPHONEOS_DEPLOYMENT_TARGET is 26.0: Xcode 26's SDK
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-device-dist
+      - name: API key
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          KEY="$RUNNER_TEMP/keys/AuthKey_$AC_API_KEY_ID.p8"
+          printf '%s\n' "$AC_API_KEY_P8" > "$KEY"
+          echo "AC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_ENV"
+      - name: Archive
+        working-directory: apps/ios
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          xcodebuild -project Commutator.xcodeproj -scheme Commutator \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Commutator.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AC_KEY_PATH" \
+            -authenticationKeyID "$AC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$AC_API_ISSUER_ID" \
+            DEVELOPMENT_TEAM=Z7PK4B5KU2 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" archive | tail -n 200
+          exit "${PIPESTATUS[0]}"
+      - name: Upload
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>Z7PK4B5KU2</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Commutator.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AC_KEY_PATH" \
+            -authenticationKeyID "$AC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$AC_API_ISSUER_ID"
+          echo "Uploaded build $BUILD_NUMBER" >> "$GITHUB_STEP_SUMMARY"
