@@ -125,14 +125,14 @@ fn next_hop(public_only: bool, hops: usize, url: &url::Url) -> Hop {
 }
 
 #[derive(Clone)]
-pub(crate) struct AssetHttpClient {
+pub struct AssetHttpClient {
     client: reqwest::Client,
     runtime: tokio::runtime::Handle,
     public_only: bool,
 }
 
 impl AssetHttpClient {
-    pub(crate) fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
+    pub fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
         Self::with_policy(runtime, true)
     }
 

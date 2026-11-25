@@ -12666,9 +12666,12 @@ impl Render for Shell {
                         (Some(device.as_str()) != this.state.read(cx).local_device_id.as_deref())
                             .then_some(device)
                     } else if matches!(this.route, Route::PullRequests) {
+                        let local = this.state.read(cx).local_device_id.clone();
                         this.pull_requests_page
                             .as_ref()
-                            .and_then(|page| page.read(cx).target_device())
+                            .and_then(|page| page.read(cx).preview(&action.0))
+                            .map(|(_, device)| device)
+                            .filter(|device| Some(device) != local.as_ref())
                     } else {
                         let state = this.state.read(cx);
                         state.selected_chat_row().and_then(|chat| {
@@ -14763,8 +14766,7 @@ mod exit_regressions {
                         settings.open_web_links_in_commutator = open_links_in_commutator;
                         settings.pull_request_destination =
                             settings::PullRequestDestination::External;
-                        settings.last_pull_request_repository = Some("acme/commutator".into());
-                        settings.last_pull_request_device = Some("remote-pr-device".into());
+                        settings.pull_request_picks.author = "ann".into();
                         settings.terminal_font_family = terminal_family.clone();
                         settings.terminal_font_size = terminal_size;
                         settings.code_font_family = code_family.clone();
@@ -14796,14 +14798,7 @@ mod exit_regressions {
                             current.wallpaper_source,
                             Some(dir.path().join("wallpapers/current.png"))
                         );
-                        assert_eq!(
-                            current.last_pull_request_repository.as_deref(),
-                            Some("acme/commutator")
-                        );
-                        assert_eq!(
-                            current.last_pull_request_device.as_deref(),
-                            Some("remote-pr-device")
-                        );
+                        assert_eq!(current.pull_request_picks.author, "ann");
                         assert_eq!(current.window_geometry, geometry);
                         assert_eq!(current.new_thread_background_effect, effect);
                         assert_eq!(current.open_web_links_in_commutator, open_links_in_commutator);
@@ -14830,14 +14825,7 @@ mod exit_regressions {
                     }
                     settings::flush(cx);
                     let loaded = settings::UiSettings::load(dir.path());
-                    assert_eq!(
-                        loaded.last_pull_request_repository.as_deref(),
-                        Some("acme/commutator")
-                    );
-                    assert_eq!(
-                        loaded.last_pull_request_device.as_deref(),
-                        Some("remote-pr-device")
-                    );
+                    assert_eq!(loaded.pull_request_picks.author, "ann");
                     assert_eq!(loaded.window_geometry, geometry);
                     assert_eq!(
                         loaded.wallpaper_history,
@@ -17866,6 +17854,10 @@ impl Shell {
         &self,
     ) -> Option<Entity<crate::pull_request_detail::PullRequestDetailPage>> {
         self.active_pull_request_page()
+    }
+
+    pub fn fixture_pull_requests_page(&self) -> Option<Entity<PullRequestsPage>> {
+        self.pull_requests_page.clone()
     }
 
     /// Size the pull request pane by hand, without the open animation.

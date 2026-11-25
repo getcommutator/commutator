@@ -6,11 +6,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::{AnyElement, Context, Render, SharedString, Window, div, prelude::*, px};
 use commutator_proto::{
-    ChangeRequestListItem, ChangeRequestState, ChangeRequestSummary, Chat,
-    CheckoutChangeRequestStatus, Space,
+    ChangeRequestState, ChangeRequestSummary, Chat, CheckoutChangeRequestStatus, Space,
 };
+use gpui::{AnyElement, Context, Render, SharedString, Window, div, prelude::*, px};
 
 use crate::theme::Theme;
 
@@ -159,25 +158,6 @@ fn render_pull_request_badge(
         query,
         interactive,
         device,
-        theme,
-    )
-}
-
-/// Listing surfaces use the exact sidebar badge renderer without inventing
-/// checkout refs. Inert: the row around it already opens the pull request.
-pub(crate) fn pull_request_list_badge(
-    id: SharedString,
-    item: &ChangeRequestListItem,
-    theme: &Theme,
-) -> AnyElement {
-    render_badge_model(
-        id,
-        ChangeRequestBadgeModel::from_fields(item.number, &item.title, item.state),
-        item.url.clone(),
-        ChangeRequestBadgeSurface::Sidebar,
-        None,
-        false,
-        None,
         theme,
     )
 }
@@ -445,7 +425,9 @@ mod tests {
     use super::*;
 
     fn chat(id: &str, device: &str, cwd: Option<&str>, checkout: Option<&str>) -> Chat {
-        Chat { child_kind: Default::default(), sleep: Default::default(),
+        Chat {
+            child_kind: Default::default(),
+            sleep: Default::default(),
             id: id.into(),
             device_id: device.into(),
             title: None,
@@ -469,7 +451,8 @@ mod tests {
     }
 
     fn space(device: &str) -> Space {
-        Space { icon: Default::default(),
+        Space {
+            icon: Default::default(),
             id: "space".into(),
             device_id: device.into(),
             path: "/project".into(),
@@ -489,7 +472,8 @@ mod tests {
             device_id: device.into(),
             cwd: cwd.into(),
             branch: "feature/pr".into(),
-            change_request: Some(ChangeRequestSummary { signals: Default::default(),
+            change_request: Some(ChangeRequestSummary {
+                signals: Default::default(),
                 provider: "github".into(),
                 number: 90,
                 title: "Add pull request badges".into(),

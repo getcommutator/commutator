@@ -11,9 +11,9 @@
 //!
 //!   Xvfb :99 -screen 0 1400x900x24 & DISPLAY=:99 openbox &
 //!   WAYLAND_DISPLAY= DISPLAY=:99 cargo run …
+use commutator_ui::*;
 use gpui::{AppContext, AsyncApp, Bounds, WindowBounds, WindowOptions, px, size};
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use commutator_ui::*;
 
 async fn pause(cx: &mut AsyncApp, ms: u64) {
     cx.background_executor()
@@ -118,13 +118,16 @@ fn main() -> anyhow::Result<()> {
             &temp.path().join("engine"),
             Arc::new(commutator_engine::default_registry()),
             commutator_proto::HarnessId::ClaudeCode,
-            None,
         )
     })?;
     let ipc_port = port();
-    let _ipc = runtime.block_on(commutator_engine::serve_ipc(ipc_port, core.rpc_service()))?;
     let data = temp.path().join("ui");
     std::fs::create_dir(&data)?;
+    let _ipc = runtime.block_on(commutator_engine::serve_ipc(
+        ipc_port,
+        &data,
+        core.rpc_service(),
+    ))?;
     let boot = EngineBootConfig {
         data_dir: data.clone(),
         ipc_port,
@@ -138,11 +141,11 @@ fn main() -> anyhow::Result<()> {
     set_delay(3)?;
     gpui_platform::application()
         .with_assets(icons::Assets)
+        .with_http_client(AssetHttpClient::new(runtime.handle().clone()))
         .run(move |cx| {
             gpui_tokio::init(cx);
             gpui_base::init(cx);
             let mut settings = settings::UiSettings::default();
-            settings.last_pull_request_repository = Some(repository.clone());
             settings.pull_request_destination = settings::PullRequestDestination::Native;
             // Match the default desktop look: translucent, frosted surfaces.
             settings.surface = commutator_theme::SurfacePreference::Frosted;
@@ -188,6 +191,15 @@ fn main() -> anyhow::Result<()> {
                     }))
                     .unwrap(),
                 ];
+                // A project in the repository, so the board lists it.
+                s.spaces = vec![
+                    serde_json::from_value(serde_json::json!({
+                        "id": "fixture-space", "deviceId": device, "path": "/tmp/fixture",
+                        "gitDetected": true, "githubRepo": repository,
+                        "createdAt": "2026-01-01T00:00:00Z"
+                    }))
+                    .unwrap(),
+                ];
                 s.auto_selected = true;
                 s.chats_synced = true;
                 s.spaces_synced = true;
@@ -219,6 +231,25 @@ fn main() -> anyhow::Result<()> {
                     pause(cx, 6000).await;
                     set_delay(0)?;
                     shot(cx, "02-board")?;
+                    let board = window
+                        .update(cx, |s, _, _| s.fixture_pull_requests_page())?
+                        .ok_or_else(|| anyhow::anyhow!("board did not open"))?;
+                    for (menu, name) in [
+                        ("sort", "02c-sort"),
+                        ("filters", "02d-filters"),
+                        ("filters:0", "02e-filters-state"),
+                        ("filters:2", "02f-filters-author"),
+                        ("filters:3", "02g-filters-labels"),
+                    ] {
+                        board.update(cx, |b, cx| b.fixture_open(menu, cx));
+                        pause(cx, 500).await;
+                        shot(cx, name)?;
+                    }
+                    board.update(cx, |b, cx| b.fixture_open("", cx));
+                    board.update(cx, |b, cx| b.fixture_search("is:draft", cx));
+                    pause(cx, 400).await;
+                    shot(cx, "02h-search-draft")?;
+                    board.update(cx, |b, cx| b.fixture_search("", cx));
                     window.update(cx, |s, _, cx| s.fixture_pull_request_settings(true, cx))?;
                     pause(cx, 600).await;
                     shot(cx, "02b-settings")?;
@@ -246,12 +277,15 @@ fn main() -> anyhow::Result<()> {
                     window.update(cx, |s, _, cx| s.fixture_pull_request_pane_width(360.0, cx))?;
                     pause(cx, 500).await;
                     shot(cx, "05b-summary-pane-360")?;
-                    detail.update(cx, |d, cx| d.fixture_select_tab(2, cx));
+                    detail.update(cx, |d, cx| d.fixture_select_tab(1, cx));
                     pause(cx, 500).await;
-                    shot(cx, "05c-activity-pane-360")?;
+                    shot(cx, "05c-timeline-pane-360")?;
+                    detail.update(cx, |d, cx| d.fixture_select_tab(3, cx));
+                    pause(cx, 500).await;
+                    shot(cx, "05d-checks-pane-360")?;
                     detail.update(cx, |d, cx| d.fixture_select_tab(0, cx));
                     window.update(cx, |s, _, cx| s.fixture_pull_request_pane_width(640.0, cx))?;
-                    detail.update(cx, |d, cx| d.fixture_select_tab(1, cx));
+                    detail.update(cx, |d, cx| d.fixture_select_tab(2, cx));
                     pause(cx, 700).await;
                     shot(cx, "06-code-loading")?;
                     pause(cx, 8000).await;
@@ -269,14 +303,14 @@ fn main() -> anyhow::Result<()> {
                     pause(cx, 600).await;
                     shot(cx, "09-code-760")?;
                     window.update(cx, |_, w, _| w.resize(size(px(1320.), px(848.))))?;
-                    detail.update(cx, |d, cx| d.fixture_select_tab(2, cx));
+                    detail.update(cx, |d, cx| d.fixture_select_tab(1, cx));
                     pause(cx, 800).await;
-                    shot(cx, "10-activity")?;
+                    shot(cx, "10-timeline")?;
                     cx.update(|cx| appearance::set_mode(appearance::AppearanceMode::Light, cx));
                     detail.update(cx, |d, cx| d.fixture_select_tab(0, cx));
                     pause(cx, 800).await;
                     shot(cx, "11-summary-light")?;
-                    detail.update(cx, |d, cx| d.fixture_select_tab(1, cx));
+                    detail.update(cx, |d, cx| d.fixture_select_tab(2, cx));
                     pause(cx, 800).await;
                     shot(cx, "12-code-light")?;
                     detail.update(cx, |d, cx| {

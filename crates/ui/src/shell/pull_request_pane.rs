@@ -209,8 +209,9 @@ impl Shell {
             let board = board.read(cx);
             // Only compare revisions observed by the same device. This is a
             // local lookup, not another board fetch on every tab activation.
-            if board.target_device() == tab.device
-                && let Some(preview) = board.preview(&tab.url)
+            let local = self.state.read(cx).local_device_id.clone();
+            if let Some((preview, device)) = board.preview(&tab.url)
+                && tab.device.as_ref().or(local.as_ref()) == Some(&device)
             {
                 tab.page
                     .update(cx, |page, cx| page.update_board_preview(preview, cx));
@@ -272,7 +273,8 @@ impl Shell {
                 let preview = self
                     .pull_requests_page
                     .as_ref()
-                    .and_then(|page| page.read(cx).preview(&url));
+                    .and_then(|page| page.read(cx).preview(&url))
+                    .map(|(item, _)| item);
                 let page = cx.new(|cx| {
                     PullRequestDetailPage::new(
                         self.state.clone(),

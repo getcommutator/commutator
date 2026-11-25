@@ -228,6 +228,51 @@ icon_assets![
     // GitHub's mark (Octicons `mark-github`, MIT) for the Cloud page's
     // GitHub connection.
     (GITHUB_MARK, "github-mark"),
+    (GITLAB_MARK, "gitlab-mark"),
+    // Lucide (ISC, lucide.dev), the glyphs t3code's and Shepherd's pull
+    // request views draw, at this set's 1.75px stroke.
+    (
+        LUCIDE_GIT_PULL_REQUEST_ARROW,
+        "lucide-git-pull-request-arrow"
+    ),
+    (LUCIDE_GIT_MERGE, "lucide-git-merge"),
+    (
+        LUCIDE_GIT_PULL_REQUEST_CLOSED,
+        "lucide-git-pull-request-closed"
+    ),
+    (
+        LUCIDE_GIT_PULL_REQUEST_DRAFT,
+        "lucide-git-pull-request-draft"
+    ),
+    (LUCIDE_CIRCLE_CHECK, "lucide-circle-check"),
+    (LUCIDE_CIRCLE_X, "lucide-circle-x"),
+    (LUCIDE_CIRCLE_DOT, "lucide-circle-dot"),
+    (LUCIDE_CIRCLE_DASHED, "lucide-circle-dashed"),
+    (LUCIDE_CIRCLE_SLASH, "lucide-circle-slash"),
+    (LUCIDE_USER_CHECK, "lucide-user-check"),
+    (LUCIDE_USER_ROUND_X, "lucide-user-round-x"),
+    (LUCIDE_USER_ROUND, "lucide-user-round"),
+    (LUCIDE_USERS, "lucide-users"),
+    (LUCIDE_LIST_FILTER, "lucide-list-filter"),
+    (LUCIDE_ARROW_DOWN_UP, "lucide-arrow-down-up"),
+    (LUCIDE_LAYERS, "lucide-layers"),
+    (LUCIDE_TRIANGLE_ALERT, "lucide-triangle-alert"),
+    (LUCIDE_CHEVRON_RIGHT, "lucide-chevron-right"),
+    (LUCIDE_PEN_LINE, "lucide-pen-line"),
+    (LUCIDE_EYE_OFF, "lucide-eye-off"),
+    (LUCIDE_CALENDAR_ARROW_DOWN, "lucide-calendar-arrow-down"),
+    (LUCIDE_CALENDAR_ARROW_UP, "lucide-calendar-arrow-up"),
+    (LUCIDE_MAXIMIZE_2, "lucide-maximize-2"),
+    (LUCIDE_MINIMIZE_2, "lucide-minimize-2"),
+    (LUCIDE_FOLDER_GIT_2, "lucide-folder-git-2"),
+    (LUCIDE_GIT_COMMIT, "lucide-git-commit"),
+    (LUCIDE_MESSAGE_SQUARE, "lucide-message-square"),
+    (
+        LUCIDE_SQUARE_ARROW_OUT_UP_RIGHT,
+        "lucide-square-arrow-out-up-right"
+    ),
+    (LUCIDE_FILE_TEXT, "lucide-file-text"),
+    (LUCIDE_TRIANGLE_SOLID, "lucide-triangle-solid"),
     // Settings → Billing (drawn to the Solar linear set's 1.5 stroke).
     (WALLET, "wallet"),
     (ANTIGRAVITY_MARK, "antigravity-mark"),

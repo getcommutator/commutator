@@ -18,6 +18,8 @@ pub mod app_update;
 pub mod appearance;
 pub mod appshots;
 mod asset_http;
+#[cfg(feature = "pull-request-fixture")]
+pub use asset_http::AssetHttpClient;
 pub mod attachments;
 pub mod badges;
 pub mod browser;

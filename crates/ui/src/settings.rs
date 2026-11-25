@@ -1176,11 +1176,8 @@ pub struct UiSettings {
     pub transcript_compact_mode: bool,
     /// Destination shared by PR badges and the pull-request board.
     pub pull_request_destination: PullRequestDestination,
-    /// Last explicitly selected PR scope, restored when no project is selected.
-    pub last_pull_request_repository: Option<String>,
-    pub last_pull_request_device: Option<String>,
-    /// Device-local bookmarks, keyed by provider/repository/PR, never GitHub mutations.
-    pub pull_request_stars: Vec<String>,
+    /// The Pull requests page's sort and filters.
+    pub pull_request_picks: crate::pull_requests::PullRequestPicks,
     /// Save edited workspace files automatically after the configured delay.
     pub files_autosave_enabled: bool,
     /// Idle time before an edited workspace file is saved automatically.
@@ -1286,9 +1283,7 @@ impl Default for UiSettings {
             open_web_links_in_commutator: true,
             transcript_compact_mode: false,
             pull_request_destination: PullRequestDestination::Native,
-            last_pull_request_repository: None,
-            last_pull_request_device: None,
-            pull_request_stars: Vec::new(),
+            pull_request_picks: Default::default(),
             files_autosave_enabled: false,
             files_autosave_delay_ms: FILES_AUTOSAVE_DELAY_DEFAULT_MS,
             files_word_wrap: false,
@@ -1942,9 +1937,7 @@ impl UiSettings {
             reduce_motion,
             pause_animations_in_background,
             pull_request_destination,
-            last_pull_request_repository,
-            last_pull_request_device,
-            pull_request_stars,
+            pull_request_picks,
         );
         current
     }
@@ -3013,9 +3006,11 @@ mod tests {
             open_web_links_in_commutator: false,
             transcript_compact_mode: true,
             pull_request_destination: PullRequestDestination::External,
-            last_pull_request_repository: Some("acme/commutator".into()),
-            last_pull_request_device: Some("remote-device".into()),
-            pull_request_stars: vec!["https://github.com/acme/commutator/pull/123".into()],
+            pull_request_picks: crate::pull_requests::PullRequestPicks {
+                author: "ann".into(),
+                state: commutator_proto::ChangeRequestStateFilter::Merged,
+                ..Default::default()
+            },
             files_autosave_enabled: true,
             files_autosave_delay_ms: 1_500,
             files_word_wrap: true,

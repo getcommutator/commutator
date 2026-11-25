@@ -1283,10 +1283,7 @@ fn inline_thread(
 fn activity_time(raw: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(raw)
         .map(|time| {
-            crate::pull_requests::relative_time(
-                time.with_timezone(&chrono::Utc),
-                chrono::Utc::now(),
-            )
+            crate::pull_requests::ago(time.with_timezone(&chrono::Utc), chrono::Utc::now())
         })
         .unwrap_or_else(|_| raw.to_owned())
 }
@@ -1935,16 +1932,7 @@ impl Render for PullRequestDetailPage {
                                                         )
                                                     }),
                                             ),
-                                    )
-                                    .child(crate::pull_requests::star_button(
-                                        if detail.url.is_empty() {
-                                            &self.url
-                                        } else {
-                                            &detail.url
-                                        },
-                                        &theme,
-                                        cx,
-                                    )),
+                                    ),
                             );
                         column = column
                             .child(assessment_card)
@@ -2736,6 +2724,8 @@ mod tests {
                     mergeability: commutator_proto::ChangeRequestMergeability::Unknown,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
+                    labels: Vec::new(),
+                    head_ref_name: String::new(),
                 }),
                 window,
                 cx,
@@ -2778,6 +2768,8 @@ mod tests {
             mergeability: commutator_proto::ChangeRequestMergeability::Unknown,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            labels: Vec::new(),
+            head_ref_name: String::new(),
         }
     }
 
@@ -3829,7 +3821,7 @@ mod tests {
                     });
                     page.detail.as_mut().unwrap().comments.push(commutator_proto::ChangeRequestComment {
                         viewer_did_author: true, body: "My comment".into(),
-                        author: commutator_proto::ChangeRequestActor { login: "viewer".into() }, ..Default::default()
+                        author: commutator_proto::ChangeRequestActor { login: "viewer".into(), ..Default::default() }, ..Default::default()
                     });
                     page.activity_bodies = vec![
                         super::super::pull_request_media::parse_description("My comment"),
