@@ -76,7 +76,9 @@ final class VisualView: UIView {
 
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
-        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+        // The core re-reads the selected theme on every setAppearance.
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle
+            || previous?[ThemeRevisionTrait.self] != traitCollection[ThemeRevisionTrait.self] {
             session.setAppearance(dark: traitCollection.userInterfaceStyle == .dark)
         }
     }

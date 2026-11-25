@@ -107,6 +107,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val ARCHIVED = "archived"
     const val PULL_REQUESTS = "pull-requests"
+    const val APPEARANCE = "appearance"
     const val TERMINAL = "terminal/{chat}?id={id}"
     const val SUBAGENT = "subagent/{parent}/{doc}?title={title}&running={running}"
     fun chat(id: String) = "chat/$id"
@@ -210,6 +211,7 @@ private fun MainNav(model: AppModel) {
                     onNew = { nav.navigate(Routes.NEW) },
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
                     onPullRequests = { nav.navigate(Routes.PULL_REQUESTS) },
+                    onAppearance = { nav.navigate(Routes.APPEARANCE) },
                 )
             } else {
                 TabletShell(
@@ -323,7 +325,7 @@ private fun MainNav(model: AppModel) {
 private val TERMINAL_DEMO = listOf("git log --oneline -5", "cargo test -p commutator-veil")
 
 /**
- * Settings and the pages it leads to (Archived, Pull requests): on the phone's stack, or in the large-screen
+ * Settings and the pages it leads to (Archived, Pull requests, Appearance): on the phone's stack, or in the large-screen
  * Settings dialog's own. `onClose` ends the dialog from its first page.
  */
 private fun androidx.navigation.NavGraphBuilder.settingsGraph(
@@ -340,6 +342,7 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
             SettingsScreen(
                 model,
                 onArchived = { nav.navigate(Routes.ARCHIVED) },
+                onAppearance = { nav.navigate(Routes.APPEARANCE) },
                 onBack = ::back,
             )
         }
@@ -349,6 +352,9 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
     }
     composable(Routes.PULL_REQUESTS) {
         PullRequestsScreen(model, onBack = ::back)
+    }
+    composable(Routes.APPEARANCE) {
+        AppearanceScreen(model, onBack = ::back)
     }
 }
 
@@ -424,6 +430,12 @@ private fun Home(
             }
         }
     }
+    // A checkout opened from Projects (`tree id` to `checkout id`): its chats over the list.
+    var checkout by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    checkout?.let { (tree, id) ->
+        val actions = remember(model, open, selected) { RowActions(model, open, { model.archive(it.id) }, emptyList(), {}, selected) }
+        return ProjectChatsScreen(model, tree, id, actions, onBack = { checkout = null }, onNew = onNew)
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Box(Modifier.fillMaxSize().nestedScroll(fabScroll)) {
             SessionsScreen(
@@ -434,6 +446,8 @@ private fun Home(
                 selected = selected,
                 onSearch = onSearch,
                 onSettings = onSettings,
+                onNew = onNew,
+                onOpenCheckout = { tree, c -> checkout = listOf(tree.id, c.id) },
             )
         }
         ExtendedFloatingActionButton(
@@ -457,6 +471,8 @@ private fun PhoneTabs(
     onSearch: () -> Unit,
     onNew: () -> Unit,
     onArchived: () -> Unit,
+    onPullRequests: () -> Unit,
+    onAppearance: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     androidx.compose.material3.Scaffold(
@@ -477,10 +493,10 @@ private fun PhoneTabs(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when (tab) {
-                0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived)
+                0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived, onPullRequests = onPullRequests)
                 1 -> PullRequestsScreen()
                 else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    SettingsScreen(model, onArchived = onArchived)
+                    SettingsScreen(model, onArchived = onArchived, onAppearance = onAppearance)
                 }
             }
         }

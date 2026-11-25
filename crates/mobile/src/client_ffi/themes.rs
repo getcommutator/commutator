@@ -65,3 +65,10 @@ pub fn theme_palette(variant_id: String, dark: bool) -> PhonePalette {
 pub fn set_theme_selection(light_id: String, dark_id: String) {
     theme::set_selection(&light_id, &dark_id);
 }
+
+/// The transcript roles in the order of `PhonePalette::roles` (Swift has no enum ordinal to
+/// index it with; Kotlin's `ordinal` already matches).
+#[uniffi::export]
+pub fn color_roles() -> Vec<ColorRole> {
+    ColorRole::ALL.to_vec()
+}

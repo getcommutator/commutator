@@ -18,7 +18,7 @@ final class TerminalViewController: UIViewController {
     /// A screenshot script to type once the shell is up (DEBUG launch arg).
     var script: [String] = []
 
-    static let background = Palette.dynamic(0xFAFAFB, 0x090909)
+    static let background = Palette.themed { $0.terminal.background }
 
     init(app: AppModel, chatId: String, tab: TerminalTab?) {
         self.app = app

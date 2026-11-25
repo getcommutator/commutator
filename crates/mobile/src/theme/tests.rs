@@ -128,3 +128,19 @@ fn ffi_palette_falls_back() {
         phone_palette(variant_or_default("commutator-dark", true))
     );
 }
+
+#[test]
+fn ffi_color_roles_are_the_role_table_order() {
+    assert_eq!(crate::client_ffi::themes::color_roles(), ColorRole::ALL.to_vec());
+}
+
+#[test]
+fn faint_text_stays_readable() {
+    // TextFaint paints whole blocks (tool output, diff context): at least 3.5:1 on the background
+    // (Commutator Light has 3.9).
+    for v in all_variants() {
+        let p = phone_palette(v);
+        let ratio = color(p.roles[ColorRole::TextFaint as usize]).contrast(color(p.app.background));
+        assert!(ratio >= 3.5, "{}: faint text is {ratio:.2}", v.id);
+    }
+}

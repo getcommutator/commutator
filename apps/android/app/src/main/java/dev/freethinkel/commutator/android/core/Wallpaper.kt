@@ -94,11 +94,14 @@ class WallpaperStore(private val context: Context) {
         changed()
     }
 
-    /** Render for an appearance (null when no wallpaper is set). */
-    suspend fun render(dark: Boolean): Render? {
+    /**
+     * Render for an appearance (null when no wallpaper is set). `text`, `secondary` and `background`
+     * are the theme's (0xRRGGBB): the opacity guard keeps that text readable over the artwork.
+     */
+    suspend fun render(dark: Boolean, text: UInt, secondary: UInt, background: UInt): Render? {
         val s = _state.value
         if (!s.set) return null
-        val key = "${s.effect}-$dark"
+        val key = "${s.effect}-$dark-$text-$secondary-$background"
         synchronized(cache) { cache[key] }?.let { return it }
         return withContext(Dispatchers.Default) {
             runCatching {
@@ -112,9 +115,6 @@ class WallpaperStore(private val context: Context) {
                 val out = wallpaperRender(buffer.array(), w.toUInt(), h.toUInt(), s.effect, !dark)
                 // Text sits over the top of the artwork: primary text keeps
                 // 4.5:1, secondary 3:1 against its worst pixels there.
-                val text = (if (dark) 0xE8E8EA else 0x27272C).toUInt()
-                val secondary = (if (dark) 0xA9A9AE else 0x62626A).toUInt()
-                val background = (if (dark) 0x060606 else 0xF3F3F5).toUInt()
                 val primary = wallpaperSafeOpacity(out, w.toUInt(), h.toUInt(), text, background, 0.6f, 4.5f, 1f)
                 val muted = wallpaperSafeOpacity(out, w.toUInt(), h.toUInt(), secondary, background, 0.6f, 3f, 1f)
                 val rendered = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)

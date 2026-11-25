@@ -40,7 +40,11 @@ import kotlin.math.min
 fun WallpaperHero(store: WallpaperStore, modifier: Modifier = Modifier, scrollFade: () -> Float = { 1f }, cutout: () -> Rect? = { null }) {
     val state by store.state.collectAsState()
     val dark = LocalDarkTheme.current
-    val render by produceState<WallpaperStore.Render?>(null, state, dark) { value = store.render(dark) }
+    val app = LocalPhonePalette.current.app
+    val rgb = { argb: UInt -> argb and 0xFFFFFFu }
+    val render by produceState<WallpaperStore.Render?>(null, state, dark, app) {
+        value = store.render(dark, rgb(app.text), rgb(app.secondary), rgb(app.background))
+    }
     val r = render ?: return
     // Artwork arriving late fades in (desktop: 120 ms).
     val appear = remember(r) { Animatable(0f) }

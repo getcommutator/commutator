@@ -51,6 +51,7 @@ import uniffi.commutator_core.serverDevices
 import uniffi.commutator_core.serverSignOut
 import java.io.File
 import java.util.UUID
+import uniffi.commutator_core.setThemeSelection
 
 /** How the app was launched (adb extras mirror the iOS launch arguments). */
 data class LaunchOptions(
@@ -121,13 +122,18 @@ class AppModel(private val app: Application) {
         Appearance(
             runCatching { ThemeMode.valueOf(settings.getString("theme", "System")!!) }.getOrDefault(ThemeMode.System),
             settings.getBoolean("dynamicColor", false),
-        ),
+            settings.getString("themeLight", null) ?: Appearance().lightTheme,
+            settings.getString("themeDark", null) ?: Appearance().darkTheme,
+        ).also { setThemeSelection(it.lightTheme, it.darkTheme) },
     )
     val appearance: StateFlow<Appearance> = _appearance.asStateFlow()
 
     fun setAppearance(value: Appearance) {
         _appearance.value = value
-        settings.edit().putString("theme", value.mode.name).putBoolean("dynamicColor", value.dynamicColor).apply()
+        // The core paints its own visuals and terminal cells with the selection too.
+        setThemeSelection(value.lightTheme, value.darkTheme)
+        settings.edit().putString("theme", value.mode.name).putBoolean("dynamicColor", value.dynamicColor)
+            .putString("themeLight", value.lightTheme).putString("themeDark", value.darkTheme).apply()
     }
 
     /** Sessions grouped by project in place of the flat Recent list. */
@@ -137,6 +143,33 @@ class AppModel(private val app: Application) {
     fun setGroupByProject(on: Boolean) {
         _groupByProject.value = on
         settings.edit().putBoolean("groupByProject", on).apply()
+    }
+
+    /** The front page's view: Projects (repositories and their worktrees) or Chats. Kept on this device. */
+    private val _projectsView = MutableStateFlow(settings.getString("sessionsView", "chats") == "projects")
+    val projectsView: StateFlow<Boolean> = _projectsView.asStateFlow()
+
+    fun setProjectsView(on: Boolean) {
+        _projectsView.value = on
+        settings.edit().putString("sessionsView", if (on) "projects" else "chats").apply()
+    }
+
+    /** Chats' project filter (a [ProjectTree.id]); null, every project. */
+    private val _activityProject = MutableStateFlow(settings.getString("activity.project", null))
+    val activityProject: StateFlow<String?> = _activityProject.asStateFlow()
+
+    fun setActivityProject(id: String?) {
+        _activityProject.value = id
+        settings.edit().putString("activity.project", id).apply()
+    }
+
+    /** One-line chat rows (the desktop sidebar's Compact): Chats and a project's chats. */
+    private val _compactRows = MutableStateFlow(settings.getBoolean("compactRows", false))
+    val compactRows: StateFlow<Boolean> = _compactRows.asStateFlow()
+
+    fun setCompactRows(on: Boolean) {
+        _compactRows.value = on
+        settings.edit().putBoolean("compactRows", on).apply()
     }
 
     /** Folded sidebar groups (pinned, recent, project groups), kept on this device. */
@@ -430,8 +463,111 @@ class AppModel(private val app: Application) {
 
     fun refreshWorkspace() {
         val client = _client.value ?: return
-        _workspace.value = client.workspace()
+        val ws = client.workspace()
+        _workspace.value = ws
         sweepFreshSideChats()
+        val trees = projectTree(ws.projects, gitWorktrees, worktreeNames)
+        _projects.value = trees
+        loadWorktrees(client, ws.projects)
+        // Each repository's artwork, for every row and header that names it.
+        for (tree in trees) {
+            ProjectArt.link(tree)
+            ProjectArt.load(scope, client, tree)
+        }
+    }
+
+    // ── projects ───────────────────────────────────────────────────────────
+
+    /** Repositories and their worktrees (the Projects view), most recently active first. */
+    private val _projects = MutableStateFlow<List<ProjectTree>>(emptyList())
+    val projects: StateFlow<List<ProjectTree>> = _projects.asStateFlow()
+
+    /** Each repository's linked worktrees (`device:main path` → paths), as the desktop lists them with no chats yet. */
+    private var gitWorktrees: Map<String, List<String>> = emptyMap()
+    private val worktreesAsked = HashMap<String, Long>()
+
+    /** Ask each git checkout's host for its worktrees, at most every 15 s; a changed answer rebuilds the tree. */
+    private fun loadWorktrees(client: CoreClient, projects: List<ProjectView>) {
+        val now = SystemClock.elapsedRealtime()
+        for (p in projects) {
+            if (!p.gitDetected || p.name != p.groupName) continue
+            val main = trimPath(p.path)
+            val home = p.deviceId + ":" + main
+            if (now - (worktreesAsked[home] ?: -15_001L) <= 15_000) continue
+            worktreesAsked[home] = now
+            scope.launch {
+                val refs = runCatching { client.listRefs(p.deviceId, p.path) }.getOrNull() ?: return@launch
+                val paths = refs.mapNotNull { it.worktreePath?.let(::trimPath) }.filter { it != main }.distinct()
+                if (gitWorktrees[home] == paths) return@launch
+                gitWorktrees = gitWorktrees + (home to paths)
+                refreshWorkspace()
+            }
+        }
+    }
+
+    /** Worktree names given on this phone (Projects' Rename), by checkout id. */
+    private var worktreeNames: Map<String, String> = settings.getStringSet("worktreeNames", emptySet())!!
+        .mapNotNull { it.split('\t', limit = 2).takeIf { p -> p.size == 2 }?.let { (k, v) -> k to v } }.toMap()
+
+    fun renameWorktree(checkoutId: String, name: String) {
+        worktreeNames = if (name.isBlank()) worktreeNames - checkoutId else worktreeNames + (checkoutId to name.trim())
+        settings.edit().putStringSet("worktreeNames", worktreeNames.map { (k, v) -> "$k\t$v" }.toSet()).apply()
+        refreshWorkspace()
+    }
+
+    /** A new worktree off the main checkout's HEAD. */
+    suspend fun createWorktree(tree: ProjectTree) {
+        val client = _client.value ?: return
+        val spaceId = tree.mainSpace ?: return
+        client.createWorktree(tree.deviceId, spaceId, tree.path, "HEAD")
+        reloadWorktrees(tree)
+    }
+
+    /** `git worktree remove` on its host, and its project entry if it had one. */
+    suspend fun deleteWorktree(tree: ProjectTree, checkout: Checkout) {
+        val client = _client.value ?: return
+        val path = checkout.path ?: return
+        client.deleteWorktree(tree.deviceId, tree.path, path)
+        tree.projectIds[checkout.id]?.let { attempt("delete project") { client.deleteProject(it) } }
+        reloadWorktrees(tree)
+    }
+
+    /** Every checkout of the repository leaves the list (folders stay on disk). */
+    fun removeProject(tree: ProjectTree) {
+        val client = _client.value ?: return
+        for (spaceId in tree.projectIds.values.toSet()) client.deleteProject(spaceId)
+        refreshWorkspace()
+    }
+
+    private fun reloadWorktrees(tree: ProjectTree) {
+        worktreesAsked.remove(tree.deviceId + ":" + tree.path)
+        refreshWorkspace()
+    }
+
+    /**
+     * The worktree the next new chat in this project runs in (`projectId` to
+     * its folder: a worktree that isn't a project of its own). Read once by
+     * [createSession]; the new-session page clears it when it closes.
+     */
+    var newChatIn: Pair<String, String>? = null
+
+    /** Set up the new-session page for a chat in this checkout: its project, or the repository's run in its folder. */
+    fun prepareNewChat(tree: ProjectTree, checkout: Checkout): Boolean {
+        val own = tree.projectIds[checkout.id]
+        val projectId = own ?: tree.mainSpace ?: return false
+        lastDraft = lastDraft.copy(projectId = projectId, hostId = null, branch = null, worktree = false)
+        newChatIn = if (own == null) checkout.path?.let { projectId to it } else null
+        return true
+    }
+
+    fun stopWaiting(id: String) {
+        val client = _client.value ?: return
+        scope.launch {
+            runCatching { client.stopWaiting(id) }.onFailure {
+                Log.w("Commutator", "stop waiting failed", it)
+                toast("Couldn't stop waiting")
+            }
+        }
     }
 
     private var inForeground = true
@@ -678,10 +814,14 @@ class AppModel(private val app: Application) {
         }
         val config = ChatConfig(draft.harness, draft.model, draft.effort, emptyMap(), SandboxLevel.WORKSPACE_WRITE)
         return try {
-            val chatId = client.createSession(NewSession(target, config, if (draft.worktree) null else draft.branch, null, null))
-            val handle = client.openSession(chatId)
+            // An existing worktree picked from Projects runs the chat there, not in a new one.
+            val cwd = newChatIn?.takeIf { it.first == draft.projectId }?.second
+            newChatIn = null
             val project = _workspace.value?.projects?.firstOrNull { it.id == draft.projectId }
-            val worktree = if (draft.worktree && project != null) WorktreeSpec(project.path, draft.branch ?: "HEAD", project.id) else null
+            val worktree = if (cwd == null && draft.worktree && project != null) WorktreeSpec(project.path, draft.branch ?: "HEAD", project.id) else null
+            val branch = if (worktree == null && cwd == null && !draft.worktree) draft.branch else null
+            val chatId = client.createSession(NewSession(target, config, branch, cwd, null))
+            val handle = client.openSession(chatId)
             handle.send(SendRequest(text, attachments, worktree, BusyPolicy.QUEUE))
             noteDeliveryActivity()
             refreshWorkspace()
@@ -701,31 +841,6 @@ private const val SERVER_URL = "https://commutator.freethinkel.dev"
 
 /** A snackbar raised from anywhere in the app. */
 class Toast(val message: String, val action: String? = null, val run: (() -> Unit)? = null)
-
-/** A Group by Project bucket: checkouts of one repository, or a device's home. */
-data class ProjectGroup(val id: String, val name: String, val sessions: List<SessionRow>)
-
-/**
- * Like the desktop's project grouping: checkouts of one repository share a
- * group (named for its representative), project-less sessions group per
- * device. Groups and rows keep the incoming recency order.
- */
-fun projectGroups(rows: List<SessionRow>, projects: List<ProjectView>): List<ProjectGroup> {
-    val byId = HashMap<String, ProjectView>()
-    for (p in projects) byId.putIfAbsent(p.id, p)
-    val groups = LinkedHashMap<String, Pair<String, MutableList<SessionRow>>>()
-    for (row in rows) {
-        val ref = row.project
-        val (id, name) = if (ref != null) {
-            val project = byId[ref.id]
-            ("project:" + (project?.groupKey ?: ref.id)) to (project?.groupName ?: ref.name)
-        } else {
-            ("home:" + row.deviceId) to (row.deviceName?.let { "Home · $it" } ?: "Home")
-        }
-        groups.getOrPut(id) { name to mutableListOf() }.second.add(row)
-    }
-    return groups.map { (id, v) -> ProjectGroup(id, v.first, v.second) }
-}
 
 /** The new-session page's options (kept across launches). */
 data class NewSessionDraft(

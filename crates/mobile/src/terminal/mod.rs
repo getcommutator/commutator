@@ -478,11 +478,11 @@ impl TerminalSession {
         self.revision.load(Ordering::Acquire)
     }
 
-    /// Colors resolve for this appearance from the next frame.
+    /// Colors resolve for this appearance, and the selected theme, from the next frame. Always
+    /// redraws: the apps also call this on a theme change, which keeps the appearance.
     pub fn set_dark(&self, dark: bool) {
-        if self.dark.swap(dark, Ordering::AcqRel) != dark {
-            self.changed();
-        }
+        self.dark.store(dark, Ordering::Release);
+        self.changed();
     }
 
     pub fn frame(&self) -> TerminalFrame {
@@ -803,6 +803,48 @@ impl CoreClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoListener;
+    impl TerminalListener for NoListener {
+        fn changed(&self) {}
+        fn bell(&self) {}
+    }
+
+    /// A session with no host link, for what doesn't need one.
+    fn detached() -> TerminalSession {
+        TerminalSession {
+            info: TerminalRef {
+                id: "t".into(),
+                device_id: "d".into(),
+                cwd: "/".into(),
+                shell: "sh".into(),
+                host_replies: true,
+            },
+            state: Arc::new(Mutex::new(State {
+                emu: Emulator::new(10, 2),
+                predictor: Predictor::default(),
+                phase: TerminalPhase::Connecting,
+                direct: false,
+                scroll_frac: 0.0,
+                wheel_remainder: 0.0,
+                expiry: 0,
+            })),
+            link: Mutex::new(None),
+            listener: Arc::new(NoListener),
+            revision: Arc::new(AtomicU64::new(1)),
+            dark: AtomicBool::new(true),
+        }
+    }
+
+    #[test]
+    fn set_dark_redraws_for_a_theme_change() {
+        // A theme change keeps the appearance: the apps call set_dark with the same value, and
+        // the cells' colours (resolved per frame) must be redrawn anyway.
+        let session = detached();
+        let before = session.revision();
+        session.set_dark(true);
+        assert!(session.revision() > before);
+    }
 
     #[test]
     fn rows_become_styled_runs() {

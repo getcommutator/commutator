@@ -1448,6 +1448,12 @@ uint64_t uniffi_commutator_mobile_fn_func_server_sign_out(RustBuffer server_url,
 RustBuffer uniffi_commutator_mobile_fn_func_agent_login_rules(RustBuffer harness, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_COLOR_ROLES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_COLOR_ROLES
+RustBuffer uniffi_commutator_mobile_fn_func_color_roles(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SET_THEME_SELECTION
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_FN_FUNC_SET_THEME_SELECTION
 void uniffi_commutator_mobile_fn_func_set_theme_selection(RustBuffer light_id, RustBuffer dark_id, RustCallStatus *_Nonnull out_status
@@ -1842,6 +1848,12 @@ uint16_t uniffi_commutator_mobile_checksum_func_server_sign_out(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_AGENT_LOGIN_RULES
 #define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_AGENT_LOGIN_RULES
 uint16_t uniffi_commutator_mobile_checksum_func_agent_login_rules(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_COLOR_ROLES
+#define UNIFFI_FFIDEF_UNIFFI_COMMUTATOR_MOBILE_CHECKSUM_FUNC_COLOR_ROLES
+uint16_t uniffi_commutator_mobile_checksum_func_color_roles(void
     
 );
 #endif

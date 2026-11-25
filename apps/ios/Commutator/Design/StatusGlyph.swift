@@ -2,15 +2,15 @@ import UIKit
 
 /// Status colors, as the desktop sidebar tints them (`status_dot_color`).
 enum StatusTone {
-    static let working = Palette.dynamic(0x18181B, 0xECECEC, alpha: 0.55)
-    static let input = Palette.dynamic(0x18181B, 0xECECEC, alpha: 0.6)
+    static let working = Palette.themed(alpha: 0.55) { $0.app.accent }
+    static let input = Palette.themed(alpha: 0.6) { $0.app.accent }
     /// The awaiting-input "?": the theme's red.
     static let question = Palette.danger
-    static let failed = Palette.dynamic(0xDC2626, 0xF87171, alpha: 0.65)
-    static let done = Palette.dynamic(0x15803D, 0x34D399, alpha: 0.9)
+    static let failed = Palette.themed(alpha: 0.65) { $0.app.danger }
+    static let done = Palette.themed(alpha: 0.9) { $0.app.success }
     static let idle = Palette.dynamic(0x000000, 0xFFFFFF, alpha: 0.14)
     /// Time-ago text on idle rows (`text_muted` @ 0.5).
-    static let time = Palette.dynamic(0x62626A, 0xA9A9AE, alpha: 0.5)
+    static let time = Palette.themed(alpha: 0.5) { $0.app.secondary }
 }
 
 /// The desktop's status glyphs:

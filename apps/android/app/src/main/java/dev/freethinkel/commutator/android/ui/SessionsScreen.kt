@@ -15,7 +15,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.focus.focusRequester
-import dev.freethinkel.commutator.android.core.projectGroups
+import dev.freethinkel.commutator.android.core.Checkout
+import dev.freethinkel.commutator.android.core.ChatStatus
+import dev.freethinkel.commutator.android.core.ProjectTree
+import dev.freethinkel.commutator.android.core.activityGroups
+import dev.freethinkel.commutator.android.core.projectByChat
+import dev.freethinkel.commutator.android.core.status
+import dev.freethinkel.commutator.android.core.urgentStatus
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -180,8 +187,20 @@ fun SessionsScreen(
     selected: String? = null,
     onSearch: () -> Unit = {},
     onSettings: () -> Unit = {},
+    onNew: () -> Unit = {},
+    onOpenCheckout: (ProjectTree, Checkout) -> Unit = { _, _ -> },
 ) {
     val workspace by model.workspace.collectAsState()
+    val trees by model.projects.collectAsState()
+    val projectsView by model.projectsView.collectAsState()
+    val activityProject by model.activityProject.collectAsState()
+    val compact by model.compactRows.collectAsState()
+    var picker by remember { mutableStateOf<String?>(null) }
+    var newProject by remember { mutableStateOf(false) }
+    val owner = remember(trees) { projectByChat(trees) }
+    // A filter on a project that's gone shows everything.
+    val filterTree = trees.firstOrNull { it.id == activityProject }
+    val keep: (SessionRow) -> Boolean = { row -> filterTree == null || owner[row.id]?.id == filterTree.id }
     val connectivity by model.connectivity.collectAsState()
     val groupByProject by model.groupByProject.collectAsState()
     val collapsedGroups by model.collapsed.collectAsState()
@@ -206,7 +225,7 @@ fun SessionsScreen(
     // "New section…" from a row's Move menu files that row into it. Remembered: every row
     // takes `actions`, so a fresh instance per recomposition re-composes every visible row.
     val userSections = ws?.front?.sections
-    val actions = remember(model, onOpen, selected, userSections) {
+    val actions = remember(model, onOpen, selected, userSections, compact) {
         RowActions(
             model = model,
             onOpen = onOpen,
@@ -214,7 +233,12 @@ fun SessionsScreen(
             sections = userSections.orEmpty().map { it.id to it.name },
             newSection = { chatId -> newSection = chatId ?: "" },
             selected = selected,
+            compact = compact,
         )
+    }
+    // The Projects view's Chats card: compact rows, no Pin.
+    val projectActions = remember(actions) {
+        RowActions(actions.model, actions.onOpen, actions.archive, actions.sections, actions.newSection, actions.selected, activity = false, compact = true)
     }
 
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -287,6 +311,15 @@ fun SessionsScreen(
                         }
                     }
                 }
+                if (projectsView) {
+                    if (ws != null) {
+                        projectsContent(
+                            model, trees, frontRows(ws), collapsedGroups, projectActions, scope,
+                            onOpenCheckout = onOpenCheckout, onNew = onNew, onNewProject = { newProject = true },
+                        )
+                    }
+                    return@LazyColumn
+                }
                 item("filters") {
                     Row(
                         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -308,19 +341,36 @@ fun SessionsScreen(
                 }
                 if (ws == null) return@LazyColumn
                 val front = ws.front
-                when (filter) {
-                    Filter.All -> {
-                        if (front.pinned.isNotEmpty()) {
+                val pinned = front.pinned.filter(keep)
+                val recent = front.recent.filter(keep)
+                val all = frontRows(ws).filter(keep)
+                when {
+                    filter == Filter.All && groupByProject -> {
+                        // One list per project, Pinned and all, no shelves.
+                        for ((tree, rows) in activityGroups(all, owner)) {
+                            val id = "activity.project." + (tree?.id ?: "none")
                             group(
-                                "pinned", "Pinned", front.pinned, actions,
+                                id, tree?.name ?: "No Project", rows, actions,
+                                collapsed = id in collapsedGroups,
+                                onToggle = { model.setGroupCollapsed(id, id !in collapsedGroups) },
+                                icon = if (tree != null) ({ ProjectIcon(tree, 18.dp) }) else null,
+                            )
+                        }
+                    }
+                    filter == Filter.All -> {
+                        if (pinned.isNotEmpty()) {
+                            group(
+                                "pinned", "Pinned", pinned, actions,
                                 collapsed = "pinned" in collapsedGroups,
                                 onToggle = { model.setGroupCollapsed("pinned", "pinned" !in collapsedGroups) },
                                 menu = listOf(MenuAction("Reorder…", ZIcons.Sort) { reorder = true }),
                             )
                         }
                         for (section in front.sections) {
+                            val rows = section.sessions.filter(keep)
+                            if (filterTree != null && rows.isEmpty()) continue
                             group(
-                                section.id, section.name, section.sessions, actions,
+                                section.id, section.name, rows, actions,
                                 collapsed = section.collapsed,
                                 onToggle = { model.setSectionCollapsed(section.id, !section.collapsed) },
                                 menu = listOf(
@@ -329,32 +379,23 @@ fun SessionsScreen(
                                 ),
                             )
                         }
-                        if (groupByProject) {
-                            // Checkouts of one repository together; project-less sessions per device.
-                            for (g in projectGroups(front.recent, ws.projects)) {
-                                group(
-                                    g.id, g.name, g.sessions, actions,
-                                    collapsed = g.id in collapsedGroups,
-                                    onToggle = { model.setGroupCollapsed(g.id, g.id !in collapsedGroups) },
-                                )
-                            }
-                        } else if (front.recent.isNotEmpty()) {
+                        if (recent.isNotEmpty()) {
                             group(
-                                "recent", "Recent", front.recent, actions,
+                                "recent", "Recent", recent, actions,
                                 collapsed = "recent" in collapsedGroups,
                                 onToggle = { model.setGroupCollapsed("recent", "recent" !in collapsedGroups) },
                             )
                         }
                     }
-                    Filter.NeedsYou -> group("f", null, frontRows(ws).filter { it.indicator == ChatIndicator.AWAITING_INPUT }, actions)
-                    Filter.Working -> group("f", null, frontRows(ws).filter { it.indicator == ChatIndicator.WORKING || it.indicator == ChatIndicator.WAITING }, actions)
-                    Filter.Pinned -> group("f", null, front.pinned, actions)
+                    filter == Filter.NeedsYou -> group("f", null, all.filter { it.indicator == ChatIndicator.AWAITING_INPUT }, actions)
+                    filter == Filter.Working -> group("f", null, all.filter { it.indicator == ChatIndicator.WORKING || it.indicator == ChatIndicator.WAITING }, actions)
+                    else -> group("f", null, pinned, actions)
                 }
                 val empty = when (filter) {
-                    Filter.All -> front.pinned.isEmpty() && front.sections.isEmpty() && front.recent.isEmpty()
-                    Filter.NeedsYou -> counts.second == 0
-                    Filter.Working -> counts.first == 0
-                    Filter.Pinned -> front.pinned.isEmpty()
+                    Filter.All -> all.isEmpty()
+                    Filter.NeedsYou -> all.none { it.indicator == ChatIndicator.AWAITING_INPUT }
+                    Filter.Working -> all.none { it.indicator == ChatIndicator.WORKING || it.indicator == ChatIndicator.WAITING }
+                    Filter.Pinned -> pinned.isEmpty()
                 }
                 if (empty) item("empty") { EmptyState(filter) }
             }
@@ -366,20 +407,44 @@ fun SessionsScreen(
             account = model.accountName,
             actions = { IconButton(onClick = onPullRequests) { ZIcon(ZIcons.PullRequest, "Pull requests", Modifier.size(24.dp)) } },
             menu = { open, dismiss ->
-                ActionMenu(
-                    open,
-                    dismiss,
+                val views = listOf(
+                    MenuAction("Chats", ZIcons.Chat, checked = !projectsView) { model.setProjectsView(false) },
+                    MenuAction("Projects", ZIcons.Folder, checked = projectsView) { model.setProjectsView(true) },
+                )
+                val chats = if (projectsView) emptyList() else listOf(
+                    MenuAction("Project: ${filterTree?.name ?: "All Projects"}", ZIcons.Project) { picker = "project" },
+                    MenuAction("Group by: ${if (groupByProject) "Project" else "None"}", ZIcons.FolderTree) { picker = "group" },
+                    MenuAction("Compact", ZIcons.RowsCompress, checked = compact) { model.setCompactRows(!compact) },
+                )
+                val more = listOfNotNull(
+                    if (projectsView) null else MenuAction("New section…", ZIcons.Folder) { newSection = "" },
+                    if (projectsView) null else MenuAction("Collapse all", ZIcons.Collapse) {
+                        val front = ws?.front ?: return@MenuAction
+                        for (section in front.sections) if (!section.collapsed) model.setSectionCollapsed(section.id, true)
+                        val local = listOf("pinned", "recent") +
+                            activityGroups(frontRows(ws), owner).map { "activity.project." + (it.first?.id ?: "none") }
+                        local.forEach { model.setGroupCollapsed(it, true) }
+                    },
+                    MenuAction("Archived", ZIcons.Archive, onClick = onArchived),
+                )
+                GroupedActionMenu(open, dismiss, listOf(views, chats, more))
+                ChoiceMenu(
+                    picker == "project", { picker = null },
                     listOf(
-                        MenuAction("New section…", ZIcons.Folder) { newSection = "" },
-                        MenuAction("Collapse all", ZIcons.Collapse) {
-                            val front = ws?.front ?: return@MenuAction
-                            for (section in front.sections) if (!section.collapsed) model.setSectionCollapsed(section.id, true)
-                            val local = listOf("pinned", "recent") +
-                                if (groupByProject) projectGroups(front.recent, ws.projects).map { it.id } else emptyList()
-                            local.forEach { model.setGroupCollapsed(it, true) }
-                        },
-                        MenuAction("Group by project", ZIcons.Project, checked = groupByProject) { model.setGroupByProject(!groupByProject) },
-                        MenuAction("Archived", ZIcons.Archive, onClick = onArchived),
+                        MenuSection("Project", listOf(
+                            MenuChoice("All Projects", filterTree == null, leading = { ZIcon(ZIcons.Companions, null, Modifier.size(20.dp)) }) { model.setActivityProject(null) },
+                        ) + trees.map { t ->
+                            MenuChoice(t.name, filterTree?.id == t.id, leading = { ProjectIcon(t, 20.dp) }) { model.setActivityProject(t.id) }
+                        }),
+                    ),
+                )
+                ChoiceMenu(
+                    picker == "group", { picker = null },
+                    listOf(
+                        MenuSection("Group by", listOf(
+                            MenuChoice("None", !groupByProject, leading = { ZIcon(ZIcons.Sort, null, Modifier.size(20.dp)) }) { model.setGroupByProject(false) },
+                            MenuChoice("Project", groupByProject, leading = { ZIcon(ZIcons.Folder, null, Modifier.size(20.dp)) }) { model.setGroupByProject(true) },
+                        )),
                     ),
                 )
             },
@@ -401,6 +466,7 @@ fun SessionsScreen(
         }
     }
     if (reorder && ws != null) ReorderPinsSheet(model, ws.front.pinned) { reorder = false }
+    if (newProject) NewProjectScreen(model, onDismiss = { newProject = false }) { newProject = false }
 }
 
 /** What a session row can do, shared by every group on the page. */
@@ -414,9 +480,13 @@ class RowActions(
     val newSection: (String?) -> Unit,
     /** The chat open beside the list (large screens). */
     val selected: String? = null,
+    /** Pin and Move (menu and swipe): the Chats view's, off in a project's chats. */
+    val activity: Boolean = true,
+    /** One-line rows (the desktop sidebar's Compact). */
+    val compact: Boolean = false,
 )
 
-private fun LazyListScope.group(
+internal fun LazyListScope.group(
     id: String,
     title: String?,
     rows: List<SessionRow>,
@@ -424,6 +494,8 @@ private fun LazyListScope.group(
     collapsed: Boolean = false,
     onToggle: (() -> Unit)? = null,
     menu: List<MenuAction> = emptyList(),
+    /** A project group's artwork (or monogram), before the title. */
+    icon: (@Composable () -> Unit)? = null,
 ) {
     if (title != null) {
         item("h-$id") {
@@ -440,9 +512,17 @@ private fun LazyListScope.group(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        if (icon != null) {
+                            icon()
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Text(title, style = MaterialTheme.typography.titleSmallEmphasized, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Spacer(Modifier.width(8.dp))
                         Text("${rows.size}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        urgentStatus(rows)?.let {
+                            Spacer(Modifier.width(6.dp))
+                            StatusGlyph(it, 12.dp)
+                        }
                     }
                     if (menu.isNotEmpty()) {
                         IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
@@ -478,6 +558,7 @@ private fun SwipeableSessionRow(row: SessionRow, index: Int, count: Int, actions
     val shape = segmentedShapes(index, count).shape
     SwipeToDismissBox(
         state = state,
+        enableDismissFromStartToEnd = actions.activity,
         onDismiss = {
             when (it) {
                 SwipeToDismissBoxValue.EndToStart -> actions.archive(row)
@@ -522,10 +603,16 @@ fun SessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions) {
     var menu by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
     val model = actions.model
     Box {
-        SegmentedListItem(
+        if (actions.compact) {
+            CompactSessionItem(row, index, count, actions) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                menu = true
+            }
+        } else SegmentedListItem(
             onClick = { actions.onOpen(row.id) },
             onLongClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -554,12 +641,14 @@ fun SessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions) {
         ActionMenu(
             menu,
             { menu = false },
-            listOf(
-                MenuAction(if (row.pinned) "Unpin" else "Pin", ZIcons.Pin) { model.setPinned(row.id, !row.pinned) },
-                MenuAction("Move to section…", ZIcons.Folder) { moving = true },
-                MenuAction("Rename…", ZIcons.Rename) { renaming = true },
-                MenuAction("Archive", ZIcons.Archive, destructive = true) { actions.archive(row) },
-            ),
+            (if (actions.activity) {
+                listOf(
+                    MenuAction(if (row.pinned) "Unpin" else "Pin", ZIcons.Pin) { model.setPinned(row.id, !row.pinned) },
+                    MenuAction("Move to section…", ZIcons.Folder) { moving = true },
+                )
+            } else {
+                emptyList()
+            }) + chatMenu(row, actions, rename = { renaming = true }, delete = { deleting = true }),
         )
         ChoiceMenu(
             moving,
@@ -575,6 +664,33 @@ fun SessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions) {
         )
     }
     if (renaming) RenameDialog(row.title, onDismiss = { renaming = false }) { model.rename(row.id, it) }
+    if (deleting) ConfirmDeleteChat(model, row.id) { deleting = false }
+}
+
+/** Compact: the title line alone, 44 dp (the Projects page's rows). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompactSessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions, onLongClick: () -> Unit) {
+    Surface(
+        shape = segmentedShapes(index, count).shape,
+        color = if (row.id == actions.selected) MaterialTheme.colorScheme.secondaryContainer else cardColor(),
+        modifier = Modifier.fillMaxWidth().height(44.dp),
+    ) {
+        Row(
+            Modifier.fillMaxSize().combinedClickable(onClick = { actions.onOpen(row.id) }, onLongClick = onLongClick).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { HarnessMark(row.harness, 20.dp, tint = MaterialTheme.colorScheme.onSurface) }
+            Spacer(Modifier.width(10.dp))
+            Text(row.title, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            val status = row.status()
+            if (status == ChatStatus.Idle) {
+                Text(row.timeLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+            } else {
+                StatusGlyph(status)
+            }
+        }
+    }
 }
 
 /** The harness mark on a tile toned by the session's project. */
@@ -594,7 +710,7 @@ private fun Subline(row: SessionRow) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         val project = row.project
         if (project != null) {
-            ProjectTile(project.name, project.colorIndex.toInt(), 16.dp)
+            ChatProjectTile(project, 16.dp)
             Spacer(Modifier.width(6.dp))
         }
         Text(

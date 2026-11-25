@@ -4104,7 +4104,8 @@ public protocol TerminalSessionProtocol: AnyObject, Sendable {
     func selection()  -> TerminalSelection?
     
     /**
-     * Colors resolve for this appearance from the next frame.
+     * Colors resolve for this appearance, and the selected theme, from the next frame. Always
+     * redraws: the apps also call this on a theme change, which keeps the appearance.
      */
     func setDark(dark: Bool) 
     
@@ -4363,7 +4364,8 @@ open func selection() -> TerminalSelection?  {
 }
     
     /**
-     * Colors resolve for this appearance from the next frame.
+     * Colors resolve for this appearance, and the selected theme, from the next frame. Always
+     * redraws: the apps also call this on a theme change, which keeps the appearance.
      */
 open func setDark(dark: Bool)  {try! rustCall() {
         uniffiCallStatus in
@@ -19222,6 +19224,31 @@ fileprivate struct FfiConverterSequenceTypeWidget: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeColorRole: FfiConverterRustBuffer {
+    typealias SwiftType = [ColorRole]
+
+    public static func write(_ value: [ColorRole], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeColorRole.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ColorRole] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ColorRole]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeColorRole.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeVisualShape: FfiConverterRustBuffer {
     typealias SwiftType = [VisualShape]
 
@@ -19484,6 +19511,17 @@ public func agentLoginRules(harness: String) -> AgentLoginRules  {
 })
 }
 /**
+ * The transcript roles in the order of `PhonePalette::roles` (Swift has no enum ordinal to
+ * index it with; Kotlin's `ordinal` already matches).
+ */
+public func colorRoles() -> [ColorRole]  {
+    return try!  FfiConverterSequenceTypeColorRole.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_commutator_mobile_fn_func_color_roles(uniffiCallStatus
+    )
+})
+}
+/**
  * Which variants the core's own drawing (visuals, terminal cells) uses from now on.
  */
 public func setThemeSelection(lightId: String, darkId: String)  {try! rustCall() {
@@ -19667,6 +19705,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_agent_login_rules() != 46870) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_color_roles() != 63065) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_set_theme_selection() != 30948) {
@@ -20140,7 +20181,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_terminalsession_selection() != 10367) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_terminalsession_set_dark() != 20746) {
+    if (uniffi_commutator_mobile_checksum_method_terminalsession_set_dark() != 10236) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_terminalsession_set_focused() != 53838) {

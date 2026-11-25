@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import dev.freethinkel.commutator.android.design.LocalPhonePalette
 import dev.freethinkel.commutator.android.design.LocalDarkTheme
 import dev.freethinkel.commutator.android.design.ZIcons
 import dev.freethinkel.commutator.android.design.TranscriptPalette
@@ -101,7 +102,9 @@ fun Transcript(state: TranscriptState, actions: TranscriptActions, modifier: Mod
     val d = density.density
     val scheme = MaterialTheme.colorScheme
     val dark = LocalDarkTheme.current
-    val palette = remember(scheme, dark) { TranscriptPalette(dark, scheme) }
+    val theme = LocalPhonePalette.current
+    val dynamic = dev.freethinkel.commutator.android.design.LocalDynamicColor.current
+    val palette = remember(scheme, dark, theme, dynamic) { TranscriptPalette(dark, scheme, theme, dynamic) }
     val interactions = remember { MutableInteractionSource() }
     val scrollable = rememberScrollableState { px -> -state.scrollBy(-px / d) * d }
     val overscroll = rememberOverscrollEffect()

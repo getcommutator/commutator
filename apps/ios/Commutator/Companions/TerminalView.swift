@@ -67,7 +67,7 @@ final class TerminalView: UIScrollView, UIKeyInput, UITextInputTraits, UIScrollV
         accessibilityIdentifier = "terminal-view"
 
         token = tab.observe { [weak self] in self?.refresh() }
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: TerminalView, _) in
+        registerForTraitChanges(Palette.colorTraits) { (view: TerminalView, _) in
             view.session.setDark(dark: view.traitCollection.userInterfaceStyle == .dark)
             view.canvas.setNeedsDisplay()
         }

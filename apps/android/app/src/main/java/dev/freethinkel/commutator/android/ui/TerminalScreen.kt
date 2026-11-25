@@ -80,6 +80,7 @@ import kotlinx.coroutines.launch
 import dev.freethinkel.commutator.android.core.AppModel
 import dev.freethinkel.commutator.android.core.TerminalTab
 import dev.freethinkel.commutator.android.design.GeistMono
+import dev.freethinkel.commutator.android.design.LocalPhonePalette
 import dev.freethinkel.commutator.android.design.LocalDarkTheme
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
@@ -94,7 +95,7 @@ enum class Latch { Off, Once, Locked }
 
 /** The terminal's page tone (iOS `TerminalViewController.background`). */
 @Composable
-fun terminalBackground(): Color = if (LocalDarkTheme.current) Color(0xFF090909) else Color(0xFFFAFAFB)
+fun terminalBackground(): Color = Color(LocalPhonePalette.current.terminal.background.toInt())
 
 /**
  * A chat's terminal: a shell on the chat's host, in its folder (iOS
@@ -203,7 +204,9 @@ fun TerminalScreen(
     val fg = MaterialTheme.colorScheme.onSurface.toArgb()
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val dark = LocalDarkTheme.current
-    LaunchedEffect(dark) { store.dark = dark }
+    // Also on a theme change: the core resolves cell colours from the selected theme.
+    val theme = LocalPhonePalette.current
+    LaunchedEffect(dark, theme) { store.dark = dark }
 
     Column(Modifier.fillMaxSize().background(terminalBackground())) {
         // Header: back, the tab switcher, new terminal and the menu.

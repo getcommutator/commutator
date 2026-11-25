@@ -27,7 +27,8 @@ final class RowCanvas: UIView {
 
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
-        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle { setNeedsDisplay() }
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle
+            || previous?[ThemeRevisionTrait.self] != traitCollection[ThemeRevisionTrait.self] { setNeedsDisplay() }
     }
 }
 

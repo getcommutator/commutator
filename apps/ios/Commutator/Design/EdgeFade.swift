@@ -99,7 +99,7 @@ final class EdgeFadeOverlay: UIView {
         gradient.startPoint = CGPoint(x: 0.5, y: 0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1)
         restyle()
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: EdgeFadeOverlay, _) in self.restyle() }
+        registerForTraitChanges(Palette.colorTraits) { (self: EdgeFadeOverlay, _) in self.restyle() }
     }
 
     required init?(coder: NSCoder) { fatalError() }

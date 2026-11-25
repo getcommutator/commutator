@@ -157,16 +157,17 @@ enum WallpaperStore {
     static func render(dark: Bool, completion: @escaping (Render?) -> Void) {
         guard isSet else { return completion(nil) }
         let effect = self.effect
-        let key = "\(Self.key(effect))-\(dark)"
+        let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+        let text = rgb(Palette.text.resolvedColor(with: traits))
+        let secondary = rgb(Palette.secondary.resolvedColor(with: traits))
+        let background = rgb(Palette.background.resolvedColor(with: traits))
+        // The opacity guard depends on the theme's colours: a theme change is a new render.
+        let key = "\(Self.key(effect))-\(dark)-\(text)-\(secondary)-\(background)"
         lock.lock()
         let hit = cache[key]
         let gen = generation
         lock.unlock()
         if let hit { return completion(hit) }
-        let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
-        let text = rgb(Palette.text.resolvedColor(with: traits))
-        let secondary = rgb(Palette.secondary.resolvedColor(with: traits))
-        let background = rgb(Palette.background.resolvedColor(with: traits))
         let url = imageURL
         queue.async {
             guard let source = UIImage(contentsOfFile: url.path)?.cgImage,
@@ -238,7 +239,7 @@ final class WallpaperView: UIView {
         layer.mask = maskLayer
         alpha = 0
         observer = NotificationCenter.default.addObserver(forName: WallpaperStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: WallpaperView, _) in self.reload() }
+        registerForTraitChanges(Palette.colorTraits) { (self: WallpaperView, _) in self.reload() }
         accessibilityIdentifier = "wallpaper"
     }
 

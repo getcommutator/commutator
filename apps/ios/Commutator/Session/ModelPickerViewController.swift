@@ -670,7 +670,7 @@ private final class ProviderSwitcher: UIView, UIScrollViewDelegate {
             scroller.addSubview(segment)
         }
         updateShadow()
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: ProviderSwitcher, _) in self.updateShadow() }
+        registerForTraitChanges(Palette.colorTraits) { (self: ProviderSwitcher, _) in self.updateShadow() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
