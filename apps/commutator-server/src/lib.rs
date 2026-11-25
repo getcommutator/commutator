@@ -90,7 +90,7 @@ pub struct App {
     codes: Mutex<HashMap<String, Grant>>,
     /// Pair codes → (user, expiry).
     pairs: Mutex<HashMap<String, (String, Instant)>>,
-    apns: Option<Arc<push::Apns>>,
+    push: push::Senders,
     rooms: relay::Rooms,
     signaling: signal::Signaling,
     http: reqwest::Client,
@@ -206,6 +206,7 @@ impl App {
              );",
         )?;
         db.execute_batch(push::SCHEMA)?;
+        let _ = db.execute(push::PLATFORM_COLUMN, []);
         // ponytail: added after launch; fails harmlessly once the column exists.
         let _ = db.execute("ALTER TABLE users ADD COLUMN picture TEXT", []);
         Ok(Arc::new(Self {
@@ -215,7 +216,7 @@ impl App {
             codes: Mutex::default(),
             pairs: Mutex::default(),
             // ponytail: from the env, not `Config`, so the tests' configs stay as they are.
-            apns: push::Apns::from_env(),
+            push: push::Senders::from_env(),
             rooms: relay::Rooms::default(),
             signaling: signal::Signaling::default(),
             http: reqwest::Client::builder()

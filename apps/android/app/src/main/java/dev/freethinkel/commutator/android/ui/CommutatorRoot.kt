@@ -108,6 +108,7 @@ object Routes {
     const val ARCHIVED = "archived"
     const val PULL_REQUESTS = "pull-requests"
     const val APPEARANCE = "appearance"
+    const val NOTIFICATIONS = "notifications"
     const val TERMINAL = "terminal/{chat}?id={id}"
     const val SUBAGENT = "subagent/{parent}/{doc}?title={title}&running={running}"
     fun chat(id: String) = "chat/$id"
@@ -154,6 +155,23 @@ private fun MainNav(model: AppModel) {
             "archived" -> nav.navigate(Routes.ARCHIVED)
             "chat" -> open(route.removePrefix("chat:"))
         }
+    }
+    // A tapped session notification opens its chat.
+    val tapped by model.push.tappedChat.collectAsState()
+    LaunchedEffect(tapped) {
+        val id = tapped ?: return@LaunchedEffect
+        model.push.tappedChat.value = null
+        open(id)
+    }
+    // Asking for notifications (after the first session, or the Settings switch).
+    val askNotifications by model.push.askPermission.collectAsState()
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { model.push.sync() }
+    LaunchedEffect(askNotifications) {
+        if (!askNotifications) return@LaunchedEffect
+        model.push.askPermission.value = false
+        if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
     // A debug `companion` extra opens over the launch route's chat, once.
     var companionPending by rememberSaveable { mutableStateOf(model.launch.companion) }
@@ -212,6 +230,7 @@ private fun MainNav(model: AppModel) {
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
                     onPullRequests = { nav.navigate(Routes.PULL_REQUESTS) },
                     onAppearance = { nav.navigate(Routes.APPEARANCE) },
+                    onNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                 )
             } else {
                 TabletShell(
@@ -325,7 +344,7 @@ private fun MainNav(model: AppModel) {
 private val TERMINAL_DEMO = listOf("git log --oneline -5", "cargo test -p commutator-veil")
 
 /**
- * Settings and the pages it leads to (Archived, Pull requests, Appearance): on the phone's stack, or in the large-screen
+ * Settings and the pages it leads to (Archived, Pull requests, Appearance, Notifications): on the phone's stack, or in the large-screen
  * Settings dialog's own. `onClose` ends the dialog from its first page.
  */
 private fun androidx.navigation.NavGraphBuilder.settingsGraph(
@@ -343,6 +362,7 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
                 model,
                 onArchived = { nav.navigate(Routes.ARCHIVED) },
                 onAppearance = { nav.navigate(Routes.APPEARANCE) },
+                onNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                 onBack = ::back,
             )
         }
@@ -355,6 +375,9 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
     }
     composable(Routes.APPEARANCE) {
         AppearanceScreen(model, onBack = ::back)
+    }
+    composable(Routes.NOTIFICATIONS) {
+        NotificationsScreen(model, onBack = ::back)
     }
 }
 
@@ -473,6 +496,7 @@ private fun PhoneTabs(
     onArchived: () -> Unit,
     onPullRequests: () -> Unit,
     onAppearance: () -> Unit,
+    onNotifications: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     androidx.compose.material3.Scaffold(
@@ -496,7 +520,7 @@ private fun PhoneTabs(
                 0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived, onPullRequests = onPullRequests)
                 1 -> PullRequestsScreen()
                 else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    SettingsScreen(model, onArchived = onArchived, onAppearance = onAppearance)
+                    SettingsScreen(model, onArchived = onArchived, onAppearance = onAppearance, onNotifications = onNotifications)
                 }
             }
         }

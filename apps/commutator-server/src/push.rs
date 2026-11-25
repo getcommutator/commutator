@@ -4,16 +4,20 @@
 //! every phone of the account that registered a push token and wants that
 //! kind.
 //!
-//! - `PUT    /push/target {token, environment, prefs}` (a phone's bearer):
-//!   this phone's APNs token (`environment`: `sandbox` for Xcode builds,
-//!   `production` for TestFlight/App Store) and which kinds it wants.
+//! - `PUT    /push/target {platform?, token, environment, prefs}` (a phone's
+//!   bearer): this phone's push token and which kinds it wants. `platform`
+//!   `apns` (the default; `environment`: `sandbox` for Xcode builds,
+//!   `production` for TestFlight/App Store) or `fcm` (Android).
 //! - `DELETE /push/target`: this phone stops getting them.
 //! - `POST   /push {chatId, kind, title, body}` (a machine's bearer).
 //!
 //! APNs is configured from the environment (`COMMUTATOR_APNS_KEY_FILE`, the
 //! `.p8`; `COMMUTATOR_APNS_KEY_ID`; `COMMUTATOR_APNS_TEAM_ID`;
 //! `COMMUTATOR_APNS_TOPIC`, the app's bundle id). Without it, targets are
-//! still kept and pushes are dropped with a log line.
+//! still kept and pushes are dropped with a log line. FCM likewise, from
+//! `COMMUTATOR_FCM_SERVICE_ACCOUNT_FILE` (`push/fcm.rs`).
+
+mod fcm;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,6 +38,29 @@ pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS push_targets (
     environment TEXT NOT NULL,
     prefs TEXT NOT NULL
 );";
+/// Added with FCM; fails harmlessly once the column exists.
+pub(crate) const PLATFORM_COLUMN: &str =
+    "ALTER TABLE push_targets ADD COLUMN platform TEXT NOT NULL DEFAULT 'apns'";
+
+/// Where notifications go out: APNs (iOS) and FCM (Android), each only
+/// when configured.
+#[derive(Default)]
+pub(crate) struct Senders {
+    apns: Option<Arc<Apns>>,
+    fcm: Option<Arc<fcm::Fcm>>,
+}
+
+impl Senders {
+    pub(crate) fn from_env() -> Self {
+        Self {
+            apns: Apns::from_env(),
+            fcm: fcm::Fcm::from_env().map(Arc::new),
+        }
+    }
+}
+
+/// A registered phone: (device, platform, token, environment).
+pub type PushTarget = (String, String, String, String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prefs {
@@ -55,6 +82,8 @@ impl Prefs {
 
 #[derive(Deserialize)]
 pub(crate) struct Target {
+    #[serde(default = "apns")]
+    platform: String,
     token: String,
     environment: String,
     prefs: Prefs,
@@ -69,6 +98,10 @@ pub(crate) struct Notification {
     body: String,
 }
 
+fn apns() -> String {
+    "apns".into()
+}
+
 /// APNs token-based auth: a `.p8` key signs a JWT that stays good for an
 /// hour; Apple asks for it to be reused, not minted per push.
 pub(crate) struct Apns {
@@ -81,7 +114,7 @@ pub(crate) struct Apns {
 }
 
 impl Apns {
-    pub(crate) fn from_env() -> Option<Arc<Self>> {
+    fn from_env() -> Option<Arc<Self>> {
         let var = |key: &str| std::env::var(key).ok().filter(|v| !v.trim().is_empty());
         let path = var("COMMUTATOR_APNS_KEY_FILE")?;
         let apns = (|| -> anyhow::Result<Self> {
@@ -185,10 +218,17 @@ impl Apns {
 impl App {
     fn set_push_target(&self, device: &str, target: &Target) -> anyhow::Result<()> {
         lock(&self.db).execute(
-            "INSERT INTO push_targets (device_id, token, environment, prefs) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(device_id) DO UPDATE SET token = excluded.token,
-                 environment = excluded.environment, prefs = excluded.prefs",
-            rusqlite::params![device, target.token, target.environment, serde_json::to_string(&target.prefs)?],
+            "INSERT INTO push_targets (device_id, platform, token, environment, prefs)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(device_id) DO UPDATE SET platform = excluded.platform,
+                 token = excluded.token, environment = excluded.environment, prefs = excluded.prefs",
+            rusqlite::params![
+                device,
+                target.platform,
+                target.token,
+                target.environment,
+                serde_json::to_string(&target.prefs)?
+            ],
         )?;
         Ok(())
     }
@@ -197,23 +237,26 @@ impl App {
         let _ = lock(&self.db).execute("DELETE FROM push_targets WHERE device_id = ?1", [device]);
     }
 
-    /// `user`'s phones that want `kind`: (device, token, environment). The
-    /// join drops targets of signed-out devices.
-    pub fn push_targets_for(&self, user: &str, kind: &str) -> rusqlite::Result<Vec<(String, String, String)>> {
+    /// `user`'s phones that want `kind`. The join drops targets of
+    /// signed-out devices.
+    pub fn push_targets_for(&self, user: &str, kind: &str) -> rusqlite::Result<Vec<PushTarget>> {
         let db = lock(&self.db);
         let mut stmt = db.prepare(
-            "SELECT p.device_id, p.token, p.environment, p.prefs FROM push_targets p
+            "SELECT p.device_id, p.platform, p.token, p.environment, p.prefs FROM push_targets p
              JOIN devices d ON d.id = p.device_id WHERE d.user_id = ?1",
         )?;
         let rows = stmt
             .query_map([user], |row| {
-                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?, row.get::<_, String>(3)?))
+                Ok((
+                    (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?),
+                    row.get::<_, String>(4)?,
+                ))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<rusqlite::Result<Vec<(PushTarget, String)>>>()?;
         Ok(rows
             .into_iter()
-            .filter(|(.., prefs)| serde_json::from_str::<Prefs>(prefs).is_ok_and(|p| p.wants(kind)))
-            .map(|(device, token, env, _)| (device, token, env))
+            .filter(|(_, prefs)| serde_json::from_str::<Prefs>(prefs).is_ok_and(|p| p.wants(kind)))
+            .map(|(target, _)| target)
             .collect())
     }
 }
@@ -228,12 +271,8 @@ pub(crate) async fn put_target(
         Ok(device) => device,
         Err(status) => return status.into_response(),
     };
-    // An APNs token is hex; anything else would land in the request path.
-    if target.token.is_empty() || target.token.len() > 200 || !target.token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return fail(StatusCode::BAD_REQUEST, "token must be hex");
-    }
-    if !matches!(target.environment.as_str(), "sandbox" | "production") {
-        return fail(StatusCode::BAD_REQUEST, "environment must be sandbox or production");
+    if let Err(problem) = valid(&target) {
+        return fail(StatusCode::BAD_REQUEST, problem);
     }
     match app.set_push_target(&device.id, &target) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -272,16 +311,18 @@ pub(crate) async fn post_push(
         Ok(targets) => targets,
         Err(err) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
     };
-    let Some(apns) = app.apns.clone() else {
-        if !targets.is_empty() {
-            tracing::warn!("push dropped: APNs is not configured");
-        }
-        return StatusCode::ACCEPTED.into_response();
-    };
     // Answer the engine at once; delivery is best effort.
     tokio::spawn(async move {
-        for (device, token, environment) in targets {
-            match apns.send(&token, &environment, &note).await {
+        for (device, platform, token, environment) in targets {
+            let sent = match (platform.as_str(), &app.push.apns, &app.push.fcm) {
+                ("apns", Some(apns), _) => apns.send(&token, &environment, &note).await,
+                ("fcm", _, Some(fcm)) => fcm.send(&token, &note).await,
+                _ => {
+                    tracing::warn!(%device, %platform, "push dropped: not configured");
+                    continue;
+                }
+            };
+            match sent {
                 Ok(true) => {}
                 Ok(false) => app.remove_push_target(&device),
                 Err(err) => tracing::warn!(%device, error = %err, "push failed"),
@@ -289,6 +330,31 @@ pub(crate) async fn post_push(
         }
     });
     StatusCode::ACCEPTED.into_response()
+}
+
+/// A target the senders can use. An APNs token lands in the request path,
+/// so only hex; an FCM registration token is base64url-ish with colons.
+fn valid(target: &Target) -> Result<(), &'static str> {
+    let token = target.token.as_bytes();
+    match target.platform.as_str() {
+        "apns" => {
+            if token.is_empty() || token.len() > 200 || !token.iter().all(u8::is_ascii_hexdigit) {
+                return Err("token must be hex");
+            }
+            if !matches!(target.environment.as_str(), "sandbox" | "production") {
+                return Err("environment must be sandbox or production");
+            }
+            Ok(())
+        }
+        "fcm" => {
+            let ok = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':');
+            if token.is_empty() || token.len() > 4096 || !token.iter().all(ok) {
+                return Err("not an FCM token");
+            }
+            Ok(())
+        }
+        _ => Err("platform must be apns or fcm"),
+    }
 }
 
 #[cfg(test)]

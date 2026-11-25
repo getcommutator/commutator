@@ -29,6 +29,9 @@ COMMUTATOR_SERVER_ADDR=127.0.0.1:8787 \
   the App Store Connect APNs key (`.p8`, Keys → Apple Push Notifications
   service) that sends session notifications to the iOS app. Without them
   phones still register, and notifications are dropped with a warning.
+- `COMMUTATOR_FCM_SERVICE_ACCOUNT_FILE` (optional): a Firebase service account's
+  JSON (Firebase › Project settings › Service accounts › Generate new private
+  key) that sends them to the Android app over FCM.
 - `COMMUTATOR_SERVER_DB` defaults to `./commutator-server.db`; `COMMUTATOR_SERVER_ADDR` to `127.0.0.1:8787`.
 
 ## Google OAuth client

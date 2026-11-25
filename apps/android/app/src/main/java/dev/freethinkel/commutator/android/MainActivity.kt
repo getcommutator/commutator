@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
             ),
         )
         handleCallback(intent)
+        handleNotification(intent)
         setContent { CommutatorRoot(model) }
     }
 
@@ -90,6 +91,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleCallback(intent)
+        handleNotification(intent)
+    }
+
+    /** A tapped session notification: the shell opens that chat. */
+    private fun handleNotification(intent: Intent?) {
+        intent?.getStringExtra(dev.freethinkel.commutator.android.core.Push.EXTRA_CHAT)?.let { model.push.tappedChat.value = it }
     }
 
     private fun handleCallback(intent: Intent?) {

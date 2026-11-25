@@ -69,6 +69,15 @@ ui/          Sign-in and the machine picker, sessions (a Material 3 bottom
 The core links C++ (`libc++_shared.so` ships beside it: `build-core.sh` passes
 `--link-libcxx-shared` to cargo-ndk).
 
+## Session notifications
+
+The same as the iOS app's (`apps/ios/README.md`), over FCM: `core/Push.kt` asks
+for permission after the first session started here, hands the server its token,
+posts a notification while the app is in the background and opens the chat on a
+tap; Settings › Notifications holds the switches. Firebase is configured from
+`res/values/firebase.xml` (project `vardoger-515618`), without the
+google-services plugin. The server needs the FCM service account (its README).
+
 ## Launch extras
 
 Mirrors the iOS launch arguments:

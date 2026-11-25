@@ -40,10 +40,23 @@ async fn a_machine_notifies_its_own_accounts_phones() {
 
     assert_eq!(
         app.push_targets_for(&me, "done").unwrap(),
-        vec![(phone_id.clone(), "ab12".into(), "sandbox".into())],
+        vec![(phone_id.clone(), "apns".into(), "ab12".into(), "sandbox".into())],
         "only my phone, not the other account's"
     );
     assert!(app.push_targets_for(&me, "input").unwrap().is_empty(), "the phone turned input off");
+
+    // An Android phone: an FCM token, colons and all.
+    let (android_id, android) = app.create_device(&me, "pixel", Kind::Client, None).unwrap();
+    let fcm = json!({"platform": "fcm", "token": "dA1-x_Y:APA91b", "environment": "production", "prefs": prefs});
+    assert_eq!(put(&android, fcm).await.unwrap().status(), 204);
+    let bogus = json!({"platform": "fcm", "token": "a/b", "environment": "production", "prefs": prefs});
+    assert_eq!(put(&android, bogus).await.unwrap().status(), 400);
+    assert!(app
+        .push_targets_for(&me, "done")
+        .unwrap()
+        .contains(&(android_id, "fcm".into(), "dA1-x_Y:APA91b".into(), "production".into())));
+    let gone = http.delete(format!("{url}/push/target")).bearer_auth(&android).send().await.unwrap();
+    assert_eq!(gone.status(), 204);
 
     let push = |token: &str| {
         http.post(format!("{url}/push"))

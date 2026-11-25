@@ -118,12 +118,14 @@ pub async fn server_devices(server_url: String, token: String) -> CoreResult<Vec
         .collect())
 }
 
-/// This phone's session notifications: its push token (APNs, hex), which
-/// APNs it belongs to (`sandbox` or `production`), and the kinds it wants.
+/// This phone's session notifications: `platform` (`apns` or `fcm`), its
+/// push token, which APNs it belongs to (`sandbox` or `production`; FCM
+/// ignores it), and the kinds it wants.
 #[uniffi::export]
 pub async fn server_set_push_target(
     server_url: String,
     token: String,
+    platform: String,
     push_token: String,
     environment: String,
     done: bool,
@@ -132,7 +134,7 @@ pub async fn server_set_push_target(
 ) -> CoreResult<()> {
     on_runtime(async move {
         let prefs = commutator_account::PushPrefs { done, input, failed };
-        commutator_account::set_push_target(&server_url, &token, &push_token, &environment, prefs)
+        commutator_account::set_push_target(&server_url, &token, &platform, &push_token, &environment, prefs)
             .await
             .map_err(|e| zc::ClientError::Network(e.to_string()))
     })

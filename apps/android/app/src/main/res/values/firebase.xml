@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Firebase (FCM, core/Push.kt): the values google-services.json would generate, by the names
+     FirebaseInitProvider reads. Project vardoger-515618, app dev.freethinkel.commutator.android.
+     The API key ships in every APK by design; Firebase scopes what it can do. -->
+<resources>
+    <string name="google_app_id" translatable="false">1:491391603771:android:3c88d09c27fd408c48381e</string>
+    <string name="gcm_defaultSenderId" translatable="false">491391603771</string>
+    <string name="google_api_key" translatable="false">AIzaSyCv_IM0Bvep5G7nyWCbYChf5iLHLjnhtvU</string>
+    <string name="project_id" translatable="false">vardoger-515618</string>
+</resources>

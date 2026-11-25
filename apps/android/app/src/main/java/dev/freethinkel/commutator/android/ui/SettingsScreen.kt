@@ -52,6 +52,7 @@ fun SettingsScreen(
     model: AppModel,
     onArchived: () -> Unit,
     onAppearance: () -> Unit = {},
+    onNotifications: () -> Unit = {},
     onBack: (() -> Unit)? = null,
 ) {
     val appearance by model.appearance.collectAsState()
@@ -108,15 +109,28 @@ fun SettingsScreen(
         }
         section("Display")
         item {
-            SegmentedListItem(
-                onClick = onAppearance,
-                shapes = segmentedShapes(0, 1),
-                colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                leadingContent = { IconTile(ZIcons.Magic) },
-                supportingContent = { Text(appearanceSummary(appearance, dev.freethinkel.commutator.android.design.LocalDarkTheme.current)) },
-                trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            ) { Text("Appearance") }
+            val rows = if (model.isDemo) 1 else 2
+            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                SegmentedListItem(
+                    onClick = onAppearance,
+                    shapes = segmentedShapes(0, rows),
+                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                    leadingContent = { IconTile(ZIcons.Magic) },
+                    supportingContent = { Text(appearanceSummary(appearance, dev.freethinkel.commutator.android.design.LocalDarkTheme.current)) },
+                    trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
+                ) { Text("Appearance") }
+                if (!model.isDemo) {
+                    val notifying by model.push.enabled.collectAsState()
+                    SegmentedListItem(
+                        onClick = onNotifications,
+                        shapes = segmentedShapes(1, rows),
+                        colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                        leadingContent = { IconTile(ZIcons.Bell) },
+                        supportingContent = { Text(if (notifying && model.push.allowed()) "On" else "Off") },
+                        trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
+                    ) { Text("Notifications") }
+                }
+            }
         }
         section("Sessions")
         item {
@@ -311,3 +325,4 @@ internal fun WallpaperSettings(model: AppModel) {
         }
     }
 }
+

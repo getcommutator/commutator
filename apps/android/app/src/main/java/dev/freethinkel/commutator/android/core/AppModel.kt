@@ -90,6 +90,7 @@ class AppModel(private val app: Application) {
     private val main = Handler(Looper.getMainLooper())
     val credentials = CredentialStore(app)
     val wallpaper = WallpaperStore(app)
+    val push = Push(app, this)
 
     private val _client = MutableStateFlow<CoreClient?>(null)
     val client: StateFlow<CoreClient?> = _client.asStateFlow()
@@ -262,6 +263,8 @@ class AppModel(private val app: Application) {
             options.demo || options.route != null && stored == null -> start(Credentials.Demo(demoOptions()))
             stored != null && host != null -> start(Credentials.Remote(stored.serverUrl, stored.token, host.id))
         }
+        // Tokens can change between launches; the server keeps the latest.
+        if (stored != null && !options.demo) push.sync()
         // Relative times ("4m") and staleness age without events.
         scope.launch {
             while (true) {
@@ -363,6 +366,7 @@ class AppModel(private val app: Application) {
                 val saved = CredentialStore.Account(a.serverUrl, a.token, a.deviceId, a.email, a.name)
                 credentials.store(saved)
                 _account.value = saved
+                push.sync()
             } catch (e: Exception) {
                 Log.w("Commutator", "sign-in failed", e)
                 signInError.value = "Sign-in didn't complete. Try again."
@@ -404,7 +408,8 @@ class AppModel(private val app: Application) {
 
     /** The user signing out: this device forgets the account's local docs. */
     fun signOut() {
-        // The server forgets this phone too; signed out here either way.
+        // The server forgets this phone too (its push target with it); signed out here either way.
+        push.signingOut()
         _account.value?.let { a -> scope.launch { runCatching { serverSignOut(a.serverUrl, a.token, a.deviceId) } } }
         signOutLocally(forget = true)
     }
@@ -577,6 +582,7 @@ class AppModel(private val app: Application) {
     }
 
     private var inForeground = true
+    val inForegroundNow: Boolean get() = inForeground
 
     /**
      * iOS suspends a backgrounded app, which is what stops its sockets. Android may not for
@@ -821,6 +827,7 @@ class AppModel(private val app: Application) {
             handle.send(SendRequest(text, attachments, worktree, BusyPolicy.QUEUE))
             noteDeliveryActivity()
             refreshWorkspace()
+            push.askAfterFirstSession()
             chatId
         } catch (e: Exception) {
             Log.w("Commutator", "create session failed", e)

@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Updates from GitHub releases (AppUpdate); the system still asks before each install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Session notifications (Push): Android 13+ asks for it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".CommutatorApplication"
@@ -49,5 +51,12 @@
             android:name=".core.DeliveryService"
             android:exported="false"
             android:foregroundServiceType="shortService|dataSync" />
+        <service
+            android:name=".core.PushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

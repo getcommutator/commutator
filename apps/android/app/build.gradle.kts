@@ -123,6 +123,8 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.coroutines.android)
+    // Session notifications (core/Push.kt); configured from res/values/firebase.xml, no google-services plugin.
+    implementation(libs.firebase.messaging)
     implementation("${libs.jna.get()}@aar")
     debugImplementation(libs.compose.ui.tooling)
     testImplementation(libs.junit)

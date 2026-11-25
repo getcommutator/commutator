@@ -285,16 +285,23 @@ pub struct PushPrefs {
     pub failed: bool,
 }
 
-/// A phone's session notifications (`PUT /push/target`): its APNs token
-/// (hex), `sandbox` or `production`, and which kinds it wants.
+/// A phone's session notifications (`PUT /push/target`): `platform` `apns`
+/// (a hex token; `environment` `sandbox` or `production`) or `fcm`, its push
+/// token, and which kinds it wants.
 pub async fn set_push_target(
     server_url: &str,
     token: &str,
-    apns_token: &str,
+    platform: &str,
+    push_token: &str,
     environment: &str,
     prefs: PushPrefs,
 ) -> Result<(), Error> {
-    let body = serde_json::json!({ "token": apns_token, "environment": environment, "prefs": prefs });
+    let body = serde_json::json!({
+        "platform": platform,
+        "token": push_token,
+        "environment": environment,
+        "prefs": prefs,
+    });
     send(reqwest::Client::new().put(push_url(server_url, "/push/target")).json(&body), token).await
 }
 

@@ -19299,14 +19299,15 @@ public func serverRemovePushTarget(serverUrl: String, token: String)async throws
         )
 }
 /**
- * This phone's session notifications: its push token (APNs, hex), which
- * APNs it belongs to (`sandbox` or `production`), and the kinds it wants.
+ * This phone's session notifications: `platform` (`apns` or `fcm`), its
+ * push token, which APNs it belongs to (`sandbox` or `production`; FCM
+ * ignores it), and the kinds it wants.
  */
-public func serverSetPushTarget(serverUrl: String, token: String, pushToken: String, environment: String, done: Bool, input: Bool, failed: Bool)async throws   {
+public func serverSetPushTarget(serverUrl: String, token: String, platform: String, pushToken: String, environment: String, done: Bool, input: Bool, failed: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_commutator_mobile_fn_func_server_set_push_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token),FfiConverterString.lower(pushToken),FfiConverterString.lower(environment),FfiConverterBool.lower(done),FfiConverterBool.lower(input),FfiConverterBool.lower(failed)
+                uniffi_commutator_mobile_fn_func_server_set_push_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token),FfiConverterString.lower(platform),FfiConverterString.lower(pushToken),FfiConverterString.lower(environment),FfiConverterBool.lower(done),FfiConverterBool.lower(input),FfiConverterBool.lower(failed)
                 )
             },
             pollFunc: ffi_commutator_mobile_rust_future_poll_void,
@@ -19539,7 +19540,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_func_server_remove_push_target() != 10687) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_func_server_set_push_target() != 20080) {
+    if (uniffi_commutator_mobile_checksum_func_server_set_push_target() != 22337) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_server_sign_out() != 41321) {

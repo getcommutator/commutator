@@ -153,7 +153,8 @@ it to the server, which sends it over APNs to every phone of the account
 (`apps/commutator-server/src/push.rs`). The app asks for permission after the
 first session started from it, hands the server its token
 (`App/PushNotifications.swift`), shows no banner while it's open, and opens the
-session on a tap. The server needs the APNs key (see its README).
+session on a tap; Settings › Notifications holds the switches. The server needs
+the APNs key (see its README).
 
 ## TestFlight release
 

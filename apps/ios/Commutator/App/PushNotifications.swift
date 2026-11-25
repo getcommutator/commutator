@@ -11,6 +11,18 @@ import UserNotifications
 final class PushNotifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = PushNotifications()
 
+    enum Kind: String, CaseIterable {
+        case done, input, failed
+
+        var title: String {
+            switch self {
+            case .done: "Run finished"
+            case .input: "Waiting on your input"
+            case .failed: "Run failed"
+            }
+        }
+    }
+
     private weak var app: AppModel?
     private var token: String?
     /// A tapped notification's chat, until the app can show it.
@@ -18,7 +30,28 @@ final class PushNotifications: NSObject, UNUserNotificationCenterDelegate {
     /// Opens a chat once the shell is up (set by the scene).
     var openChat: ((String) -> Bool)?
 
+    private let defaults = UserDefaults.standard
+    private static let enabledKey = "notifications.enabled"
     private static let askedKey = "notifications.asked"
+
+    // MARK: Choices
+
+    /// The master switch (on unless turned off here; the system permission
+    /// is separate).
+    var enabled: Bool {
+        get { defaults.object(forKey: Self.enabledKey) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Self.enabledKey)
+            Task { await self.sync() }
+        }
+    }
+
+    func isOn(_ kind: Kind) -> Bool { defaults.object(forKey: "notifications.\(kind.rawValue)") as? Bool ?? true }
+
+    func set(_ kind: Kind, _ on: Bool) {
+        defaults.set(on, forKey: "notifications.\(kind.rawValue)")
+        Task { await self.sync() }
+    }
 
     // MARK: Lifecycle
 
@@ -41,13 +74,28 @@ final class PushNotifications: NSObject, UNUserNotificationCenterDelegate {
     /// The first time a session is started from this phone: the moment the
     /// ask makes sense ("tell me when it's done").
     func askAfterFirstSession() {
-        guard app?.isDemo == false, !UserDefaults.standard.bool(forKey: Self.askedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Self.askedKey)
-        Task {
-            let center = UNUserNotificationCenter.current()
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            if granted { UIApplication.shared.registerForRemoteNotifications() }
+        guard app?.isDemo == false, enabled, !defaults.bool(forKey: Self.askedKey) else { return }
+        defaults.set(true, forKey: Self.askedKey)
+        Task { _ = await self.requestPermission() }
+    }
+
+    /// Ask the system (once; later it's the Settings app's call).
+    @discardableResult
+    func requestPermission() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        let granted: Bool
+        if status == .notDetermined {
+            granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        } else {
+            granted = Self.allowed(status)
         }
+        if granted { UIApplication.shared.registerForRemoteNotifications() }
+        return granted
+    }
+
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
     private static func allowed(_ status: UNAuthorizationStatus) -> Bool {
@@ -63,20 +111,25 @@ final class PushNotifications: NSObject, UNUserNotificationCenterDelegate {
     // MARK: Token
 
     func didRegister(deviceToken: Data) {
-        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
-        self.token = token
+        token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        Task { await sync() }
+    }
+
+    /// Tell the server what this phone wants now (or that it wants nothing).
+    private func sync() async {
         guard let account = app?.account, app?.isDemo == false else { return }
-        // ponytail: every kind on; the system's per-app switch turns them off.
-        // Per-kind toggles go in Settings when someone asks for them.
-        Task {
-            do {
+        do {
+            if enabled, let token {
                 try await serverSetPushTarget(
-                    serverUrl: account.serverUrl, token: account.token, pushToken: token,
-                    environment: Self.apnsEnvironment, done: true, input: true, failed: true
+                    serverUrl: account.serverUrl, token: account.token, platform: "apns", pushToken: token,
+                    environment: Self.apnsEnvironment,
+                    done: isOn(.done), input: isOn(.input), failed: isOn(.failed)
                 )
-            } catch {
-                NSLog("push target sync failed: \(error)")
+            } else if !enabled {
+                try await serverRemovePushTarget(serverUrl: account.serverUrl, token: account.token)
             }
+        } catch {
+            NSLog("push target sync failed: \(error)")
         }
     }
 
