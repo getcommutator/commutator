@@ -472,6 +472,11 @@ pub fn agent_allowed(method: &str) -> bool {
             | methods::READ_COMMAND_OUTPUT
             | methods::STOP_COMMAND
             | methods::LIST_BACKGROUND_COMMANDS
+            // Project Actions (Commutator MCP's *_project_action); changing
+            // one is full access only, as a saved command runs as the person.
+            | methods::LIST_PROJECT_ACTIONS
+            | methods::UPSERT_PROJECT_ACTION
+            | methods::DELETE_PROJECT_ACTION
     )
 }
 

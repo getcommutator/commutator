@@ -84,9 +84,16 @@ impl EngineRpc {
             params["chatId"] = json!(chat);
             return Ok(params);
         }
+        // A saved Action is a command too: it runs later as the person (the
+        // worktree setup hook without anyone clicking).
         let command = matches!(
             method,
-            methods::RUN_COMMAND | methods::READ_COMMAND_OUTPUT | methods::STOP_COMMAND | methods::LIST_BACKGROUND_COMMANDS
+            methods::RUN_COMMAND
+                | methods::READ_COMMAND_OUTPUT
+                | methods::STOP_COMMAND
+                | methods::LIST_BACKGROUND_COMMANDS
+                | methods::UPSERT_PROJECT_ACTION
+                | methods::DELETE_PROJECT_ACTION
         );
         if !command && !matches!(method, methods::MUTATE | methods::QUEUE_MESSAGE | methods::QUEUE_COMMAND) {
             return Ok(params);
@@ -106,7 +113,7 @@ impl EngineRpc {
             });
             if !full {
                 return Err(refused(
-                    "A command runs as the person, unconfined: only a chat with full access runs one. Ask the person to give this chat full access, or to run it themselves",
+                    "A command runs as the person, unconfined: only a chat with full access runs or saves one. Ask the person to give this chat full access, or to do it themselves",
                 ));
             }
             // A command is its agent's own chat's (it stops when that chat
@@ -338,6 +345,8 @@ mod tests {
             methods::READ_COMMAND_OUTPUT,
             methods::STOP_COMMAND,
             methods::LIST_BACKGROUND_COMMANDS,
+            methods::UPSERT_PROJECT_ACTION,
+            methods::DELETE_PROJECT_ACTION,
         ] {
             for who in ["careful", "edits", "nowhere"] {
                 let refused =
