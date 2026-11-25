@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest # arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain-db"
+          KC_PASS="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Store notary credentials
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials commutator \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --keychain "$RUNNER_TEMP/build.keychain-db"
+
+      # On a tag: the app tarball + manifest.json the updater reads, plus the dmg.
+      - name: Build, sign, notarize, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            make release NOTARY_PROFILE=commutator
+          else
+            make notarize NOTARY_PROFILE=commutator
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Commutator-macos
+          path: target/Commutator-*.dmg
+
+  # The signed APK AppUpdate (apps/android/.../core/AppUpdate.kt) finds on the latest release:
+  # commutator-<version>-android-<versionCode>.apk, versionCode = this workflow's run number, so it only grows.
+  # Secrets: COMMUTATOR_ANDROID_KEYSTORE_B64 (base64 of the .jks), COMMUTATOR_ANDROID_KEYSTORE_PASSWORD,
+  # COMMUTATOR_ANDROID_KEY_ALIAS, COMMUTATOR_ANDROID_KEY_PASSWORD.
+  android:
+    runs-on: ubuntu-latest
+    env:
+      COMMUTATOR_ANDROID_ABIS: arm64-v8a
+      COMMUTATOR_ANDROID_PROFILE: mobile-dist
+      COMMUTATOR_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.COMMUTATOR_ANDROID_KEYSTORE_PASSWORD }}
+      COMMUTATOR_ANDROID_KEY_ALIAS: ${{ secrets.COMMUTATOR_ANDROID_KEY_ALIAS }}
+      COMMUTATOR_ANDROID_KEY_PASSWORD: ${{ secrets.COMMUTATOR_ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-release
+      - uses: gradle/actions/setup-gradle@v4
+      - name: NDK, cargo-ndk, signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.COMMUTATOR_ANDROID_KEYSTORE_B64 }}
+        run: |
+          # without the key the build falls back to the debug one, which no installed release could update to
+          [[ -n "$KEYSTORE_B64" ]] || { echo "::error::COMMUTATOR_ANDROID_KEYSTORE_B64 is not set"; exit 1; }
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "COMMUTATOR_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          NDK=$(grep -oP 'NDK_VERSION = "\K[^"]+' apps/android/app/build.gradle.kts)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked
+      - name: Build
+        working-directory: apps/android
+        run: ./gradlew :app:assembleRelease -PcommutatorVersionCode=${{ github.run_number }} --console=plain
+      - name: Name the APK
+        run: |
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' Cargo.toml)
+          mkdir -p target && cp apps/android/app/build/outputs/apk/release/app-release.apk \
+            "target/commutator-$VERSION-android-${{ github.run_number }}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Commutator-android
+          path: target/commutator-*-android-*.apk
+
+  # Onto the release the macOS job creates (gh release create), once it exists.
+  android-publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Commutator-android
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" commutator-*-android-*.apk --repo "$GITHUB_REPOSITORY"

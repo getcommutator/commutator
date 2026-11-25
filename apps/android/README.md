@@ -35,7 +35,12 @@ iterating on Kotlin; `COMMUTATOR_ANDROID_ABIS=arm64-v8a` builds one ABI.
 
 ## Releases
 
-Zeron's release workflow (APK on zeron.sh, Play uploads) was not ported.
+A `v*` tag builds a signed arm64 APK (`android` job in `.github/workflows/release.yml`) and attaches it to that
+tag's GitHub release as `commutator-<version>-android-<versionCode>.apk`. Release builds check the latest release
+when Settings opens (`core/AppUpdate.kt`) and offer “Update to …” in About; the system asks before installing.
+Only APKs signed with the same key install over each other: the release key is `~/commutator-release.jks`
+(password in the login Keychain, “Commutator Android release keystore”) and in the repo's
+`COMMUTATOR_ANDROID_*` secrets. Lose it and every install needs a reinstall.
 
 ## Layout
 

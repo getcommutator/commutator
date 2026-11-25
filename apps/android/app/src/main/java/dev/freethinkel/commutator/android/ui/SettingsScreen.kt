@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.freethinkel.commutator.android.core.AppModel
+import dev.freethinkel.commutator.android.core.AppUpdate
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
 import uniffi.commutator_core.coreVersion
@@ -59,6 +60,9 @@ fun SettingsScreen(
     val workspace by model.workspace.collectAsState()
     val devices = workspace?.devices.orEmpty()
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    LaunchedEffect(Unit) { AppUpdate.check(context) }
     Box(Modifier.fillMaxSize()) {
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -183,17 +187,34 @@ fun SettingsScreen(
         }
         section("About")
         item {
+            val update = AppUpdate.available
+            val rows = if (update != null) 3 else 2
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                if (update != null) {
+                    val progress = AppUpdate.progress
+                    SegmentedListItem(
+                        onClick = { scope.launch { AppUpdate.install(context) } },
+                        shapes = segmentedShapes(0, rows),
+                        colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                        leadingContent = { IconTile(ZIcons.ArrowDown, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer) },
+                        supportingContent = {
+                            Text(
+                                AppUpdate.error ?: progress?.let { "Downloading · ${(it * 100).toInt()}%" } ?: "Download and install",
+                                color = if (AppUpdate.error != null) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified,
+                            )
+                        },
+                    ) { Text("Update to ${update.name}") }
+                }
                 SegmentedListItem(
                     onClick = {},
-                    shapes = segmentedShapes(0, 2),
+                    shapes = segmentedShapes(rows - 2, rows),
                     colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
                     leadingContent = { IconTile(ZIcons.Info) },
                     supportingContent = { Text("Commutator for Android · core ${coreVersion()}") },
                 ) { Text("Version") }
                 SegmentedListItem(
                     onClick = { if (model.isDemo) model.signOut() else confirmSignOut = true },
-                    shapes = segmentedShapes(1, 2),
+                    shapes = segmentedShapes(rows - 1, rows),
                     colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
                     leadingContent = { IconTile(ZIcons.Logout, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer) },
                 ) { Text(if (model.isDemo) "Leave demo" else "Sign out", color = MaterialTheme.colorScheme.error) }
