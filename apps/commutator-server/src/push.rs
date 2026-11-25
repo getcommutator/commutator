@@ -17,6 +17,7 @@
 //! still kept and pushes are dropped with a log line. FCM likewise, from
 //! `COMMUTATOR_FCM_SERVICE_ACCOUNT_FILE` (`push/fcm.rs`).
 
+pub(crate) mod activity;
 mod fcm;
 
 use std::sync::{Arc, Mutex};
@@ -181,11 +182,6 @@ impl Apns {
 
     /// One push. `Ok(false)`: the token is dead (unregistered, bad), drop it.
     async fn send(&self, token: &str, environment: &str, note: &Notification) -> anyhow::Result<bool> {
-        let host = if environment == "sandbox" {
-            "api.sandbox.push.apple.com"
-        } else {
-            "api.push.apple.com"
-        };
         let payload = serde_json::json!({
             "aps": {
                 "alert": { "title": note.title, "body": note.body },
@@ -194,13 +190,42 @@ impl Apns {
             },
             "chatId": note.chat_id,
         });
+        self.post(token, environment, "alert", &self.topic, 10, &payload).await
+    }
+
+    /// A Live Activity update or end (`apns-push-type: liveactivity`).
+    pub(crate) async fn send_activity(
+        &self,
+        token: &str,
+        environment: &str,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        let topic = format!("{}.push-type.liveactivity", self.topic);
+        self.post(token, environment, "liveactivity", &topic, 10, payload).await
+    }
+
+    async fn post(
+        &self,
+        token: &str,
+        environment: &str,
+        push_type: &str,
+        topic: &str,
+        priority: u8,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        let host = if environment == "sandbox" {
+            "api.sandbox.push.apple.com"
+        } else {
+            "api.push.apple.com"
+        };
         let response = self
             .http
             .post(format!("https://{host}/3/device/{token}"))
             .header("authorization", format!("bearer {}", self.jwt()?))
-            .header("apns-topic", &self.topic)
-            .header("apns-push-type", "alert")
-            .json(&payload)
+            .header("apns-topic", topic)
+            .header("apns-push-type", push_type)
+            .header("apns-priority", priority.to_string())
+            .json(payload)
             .send()
             .await?;
         let status = response.status();

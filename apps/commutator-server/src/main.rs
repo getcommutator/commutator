@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let db = std::env::var("COMMUTATOR_SERVER_DB").unwrap_or_else(|_| "commutator-server.db".into());
     let addr = std::env::var("COMMUTATOR_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:8787".into());
     let app = commutator_server::App::open(config, std::path::Path::new(&db))?;
+    app.clone().sweep_activities();
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
     axum::serve(listener, commutator_server::router(app)).await?;

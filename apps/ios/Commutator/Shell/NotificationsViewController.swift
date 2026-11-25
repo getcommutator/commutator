@@ -1,7 +1,8 @@
 import UIKit
 import UserNotifications
 
-/// Settings → Notifications: session notifications (the master switch, then one per kind).
+/// Settings → Notifications: session notifications (the master switch, then one per kind)
+/// and the agents' Live Activity.
 final class NotificationsViewController: SettingsListController {
     private let app: AppModel
 
@@ -55,10 +56,25 @@ final class NotificationsViewController: SettingsListController {
                 return Row(id: "notify:\(kind.rawValue)", title: kind.title, symbol: symbol, accessory: .toggle(PushNotifications.shared.isOn(kind)))
             }
         }
-        return [("Sessions", rows)]
+        let live = LiveActivities.shared
+        let activity = Row(
+            id: "liveActivity", title: "Live Activity",
+            subtitle: live.allowed ? "Your agents on the Lock Screen and in the Dynamic Island, after you send work from here" : "Turned off in iOS Settings",
+            symbol: "platter.filled.top.iphone", accessory: .toggle(live.enabled && live.allowed)
+        )
+        return [("Sessions", rows), ("Live Activity", [activity])]
     }
 
     override func toggled(_ id: String, _ on: Bool) {
+        if id == "liveActivity" {
+            if on, !LiveActivities.shared.allowed {
+                // Only the Settings app can turn them back on.
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                return reload()
+            }
+            LiveActivities.shared.enabled = on
+            return reload()
+        }
         let push = PushNotifications.shared
         if id == "notify:enabled" {
             guard on else {

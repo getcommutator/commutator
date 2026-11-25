@@ -23,7 +23,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import uniffi.commutator_core.serverRemoveActivityTarget
 import uniffi.commutator_core.serverRemovePushTarget
+import uniffi.commutator_core.serverSetActivityTarget
 import uniffi.commutator_core.serverSetPushTarget
 
 /**
@@ -49,6 +51,10 @@ class Push(private val app: Application, private val model: AppModel) {
     private val _kinds = MutableStateFlow(Kind.entries.associateWith { prefs.getBoolean(it.key, true) })
     val kinds: StateFlow<Map<Kind, Boolean>> = _kinds.asStateFlow()
 
+    private val _activity = MutableStateFlow(prefs.getBoolean("activity", true))
+    /** The agents' live update (an ongoing notification; Android 16 promotes it to a Live Update). */
+    val activity: StateFlow<Boolean> = _activity.asStateFlow()
+
     /** Set when the system should be asked (the root holds the permission launcher). */
     val askPermission = MutableStateFlow(false)
 
@@ -60,6 +66,38 @@ class Push(private val app: Application, private val model: AppModel) {
         _enabled.value = on
         if (on && !allowed()) askPermission.value = true
         sync()
+    }
+
+    fun setActivity(on: Boolean) {
+        prefs.edit().putBoolean("activity", on).apply()
+        _activity.value = on
+        if (!on) endActivity(unregister = true)
+    }
+
+    /**
+     * Work was just sent from here: from now on the server keeps the agents' card on this phone
+     * (as in T3 Code), until nothing has moved for a while. Registering sends what every machine is
+     * doing at once.
+     */
+    fun armActivity() {
+        val account = model.account.value ?: return
+        if (model.isDemo || !_activity.value || !allowed() || activityShown) return
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            scope.launch {
+                runCatching { serverSetActivityTarget(account.serverUrl, account.token, "fcm", token, "") }
+                    .onFailure { android.util.Log.w("Push", "activity target sync failed", it) }
+            }
+        }
+    }
+
+    /** Whether the card is up now (it then stays registered on the server). */
+    private var activityShown = false
+
+    private fun endActivity(unregister: Boolean) {
+        activityShown = false
+        NotificationManagerCompat.from(app).cancel(ACTIVITY_ID)
+        val account = model.account.value ?: return
+        if (unregister) scope.launch { runCatching { serverRemoveActivityTarget(account.serverUrl, account.token) } }
     }
 
     fun set(kind: Kind, on: Boolean) {
@@ -107,10 +145,17 @@ class Push(private val app: Application, private val model: AppModel) {
 
     /** Signing out removes this phone on the server, its push target with it. */
     fun signingOut() {
+        activityShown = false
+        NotificationManagerCompat.from(app).cancel(ACTIVITY_ID)
         runCatching { FirebaseMessaging.getInstance().deleteToken() }
     }
 
     fun show(data: Map<String, String>) {
+        when (data["type"]) {
+            "activity" -> return showActivity(data["state"] ?: return)
+            // The server ended it and forgot this phone's card.
+            "activity_end" -> return endActivity(unregister = false)
+        }
         // In the app: no banner (the list and the session already show it).
         if (model.inForegroundNow || !allowed()) return
         val chatId = data["chatId"] ?: return
@@ -132,9 +177,77 @@ class Push(private val app: Application, private val model: AppModel) {
         manager.notify(chatId.hashCode(), notification)
     }
 
+    /** The server's card state (`push/activity.rs`, `State`) as one quiet ongoing notification. */
+    private fun showActivity(json: String) {
+        if (!_activity.value || !allowed()) return
+        val state = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return
+        val active = state.optInt("active")
+        val attention = state.optInt("attention")
+        val rows = state.optJSONArray("rows") ?: org.json.JSONArray()
+        val lines = (0 until rows.length()).map { rows.getJSONObject(it) }
+        val failed = lines.any { it.optString("phase") == "failed" }
+        val title = when {
+            active == 0 -> if (failed) "Finished, with a failure" else "All done"
+            attention > 0 -> "$active agent${if (active == 1) "" else "s"} active · $attention need${if (attention == 1) "s" else ""} you"
+            else -> "$active agent${if (active == 1) "" else "s"} active"
+        }
+        val chip = when {
+            attention > 0 -> "Input"
+            failed -> "Failed"
+            active > 0 -> "Active"
+            else -> "Done"
+        }
+        val label = mapOf("working" to "Working", "input" to "Needs you", "failed" to "Failed", "done" to "Done")
+        val focus = lines.firstOrNull()?.optString("chatId")
+        val manager = app.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(ACTIVITY_CHANNEL, "Agents", NotificationManager.IMPORTANCE_LOW))
+        val open = PendingIntent.getActivity(
+            app, ACTIVITY_ID,
+            Intent(app, MainActivity::class.java).apply { focus?.let { putExtra(EXTRA_CHAT, it) } }.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val dismiss = PendingIntent.getBroadcast(
+            app, ACTIVITY_ID, Intent(app, ActivityDismissReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val style = NotificationCompat.InboxStyle()
+        lines.forEach { style.addLine("${label[it.optString("phase")] ?: "Done"} · ${it.optString("title")}") }
+        val notification = NotificationCompat.Builder(app, ACTIVITY_CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(lines.firstOrNull()?.let { "${label[it.optString("phase")]} · ${it.optString("title")}" })
+            .setStyle(style)
+            .setOngoing(active > 0)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(open)
+            .addAction(0, "Open", open)
+            .addAction(0, "Dismiss", dismiss)
+            // Nothing heard for this long: the server would have ended it.
+            .setTimeoutAfter(2 * 60 * 60 * 1000L)
+            // Android 16: a Live Update, with the chip in the status bar.
+            .setRequestPromotedOngoing(true)
+            .setShortCriticalText(chip)
+            .build()
+        manager.notify(ACTIVITY_ID, notification)
+        activityShown = true
+    }
+
+    /** The card's Dismiss: gone here, and the server stops sending it. */
+    fun dismissActivity() = endActivity(unregister = true)
+
     companion object {
+        const val ACTIVITY_CHANNEL = "agents"
+        const val ACTIVITY_ID = 1
         const val CHANNEL = "sessions"
         const val EXTRA_CHAT = "chatId"
+    }
+}
+
+/** The live update's Dismiss button. */
+class ActivityDismissReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        (context.applicationContext as CommutatorApplication).model.push.dismissActivity()
     }
 }
 

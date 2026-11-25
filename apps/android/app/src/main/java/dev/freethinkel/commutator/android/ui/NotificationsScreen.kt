@@ -27,7 +27,8 @@ import androidx.compose.ui.unit.dp
 import dev.freethinkel.commutator.android.core.AppModel
 import dev.freethinkel.commutator.android.design.ZIcons
 
-/** Settings › Notifications: session notifications (and, later, Live Updates). */
+/** Settings › Notifications: session notifications and the agents' live update. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun NotificationsScreen(model: AppModel, onBack: () -> Unit) {
     LazyColumn(
@@ -42,6 +43,19 @@ fun NotificationsScreen(model: AppModel, onBack: () -> Unit) {
         item { ScreenHeader("Notifications", null) }
         section("Sessions")
         item { NotificationSettings(model) }
+        section("Live updates")
+        item {
+            val on by model.push.activity.collectAsState()
+            SegmentedListItem(
+                onClick = { model.push.setActivity(!on) },
+                shapes = segmentedShapes(0, 1),
+                colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                leadingContent = { IconTile(ZIcons.Alarm) },
+                supportingContent = { Text("Your agents in an ongoing notification, after you send work from here") },
+                trailingContent = { Switch(on, { model.push.setActivity(it) }) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) { Text("Agent activity") }
+        }
     }
 }
 

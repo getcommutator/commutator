@@ -339,6 +339,19 @@ fn update_key(device: &str, status: &HarnessUpdateStatus) -> Option<String> {
 type Post = Box<dyn Fn(&str, &str, Option<&str>) + Send>;
 /// A session ping for the account's phones: (ping, title, body, chat).
 type Phone = Box<dyn Fn(Ping, &str, &str, &str) + Send>;
+/// A chat's new phase, for the phones' Live Activities.
+type Activity = Box<dyn Fn(&ActivityRow) + Send>;
+
+/// What a Live Activity shows of one chat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActivityRow {
+    pub chat_id: String,
+    pub title: String,
+    /// The folder the chat works in.
+    pub project: Option<String>,
+    /// `working`, `input`, `failed`, `done`, or `idle` (off the card).
+    pub phase: &'static str,
+}
 
 fn ping_body(ping: Ping) -> &'static str {
     match ping {
@@ -357,6 +370,12 @@ struct Notifier {
     /// Signed in to a server: the same pings go to the account's phones,
     /// whatever the desktop's banner settings (the phone has its own).
     phone: Option<Phone>,
+    /// Signed in: each top-level chat's phase changes go to the phones'
+    /// Live Activities.
+    activity: Option<Activity>,
+    /// The phase last sent per chat, and the completed turn when it went
+    /// to work (a different one when it stops means it finished).
+    phases: HashMap<String, (&'static str, Option<String>)>,
     baselines: HashMap<String, SessionNotificationState>,
     /// Finishes waiting to stand ([`DONE_SETTLE`]): chat → its title and
     /// when it rings.
@@ -373,6 +392,8 @@ impl Notifier {
             focus,
             post,
             phone: None,
+            activity: None,
+            phases: HashMap::new(),
             baselines: HashMap::new(),
             settling: HashMap::new(),
             connectivity: ConnectivityNotificationState::default(),
@@ -403,6 +424,9 @@ impl Notifier {
             if !chat.is_some_and(Chat::is_top_level) {
                 continue;
             }
+            if let Some(chat) = chat {
+                self.track_activity(chat, &status);
+            }
             // A turn going on (or asking, or failing) takes a waiting
             // finish with it.
             if status.indicator != Indicator::None {
@@ -427,6 +451,47 @@ impl Notifier {
             }
         }
         self.post_due(due);
+    }
+
+    /// Send `chat`'s phase on when it changed (first sight included, so a
+    /// restarted engine brings the card up to date).
+    fn track_activity(&mut self, chat: &Chat, status: &SessionNotificationState) {
+        let Some(activity) = &self.activity else { return };
+        let (last, turn) = self
+            .phases
+            .get(&chat.id)
+            .cloned()
+            .unwrap_or(("idle", None));
+        let next = match status.indicator {
+            Indicator::Working => "working",
+            Indicator::AwaitingInput => "input",
+            Indicator::Errored => "failed",
+            // Stopped: finished if a turn completed since it went to work,
+            // else interrupted (off the card).
+            _ if matches!(last, "working" | "input") => {
+                if status.last_completed_turn != turn { "done" } else { "idle" }
+            }
+            _ => last,
+        };
+        if next == last {
+            return;
+        }
+        let turn = if matches!(next, "working" | "input") && !matches!(last, "working" | "input") {
+            status.last_completed_turn.clone()
+        } else {
+            turn
+        };
+        self.phases.insert(chat.id.clone(), (next, turn));
+        activity(&ActivityRow {
+            chat_id: chat.id.clone(),
+            title: chat.title.clone().unwrap_or_else(|| "New session".into()),
+            project: chat
+                .cwd
+                .as_deref()
+                .and_then(|cwd| Path::new(cwd).file_name())
+                .map(|name| name.to_string_lossy().into_owned()),
+            phase: next,
+        });
     }
 
     /// When the next waiting finish rings.
@@ -550,7 +615,8 @@ pub(crate) fn spawn(
             Box::new(|_: &str, _: &str, _: Option<&str>| {})
         },
     );
-    notifier.phone = Some(phone_push(auth));
+    notifier.phone = Some(phone_push(auth.clone()));
+    notifier.activity = Some(activity_push(auth));
     tokio::spawn(async move {
         const UPDATE_DEBOUNCE: Duration = Duration::from_secs(1);
         // Seed every baseline silently.
@@ -629,6 +695,33 @@ fn phone_push(auth: crate::Auth) -> Phone {
                 tracing::debug!(error = %err, "phone push not sent");
             }
         });
+    })
+}
+
+/// Hands chat phases to the server for the phones' Live Activities (`POST
+/// /activity`), in order: one at a time, so a quick working → done never
+/// lands the wrong way round.
+fn activity_push(auth: crate::Auth) -> Activity {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ActivityRow>();
+    tokio::spawn(async move {
+        while let Some(row) = rx.recv().await {
+            let Some(account) = auth.account() else { continue };
+            if let Err(err) = commutator_account::activity(
+                &account.server_url,
+                &account.token,
+                &row.chat_id,
+                &row.title,
+                row.project.as_deref(),
+                row.phase,
+            )
+            .await
+            {
+                tracing::debug!(error = %err, "activity not sent");
+            }
+        }
+    });
+    Box::new(move |row| {
+        let _ = tx.send(row.clone());
     })
 }
 
@@ -1036,6 +1129,37 @@ mod tests {
         notifier.flush(now + DONE_SETTLE);
         assert!(posted.lock().unwrap().is_empty());
         assert_eq!(*phoned.lock().unwrap(), vec![(Ping::Done, "Fix the build".into(), "a".into())]);
+    }
+
+    /// A chat's Live Activity row follows it: working, then done when a turn
+    /// completed, idle when it was stopped; side chats never show.
+    #[test]
+    fn chats_phases_go_to_the_live_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut notifier, _, _) = notifier(dir.path());
+        let sent: Arc<Mutex<Vec<(String, &'static str)>>> = Arc::default();
+        let sink = sent.clone();
+        notifier.activity = Some(Box::new(move |row| {
+            sink.lock().unwrap().push((row.chat_id.clone(), row.phase));
+        }));
+        let mut a = chat("a", "Fix the build", None);
+        a.cwd = Some("/src/commutator".into());
+        let chats = [a, chat("side", "Side", Some("a"))];
+        let now = chrono::Utc::now();
+        notifier.sessions(&[session("a", Some("t1"), now), working("side", None, now)], &chats, now);
+        notifier.sessions(&[working("a", Some("t1"), now), working("side", None, now)], &chats, now);
+        notifier.sessions(&[session("a", Some("t2"), now)], &chats, now);
+        notifier.sessions(&[working("a", Some("t2"), now)], &chats, now);
+        notifier.sessions(&[session("a", Some("t2"), now)], &chats, now);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec![
+                ("a".into(), "working"),
+                ("a".into(), "done"),
+                ("a".into(), "working"),
+                ("a".into(), "idle"),
+            ]
+        );
     }
 
     #[test]

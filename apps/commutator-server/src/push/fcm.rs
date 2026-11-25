@@ -128,15 +128,21 @@ impl Fcm {
     /// One push, as a data message: the app shows it (or not, in front) and
     /// opens the chat on a tap. `Ok(false)`: the token is dead, drop it.
     pub(crate) async fn send(&self, token: &str, note: &Notification) -> anyhow::Result<bool> {
+        let data = serde_json::json!({
+            "chatId": note.chat_id,
+            "kind": note.kind,
+            "title": note.title,
+            "body": note.body,
+        });
+        self.send_data(token, &data).await
+    }
+
+    /// A data message (string values only, as FCM wants).
+    pub(crate) async fn send_data(&self, token: &str, data: &serde_json::Value) -> anyhow::Result<bool> {
         let message = serde_json::json!({
             "message": {
                 "token": token,
-                "data": {
-                    "chatId": note.chat_id,
-                    "kind": note.kind,
-                    "title": note.title,
-                    "body": note.body,
-                },
+                "data": data,
                 "android": { "priority": "high" },
             }
         });

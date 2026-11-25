@@ -18,6 +18,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         let push = PushNotifications.shared
         push.install(app: app)
+        LiveActivities.shared.install(app: app)
         push.openChat = { [weak self] chatId in
             guard let router = self?.window?.rootViewController as? AppRouter else { return false }
             router.openSession(chatId)
@@ -30,6 +31,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         app.onSignOut = { [weak self] in
             guard let self else { return }
             push.signingOut()
+            LiveActivities.shared.endAll()
             self.app.signOutLocally()
             self.showRoot(animated: true)
         }
@@ -53,9 +55,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             showRoot(animated: false)
         }
         window.makeKeyAndVisible()
+        // Launched by a tap on the Live Activity.
+        if let url = connectionOptions.urlContexts.first?.url {
+            DispatchQueue.main.async { [weak self] in self?.openLink(url) }
+        }
         if !args.contains("-lab") { shellShown() }
 
         #if DEBUG
+        if args.contains("-live-activity-demo") { LiveActivities.shared.demo() }
+        if args.contains("-live-activity-preview") {
+            // After the demo's sign-in has put its own root up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { window.rootViewController = LiveActivities.preview() }
+        }
         TerminalProbe.runIfAsked(app: app, router: window.rootViewController as? AppRouter)
         #endif
         if let router = window.rootViewController as? AppRouter, let i = args.firstIndex(of: "-route"), i + 1 < args.count {
@@ -100,6 +111,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         UIView.transition(with: window, duration: 0.35, options: [.transitionCrossDissolve, .allowAnimatedContent]) {
             window.rootViewController = root
         }
+    }
+
+    /// `commutator://chat/<id>`: a Live Activity tapped (the auth callback
+    /// goes to its web-auth session, not here).
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        for context in URLContexts { openLink(context.url) }
+    }
+
+    private func openLink(_ url: URL) {
+        guard url.scheme == "commutator", url.host == "chat",
+              let id = url.pathComponents.dropFirst().first, app.isSignedIn,
+              let router = window?.rootViewController as? AppRouter
+        else { return }
+        router.openSession(id)
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {

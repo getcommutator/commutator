@@ -607,8 +607,10 @@ class AppModel(private val app: Application) {
     /** When the user last sent something (elapsed realtime). */
     private var lastDeliveryActivity = 0L
 
+    /** The person sent something (a new chat or a message): also brings up the agents' live update. */
     fun noteDeliveryActivity() {
         lastDeliveryActivity = SystemClock.elapsedRealtime()
+        push.armActivity()
     }
 
     fun onBackground() {

@@ -19396,6 +19396,23 @@ public func serverDevices(serverUrl: String, token: String)async throws  -> [Ser
         )
 }
 /**
+ * This phone's Live Activity went away.
+ */
+public func serverRemoveActivityTarget(serverUrl: String, token: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_func_server_remove_activity_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_void,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_void,
+            freeFunc: ffi_commutator_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+/**
  * This phone stops getting session notifications.
  */
 public func serverRemovePushTarget(serverUrl: String, token: String)async throws   {
@@ -19403,6 +19420,25 @@ public func serverRemovePushTarget(serverUrl: String, token: String)async throws
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_commutator_mobile_fn_func_server_remove_push_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_void,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_void,
+            freeFunc: ffi_commutator_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+/**
+ * This phone's Live Activity: `platform` `apns` (the card's ActivityKit push
+ * token, hex; `environment` `sandbox` or `production`) or `fcm` (the phone's
+ * FCM token; Android shows it as an ongoing notification).
+ */
+public func serverSetActivityTarget(serverUrl: String, token: String, platform: String, pushToken: String, environment: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_func_server_set_activity_target(FfiConverterString.lower(serverUrl),FfiConverterString.lower(token),FfiConverterString.lower(platform),FfiConverterString.lower(pushToken),FfiConverterString.lower(environment)
                 )
             },
             pollFunc: ffi_commutator_mobile_rust_future_poll_void,
@@ -19651,7 +19687,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_func_server_devices() != 25073) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_commutator_mobile_checksum_func_server_remove_activity_target() != 38857) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_commutator_mobile_checksum_func_server_remove_push_target() != 10687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_server_set_activity_target() != 53337) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_server_set_push_target() != 22337) {

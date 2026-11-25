@@ -36,6 +36,8 @@
 //! - `GET  /me`, `GET /devices`, `DELETE /devices/{id}` (bearer).
 //! - `PUT|DELETE /push/target`, `POST /push` (bearer): session
 //!   notifications on the account's phones (`push.rs`).
+//! - `POST /activity`, `PUT|DELETE /activity/target` (bearer): their Live
+//!   Activities (`push/activity.rs`).
 //! - `GET  /device/{id}/ws?role=host|client[&connId]` (bearer): the relay.
 //! - `GET  /preview/ws?device={id}` (bearer): WebRTC signaling between the
 //!   account's devices (`signal.rs`).
@@ -91,6 +93,7 @@ pub struct App {
     /// Pair codes → (user, expiry).
     pairs: Mutex<HashMap<String, (String, Instant)>>,
     push: push::Senders,
+    activities: push::activity::Board,
     rooms: relay::Rooms,
     signaling: signal::Signaling,
     http: reqwest::Client,
@@ -207,6 +210,7 @@ impl App {
         )?;
         db.execute_batch(push::SCHEMA)?;
         let _ = db.execute(push::PLATFORM_COLUMN, []);
+        db.execute_batch(push::activity::SCHEMA)?;
         // ponytail: added after launch; fails harmlessly once the column exists.
         let _ = db.execute("ALTER TABLE users ADD COLUMN picture TEXT", []);
         Ok(Arc::new(Self {
@@ -217,6 +221,7 @@ impl App {
             pairs: Mutex::default(),
             // ponytail: from the env, not `Config`, so the tests' configs stay as they are.
             push: push::Senders::from_env(),
+            activities: push::activity::Board::default(),
             rooms: relay::Rooms::default(),
             signaling: signal::Signaling::default(),
             http: reqwest::Client::builder()
@@ -355,6 +360,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/preview/ws", get(signal::preview_ws))
         .route("/push/target", axum::routing::put(push::put_target).delete(push::delete_target))
         .route("/push", post(push::post_push))
+        .route("/activity", post(push::activity::post_activity))
+        .route(
+            "/activity/target",
+            axum::routing::put(push::activity::put_target).delete(push::activity::delete_target),
+        )
         .with_state(app)
 }
 
