@@ -2294,6 +2294,7 @@ fn forwardable(method: &str) -> bool {
             | methods::GET_CHANGE_REQUEST
             | methods::GET_CHANGE_REQUEST_DIFF
             | methods::POST_CHANGE_REQUEST_COMMENT
+            | methods::ACT_ON_CHANGE_REQUEST
             | methods::POST_CHANGE_REQUEST_REVIEW_COMMENT
             | methods::REPLY_CHANGE_REQUEST_THREAD
             | methods::RESOLVE_CHANGE_REQUEST_THREAD
@@ -4042,6 +4043,9 @@ impl RpcService for EngineRpc {
                     cwd: Option<String>,
                     #[serde(default)]
                     filter: commutator_proto::ChangeRequestFilter,
+                    /// Open unless asked; older clients list open only.
+                    #[serde(default)]
+                    state: commutator_proto::ChangeRequestStateFilter,
                     #[serde(default)]
                     after: Option<String>,
                     #[serde(default)]
@@ -4063,7 +4067,7 @@ impl RpcService for EngineRpc {
                         Some(project) if self.github.is_gitlab(&project).await => {
                             let page = self
                                 .github
-                                .list_gitlab_page(&project, p.filter, p.after.as_deref(), p.refresh, p.cached)
+                                .list_gitlab_page(&project, p.filter, p.state, p.after.as_deref(), p.refresh, p.cached)
                                 .await
                                 .map_err(change_request_rpc_error)?;
                             return RpcReply::value(&page);
@@ -4093,6 +4097,7 @@ impl RpcService for EngineRpc {
                     .list_page(
                         &p.repository,
                         p.filter,
+                        p.state,
                         p.after.as_deref(),
                         p.refresh,
                         p.cached,
@@ -4157,6 +4162,22 @@ impl RpcService for EngineRpc {
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&serde_json::json!({ "resolved": now }))
+            }
+            methods::ACT_ON_CHANGE_REQUEST => {
+                #[derive(Deserialize)]
+                struct P {
+                    url: String,
+                    #[serde(flatten)]
+                    action: crate::source_control::ChangeRequestAction,
+                }
+                let p: P = parse_params(params)?;
+                match self.github.act(&p.url, &p.action).await {
+                    Ok(()) => RpcReply::value(&serde_json::json!({})),
+                    Err(crate::source_control::ActError::Refused(why)) => Err(RpcError::Failed(why)),
+                    Err(crate::source_control::ActError::Request(error)) => {
+                        Err(change_request_rpc_error(error))
+                    }
+                }
             }
             methods::POST_CHANGE_REQUEST_COMMENT => {
                 #[derive(Deserialize)]
@@ -6240,6 +6261,7 @@ mod tests {
         assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));
         assert!(forwardable(methods::POST_CHANGE_REQUEST_COMMENT));
         for method in [
+            methods::ACT_ON_CHANGE_REQUEST,
             methods::POST_CHANGE_REQUEST_REVIEW_COMMENT,
             methods::REPLY_CHANGE_REQUEST_THREAD,
             methods::RESOLVE_CHANGE_REQUEST_THREAD,

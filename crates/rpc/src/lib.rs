@@ -313,8 +313,8 @@ pub mod methods {
     pub const WATCH_WORKSPACE_GIT_STATUS: &str = "WatchWorkspaceGitStatus";
     /// Current pull request for one checkout, resolved on the checkout's host device.
     pub const WATCH_CHECKOUT_CHANGE_REQUEST: &str = "WatchCheckoutChangeRequest";
-    /// One page of a repository's open pull requests (`filter`, `after`
-    /// cursor), with the total count.
+    /// One page of a repository's pull requests (`filter`, `state`: open
+    /// unless given, `after` cursor), with the total count.
     pub const LIST_CHANGE_REQUEST_PAGE: &str = "ListChangeRequestPage";
     /// Resolve a selected checkout through local Git metadata only.
     pub const GET_CHANGE_REQUEST_REPOSITORY: &str = "GetChangeRequestRepository";
@@ -329,6 +329,10 @@ pub mod methods {
     /// opened again.
     pub const RESOLVE_CHANGE_REQUEST_THREAD: &str = "ResolveChangeRequestThread";
     pub const GET_CHANGE_REQUEST_DIFF: &str = "GetChangeRequestDiff";
+    /// `{url, action: "approve" | "merge" | "disableAutoMerge" | "ready" |
+    /// "close" | "reopen", method?: "squash" | "merge" | "rebase", auto?}` →
+    /// `{}`. A refusal is `Failed` with GitHub's reason.
+    pub const ACT_ON_CHANGE_REQUEST: &str = "ActOnChangeRequest";
     pub const GET_CHECKOUT_DIFF: &str = "GetCheckoutDiff";
     /// Permanently restore one chat-owned checkout to its current HEAD and
     /// remove only its untracked, non-ignored paths.
