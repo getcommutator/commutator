@@ -400,19 +400,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
 
     private func renderEmptyNotice(_ notice: SessionChrome.EmptyNotice?) {
         guard let notice else {
-            if let row = emptyNoticeRow, loader.superview === row.stack {
-                row.stack.removeArrangedSubview(loader)
-                loader.removeFromSuperview()
-                loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
-                row.stack.insertArrangedSubview(row.glyph, at: 0)
-                loaderConstraints = [
-                    loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                    loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
-                    loader.widthAnchor.constraint(equalToConstant: 12),
-                    loader.heightAnchor.constraint(equalToConstant: 12),
-                ]
-                NSLayoutConstraint.activate(loaderConstraints)
-            }
+            if let row = emptyNoticeRow, loader.superview === row.stack { returnLoader(from: row) }
             emptyNoticeRow?.stack.isHidden = true
             return
         }
@@ -432,28 +420,36 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
                 NSLayoutConstraint.deactivate(loaderConstraints)
                 loader.removeFromSuperview()
                 row.stack.insertArrangedSubview(loader, at: 0)
-                NSLayoutConstraint.activate([
-                    loader.widthAnchor.constraint(equalToConstant: 12),
-                    loader.heightAnchor.constraint(equalToConstant: 12),
-                ])
-            }
-        } else {
-            if loader.superview === row.stack {
-                row.stack.removeArrangedSubview(loader)
-                loader.removeFromSuperview()
-                loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
-                row.stack.insertArrangedSubview(row.glyph, at: 0)
                 loaderConstraints = [
-                    loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                    loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
                     loader.widthAnchor.constraint(equalToConstant: 12),
                     loader.heightAnchor.constraint(equalToConstant: 12),
                 ]
                 NSLayoutConstraint.activate(loaderConstraints)
             }
+        } else {
+            if loader.superview === row.stack { returnLoader(from: row) }
             row.glyph.kind = notice.isWorking ? .spinner : .dot(Palette.warning)
         }
         row.stack.isHidden = false
+    }
+
+    /// The opening loader leaves the notice row for the middle of the page.
+    /// Back in `view` first: centering it on `view` while it hangs outside
+    /// the hierarchy throws (no common ancestor).
+    private func returnLoader(from row: (stack: UIStackView, glyph: StatusGlyph, label: UILabel)) {
+        NSLayoutConstraint.deactivate(loaderConstraints)
+        row.stack.removeArrangedSubview(loader)
+        loader.removeFromSuperview()
+        row.stack.insertArrangedSubview(row.glyph, at: 0)
+        view.insertSubview(loader, aboveSubview: list)
+        loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
+        loaderConstraints = [
+            loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
+            loader.widthAnchor.constraint(equalToConstant: 12),
+            loader.heightAnchor.constraint(equalToConstant: 12),
+        ]
+        NSLayoutConstraint.activate(loaderConstraints)
     }
 
     private func makeEmptyNotice() -> (stack: UIStackView, glyph: StatusGlyph, label: UILabel) {
