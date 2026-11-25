@@ -47,7 +47,9 @@ run: $(ICNS)
 	exec $(DEV_APP)/Contents/MacOS/commutator
 
 dmg: app
-	hdiutil create -volname Commutator -srcfolder $(APP) -ov -format UDZO target/Commutator-$(VERSION).dmg
+	rm -rf target/dmg && mkdir -p target/dmg && ditto $(APP) target/dmg/$(notdir $(APP))
+	ln -s /Applications target/dmg/Applications  # drag-to-install target
+	hdiutil create -volname Commutator -srcfolder target/dmg -ov -format UDZO target/Commutator-$(VERSION).dmg
 
 # One-time: xcrun notarytool store-credentials $(NOTARY_PROFILE) --apple-id <id> --team-id Z7PK4B5KU2
 notarize: dmg
