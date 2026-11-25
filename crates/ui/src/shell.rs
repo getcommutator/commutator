@@ -1864,7 +1864,7 @@ pub struct Shell {
     /// Session-transient disclosure state, matching the Archived shelf.
     pub(super) pinned_open: bool,
     pub(super) sessions_open: bool,
-    /// The sidebar's archived accordion (t3code Sidebar): OPEN by default
+    /// The sidebar's archived accordion (t3code Sidebar): folded by default
     /// (user request), session-transient. `archived_shown` pages the
     /// expanded list ("Show more" reveals another page).
     pub(super) archived_open: bool,
@@ -2412,7 +2412,7 @@ impl Shell {
             bottom_stack_has_composer: std::rc::Rc::new(std::cell::Cell::new(false)),
             composer_dock: Default::default(),
             new_thread_artwork_ready: Default::default(),
-            archived_open: true,
+            archived_open: false,
             pinned_open: true,
             sessions_open: true,
             archived_shown: 0,

@@ -1294,6 +1294,7 @@ mod pinned_session_tests {
                 shell.settings.sidebar_show_branch = true;
                 shell.settings.sidebar_compact = compact;
                 shell.settings.sidebar_show_project_label = show_label;
+                shell.archived_open = true; // folded by default; these checks need its rows
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Local);
                     state.local_device_id = Some("local".into());
