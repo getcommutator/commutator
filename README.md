@@ -70,10 +70,11 @@ Other commands:
 - `commutator mcp` serves an MCP server on stdio, so agents can create and message chats.
 - `commutator update` installs the newest GitHub release after checking its sha256.
 
-The desktop app checks GitHub releases hourly. It downloads a newer one in the
-background, shows "Update ready — restart to apply" in the sidebar and
-installs it on quit if you never click; `COMMUTATOR_AUTO_UPDATE=0` leaves only
-the notice. A headless engine updates itself only with `COMMUTATOR_AUTO_UPDATE=1`.
+The desktop app checks GitHub releases hourly and shows "Update available" in
+the sidebar. Clicking it downloads the release, then "Update ready — restart to
+apply"; a downloaded update you never restart for installs on quit.
+`COMMUTATOR_AUTO_UPDATE=1` downloads in the background without the click, and
+is also what lets a headless engine update itself.
 
 ## Own server
 

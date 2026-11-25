@@ -1912,14 +1912,14 @@ fn auto_update_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// The desktop app downloads releases in the background and installs them on
-/// quit, unless `COMMUTATOR_AUTO_UPDATE=0|false|no`: then it only reports.
+/// The desktop app only reports a release and downloads it when the user clicks,
+/// unless `COMMUTATOR_AUTO_UPDATE=1|true|yes`: then it downloads in the background.
 pub fn desktop_auto_update_enabled() -> bool {
     desktop_auto_update(std::env::var("COMMUTATOR_AUTO_UPDATE").ok().as_deref())
 }
 
 fn desktop_auto_update(value: Option<&str>) -> bool {
-    !value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+    value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
 /// "Nothing would be interrupted by a restart right now" — wired by the engine
@@ -2976,11 +2976,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_desktop_updates_itself_unless_told_not_to() {
-        assert!(desktop_auto_update(None));
+    fn the_desktop_downloads_only_on_click_unless_told_to() {
+        assert!(!desktop_auto_update(None));
         assert!(desktop_auto_update(Some("1")));
+        assert!(desktop_auto_update(Some(" True ")));
         assert!(!desktop_auto_update(Some("0")));
-        assert!(!desktop_auto_update(Some(" False ")));
     }
 
     fn managed() -> InstallKind {
