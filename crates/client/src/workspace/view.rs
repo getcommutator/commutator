@@ -101,6 +101,9 @@ pub struct SessionRow {
     pub parent_chat_id: Option<String>,
     /// Sync room generation (2 = chat2; 1 = legacy, not dialable).
     pub room_gen: u32,
+    /// Processes the agent left running, oldest first; none once the row
+    /// goes stale (the engine took them with it).
+    pub background_tasks: Vec<commutator_proto::BackgroundTask>,
     /// Asleep until then (ms; the Activity view's Asleep), as
     /// [`Chat::sleep_state`] reads it at derive time. `None` when awake or
     /// woken.
@@ -427,6 +430,12 @@ fn hash_row(row: &SessionRow) -> u64 {
     row.send_state.hash(&mut h);
     row.parent_chat_id.hash(&mut h);
     row.room_gen.hash(&mut h);
+    for task in &row.background_tasks {
+        task.id.hash(&mut h);
+        task.command.hash(&mut h);
+        task.description.hash(&mut h);
+        task.started_at.timestamp_millis().hash(&mut h);
+    }
     row.sleep_until_ms.hash(&mut h);
     row.woke_at_ms.hash(&mut h);
     row.waits_on_process.hash(&mut h);
@@ -533,6 +542,7 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
         send_state,
         parent_chat_id: chat.parent_chat_id.clone(),
         room_gen: chat.room_gen.unwrap_or(1),
+        background_tasks: commutator_proto::view::background_tasks(session, cx.now).to_vec(),
         sleep_until_ms,
         woke_at_ms,
         waits_on_process,

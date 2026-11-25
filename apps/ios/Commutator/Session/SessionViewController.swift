@@ -261,6 +261,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         state.sideChats = sides
         state.terminals = tabs.count
         state.liveTerminals = tabs.filter(\.isLive).count
+        state.background = app.sessionBackground(chatId).count
         let wasEmpty = strip.state.isEmpty
         if state != strip.state {
             strip.apply(state)

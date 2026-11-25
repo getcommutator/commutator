@@ -462,6 +462,10 @@ impl SessionCore {
             last_submitted_message_id: st.last_submitted.clone(),
             context_usage: st.context_usage,
             transcript_load,
+            background: row
+                .as_ref()
+                .map(|r| r.background_tasks.clone())
+                .unwrap_or_default(),
         };
         let current = self.composer();
         next.revision = current.revision;
@@ -650,6 +654,7 @@ fn empty_composer(chat_id: &str) -> ComposerState {
         last_submitted_message_id: None,
         context_usage: None,
         transcript_load: TranscriptLoad::Ready,
+        background: Vec::new(),
     }
 }
 
@@ -1381,6 +1386,34 @@ impl SessionHandle {
                 Err(ClientError::HostUnavailable(message))
             }
         }
+    }
+
+    /// Ask the host to stop one of [`ComposerState::background`]. `false`
+    /// when it isn't listed any more (it ended meanwhile); it leaves the list
+    /// when the agent reports it gone, not on this call.
+    pub async fn stop_background_task(&self, task_id: &str) -> Result<bool> {
+        let reply = self
+            .queue_rpc(
+                commutator_rpc::methods::STOP_BACKGROUND_TASK,
+                serde_json::json!({ "chatId": self.core.chat_id, "taskId": task_id }),
+            )
+            .await?;
+        Ok(reply.get("stopping").and_then(|v| v.as_bool()) == Some(true))
+    }
+
+    /// The tail of one background process's output; `None` once it isn't
+    /// listed.
+    pub async fn background_task_output(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<commutator_proto::BackgroundTaskOutput>> {
+        let reply = self
+            .queue_rpc(
+                commutator_rpc::methods::READ_BACKGROUND_TASK_OUTPUT,
+                serde_json::json!({ "chatId": self.core.chat_id, "taskId": task_id }),
+            )
+            .await?;
+        serde_json::from_value(reply).map_err(|err| ClientError::HostUnavailable(err.to_string()))
     }
 
     /// Deliver a queued row now (interrupting the live turn if needed).

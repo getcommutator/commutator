@@ -285,6 +285,9 @@ pub struct ComposerState {
     pub context_usage: Option<ContextUsage>,
     /// What to show in place of an empty transcript, if anything.
     pub transcript_load: TranscriptLoad,
+    /// Processes the chat's agent left running, oldest first: "2 running"
+    /// above the composer, each readable and stoppable.
+    pub background: Vec<BackgroundTaskRow>,
 }
 
 impl From<&zc::ComposerState> for ComposerState {
@@ -381,8 +384,38 @@ impl From<&zc::ComposerState> for ComposerState {
                 window: u.window,
             }),
             transcript_load: c.transcript_load.into(),
+            background: c
+                .background
+                .iter()
+                .map(|t| BackgroundTaskRow {
+                    id: t.id.clone(),
+                    command: t.command.clone(),
+                    description: t.description.clone(),
+                    started_at_ms: t.started_at.timestamp_millis(),
+                })
+                .collect(),
         }
     }
+}
+
+/// A process the chat's agent left running (a dev server, a watcher).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BackgroundTaskRow {
+    /// What `stop_background_task` and `background_task_output` address.
+    pub id: String,
+    /// The command line (or the agent's description when it never said).
+    pub command: String,
+    /// The agent's one-line description, when it gave one.
+    pub description: Option<String>,
+    pub started_at_ms: i64,
+}
+
+/// The tail of a background process's output, plain text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BackgroundOutput {
+    pub text: String,
+    /// Earlier output was cut off.
+    pub truncated: bool,
 }
 
 /// Transcript-level facts the platform needs without the rows (loader vs
@@ -661,6 +694,28 @@ impl SessionHandle {
     pub async fn deliver_queued_now(&self, id: String) -> CoreResult<bool> {
         let inner = self.inner.clone();
         on_runtime(async move { inner.deliver_queued_now(&id).await }).await
+    }
+
+    /// Ask the host to stop one background process. `false` when it isn't
+    /// listed any more; it leaves `ComposerState.background` when the agent
+    /// reports it gone.
+    pub async fn stop_background_task(&self, task_id: String) -> CoreResult<bool> {
+        let inner = self.inner.clone();
+        on_runtime(async move { inner.stop_background_task(&task_id).await }).await
+    }
+
+    /// The tail of one background process's output; `None` once it isn't
+    /// listed.
+    pub async fn background_task_output(
+        &self,
+        task_id: String,
+    ) -> CoreResult<Option<BackgroundOutput>> {
+        let inner = self.inner.clone();
+        let output = on_runtime(async move { inner.background_task_output(&task_id).await }).await?;
+        Ok(output.map(|o| BackgroundOutput {
+            text: o.text,
+            truncated: o.truncated,
+        }))
     }
 
     /// Remove a queued row (applied locally after the host acks).

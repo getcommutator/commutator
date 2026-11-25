@@ -731,6 +731,20 @@ class AppModel(private val app: Application) {
         return handle?.subagents().orEmpty()
     }
 
+    /** Processes the session's agent left running (a dev server, a watcher), oldest first. */
+    fun sessionBackground(chatId: String): List<uniffi.commutator_core.BackgroundTaskRow> {
+        if ("--sub--" in chatId) return emptyList()
+        return _client.value?.session(chatId)?.composer()?.background.orEmpty()
+    }
+
+    /** Ask the session's host to stop one; it leaves the list when the agent reports it gone. */
+    suspend fun stopBackgroundTask(chatId: String, id: String): Boolean =
+        _client.value?.session(chatId)?.stopBackgroundTask(id) ?: false
+
+    /** The tail of one's output; null once it isn't listed. */
+    suspend fun backgroundOutput(chatId: String, id: String): uniffi.commutator_core.BackgroundOutput? =
+        _client.value?.session(chatId)?.backgroundTaskOutput(id)
+
     /**
      * Side chats started here that nothing has been sent in yet: closed
      * unused, they go (the desktop only writes one at its first send). Kept

@@ -6,11 +6,12 @@ import UIKit
 /// session; beside it on iPad and the unfolded iPhone Duo, the inspector.
 final class CompanionsViewController: UIViewController, UICollectionViewDelegate {
     enum Section: Int, CaseIterable {
-        case agents, sideChats, terminals
+        case agents, background, sideChats, terminals
 
         var title: String {
             switch self {
             case .agents: "Agents"
+            case .background: "Running in the background"
             case .sideChats: "Side chats"
             case .terminals: "Terminals"
             }
@@ -24,6 +25,7 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
     private enum Item: Hashable {
         case header(Section)
         case agent(String)
+        case background(String)
         case sideChat(String)
         case terminal(ObjectIdentifier)
         case action(Action)
@@ -44,6 +46,10 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
     private var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
     private var agents: [String: SubagentRow] = [:]
+    private var background: [String: BackgroundTaskRow] = [:]
+    /// Stops asked for: the row reads "Stopping…" until the agent reports
+    /// the process gone.
+    private var stopping = Set<String>()
     private var sides: [String: SessionRowVM] = [:]
     private var terminals: [ObjectIdentifier: TerminalTab] = [:]
     private var tokens: [AnyObject] = []
@@ -91,6 +97,10 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
             guard let row = self?.agents[id] else { return }
             cell.configure(agent: row)
         }
+        let process = UICollectionView.CellRegistration<CompanionCell, String> { [weak self] cell, _, id in
+            guard let self, let row = self.background[id] else { return }
+            cell.configure(background: row, stopping: self.stopping.contains(id))
+        }
         let side = UICollectionView.CellRegistration<SessionCell, String> { [weak self] cell, _, id in
             guard let vm = self?.sides[id] else { return }
             cell.configure(vm)
@@ -107,6 +117,7 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
             var c = UIListContentConfiguration.cell()
             c.text = switch section {
             case .agents: "No subagents yet"
+            case .background: "Nothing running"
             case .sideChats: "Ask something on the side without derailing the main thread."
             case .terminals: "A shell on this session's computer, in its folder."
             }
@@ -122,6 +133,7 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
             switch item {
             case let .header(s): cv.dequeueConfiguredReusableCell(using: header, for: path, item: s)
             case let .agent(id): cv.dequeueConfiguredReusableCell(using: agent, for: path, item: id)
+            case let .background(id): cv.dequeueConfiguredReusableCell(using: process, for: path, item: id)
             case let .sideChat(id): cv.dequeueConfiguredReusableCell(using: side, for: path, item: id)
             case let .terminal(id): cv.dequeueConfiguredReusableCell(using: terminal, for: path, item: id)
             case let .action(a): cv.dequeueConfiguredReusableCell(using: action, for: path, item: a)
@@ -169,13 +181,14 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
     private func tick() {
         var s = dataSource.snapshot()
         let live = agents.values.filter { $0.state == .running }.map { Item.agent($0.id) }
+            + background.keys.map { Item.background($0) }
         guard !live.isEmpty else { return }
         s.reconfigureItems(live.filter { s.indexOfItem($0) != nil })
         dataSource.apply(s, animatingDifferences: false)
     }
 
     private func headerButton(_ section: Section) -> UIButton? {
-        guard section != .agents else { return nil }
+        guard section != .agents, section != .background else { return nil }
         let button = UIButton(configuration: {
             var c = UIButton.Configuration.glass()
             c.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold))
@@ -221,12 +234,18 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
             let (ra, rb) = (a.element.state == .running, b.element.state == .running)
             return ra != rb ? ra : a.offset > b.offset
         }.map(\.element)
+        let processRows = app.sessionBackground(chatId)
         let sideRows = app.sideChats(of: chatId)
         let tabs = app.terminals.tabs(for: chatId)
         var changed: [Item] = []
         let oldAgents = agents
         agents = Dictionary(agentRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         changed += agents.filter { oldAgents[$0.key] != $0.value }.map { .agent($0.key) }
+        let oldBackground = background
+        background = Dictionary(processRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        changed += background.filter { oldBackground[$0.key] != $0.value }.map { .background($0.key) }
+        // A stop is done once the process has left the list.
+        stopping.formIntersection(background.keys)
         let oldSides = sides
         sides = Dictionary(sideRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         changed += sides.filter { oldSides[$0.key] != $0.value }.map { .sideChat($0.key) }
@@ -237,6 +256,10 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
         if !ordered.isEmpty {
             s.appendSections([.agents])
             s.appendItems([.header(.agents)] + ordered.map { .agent($0.id) }, toSection: .agents)
+        }
+        if !processRows.isEmpty {
+            s.appendSections([.background])
+            s.appendItems([.header(.background)] + processRows.map { .background($0.id) }, toSection: .background)
         }
         s.appendSections([.sideChats])
         s.appendItems([.header(.sideChats)] + (sideRows.isEmpty ? [.empty(.sideChats)] : sideRows.map { .sideChat($0.id) }), toSection: .sideChats)
@@ -274,6 +297,9 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
         case let .agent(id):
             guard let row = agents[id], let doc = row.docId else { return }
             open?(SubagentViewController(app: app, parentId: chatId, docId: doc, title: row.title, running: row.state == .running))
+        case let .background(id):
+            guard let row = background[id] else { return }
+            open?(BackgroundOutputViewController(app: app, chatId: chatId, task: row))
         case let .sideChat(id):
             openSideChat?(id)
         case let .terminal(id):
@@ -328,8 +354,32 @@ final class CompanionsViewController: UIViewController, UICollectionViewDelegate
         dataSource.apply(s, animatingDifferences: false)
     }
 
+    /// Ask the host to stop one; it stays listed, dimmed, until it's gone.
+    func stopBackground(_ id: String) {
+        guard !stopping.contains(id) else { return }
+        stopping.insert(id)
+        reconfigure(.background(id))
+        Task { @MainActor in
+            do {
+                _ = try await app.stopBackgroundTask(chatId, id: id)
+            } catch {
+                stopping.remove(id)
+                reconfigure(.background(id))
+                Toast.show("Couldn't stop that process", in: view.window)
+            }
+        }
+    }
+
     private func trailingSwipe(_ path: IndexPath) -> UISwipeActionsConfiguration? {
         switch dataSource.itemIdentifier(for: path) {
+        case let .background(id):
+            guard !stopping.contains(id) else { return nil }
+            let stop = UIContextualAction(style: .destructive, title: "Stop") { [weak self] _, _, done in
+                self?.stopBackground(id)
+                done(true)
+            }
+            stop.image = UIImage(systemName: "stop.fill")
+            return UISwipeActionsConfiguration(actions: [stop])
         case let .terminal(id):
             guard let tab = terminals[id] else { return nil }
             let close = UIContextualAction(style: .destructive, title: "Close") { [weak self] _, _, done in
@@ -398,6 +448,7 @@ final class CompanionCell: UICollectionViewListCell {
     }
 
     private func styleText(titleColor: UIColor = Palette.text) {
+        contentView.alpha = 1
         title.font = Fonts.ui(.sansMedium, TypeScale.size(16))
         title.textColor = titleColor
         detail.font = Fonts.ui(.sans, TypeScale.size(13.5))
@@ -434,6 +485,31 @@ final class CompanionCell: UICollectionViewListCell {
         chevron.isHidden = row.docId == nil
         accessibilityIdentifier = "companion-agent"
         accessibilityLabel = "\(row.title), \(row.state == .running ? "working" : row.state == .failed ? "failed" : "done")"
+        setNeedsLayout()
+    }
+
+    func configure(background row: BackgroundTaskRow, stopping: Bool) {
+        accent = false
+        styleText()
+        tile.backgroundColor = Palette.accentSoft
+        icon.image = UIImage(systemName: "apple.terminal", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        icon.tintColor = StatusTone.working
+        icon.isHidden = false
+        glyph.isHidden = true
+        title.font = Fonts.ui(.mono, TypeScale.size(14))
+        title.text = row.command.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? row.command
+        detail.text = row.description ?? "Started by the agent"
+        if stopping {
+            trailing.text = "Stopping…"
+            trailing.textColor = Palette.tertiary
+        } else {
+            trailing.text = SubagentFormat.elapsed(since: Date(timeIntervalSince1970: Double(row.startedAtMs) / 1000))
+            trailing.textColor = StatusTone.working
+        }
+        contentView.alpha = stopping ? 0.55 : 1
+        chevron.isHidden = false
+        accessibilityIdentifier = "companion-background"
+        accessibilityLabel = "\(title.text ?? ""), \(stopping ? "stopping" : "running \(trailing.text ?? "")")"
         setNeedsLayout()
     }
 

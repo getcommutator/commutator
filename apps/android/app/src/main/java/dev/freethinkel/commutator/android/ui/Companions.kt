@@ -52,7 +52,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
@@ -66,6 +70,8 @@ import dev.freethinkel.commutator.android.core.AppModel
 import dev.freethinkel.commutator.android.core.TerminalTab
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
+import uniffi.commutator_core.BackgroundOutput
+import uniffi.commutator_core.BackgroundTaskRow
 import uniffi.commutator_core.CoreException
 import uniffi.commutator_core.SessionRow
 import uniffi.commutator_core.SubagentRow
@@ -73,14 +79,24 @@ import uniffi.commutator_core.SubagentState
 import uniffi.commutator_core.TerminalPhase
 
 /** The companions sheet's sections (each chip opens its own). */
-enum class CompanionSection(val title: String) { Agents("Agents"), SideChats("Side chats"), Terminals("Terminals") }
+enum class CompanionSection(val title: String) {
+    Agents("Agents"),
+    Background("Running in the background"),
+    SideChats("Side chats"),
+    Terminals("Terminals"),
+}
 
-/** What's working alongside one session: its subagents, side chats and terminals. */
+/** What's working alongside one session: its subagents, background processes, side chats and terminals. */
 @Stable
-class Companions(val agents: List<SubagentRow>, val sideChats: List<SessionRow>, val terminals: List<TerminalTab>) {
+class Companions(
+    val agents: List<SubagentRow>,
+    val sideChats: List<SessionRow>,
+    val terminals: List<TerminalTab>,
+    val background: List<BackgroundTaskRow> = emptyList(),
+) {
     val runningAgents: Int get() = agents.count { it.state == SubagentState.RUNNING }
     val liveTerminals: Int get() = terminals.count { it.isLive }
-    val isEmpty: Boolean get() = agents.isEmpty() && sideChats.isEmpty() && terminals.isEmpty()
+    val isEmpty: Boolean get() = agents.isEmpty() && sideChats.isEmpty() && terminals.isEmpty() && background.isEmpty()
 }
 
 /**
@@ -94,6 +110,7 @@ fun rememberCompanions(model: AppModel, chatId: String, includeSideChats: Boolea
         model.sessionSubagents(chatId),
         if (includeSideChats) model.sideChats(chatId) else emptyList(),
         model.terminals.tabs(chatId),
+        model.sessionBackground(chatId),
     )
     var value by remember(chatId) { mutableStateOf(load()) }
     LaunchedEffect(chatId, includeSideChats) {
@@ -131,6 +148,12 @@ fun CompanionStrip(c: Companions, onTap: (CompanionSection) -> Unit, modifier: M
                 label = if (running > 0) "$running subagents working" else "${c.agents.size} subagents",
                 spinning = running > 0,
             ) { tap(CompanionSection.Agents) }
+        }
+        AnimatedVisibility(c.background.isNotEmpty(), enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
+            val n = c.background.size
+            CompanionChip(ZIcons.Terminal, "$n running", "$n background process${if (n == 1) "" else "es"} running", dot = MaterialTheme.colorScheme.primary) {
+                tap(CompanionSection.Background)
+            }
         }
         AnimatedVisibility(c.sideChats.isNotEmpty(), enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
             CompanionChip(ZIcons.SideChats, "${c.sideChats.size}", "${c.sideChats.size} side chats") { tap(CompanionSection.SideChats) }
@@ -231,6 +254,24 @@ fun CompanionsContent(
             now = System.currentTimeMillis()
         }
     }
+    // The background process whose output is open, and the stops asked for
+    // (a row reads "Stopping…" until the agent reports the process gone).
+    var openProcess by remember { mutableStateOf<String?>(null) }
+    var stopping by remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(c.background) { stopping = stopping.intersect(c.background.map { it.id }.toSet()) }
+    fun stop(id: String) {
+        if (id in stopping) return
+        stopping = stopping + id
+        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        scope.launch {
+            try {
+                model.stopBackgroundTask(chatId, id)
+            } catch (e: Exception) {
+                stopping = stopping - id
+                model.toast("Couldn't stop that process")
+            }
+        }
+    }
     fun newSideChat() {
         val id = model.createSideChat(chatId) ?: return model.toast("Couldn't start a side chat")
         dismissThen { onOpenSideChat(id) }
@@ -260,9 +301,11 @@ fun CompanionsContent(
         val section = initialSection ?: return@LaunchedEffect
         // Items: title, [agents header + rows], side chats header + rows (or empty text + 2 actions), terminals…
         val first = if (showTitle) 1 else 0
-        val sides = first + if (agents.isNotEmpty()) agents.size + 1 else 0
+        val processes = first + if (agents.isNotEmpty()) agents.size + 1 else 0
+        val sides = processes + if (c.background.isNotEmpty()) c.background.size + 1 else 0
         val index = when (section) {
             CompanionSection.Agents -> first
+            CompanionSection.Background -> processes
             CompanionSection.SideChats -> sides
             CompanionSection.Terminals -> sides + 1 + if (c.sideChats.isEmpty()) 3 else c.sideChats.size
         }
@@ -287,6 +330,21 @@ fun CompanionsContent(
                 header(CompanionSection.Agents)
                 itemsIndexed(agents, key = { _, a -> "agent/${a.id}" }) { i, a ->
                     AgentRow(a, i, agents.size, now, Modifier.animateItem()) { onOpen -> if (onOpen) dismissThen { onOpenSubagent(a) } }
+                }
+            }
+            if (c.background.isNotEmpty()) {
+                header(CompanionSection.Background)
+                itemsIndexed(c.background, key = { _, t -> "bg/${t.id}" }) { i, task ->
+                    val isStopping = task.id in stopping
+                    Swipeable(ZIcons.Close, "Stop", Modifier.animateItem(), onSwipe = { stop(task.id) }, index = i, count = c.background.size, destructive = true) {
+                        BackgroundRow(
+                            model, chatId, task, i, c.background.size, now,
+                            open = openProcess == task.id,
+                            stopping = isStopping,
+                            onClick = { openProcess = if (openProcess == task.id) null else task.id },
+                            onStop = { stop(task.id) },
+                        )
+                    }
                 }
             }
             header(CompanionSection.SideChats) {
@@ -410,6 +468,81 @@ private fun AgentRow(a: SubagentRow, index: Int, count: Int, now: Long, modifier
             null
         },
     ) { Text(a.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+/**
+ * One process the agent left running: its command, how long it has run, and
+ * Stop. A tap opens the tail of its output beneath it, read once a second
+ * while open, following the end.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun BackgroundRow(
+    model: AppModel,
+    chatId: String,
+    task: BackgroundTaskRow,
+    index: Int,
+    count: Int,
+    now: Long,
+    open: Boolean,
+    stopping: Boolean,
+    onClick: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val command = task.command.lineSequence().firstOrNull().orEmpty()
+    var output by remember(task.id) { mutableStateOf<BackgroundOutput?>(null) }
+    if (open) {
+        LaunchedEffect(task.id) {
+            while (true) {
+                runCatching { model.backgroundOutput(chatId, task.id) }.getOrNull()?.let { output = it }
+                delay(1000)
+            }
+        }
+    }
+    Column(Modifier.padding(bottom = ListItemDefaults.SegmentedGap).alpha(if (stopping) 0.55f else 1f)) {
+        SegmentedListItem(
+            onClick = onClick,
+            shapes = segmentedShapes(index, count),
+            colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+            leadingContent = { Tile(scheme.primaryContainer) { ZIcon(ZIcons.Terminal, null, Modifier.size(22.dp), tint = scheme.onPrimaryContainer) } },
+            supportingContent = { Text(task.description ?: "Started by the agent", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            trailingContent = {
+                if (stopping) {
+                    Text("Stopping…", style = MaterialTheme.typography.labelLarge, color = scheme.outline)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(SubagentFormat.elapsedSince(task.startedAtMs, now), style = MaterialTheme.typography.labelLarge, color = scheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        TonalCircleButton(ZIcons.Close, "Stop $command", onClick = onStop, size = 32.dp)
+                    }
+                }
+            },
+            modifier = Modifier.semantics { contentDescription = "$command, ${if (stopping) "stopping" else "running"}" },
+        ) { Text(command, style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        AnimatedVisibility(open) {
+            val scroll = rememberScrollState()
+            val text = output?.let { o ->
+                val body = o.text.ifEmpty { "No output yet" }
+                if (o.truncated) "Earlier output not shown\n\n$body" else body
+            } ?: "No output yet"
+            // Follow the end as it grows.
+            LaunchedEffect(text) { scroll.scrollTo(scroll.maxValue) }
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(scheme.surfaceContainerHighest)
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(scroll)
+                    .padding(12.dp),
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

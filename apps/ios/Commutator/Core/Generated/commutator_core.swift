@@ -3291,6 +3291,12 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      */
     func subagents()  -> [SubagentRow]
     
+    /**
+     * The tail of one background process's output; `None` once it isn't
+     * listed.
+     */
+    func backgroundTaskOutput(taskId: String) async throws  -> BackgroundOutput?
+    
     func beginQueuedEdit(id: String, instanceId: String) async  -> QueueEditStart
     
     func chatId()  -> String
@@ -3363,6 +3369,13 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      */
     func setViewAttached(attached: Bool) 
     
+    /**
+     * Ask the host to stop one background process. `false` when it isn't
+     * listed any more; it leaves `ComposerState.background` when the agent
+     * reports it gone.
+     */
+    func stopBackgroundTask(taskId: String) async throws  -> Bool
+    
     func transcriptStatus()  -> TranscriptStatus
     
 }
@@ -3433,6 +3446,26 @@ open func subagents() -> [SubagentRow]  {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * The tail of one background process's output; `None` once it isn't
+     * listed.
+     */
+open func backgroundTaskOutput(taskId: String)async throws  -> BackgroundOutput?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_method_sessionhandle_background_task_output(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(taskId)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_commutator_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeBackgroundOutput.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
     
 open func beginQueuedEdit(id: String, instanceId: String)async  -> QueueEditStart  {
@@ -3689,6 +3722,27 @@ open func setViewAttached(attached: Bool)  {try! rustCall() {
         FfiConverterBool.lower(attached),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Ask the host to stop one background process. `false` when it isn't
+     * listed any more; it leaves `ComposerState.background` when the agent
+     * reports it gone.
+     */
+open func stopBackgroundTask(taskId: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_method_sessionhandle_stop_background_task(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(taskId)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_i8,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_i8,
+            freeFunc: ffi_commutator_mobile_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
     
 open func transcriptStatus() -> TranscriptStatus  {
@@ -5858,6 +5912,152 @@ public func FfiConverterTypeAppshotLabel_lower(_ value: AppshotLabel) -> RustBuf
 }
 
 
+/**
+ * The tail of a background process's output, plain text.
+ */
+public struct BackgroundOutput: Equatable, Hashable {
+    public var text: String
+    /**
+     * Earlier output was cut off.
+     */
+    public var truncated: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, 
+        /**
+         * Earlier output was cut off.
+         */truncated: Bool) {
+        self.text = text
+        self.truncated = truncated
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BackgroundOutput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBackgroundOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BackgroundOutput {
+        return
+            try BackgroundOutput(
+                text: FfiConverterString.read(from: &buf), 
+                truncated: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BackgroundOutput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.truncated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundOutput_lift(_ buf: RustBuffer) throws -> BackgroundOutput {
+    return try FfiConverterTypeBackgroundOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundOutput_lower(_ value: BackgroundOutput) -> RustBuffer {
+    return FfiConverterTypeBackgroundOutput.lower(value)
+}
+
+
+/**
+ * A process the chat's agent left running (a dev server, a watcher).
+ */
+public struct BackgroundTaskRow: Equatable, Hashable {
+    /**
+     * What `stop_background_task` and `background_task_output` address.
+     */
+    public var id: String
+    /**
+     * The command line (or the agent's description when it never said).
+     */
+    public var command: String
+    /**
+     * The agent's one-line description, when it gave one.
+     */
+    public var description: String?
+    public var startedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What `stop_background_task` and `background_task_output` address.
+         */id: String, 
+        /**
+         * The command line (or the agent's description when it never said).
+         */command: String, 
+        /**
+         * The agent's one-line description, when it gave one.
+         */description: String?, startedAtMs: Int64) {
+        self.id = id
+        self.command = command
+        self.description = description
+        self.startedAtMs = startedAtMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BackgroundTaskRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBackgroundTaskRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BackgroundTaskRow {
+        return
+            try BackgroundTaskRow(
+                id: FfiConverterString.read(from: &buf), 
+                command: FfiConverterString.read(from: &buf), 
+                description: FfiConverterOptionString.read(from: &buf), 
+                startedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BackgroundTaskRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterOptionString.write(value.description, into: &buf)
+        FfiConverterInt64.write(value.startedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundTaskRow_lift(_ buf: RustBuffer) throws -> BackgroundTaskRow {
+    return try FfiConverterTypeBackgroundTaskRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundTaskRow_lower(_ value: BackgroundTaskRow) -> RustBuffer {
+    return FfiConverterTypeBackgroundTaskRow.lower(value)
+}
+
+
 public struct BoxPrim: Equatable, Hashable {
     public var x: Float
     public var y: Float
@@ -6084,6 +6284,11 @@ public struct ComposerState: Equatable, Hashable {
      * What to show in place of an empty transcript, if anything.
      */
     public var transcriptLoad: TranscriptLoad
+    /**
+     * Processes the chat's agent left running, oldest first: "2 running"
+     * above the composer, each readable and stoppable.
+     */
+    public var background: [BackgroundTaskRow]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6114,7 +6319,11 @@ public struct ComposerState: Equatable, Hashable {
          */lastSubmittedMessageId: String?, contextUsage: ContextUsage?, 
         /**
          * What to show in place of an empty transcript, if anything.
-         */transcriptLoad: TranscriptLoad) {
+         */transcriptLoad: TranscriptLoad, 
+        /**
+         * Processes the chat's agent left running, oldest first: "2 running"
+         * above the composer, each readable and stoppable.
+         */background: [BackgroundTaskRow]) {
         self.chatId = chatId
         self.revision = revision
         self.title = title
@@ -6131,6 +6340,7 @@ public struct ComposerState: Equatable, Hashable {
         self.lastSubmittedMessageId = lastSubmittedMessageId
         self.contextUsage = contextUsage
         self.transcriptLoad = transcriptLoad
+        self.background = background
     }
 
     
@@ -6164,7 +6374,8 @@ public struct FfiConverterTypeComposerState: FfiConverterRustBuffer {
                 queueError: FfiConverterOptionString.read(from: &buf), 
                 lastSubmittedMessageId: FfiConverterOptionString.read(from: &buf), 
                 contextUsage: FfiConverterOptionTypeContextUsage.read(from: &buf), 
-                transcriptLoad: FfiConverterTypeTranscriptLoad.read(from: &buf)
+                transcriptLoad: FfiConverterTypeTranscriptLoad.read(from: &buf), 
+                background: FfiConverterSequenceTypeBackgroundTaskRow.read(from: &buf)
         )
     }
 
@@ -6185,6 +6396,7 @@ public struct FfiConverterTypeComposerState: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.lastSubmittedMessageId, into: &buf)
         FfiConverterOptionTypeContextUsage.write(value.contextUsage, into: &buf)
         FfiConverterTypeTranscriptLoad.write(value.transcriptLoad, into: &buf)
+        FfiConverterSequenceTypeBackgroundTaskRow.write(value.background, into: &buf)
     }
 }
 
@@ -17405,6 +17617,30 @@ fileprivate struct FfiConverterOptionTypeAppshotLabel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeBackgroundOutput: FfiConverterRustBuffer {
+    typealias SwiftType = BackgroundOutput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBackgroundOutput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBackgroundOutput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeChatConfig: FfiConverterRustBuffer {
     typealias SwiftType = ChatConfig?
 
@@ -17880,6 +18116,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBackgroundTaskRow: FfiConverterRustBuffer {
+    typealias SwiftType = [BackgroundTaskRow]
+
+    public static func write(_ value: [BackgroundTaskRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBackgroundTaskRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BackgroundTaskRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BackgroundTaskRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBackgroundTaskRow.read(from: &buf))
         }
         return seq
     }
@@ -19713,6 +19974,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_subagents() != 26004) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_commutator_mobile_checksum_method_sessionhandle_background_task_output() != 55873) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_begin_queued_edit() != 36763) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19768,6 +20032,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_set_view_attached() != 42435) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_method_sessionhandle_stop_background_task() != 39990) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_transcript_status() != 55893) {

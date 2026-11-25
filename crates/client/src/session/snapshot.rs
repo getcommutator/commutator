@@ -352,6 +352,8 @@ pub struct ComposerState {
     pub context_usage: Option<ContextUsage>,
     /// What to show in place of an empty transcript, if anything.
     pub transcript_load: TranscriptLoad,
+    /// Processes the chat's agent left running, oldest first.
+    pub background: Vec<commutator_proto::BackgroundTask>,
 }
 
 #[cfg(test)]

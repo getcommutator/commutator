@@ -11,8 +11,10 @@ final class CompanionStrip: UIView {
         var sideChats = 0
         var terminals = 0
         var liveTerminals = 0
+        /// Processes the agent left running.
+        var background = 0
 
-        var isEmpty: Bool { agents == 0 && sideChats == 0 && terminals == 0 }
+        var isEmpty: Bool { agents == 0 && sideChats == 0 && terminals == 0 && background == 0 }
     }
 
     var onTap: ((CompanionsViewController.Section) -> Void)?
@@ -21,6 +23,7 @@ final class CompanionStrip: UIView {
     private let agents = CompanionChip()
     private let sides = CompanionChip()
     private let terminals = CompanionChip()
+    private let background = CompanionChip()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -34,7 +37,7 @@ final class CompanionStrip: UIView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        for (chip, section, id) in [(agents, CompanionsViewController.Section.agents, "chip-agents"), (sides, .sideChats, "chip-side-chats"), (terminals, .terminals, "chip-terminals")] {
+        for (chip, section, id) in [(agents, CompanionsViewController.Section.agents, "chip-agents"), (background, .background, "chip-background"), (sides, .sideChats, "chip-side-chats"), (terminals, .terminals, "chip-terminals")] {
             chip.addAction(UIAction { [weak self] _ in
                 UISelectionFeedbackGenerator().selectionChanged()
                 self?.onTap?(section)
@@ -57,6 +60,13 @@ final class CompanionStrip: UIView {
         } else {
             agents.configure(glyph: nil, symbol: "tool-bot", text: "\(s.agents)", label: "\(s.agents) subagents")
         }
+        background.isHidden = s.background == 0
+        background.configure(
+            glyph: .dot(StatusTone.working),
+            symbol: "apple.terminal",
+            text: "\(s.background) running",
+            label: "\(s.background) background \(s.background == 1 ? "process" : "processes") running"
+        )
         sides.isHidden = s.sideChats == 0
         sides.configure(glyph: nil, symbol: "bubble.left.and.bubble.right", text: "\(s.sideChats)", label: "\(s.sideChats) side chats")
         terminals.isHidden = s.terminals == 0
