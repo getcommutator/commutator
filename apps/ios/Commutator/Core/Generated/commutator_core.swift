@@ -3291,6 +3291,12 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      */
     func subagents()  -> [SubagentRow]
     
+    /**
+     * The tail of one background process's output; `None` once it isn't
+     * listed.
+     */
+    func backgroundTaskOutput(taskId: String) async throws  -> BackgroundOutput?
+    
     func beginQueuedEdit(id: String, instanceId: String) async  -> QueueEditStart
     
     func chatId()  -> String
@@ -3363,6 +3369,13 @@ public protocol SessionHandleProtocol: AnyObject, Sendable {
      */
     func setViewAttached(attached: Bool) 
     
+    /**
+     * Ask the host to stop one background process. `false` when it isn't
+     * listed any more; it leaves `ComposerState.background` when the agent
+     * reports it gone.
+     */
+    func stopBackgroundTask(taskId: String) async throws  -> Bool
+    
     func transcriptStatus()  -> TranscriptStatus
     
 }
@@ -3433,6 +3446,26 @@ open func subagents() -> [SubagentRow]  {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * The tail of one background process's output; `None` once it isn't
+     * listed.
+     */
+open func backgroundTaskOutput(taskId: String)async throws  -> BackgroundOutput?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_method_sessionhandle_background_task_output(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(taskId)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_commutator_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeBackgroundOutput.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
     
 open func beginQueuedEdit(id: String, instanceId: String)async  -> QueueEditStart  {
@@ -3689,6 +3722,27 @@ open func setViewAttached(attached: Bool)  {try! rustCall() {
         FfiConverterBool.lower(attached),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Ask the host to stop one background process. `false` when it isn't
+     * listed any more; it leaves `ComposerState.background` when the agent
+     * reports it gone.
+     */
+open func stopBackgroundTask(taskId: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_commutator_mobile_fn_method_sessionhandle_stop_background_task(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(taskId)
+                )
+            },
+            pollFunc: ffi_commutator_mobile_rust_future_poll_i8,
+            completeFunc: ffi_commutator_mobile_rust_future_complete_i8,
+            freeFunc: ffi_commutator_mobile_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
 }
     
 open func transcriptStatus() -> TranscriptStatus  {
@@ -5655,6 +5709,153 @@ public func FfiConverterTypeAgentLoginRules_lower(_ value: AgentLoginRules) -> R
 }
 
 
+/**
+ * The app chrome's roles (iOS `Palette`).
+ */
+public struct AppColors: Equatable, Hashable {
+    public var background: UInt32
+    /**
+     * The open session's row in the iPad sidebar.
+     */
+    public var rowActive: UInt32
+    public var elevated: UInt32
+    public var text: UInt32
+    public var secondary: UInt32
+    public var tertiary: UInt32
+    public var hairline: UInt32
+    public var accent: UInt32
+    /**
+     * A switch's on track.
+     */
+    public var toggleOn: UInt32
+    public var onAccent: UInt32
+    public var controlFill: UInt32
+    public var accentSoft: UInt32
+    public var danger: UInt32
+    public var success: UInt32
+    public var warning: UInt32
+    public var userBubble: UInt32
+    public var codeBackground: UInt32
+    public var codeBorder: UInt32
+    public var chip: UInt32
+    /**
+     * Sidebar sublines (project label, branch).
+     */
+    public var subline: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(background: UInt32, 
+        /**
+         * The open session's row in the iPad sidebar.
+         */rowActive: UInt32, elevated: UInt32, text: UInt32, secondary: UInt32, tertiary: UInt32, hairline: UInt32, accent: UInt32, 
+        /**
+         * A switch's on track.
+         */toggleOn: UInt32, onAccent: UInt32, controlFill: UInt32, accentSoft: UInt32, danger: UInt32, success: UInt32, warning: UInt32, userBubble: UInt32, codeBackground: UInt32, codeBorder: UInt32, chip: UInt32, 
+        /**
+         * Sidebar sublines (project label, branch).
+         */subline: UInt32) {
+        self.background = background
+        self.rowActive = rowActive
+        self.elevated = elevated
+        self.text = text
+        self.secondary = secondary
+        self.tertiary = tertiary
+        self.hairline = hairline
+        self.accent = accent
+        self.toggleOn = toggleOn
+        self.onAccent = onAccent
+        self.controlFill = controlFill
+        self.accentSoft = accentSoft
+        self.danger = danger
+        self.success = success
+        self.warning = warning
+        self.userBubble = userBubble
+        self.codeBackground = codeBackground
+        self.codeBorder = codeBorder
+        self.chip = chip
+        self.subline = subline
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AppColors: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppColors: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppColors {
+        return
+            try AppColors(
+                background: FfiConverterUInt32.read(from: &buf), 
+                rowActive: FfiConverterUInt32.read(from: &buf), 
+                elevated: FfiConverterUInt32.read(from: &buf), 
+                text: FfiConverterUInt32.read(from: &buf), 
+                secondary: FfiConverterUInt32.read(from: &buf), 
+                tertiary: FfiConverterUInt32.read(from: &buf), 
+                hairline: FfiConverterUInt32.read(from: &buf), 
+                accent: FfiConverterUInt32.read(from: &buf), 
+                toggleOn: FfiConverterUInt32.read(from: &buf), 
+                onAccent: FfiConverterUInt32.read(from: &buf), 
+                controlFill: FfiConverterUInt32.read(from: &buf), 
+                accentSoft: FfiConverterUInt32.read(from: &buf), 
+                danger: FfiConverterUInt32.read(from: &buf), 
+                success: FfiConverterUInt32.read(from: &buf), 
+                warning: FfiConverterUInt32.read(from: &buf), 
+                userBubble: FfiConverterUInt32.read(from: &buf), 
+                codeBackground: FfiConverterUInt32.read(from: &buf), 
+                codeBorder: FfiConverterUInt32.read(from: &buf), 
+                chip: FfiConverterUInt32.read(from: &buf), 
+                subline: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppColors, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.background, into: &buf)
+        FfiConverterUInt32.write(value.rowActive, into: &buf)
+        FfiConverterUInt32.write(value.elevated, into: &buf)
+        FfiConverterUInt32.write(value.text, into: &buf)
+        FfiConverterUInt32.write(value.secondary, into: &buf)
+        FfiConverterUInt32.write(value.tertiary, into: &buf)
+        FfiConverterUInt32.write(value.hairline, into: &buf)
+        FfiConverterUInt32.write(value.accent, into: &buf)
+        FfiConverterUInt32.write(value.toggleOn, into: &buf)
+        FfiConverterUInt32.write(value.onAccent, into: &buf)
+        FfiConverterUInt32.write(value.controlFill, into: &buf)
+        FfiConverterUInt32.write(value.accentSoft, into: &buf)
+        FfiConverterUInt32.write(value.danger, into: &buf)
+        FfiConverterUInt32.write(value.success, into: &buf)
+        FfiConverterUInt32.write(value.warning, into: &buf)
+        FfiConverterUInt32.write(value.userBubble, into: &buf)
+        FfiConverterUInt32.write(value.codeBackground, into: &buf)
+        FfiConverterUInt32.write(value.codeBorder, into: &buf)
+        FfiConverterUInt32.write(value.chip, into: &buf)
+        FfiConverterUInt32.write(value.subline, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppColors_lift(_ buf: RustBuffer) throws -> AppColors {
+    return try FfiConverterTypeAppColors.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppColors_lower(_ value: AppColors) -> RustBuffer {
+    return FfiConverterTypeAppColors.lower(value)
+}
+
+
 public struct AppshotLabel: Equatable, Hashable {
     public var appName: String
     public var windowTitle: String?
@@ -5706,6 +5907,152 @@ public func FfiConverterTypeAppshotLabel_lift(_ buf: RustBuffer) throws -> Appsh
 #endif
 public func FfiConverterTypeAppshotLabel_lower(_ value: AppshotLabel) -> RustBuffer {
     return FfiConverterTypeAppshotLabel.lower(value)
+}
+
+
+/**
+ * The tail of a background process's output, plain text.
+ */
+public struct BackgroundOutput: Equatable, Hashable {
+    public var text: String
+    /**
+     * Earlier output was cut off.
+     */
+    public var truncated: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, 
+        /**
+         * Earlier output was cut off.
+         */truncated: Bool) {
+        self.text = text
+        self.truncated = truncated
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BackgroundOutput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBackgroundOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BackgroundOutput {
+        return
+            try BackgroundOutput(
+                text: FfiConverterString.read(from: &buf), 
+                truncated: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BackgroundOutput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.truncated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundOutput_lift(_ buf: RustBuffer) throws -> BackgroundOutput {
+    return try FfiConverterTypeBackgroundOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundOutput_lower(_ value: BackgroundOutput) -> RustBuffer {
+    return FfiConverterTypeBackgroundOutput.lower(value)
+}
+
+
+/**
+ * A process the chat's agent left running (a dev server, a watcher).
+ */
+public struct BackgroundTaskRow: Equatable, Hashable {
+    /**
+     * What `stop_background_task` and `background_task_output` address.
+     */
+    public var id: String
+    /**
+     * The command line (or the agent's description when it never said).
+     */
+    public var command: String
+    /**
+     * The agent's one-line description, when it gave one.
+     */
+    public var description: String?
+    public var startedAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What `stop_background_task` and `background_task_output` address.
+         */id: String, 
+        /**
+         * The command line (or the agent's description when it never said).
+         */command: String, 
+        /**
+         * The agent's one-line description, when it gave one.
+         */description: String?, startedAtMs: Int64) {
+        self.id = id
+        self.command = command
+        self.description = description
+        self.startedAtMs = startedAtMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BackgroundTaskRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBackgroundTaskRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BackgroundTaskRow {
+        return
+            try BackgroundTaskRow(
+                id: FfiConverterString.read(from: &buf), 
+                command: FfiConverterString.read(from: &buf), 
+                description: FfiConverterOptionString.read(from: &buf), 
+                startedAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BackgroundTaskRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterOptionString.write(value.description, into: &buf)
+        FfiConverterInt64.write(value.startedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundTaskRow_lift(_ buf: RustBuffer) throws -> BackgroundTaskRow {
+    return try FfiConverterTypeBackgroundTaskRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackgroundTaskRow_lower(_ value: BackgroundTaskRow) -> RustBuffer {
+    return FfiConverterTypeBackgroundTaskRow.lower(value)
 }
 
 
@@ -5935,6 +6282,11 @@ public struct ComposerState: Equatable, Hashable {
      * What to show in place of an empty transcript, if anything.
      */
     public var transcriptLoad: TranscriptLoad
+    /**
+     * Processes the chat's agent left running, oldest first: "2 running"
+     * above the composer, each readable and stoppable.
+     */
+    public var background: [BackgroundTaskRow]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5965,7 +6317,11 @@ public struct ComposerState: Equatable, Hashable {
          */lastSubmittedMessageId: String?, contextUsage: ContextUsage?, 
         /**
          * What to show in place of an empty transcript, if anything.
-         */transcriptLoad: TranscriptLoad) {
+         */transcriptLoad: TranscriptLoad, 
+        /**
+         * Processes the chat's agent left running, oldest first: "2 running"
+         * above the composer, each readable and stoppable.
+         */background: [BackgroundTaskRow]) {
         self.chatId = chatId
         self.revision = revision
         self.title = title
@@ -5982,6 +6338,7 @@ public struct ComposerState: Equatable, Hashable {
         self.lastSubmittedMessageId = lastSubmittedMessageId
         self.contextUsage = contextUsage
         self.transcriptLoad = transcriptLoad
+        self.background = background
     }
 
     
@@ -6015,7 +6372,8 @@ public struct FfiConverterTypeComposerState: FfiConverterRustBuffer {
                 queueError: FfiConverterOptionString.read(from: &buf), 
                 lastSubmittedMessageId: FfiConverterOptionString.read(from: &buf), 
                 contextUsage: FfiConverterOptionTypeContextUsage.read(from: &buf), 
-                transcriptLoad: FfiConverterTypeTranscriptLoad.read(from: &buf)
+                transcriptLoad: FfiConverterTypeTranscriptLoad.read(from: &buf), 
+                background: FfiConverterSequenceTypeBackgroundTaskRow.read(from: &buf)
         )
     }
 
@@ -6036,6 +6394,7 @@ public struct FfiConverterTypeComposerState: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.lastSubmittedMessageId, into: &buf)
         FfiConverterOptionTypeContextUsage.write(value.contextUsage, into: &buf)
         FfiConverterTypeTranscriptLoad.write(value.transcriptLoad, into: &buf)
+        FfiConverterSequenceTypeBackgroundTaskRow.write(value.background, into: &buf)
     }
 }
 
@@ -7931,6 +8290,196 @@ public func FfiConverterTypeLoginOptionInfo_lower(_ value: LoginOptionInfo) -> R
 }
 
 
+public struct MaterialColors: Equatable, Hashable {
+    public var primary: UInt32
+    public var onPrimary: UInt32
+    public var primaryContainer: UInt32
+    public var onPrimaryContainer: UInt32
+    public var inversePrimary: UInt32
+    public var secondary: UInt32
+    public var onSecondary: UInt32
+    public var secondaryContainer: UInt32
+    public var onSecondaryContainer: UInt32
+    public var tertiary: UInt32
+    public var onTertiary: UInt32
+    public var tertiaryContainer: UInt32
+    public var onTertiaryContainer: UInt32
+    public var background: UInt32
+    public var onBackground: UInt32
+    public var surface: UInt32
+    public var onSurface: UInt32
+    public var surfaceVariant: UInt32
+    public var onSurfaceVariant: UInt32
+    public var surfaceTint: UInt32
+    public var surfaceBright: UInt32
+    public var surfaceDim: UInt32
+    public var surfaceContainerLowest: UInt32
+    public var surfaceContainerLow: UInt32
+    public var surfaceContainer: UInt32
+    public var surfaceContainerHigh: UInt32
+    public var surfaceContainerHighest: UInt32
+    public var outline: UInt32
+    public var outlineVariant: UInt32
+    public var error: UInt32
+    public var onError: UInt32
+    public var errorContainer: UInt32
+    public var onErrorContainer: UInt32
+    public var inverseSurface: UInt32
+    public var inverseOnSurface: UInt32
+    public var scrim: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(primary: UInt32, onPrimary: UInt32, primaryContainer: UInt32, onPrimaryContainer: UInt32, inversePrimary: UInt32, secondary: UInt32, onSecondary: UInt32, secondaryContainer: UInt32, onSecondaryContainer: UInt32, tertiary: UInt32, onTertiary: UInt32, tertiaryContainer: UInt32, onTertiaryContainer: UInt32, background: UInt32, onBackground: UInt32, surface: UInt32, onSurface: UInt32, surfaceVariant: UInt32, onSurfaceVariant: UInt32, surfaceTint: UInt32, surfaceBright: UInt32, surfaceDim: UInt32, surfaceContainerLowest: UInt32, surfaceContainerLow: UInt32, surfaceContainer: UInt32, surfaceContainerHigh: UInt32, surfaceContainerHighest: UInt32, outline: UInt32, outlineVariant: UInt32, error: UInt32, onError: UInt32, errorContainer: UInt32, onErrorContainer: UInt32, inverseSurface: UInt32, inverseOnSurface: UInt32, scrim: UInt32) {
+        self.primary = primary
+        self.onPrimary = onPrimary
+        self.primaryContainer = primaryContainer
+        self.onPrimaryContainer = onPrimaryContainer
+        self.inversePrimary = inversePrimary
+        self.secondary = secondary
+        self.onSecondary = onSecondary
+        self.secondaryContainer = secondaryContainer
+        self.onSecondaryContainer = onSecondaryContainer
+        self.tertiary = tertiary
+        self.onTertiary = onTertiary
+        self.tertiaryContainer = tertiaryContainer
+        self.onTertiaryContainer = onTertiaryContainer
+        self.background = background
+        self.onBackground = onBackground
+        self.surface = surface
+        self.onSurface = onSurface
+        self.surfaceVariant = surfaceVariant
+        self.onSurfaceVariant = onSurfaceVariant
+        self.surfaceTint = surfaceTint
+        self.surfaceBright = surfaceBright
+        self.surfaceDim = surfaceDim
+        self.surfaceContainerLowest = surfaceContainerLowest
+        self.surfaceContainerLow = surfaceContainerLow
+        self.surfaceContainer = surfaceContainer
+        self.surfaceContainerHigh = surfaceContainerHigh
+        self.surfaceContainerHighest = surfaceContainerHighest
+        self.outline = outline
+        self.outlineVariant = outlineVariant
+        self.error = error
+        self.onError = onError
+        self.errorContainer = errorContainer
+        self.onErrorContainer = onErrorContainer
+        self.inverseSurface = inverseSurface
+        self.inverseOnSurface = inverseOnSurface
+        self.scrim = scrim
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension MaterialColors: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMaterialColors: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MaterialColors {
+        return
+            try MaterialColors(
+                primary: FfiConverterUInt32.read(from: &buf), 
+                onPrimary: FfiConverterUInt32.read(from: &buf), 
+                primaryContainer: FfiConverterUInt32.read(from: &buf), 
+                onPrimaryContainer: FfiConverterUInt32.read(from: &buf), 
+                inversePrimary: FfiConverterUInt32.read(from: &buf), 
+                secondary: FfiConverterUInt32.read(from: &buf), 
+                onSecondary: FfiConverterUInt32.read(from: &buf), 
+                secondaryContainer: FfiConverterUInt32.read(from: &buf), 
+                onSecondaryContainer: FfiConverterUInt32.read(from: &buf), 
+                tertiary: FfiConverterUInt32.read(from: &buf), 
+                onTertiary: FfiConverterUInt32.read(from: &buf), 
+                tertiaryContainer: FfiConverterUInt32.read(from: &buf), 
+                onTertiaryContainer: FfiConverterUInt32.read(from: &buf), 
+                background: FfiConverterUInt32.read(from: &buf), 
+                onBackground: FfiConverterUInt32.read(from: &buf), 
+                surface: FfiConverterUInt32.read(from: &buf), 
+                onSurface: FfiConverterUInt32.read(from: &buf), 
+                surfaceVariant: FfiConverterUInt32.read(from: &buf), 
+                onSurfaceVariant: FfiConverterUInt32.read(from: &buf), 
+                surfaceTint: FfiConverterUInt32.read(from: &buf), 
+                surfaceBright: FfiConverterUInt32.read(from: &buf), 
+                surfaceDim: FfiConverterUInt32.read(from: &buf), 
+                surfaceContainerLowest: FfiConverterUInt32.read(from: &buf), 
+                surfaceContainerLow: FfiConverterUInt32.read(from: &buf), 
+                surfaceContainer: FfiConverterUInt32.read(from: &buf), 
+                surfaceContainerHigh: FfiConverterUInt32.read(from: &buf), 
+                surfaceContainerHighest: FfiConverterUInt32.read(from: &buf), 
+                outline: FfiConverterUInt32.read(from: &buf), 
+                outlineVariant: FfiConverterUInt32.read(from: &buf), 
+                error: FfiConverterUInt32.read(from: &buf), 
+                onError: FfiConverterUInt32.read(from: &buf), 
+                errorContainer: FfiConverterUInt32.read(from: &buf), 
+                onErrorContainer: FfiConverterUInt32.read(from: &buf), 
+                inverseSurface: FfiConverterUInt32.read(from: &buf), 
+                inverseOnSurface: FfiConverterUInt32.read(from: &buf), 
+                scrim: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MaterialColors, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.primary, into: &buf)
+        FfiConverterUInt32.write(value.onPrimary, into: &buf)
+        FfiConverterUInt32.write(value.primaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.onPrimaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.inversePrimary, into: &buf)
+        FfiConverterUInt32.write(value.secondary, into: &buf)
+        FfiConverterUInt32.write(value.onSecondary, into: &buf)
+        FfiConverterUInt32.write(value.secondaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.onSecondaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.tertiary, into: &buf)
+        FfiConverterUInt32.write(value.onTertiary, into: &buf)
+        FfiConverterUInt32.write(value.tertiaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.onTertiaryContainer, into: &buf)
+        FfiConverterUInt32.write(value.background, into: &buf)
+        FfiConverterUInt32.write(value.onBackground, into: &buf)
+        FfiConverterUInt32.write(value.surface, into: &buf)
+        FfiConverterUInt32.write(value.onSurface, into: &buf)
+        FfiConverterUInt32.write(value.surfaceVariant, into: &buf)
+        FfiConverterUInt32.write(value.onSurfaceVariant, into: &buf)
+        FfiConverterUInt32.write(value.surfaceTint, into: &buf)
+        FfiConverterUInt32.write(value.surfaceBright, into: &buf)
+        FfiConverterUInt32.write(value.surfaceDim, into: &buf)
+        FfiConverterUInt32.write(value.surfaceContainerLowest, into: &buf)
+        FfiConverterUInt32.write(value.surfaceContainerLow, into: &buf)
+        FfiConverterUInt32.write(value.surfaceContainer, into: &buf)
+        FfiConverterUInt32.write(value.surfaceContainerHigh, into: &buf)
+        FfiConverterUInt32.write(value.surfaceContainerHighest, into: &buf)
+        FfiConverterUInt32.write(value.outline, into: &buf)
+        FfiConverterUInt32.write(value.outlineVariant, into: &buf)
+        FfiConverterUInt32.write(value.error, into: &buf)
+        FfiConverterUInt32.write(value.onError, into: &buf)
+        FfiConverterUInt32.write(value.errorContainer, into: &buf)
+        FfiConverterUInt32.write(value.onErrorContainer, into: &buf)
+        FfiConverterUInt32.write(value.inverseSurface, into: &buf)
+        FfiConverterUInt32.write(value.inverseOnSurface, into: &buf)
+        FfiConverterUInt32.write(value.scrim, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMaterialColors_lift(_ buf: RustBuffer) throws -> MaterialColors {
+    return try FfiConverterTypeMaterialColors.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMaterialColors_lower(_ value: MaterialColors) -> RustBuffer {
+    return FfiConverterTypeMaterialColors.lower(value)
+}
+
+
 public struct ModelInfo: Equatable, Hashable {
     public var id: String
     public var label: String
@@ -8408,6 +8957,87 @@ public func FfiConverterTypePendingSend_lift(_ buf: RustBuffer) throws -> Pendin
 #endif
 public func FfiConverterTypePendingSend_lower(_ value: PendingSend) -> RustBuffer {
     return FfiConverterTypePendingSend.lower(value)
+}
+
+
+/**
+ * Everything the apps paint with, for one theme variant.
+ */
+public struct PhonePalette: Equatable, Hashable {
+    public var dark: Bool
+    public var app: AppColors
+    /**
+     * One colour per transcript `ColorRole`, at the role's index in `ColorRole::ALL`.
+     */
+    public var roles: [UInt32]
+    public var terminal: TerminalColors
+    /**
+     * Android's Material `ColorScheme` slots.
+     */
+    public var material: MaterialColors
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(dark: Bool, app: AppColors, 
+        /**
+         * One colour per transcript `ColorRole`, at the role's index in `ColorRole::ALL`.
+         */roles: [UInt32], terminal: TerminalColors, 
+        /**
+         * Android's Material `ColorScheme` slots.
+         */material: MaterialColors) {
+        self.dark = dark
+        self.app = app
+        self.roles = roles
+        self.terminal = terminal
+        self.material = material
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PhonePalette: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePhonePalette: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PhonePalette {
+        return
+            try PhonePalette(
+                dark: FfiConverterBool.read(from: &buf), 
+                app: FfiConverterTypeAppColors.read(from: &buf), 
+                roles: FfiConverterSequenceUInt32.read(from: &buf), 
+                terminal: FfiConverterTypeTerminalColors.read(from: &buf), 
+                material: FfiConverterTypeMaterialColors.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PhonePalette, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.dark, into: &buf)
+        FfiConverterTypeAppColors.write(value.app, into: &buf)
+        FfiConverterSequenceUInt32.write(value.roles, into: &buf)
+        FfiConverterTypeTerminalColors.write(value.terminal, into: &buf)
+        FfiConverterTypeMaterialColors.write(value.material, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePhonePalette_lift(_ buf: RustBuffer) throws -> PhonePalette {
+    return try FfiConverterTypePhonePalette.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePhonePalette_lower(_ value: PhonePalette) -> RustBuffer {
+    return FfiConverterTypePhonePalette.lower(value)
 }
 
 
@@ -10490,6 +11120,74 @@ public func FfiConverterTypeSurfaceFrame_lower(_ value: SurfaceFrame) -> RustBuf
 }
 
 
+public struct TerminalColors: Equatable, Hashable {
+    public var background: UInt32
+    public var foreground: UInt32
+    public var selection: UInt32
+    /**
+     * ANSI 0–15.
+     */
+    public var ansi: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(background: UInt32, foreground: UInt32, selection: UInt32, 
+        /**
+         * ANSI 0–15.
+         */ansi: [UInt32]) {
+        self.background = background
+        self.foreground = foreground
+        self.selection = selection
+        self.ansi = ansi
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TerminalColors: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTerminalColors: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TerminalColors {
+        return
+            try TerminalColors(
+                background: FfiConverterUInt32.read(from: &buf), 
+                foreground: FfiConverterUInt32.read(from: &buf), 
+                selection: FfiConverterUInt32.read(from: &buf), 
+                ansi: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TerminalColors, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.background, into: &buf)
+        FfiConverterUInt32.write(value.foreground, into: &buf)
+        FfiConverterUInt32.write(value.selection, into: &buf)
+        FfiConverterSequenceUInt32.write(value.ansi, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTerminalColors_lift(_ buf: RustBuffer) throws -> TerminalColors {
+    return try FfiConverterTypeTerminalColors.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTerminalColors_lower(_ value: TerminalColors) -> RustBuffer {
+    return FfiConverterTypeTerminalColors.lower(value)
+}
+
+
 public struct TerminalCursor: Equatable, Hashable {
     public var row: UInt16
     public var col: UInt16
@@ -11099,6 +11797,132 @@ public func FfiConverterTypeTextRun_lift(_ buf: RustBuffer) throws -> TextRun {
 #endif
 public func FfiConverterTypeTextRun_lower(_ value: TextRun) -> RustBuffer {
     return FfiConverterTypeTextRun.lower(value)
+}
+
+
+public struct ThemeFamilyInfo: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var variants: [ThemeVariantInfo]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, variants: [ThemeVariantInfo]) {
+        self.id = id
+        self.name = name
+        self.variants = variants
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ThemeFamilyInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeThemeFamilyInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThemeFamilyInfo {
+        return
+            try ThemeFamilyInfo(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                variants: FfiConverterSequenceTypeThemeVariantInfo.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ThemeFamilyInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeThemeVariantInfo.write(value.variants, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThemeFamilyInfo_lift(_ buf: RustBuffer) throws -> ThemeFamilyInfo {
+    return try FfiConverterTypeThemeFamilyInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThemeFamilyInfo_lower(_ value: ThemeFamilyInfo) -> RustBuffer {
+    return FfiConverterTypeThemeFamilyInfo.lower(value)
+}
+
+
+public struct ThemeVariantInfo: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var dark: Bool
+    /**
+     * For the picker: background, text, accent, success (0xAARRGGBB).
+     */
+    public var swatches: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, dark: Bool, 
+        /**
+         * For the picker: background, text, accent, success (0xAARRGGBB).
+         */swatches: [UInt32]) {
+        self.id = id
+        self.name = name
+        self.dark = dark
+        self.swatches = swatches
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ThemeVariantInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeThemeVariantInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThemeVariantInfo {
+        return
+            try ThemeVariantInfo(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                dark: FfiConverterBool.read(from: &buf), 
+                swatches: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ThemeVariantInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.dark, into: &buf)
+        FfiConverterSequenceUInt32.write(value.swatches, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThemeVariantInfo_lift(_ buf: RustBuffer) throws -> ThemeVariantInfo {
+    return try FfiConverterTypeThemeVariantInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThemeVariantInfo_lower(_ value: ThemeVariantInfo) -> RustBuffer {
+    return FfiConverterTypeThemeVariantInfo.lower(value)
 }
 
 
@@ -16791,6 +17615,30 @@ fileprivate struct FfiConverterOptionTypeAppshotLabel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeBackgroundOutput: FfiConverterRustBuffer {
+    typealias SwiftType = BackgroundOutput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBackgroundOutput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBackgroundOutput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeChatConfig: FfiConverterRustBuffer {
     typealias SwiftType = ChatConfig?
 
@@ -17266,6 +18114,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBackgroundTaskRow: FfiConverterRustBuffer {
+    typealias SwiftType = [BackgroundTaskRow]
+
+    public static func write(_ value: [BackgroundTaskRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBackgroundTaskRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BackgroundTaskRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BackgroundTaskRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBackgroundTaskRow.read(from: &buf))
         }
         return seq
     }
@@ -18099,6 +18972,56 @@ fileprivate struct FfiConverterSequenceTypeTextRun: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeThemeFamilyInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [ThemeFamilyInfo]
+
+    public static func write(_ value: [ThemeFamilyInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeThemeFamilyInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ThemeFamilyInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ThemeFamilyInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeThemeFamilyInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeThemeVariantInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [ThemeVariantInfo]
+
+    public static func write(_ value: [ThemeVariantInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeThemeVariantInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ThemeVariantInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ThemeVariantInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeThemeVariantInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeUsageWindowInfo: FfiConverterRustBuffer {
     typealias SwiftType = [UsageWindowInfo]
 
@@ -18561,6 +19484,40 @@ public func agentLoginRules(harness: String) -> AgentLoginRules  {
 })
 }
 /**
+ * Which variants the core's own drawing (visuals, terminal cells) uses from now on.
+ */
+public func setThemeSelection(lightId: String, darkId: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_commutator_mobile_fn_func_set_theme_selection(
+        FfiConverterString.lower(lightId),
+        FfiConverterString.lower(darkId),uniffiCallStatus
+    )
+}
+}
+/**
+ * Every built-in family, in the desktop's order.
+ */
+public func themeFamilies() -> [ThemeFamilyInfo]  {
+    return try!  FfiConverterSequenceTypeThemeFamilyInfo.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_commutator_mobile_fn_func_theme_families(uniffiCallStatus
+    )
+})
+}
+/**
+ * The palette for `variant_id`; an unknown id, or one of the other appearance, gives
+ * Commutator Light / Dark.
+ */
+public func themePalette(variantId: String, dark: Bool) -> PhonePalette  {
+    return try!  FfiConverterTypePhonePalette_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_commutator_mobile_fn_func_theme_palette(
+        FfiConverterString.lower(variantId),
+        FfiConverterBool.lower(dark),uniffiCallStatus
+    )
+})
+}
+/**
  * The canonical mention link the host understands (`[name](commutator-file:path)`).
  */
 public func fileMentionLink(path: String, isDir: Bool) -> String  {
@@ -18710,6 +19667,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_agent_login_rules() != 46870) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_set_theme_selection() != 30948) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_theme_families() != 51113) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_func_theme_palette() != 29615) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_func_file_mention_link() != 30287) {
@@ -18967,6 +19933,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_subagents() != 26004) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_commutator_mobile_checksum_method_sessionhandle_background_task_output() != 55873) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_begin_queued_edit() != 36763) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19022,6 +19991,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_set_view_attached() != 42435) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_commutator_mobile_checksum_method_sessionhandle_stop_background_task() != 39990) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_sessionhandle_transcript_status() != 55893) {

@@ -925,6 +925,26 @@ final class AppModel {
         return (client.session(chatId: chatId) ?? (try? client.openSession(chatId: chatId)))?.subagents() ?? []
     }
 
+    /// Processes the session's agent left running (a dev server, a watcher),
+    /// oldest first.
+    func sessionBackground(_ chatId: String) -> [BackgroundTaskRow] {
+        guard let client, !chatId.contains("--sub--") else { return [] }
+        return client.session(chatId: chatId)?.composer().background ?? []
+    }
+
+    /// Ask the session's host to stop one; it leaves the list when the agent
+    /// reports it gone. `false`: it had ended already.
+    func stopBackgroundTask(_ chatId: String, id: String) async throws -> Bool {
+        guard let handle = client?.session(chatId: chatId) else { return false }
+        return try await handle.stopBackgroundTask(taskId: id)
+    }
+
+    /// The tail of one's output; `nil` once it isn't listed.
+    func backgroundOutput(_ chatId: String, id: String) async throws -> BackgroundOutput? {
+        guard let handle = client?.session(chatId: chatId) else { return nil }
+        return try await handle.backgroundTaskOutput(taskId: id)
+    }
+
     /// Side chats started here that nothing has been sent in yet: closed
     /// unused, they go (the desktop only writes one at its first send).
     /// Kept across launches, so one left open when the app was killed goes
