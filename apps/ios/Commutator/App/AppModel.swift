@@ -535,11 +535,6 @@ final class AppModel {
             page.folders.append(FolderRowVM(id: "pinned", name: "Pinned", count: pinned.count, symbol: "pin"))
         }
         page.sectionSessions["pinned"] = pinned
-        for s in ws.front.sections {
-            let list = s.sessions.map(vm)
-            page.folders.append(FolderRowVM(id: s.id, name: s.name, count: list.count, symbol: "folder"))
-            page.sectionSessions[s.id] = list
-        }
         page.sessions = ws.front.recent.map(vm)
         page.projects = Self.projectTree(ws.projects, worktrees: gitWorktrees, names: worktreeNames, sectionSessions: &page.sectionSessions)
         rawProjects = ws.projects
@@ -881,7 +876,6 @@ final class AppModel {
     }
     /// Permanently: the row on every device (a Cloud chat's machine too).
     func delete(_ id: String) { attempt("delete") { try client?.deleteSession(chatId: id) } }
-    func move(_ id: String, toSection section: String?) { attempt("assign") { try client?.assignSection(chatId: id, sectionId: section) } }
     func movePin(_ id: String, after: String?, before: String?) {
         attempt("move pin") { try client?.movePin(chatId: id, after: after, before: before) }
     }
@@ -889,13 +883,6 @@ final class AppModel {
     func pin(_ id: String, after: String?, before: String?) {
         attempt("pin") { try client?.pinSessionAt(chatId: id, after: after, before: before) }
     }
-    /// Move into a section between its members (`nil` at either end).
-    func place(_ id: String, inSection section: String, after: String?, before: String?) {
-        attempt("assign") { try client?.placeSession(chatId: id, sectionId: section, after: after, before: before) }
-    }
-    func renameSection(_ id: String, _ name: String) { attempt("rename section") { try client?.renameSection(sectionId: id, name: name) } }
-    func deleteSection(_ id: String) { attempt("delete section") { try client?.deleteSection(sectionId: id) } }
-    func createSection(_ name: String) { attempt("section") { _ = try client?.createSection(name: name) } }
     func rename(_ id: String, _ title: String) { attempt("rename") { try client?.renameSession(chatId: id, title: title) } }
     func markSeen(_ id: String) { attempt("seen") { try client?.markSeen(chatId: id) } }
 

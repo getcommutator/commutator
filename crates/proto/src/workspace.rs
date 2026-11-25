@@ -18,9 +18,6 @@ pub mod capabilities {
     /// The host creates a projectless chat's scratch folder
     /// (`crate::projectless`) when it runs; older hosts only know `~`.
     pub const PROJECTLESS_SCRATCH_V1: &str = "projectless-scratch-v1";
-    /// The host accepts `SidebarSectionChange::Move` and orders sections by
-    /// their placed key; older hosts reject the action outright.
-    pub const SIDEBAR_SECTION_ORDER_V1: &str = "sidebar-section-order-v1";
     /// The engine posts the desktop banners (finished runs, questions,
     /// failures, connection loss, agent updates) and takes viewport focus
     /// through `SetViewportFocus`; a viewport attached to it posts none of
@@ -60,7 +57,6 @@ pub mod capabilities {
         MESSAGE_QUEUE_EDIT_LEASE_V1,
         HARNESS_UPDATES_V1,
         PROJECTLESS_SCRATCH_V1,
-        SIDEBAR_SECTION_ORDER_V1,
         PROVIDER_SWITCH_V1,
         BACKGROUND_TASKS_V1,
         ZGX_INTERFACE_V1,
@@ -180,7 +176,6 @@ mod tests {
                     "message-queue-edit-lease-v1",
                     "harness-updates-v1",
                     "projectless-scratch-v1",
-                    "sidebar-section-order-v1",
                     "provider-switch-v1",
                     "background-tasks-v1",
                     "zgx-interface-v1",

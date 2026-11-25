@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{TimeZone, Utc};
 use tokio_util::sync::CancellationToken;
 use commutator_doc::RegistryDoc;
-use commutator_proto::{Chat, ChatConfig, SidebarPinChange, SidebarSectionChange};
+use commutator_proto::{Chat, ChatConfig, SidebarPinChange};
 
 use crate::attachments::{self, AttachmentCache};
 use crate::catalog::{self, HarnessInfo, ModelInfo};
@@ -932,62 +932,6 @@ impl Client {
         })
     }
 
-    fn section_change(&self, change: SidebarSectionChange) -> Result<()> {
-        self.pin_change(SidebarPinChange::Section { change })
-    }
-
-    pub fn create_section(&self, name: &str) -> Result<String> {
-        let id = crate::new_id();
-        self.section_change(SidebarSectionChange::Create {
-            id: id.clone(),
-            name: name.trim().to_owned(),
-        })?;
-        Ok(id)
-    }
-
-    pub fn rename_section(&self, section_id: &str, name: &str) -> Result<()> {
-        self.section_change(SidebarSectionChange::Rename {
-            id: section_id.to_owned(),
-            name: name.trim().to_owned(),
-        })
-    }
-
-    /// Delete a section (its sessions return to the recent list).
-    pub fn delete_section(&self, section_id: &str) -> Result<()> {
-        self.section_change(SidebarSectionChange::Delete {
-            id: section_id.to_owned(),
-        })
-    }
-
-    pub fn set_section_collapsed(&self, section_id: &str, collapsed: bool) -> Result<()> {
-        self.section_change(SidebarSectionChange::Collapse {
-            id: section_id.to_owned(),
-            collapsed,
-        })
-    }
-
-    /// Move a session into a section (`None` = back to the recent list).
-    pub fn assign_section(&self, chat_id: &str, section_id: Option<String>) -> Result<()> {
-        self.place_session(chat_id, section_id, None, None)
-    }
-
-    /// Move a session into a section between its members (either neighbour
-    /// may be `None` at the ends; both `None` appends).
-    pub fn place_session(
-        &self,
-        chat_id: &str,
-        section_id: Option<String>,
-        after: Option<String>,
-        before: Option<String>,
-    ) -> Result<()> {
-        self.section_change(SidebarSectionChange::Assign {
-            session_id: chat_id.to_owned(),
-            section_id,
-            after,
-            before,
-        })
-    }
-
     /// Create a project on `device_id` (deduped on device + path). With an
     /// engine, asks the owning host (`Mutate {createSpace}`) and falls back
     /// to a local row write when it is unreachable.
@@ -1478,15 +1422,13 @@ impl Client {
         commutator_sync::wake::set_resting(true);
     }
 
-    /// Warm the most relevant sessions (front page order: pinned, sections,
-    /// recent), up to [`PRELOAD_CAP`].
+    /// Warm the most relevant sessions (front page order: pinned, recent), up to [`PRELOAD_CAP`].
     pub fn preload_sessions(&self) {
         let workspace = self.workspace();
         let front = &workspace.front;
         let candidates = front
             .pinned
             .iter()
-            .chain(front.sections.iter().flat_map(|s| s.sessions.iter()))
             .chain(front.recent.iter());
         for row in candidates.take(PRELOAD_CAP) {
             if self.inner.session_core(&row.id).is_none() {

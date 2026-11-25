@@ -43,7 +43,8 @@ $(ICNS): assets/icon.png
 run: $(ICNS)
 	cargo build -p commutator --bins
 	$(call bundle,$(DEV_APP),target/debug,codesign --force --entitlements dist/macos/entitlements.plist --sign -)
-	open $(DEV_APP)
+	-pkill -f '[C]ommutator-dev.app/Contents/MacOS/commutator'
+	exec $(DEV_APP)/Contents/MacOS/commutator
 
 dmg: app
 	hdiutil create -volname Commutator -srcfolder $(APP) -ov -format UDZO target/Commutator-$(VERSION).dmg

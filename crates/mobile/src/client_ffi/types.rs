@@ -92,7 +92,7 @@ impl From<CoreConfig> for zc::ClientConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DemoFixture {
-    /// Devices, projects, pinned + sectioned sessions, PRs in every state.
+    /// Devices, projects, pinned sessions, PRs in every state.
     Standard,
     /// No projects and no sessions (empty states).
     NoProjects,
@@ -397,7 +397,6 @@ pub struct SessionRow {
     pub unseen: bool,
     pub archived: bool,
     pub pinned: bool,
-    pub section_id: Option<String>,
     pub pull_request: Option<PullRequest>,
     /// Oldest unadopted send from this device (open sessions only).
     pub send_state: Option<SendState>,
@@ -446,7 +445,6 @@ impl From<&zc::SessionRow> for SessionRow {
             unseen: r.unseen,
             archived: r.archived,
             pinned: r.pinned,
-            section_id: r.section_id.clone(),
             pull_request: r.pull_request.as_ref().map(PullRequest::from),
             send_state: r.send_state.map(Into::into),
             parent_chat_id: r.parent_chat_id.clone(),
@@ -462,22 +460,11 @@ pub(crate) fn rows(rows: &[Arc<zc::SessionRow>]) -> Vec<SessionRow> {
     rows.iter().map(|r| SessionRow::from(&**r)).collect()
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SectionView {
-    pub id: String,
-    pub name: String,
-    pub collapsed: bool,
-    /// Recency order (pinned sessions excluded).
-    pub sessions: Vec<SessionRow>,
-}
-
 /// The Threads page — the desktop sidebar order.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FrontPage {
     /// Shared manual pin order.
     pub pinned: Vec<SessionRow>,
-    /// User sections ("folders"), each in recency order.
-    pub sections: Vec<SectionView>,
     /// Everything else, by recency.
     pub recent: Vec<SessionRow>,
 }
@@ -486,16 +473,6 @@ impl From<&zc::FrontPage> for FrontPage {
     fn from(f: &zc::FrontPage) -> Self {
         Self {
             pinned: rows(&f.pinned),
-            sections: f
-                .sections
-                .iter()
-                .map(|s| SectionView {
-                    id: s.id.clone(),
-                    name: s.name.clone(),
-                    collapsed: s.collapsed,
-                    sessions: rows(&s.sessions),
-                })
-                .collect(),
             recent: rows(&f.recent),
         }
     }
@@ -598,7 +575,7 @@ impl From<&zc::DeviceView> for DeviceView {
 pub struct WorkspaceSnapshot {
     pub revision: u64,
     pub computed_at_ms: i64,
-    /// Pin/section edits allowed (sidebar prefs known).
+    /// Pin edits allowed (sidebar prefs known).
     pub pins_ready: bool,
     /// The registry reached this device at least once (or demo).
     pub synced: bool,

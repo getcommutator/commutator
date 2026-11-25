@@ -752,6 +752,7 @@ impl Shell {
                     active: is_active,
                     title: title.into(),
                     dirty: false,
+                    status: None,
                     leading,
                 },
                 &theme,

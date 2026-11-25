@@ -311,7 +311,7 @@ fun ProjectChatsScreen(
     if (tree == null || checkout == null) return
     val rows = needsYouFirst(checkout.chats)
     val list = rememberLazyListState()
-    val local = remember(actions, compact) { RowActions(actions.model, actions.onOpen, actions.archive, actions.sections, actions.newSection, actions.selected, activity = false, compact = compact) }
+    val local = remember(actions, compact) { RowActions(actions.model, actions.onOpen, actions.archive, actions.selected, activity = false, compact = compact) }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(state = list, contentPadding = PaddingValues(bottom = 32.dp), modifier = Modifier.fillMaxSize()) {
             item("header") {

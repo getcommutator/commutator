@@ -606,7 +606,7 @@ class AppModel(private val app: Application) {
         endDeliveryHold()
         val recent = lastDeliveryActivity != 0L && SystemClock.elapsedRealtime() - lastDeliveryActivity < 120_000
         val pending = _workspace.value?.let { ws ->
-            (ws.front.pinned + ws.front.sections.flatMap { it.sessions } + ws.front.recent)
+            (ws.front.pinned + ws.front.recent)
                 .any { it.sendState == SendState.SENDING || it.sendState == SendState.QUEUED }
         } == true
         if (_client.value != null && !isDemo && (recent || pending)) DeliveryService.hold(app, 25_000)
@@ -689,17 +689,7 @@ class AppModel(private val app: Application) {
     fun unarchive(id: String) = attempt("unarchive") { _client.value?.unarchiveSession(id) }
     fun rename(id: String, title: String) = attempt("rename") { _client.value?.renameSession(id, title) }
     fun markSeen(id: String) = attempt("seen") { _client.value?.markSeen(id) }
-    fun setSectionCollapsed(id: String, collapsed: Boolean) = attempt("collapse") { _client.value?.setSectionCollapsed(id, collapsed) }
-    fun move(id: String, toSection: String?) = attempt("assign") { _client.value?.assignSection(id, toSection) }
     fun movePin(id: String, after: String?, before: String?) = attempt("move pin") { _client.value?.movePin(id, after, before) }
-    fun createSection(name: String): String? = try {
-        _client.value?.createSection(name)
-    } catch (e: Exception) {
-        Log.w("Commutator", "section failed", e)
-        null
-    }
-    fun renameSection(id: String, name: String) = attempt("rename section") { _client.value?.renameSection(id, name) }
-    fun deleteSection(id: String) = attempt("delete section") { _client.value?.deleteSection(id) }
 
     fun row(id: String): SessionRow? = _client.value?.sessionRow(id)
 

@@ -98,7 +98,7 @@ impl Default for DemoOptions {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemoFixture {
-    /// Devices, projects, pinned + sectioned sessions, PRs in every state.
+    /// Devices, projects, pinned sessions, PRs in every state.
     Standard,
     /// No projects and no sessions (`-no-projects`): empty-state screens.
     NoProjects,

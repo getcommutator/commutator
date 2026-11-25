@@ -61,12 +61,28 @@ enum ThemeStore {
         load()
         revision += 1
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
-            for window in scene.windows { window.traitOverrides[ThemeRevisionTrait.self] = revision }
+            for window in scene.windows {
+                window.traitOverrides[ThemeRevisionTrait.self] = revision
+                refreshTitles(in: window)
+            }
         }
         NotificationCenter.default.post(name: didChange, object: nil)
     }
 
     private static var revision = 0
+
+    /// Navigation bars resolve their title colours once, when the attributes are set, so a theme
+    /// change would keep the old theme's title: set them again (nil first, or an equal value is skipped).
+    private static func refreshTitles(in view: UIView) {
+        if let bar = view as? UINavigationBar {
+            let title = bar.titleTextAttributes, large = bar.largeTitleTextAttributes
+            bar.titleTextAttributes = nil
+            bar.largeTitleTextAttributes = nil
+            bar.titleTextAttributes = title
+            bar.largeTitleTextAttributes = large
+        }
+        for sub in view.subviews { refreshTitles(in: sub) }
+    }
 }
 
 /// Bumped on every theme change. It affects colour appearance, so dynamic colours re-resolve;

@@ -904,11 +904,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func archivedSessions()  -> [SessionRow]
     
     /**
-     * Move a session into a section (`None` = back to recent).
-     */
-    func assignSection(chatId: String, sectionId: String?) throws 
-    
-    /**
      * Side chats / subagent chats of `parent_id`, recency order.
      */
     func childSessions(parentId: String)  -> [SessionRow]
@@ -926,11 +921,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func createProject(deviceId: String, path: String, gitDetected: Bool) async throws  -> String
     
     /**
-     * Returns the new section id.
-     */
-    func createSection(name: String) throws  -> String
-    
-    /**
      * Mint a chat row (born on chat2). Returns the new chat id.
      */
     func createSession(newSession: NewSession) throws  -> String
@@ -941,8 +931,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func createWorktree(deviceId: String, spaceId: String, repoPath: String, base: String) async throws  -> String
     
     func deleteProject(spaceId: String) throws 
-    
-    func deleteSection(sectionId: String) throws 
     
     func deleteSession(chatId: String) throws 
     
@@ -961,7 +949,7 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func executionDevices()  -> [DeviceView]
     
     /**
-     * Threads page: pinned, sections, recent.
+     * Threads page: pinned, recent.
      */
     func frontPage()  -> FrontPage
     
@@ -1023,12 +1011,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func pinSessionAt(chatId: String, after: String?, before: String?) throws 
     
     /**
-     * Move a session into a section between its members (`None` at either
-     * end), as a drop into the section does.
-     */
-    func placeSession(chatId: String, sectionId: String?, after: String?, before: String?) throws 
-    
-    /**
      * Warm the most relevant sessions (capped).
      */
     func preloadSessions() 
@@ -1050,8 +1032,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func readAttachment(deviceId: String, path: String) async throws  -> Data
     
     func renameProject(spaceId: String, name: String?) throws 
-    
-    func renameSection(sectionId: String, name: String) throws 
     
     func renameSession(chatId: String, title: String) throws 
     
@@ -1079,8 +1059,6 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * OS network path: `false` only for a definitive "unsatisfied".
      */
     func setNetworkOnline(online: Bool) 
-    
-    func setSectionCollapsed(sectionId: String, collapsed: Bool) throws 
     
     func setSessionConfig(chatId: String, config: ChatConfig) throws 
     
@@ -1288,19 +1266,6 @@ open func archivedSessions() -> [SessionRow]  {
 }
     
     /**
-     * Move a session into a section (`None` = back to recent).
-     */
-open func assignSection(chatId: String, sectionId: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_assign_section(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(chatId),
-        FfiConverterOptionString.lower(sectionId),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * Side chats / subagent chats of `parent_id`, recency order.
      */
 open func childSessions(parentId: String) -> [SessionRow]  {
@@ -1354,19 +1319,6 @@ open func createProject(deviceId: String, path: String, gitDetected: Bool)async 
 }
     
     /**
-     * Returns the new section id.
-     */
-open func createSection(name: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_create_section(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(name),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Mint a chat row (born on chat2). Returns the new chat id.
      */
 open func createSession(newSession: NewSession)throws  -> String  {
@@ -1403,15 +1355,6 @@ open func deleteProject(spaceId: String)throws   {try rustCallWithError(FfiConve
     uniffi_commutator_mobile_fn_method_coreclient_delete_project(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(spaceId),uniffiCallStatus
-    )
-}
-}
-    
-open func deleteSection(sectionId: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_delete_section(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(sectionId),uniffiCallStatus
     )
 }
 }
@@ -1475,7 +1418,7 @@ open func executionDevices() -> [DeviceView]  {
 }
     
     /**
-     * Threads page: pinned, sections, recent.
+     * Threads page: pinned, recent.
      */
 open func frontPage() -> FrontPage  {
     return try!  FfiConverterTypeFrontPage_lift(try! rustCall() {
@@ -1674,22 +1617,6 @@ open func pinSessionAt(chatId: String, after: String?, before: String?)throws   
 }
     
     /**
-     * Move a session into a section between its members (`None` at either
-     * end), as a drop into the section does.
-     */
-open func placeSession(chatId: String, sectionId: String?, after: String?, before: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_place_session(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(chatId),
-        FfiConverterOptionString.lower(sectionId),
-        FfiConverterOptionString.lower(after),
-        FfiConverterOptionString.lower(before),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * Warm the most relevant sessions (capped).
      */
 open func preloadSessions()  {try! rustCall() {
@@ -1765,16 +1692,6 @@ open func renameProject(spaceId: String, name: String?)throws   {try rustCallWit
             self.uniffiCloneHandle(),
         FfiConverterString.lower(spaceId),
         FfiConverterOptionString.lower(name),uniffiCallStatus
-    )
-}
-}
-    
-open func renameSection(sectionId: String, name: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_rename_section(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(sectionId),
-        FfiConverterString.lower(name),uniffiCallStatus
     )
 }
 }
@@ -1864,16 +1781,6 @@ open func setNetworkOnline(online: Bool)  {try! rustCall() {
     uniffi_commutator_mobile_fn_method_coreclient_set_network_online(
             self.uniffiCloneHandle(),
         FfiConverterBool.lower(online),uniffiCallStatus
-    )
-}
-}
-    
-open func setSectionCollapsed(sectionId: String, collapsed: Bool)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_commutator_mobile_fn_method_coreclient_set_section_collapsed(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(sectionId),
-        FfiConverterBool.lower(collapsed),uniffiCallStatus
     )
 }
 }
@@ -7514,10 +7421,6 @@ public struct FrontPage: Equatable, Hashable {
      */
     public var pinned: [SessionRow]
     /**
-     * User sections ("folders"), each in recency order.
-     */
-    public var sections: [SectionView]
-    /**
      * Everything else, by recency.
      */
     public var recent: [SessionRow]
@@ -7529,13 +7432,9 @@ public struct FrontPage: Equatable, Hashable {
          * Shared manual pin order.
          */pinned: [SessionRow], 
         /**
-         * User sections ("folders"), each in recency order.
-         */sections: [SectionView], 
-        /**
          * Everything else, by recency.
          */recent: [SessionRow]) {
         self.pinned = pinned
-        self.sections = sections
         self.recent = recent
     }
 
@@ -7556,14 +7455,12 @@ public struct FfiConverterTypeFrontPage: FfiConverterRustBuffer {
         return
             try FrontPage(
                 pinned: FfiConverterSequenceTypeSessionRow.read(from: &buf), 
-                sections: FfiConverterSequenceTypeSectionView.read(from: &buf), 
                 recent: FfiConverterSequenceTypeSessionRow.read(from: &buf)
         )
     }
 
     public static func write(_ value: FrontPage, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeSessionRow.write(value.pinned, into: &buf)
-        FfiConverterSequenceTypeSectionView.write(value.sections, into: &buf)
         FfiConverterSequenceTypeSessionRow.write(value.recent, into: &buf)
     }
 }
@@ -10309,74 +10206,6 @@ public func FfiConverterTypeSearchHit_lower(_ value: SearchHit) -> RustBuffer {
 }
 
 
-public struct SectionView: Equatable, Hashable {
-    public var id: String
-    public var name: String
-    public var collapsed: Bool
-    /**
-     * Recency order (pinned sessions excluded).
-     */
-    public var sessions: [SessionRow]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, name: String, collapsed: Bool, 
-        /**
-         * Recency order (pinned sessions excluded).
-         */sessions: [SessionRow]) {
-        self.id = id
-        self.name = name
-        self.collapsed = collapsed
-        self.sessions = sessions
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension SectionView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeSectionView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SectionView {
-        return
-            try SectionView(
-                id: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                collapsed: FfiConverterBool.read(from: &buf), 
-                sessions: FfiConverterSequenceTypeSessionRow.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: SectionView, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterBool.write(value.collapsed, into: &buf)
-        FfiConverterSequenceTypeSessionRow.write(value.sessions, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSectionView_lift(_ buf: RustBuffer) throws -> SectionView {
-    return try FfiConverterTypeSectionView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSectionView_lower(_ value: SectionView) -> RustBuffer {
-    return FfiConverterTypeSectionView.lower(value)
-}
-
-
 public struct SendRequest: Equatable, Hashable {
     public var text: String
     public var attachments: [OutgoingAttachment]
@@ -10679,7 +10508,6 @@ public struct SessionRow: Equatable, Hashable {
     public var unseen: Bool
     public var archived: Bool
     public var pinned: Bool
-    public var sectionId: String?
     public var pullRequest: PullRequest?
     /**
      * Oldest unadopted send from this device (open sessions only).
@@ -10734,7 +10562,7 @@ public struct SessionRow: Equatable, Hashable {
          */workingSinceMs: Int64?, lastActivityMs: Int64, 
         /**
          * `now` / `34m` / `4h` / `2d` at derive time.
-         */timeLabel: String, createdAtMs: Int64, unseen: Bool, archived: Bool, pinned: Bool, sectionId: String?, pullRequest: PullRequest?, 
+         */timeLabel: String, createdAtMs: Int64, unseen: Bool, archived: Bool, pinned: Bool, pullRequest: PullRequest?, 
         /**
          * Oldest unadopted send from this device (open sessions only).
          */sendState: SendState?, parentChatId: String?, 
@@ -10777,7 +10605,6 @@ public struct SessionRow: Equatable, Hashable {
         self.unseen = unseen
         self.archived = archived
         self.pinned = pinned
-        self.sectionId = sectionId
         self.pullRequest = pullRequest
         self.sendState = sendState
         self.parentChatId = parentChatId
@@ -10828,7 +10655,6 @@ public struct FfiConverterTypeSessionRow: FfiConverterRustBuffer {
                 unseen: FfiConverterBool.read(from: &buf), 
                 archived: FfiConverterBool.read(from: &buf), 
                 pinned: FfiConverterBool.read(from: &buf), 
-                sectionId: FfiConverterOptionString.read(from: &buf), 
                 pullRequest: FfiConverterOptionTypePullRequest.read(from: &buf), 
                 sendState: FfiConverterOptionTypeSendState.read(from: &buf), 
                 parentChatId: FfiConverterOptionString.read(from: &buf), 
@@ -10865,7 +10691,6 @@ public struct FfiConverterTypeSessionRow: FfiConverterRustBuffer {
         FfiConverterBool.write(value.unseen, into: &buf)
         FfiConverterBool.write(value.archived, into: &buf)
         FfiConverterBool.write(value.pinned, into: &buf)
-        FfiConverterOptionString.write(value.sectionId, into: &buf)
         FfiConverterOptionTypePullRequest.write(value.pullRequest, into: &buf)
         FfiConverterOptionTypeSendState.write(value.sendState, into: &buf)
         FfiConverterOptionString.write(value.parentChatId, into: &buf)
@@ -12771,7 +12596,7 @@ public struct WorkspaceSnapshot: Equatable, Hashable {
     public var revision: UInt64
     public var computedAtMs: Int64
     /**
-     * Pin/section edits allowed (sidebar prefs known).
+     * Pin edits allowed (sidebar prefs known).
      */
     public var pinsReady: Bool
     /**
@@ -12795,7 +12620,7 @@ public struct WorkspaceSnapshot: Equatable, Hashable {
     // declare one manually.
     public init(revision: UInt64, computedAtMs: Int64, 
         /**
-         * Pin/section edits allowed (sidebar prefs known).
+         * Pin edits allowed (sidebar prefs known).
          */pinsReady: Bool, 
         /**
          * The registry reached this device at least once (or demo).
@@ -14275,7 +14100,7 @@ public func FfiConverterTypeDecoration_lower(_ value: Decoration) -> RustBuffer 
 public enum DemoFixture: Equatable, Hashable {
     
     /**
-     * Devices, projects, pinned + sectioned sessions, PRs in every state.
+     * Devices, projects, pinned sessions, PRs in every state.
      */
     case standard
     /**
@@ -18774,31 +18599,6 @@ fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeSectionView: FfiConverterRustBuffer {
-    typealias SwiftType = [SectionView]
-
-    public static func write(_ value: [SectionView], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeSectionView.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SectionView] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [SectionView]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeSectionView.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeServerDevice: FfiConverterRustBuffer {
     typealias SwiftType = [ServerDevice]
 
@@ -19746,9 +19546,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_archived_sessions() != 40754) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_assign_section() != 52425) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_commutator_mobile_checksum_method_coreclient_child_sessions() != 49959) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19761,9 +19558,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_create_project() != 56918) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_create_section() != 51494) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_commutator_mobile_checksum_method_coreclient_create_session() != 12724) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19771,9 +19565,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_delete_project() != 27444) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_delete_section() != 32465) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_delete_session() != 1598) {
@@ -19791,7 +19582,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_execution_devices() != 3862) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_front_page() != 20128) {
+    if (uniffi_commutator_mobile_checksum_method_coreclient_front_page() != 61588) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_is_demo() != 59181) {
@@ -19836,9 +19627,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_pin_session_at() != 44143) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_place_session() != 23648) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_commutator_mobile_checksum_method_coreclient_preload_sessions() != 40174) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19860,9 +19648,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_rename_project() != 5185) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_rename_section() != 29450) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_commutator_mobile_checksum_method_coreclient_rename_session() != 28193) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19882,9 +19667,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_set_network_online() != 36560) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_set_section_collapsed() != 44927) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_set_session_config() != 26226) {

@@ -111,12 +111,16 @@ pub(crate) struct TabChip {
     pub title: gpui::SharedString,
     /// Shows the unsaved dot in the close slot while the tab is not hovered.
     pub dirty: bool,
+    /// What the close slot shows while the tab is not hovered, in place of
+    /// the unsaved dot (a chat's activity: its loader or status).
+    pub status: Option<gpui::AnyElement>,
     /// The leading 18px slot's content, usually [`tab_chip_icon`].
     pub leading: gpui::AnyElement,
 }
 
 /// A pane tab: the leading icon, the truncated title, and a trailing slot
-/// whose ✕ fades in on hover over the unsaved dot (same slot, no width jump).
+/// whose ✕ fades in on hover over the unsaved dot or the tab's status (same
+/// slot, no width jump).
 /// Callers add activation, menus, tooltips and drag behaviour.
 pub(crate) fn tab_chip(
     chip: TabChip,
@@ -130,8 +134,18 @@ pub(crate) fn tab_chip(
         active,
         title,
         dirty,
+        status,
         leading,
     } = chip;
+    let status = status.or_else(|| {
+        dirty.then(|| {
+            div()
+                .size(px(6.0))
+                .rounded_full()
+                .bg(theme.text_muted)
+                .into_any_element()
+        })
+    });
     let group: gpui::SharedString = format!("{id}-{ix}").into();
     let selector = group.clone();
     tab((id, ix), active, theme)
@@ -177,8 +191,8 @@ pub(crate) fn tab_chip(
                 .child(title),
         )
         .child(
-            // Trailing slot: the unsaved dot normally, ✕ on tab hover — two
-            // stacked layers opacity-swapped by the group hover.
+            // Trailing slot: the status (or unsaved dot) normally, ✕ on tab
+            // hover — two stacked layers opacity-swapped by the group hover.
             div()
                 .id((close_id, ix))
                 .debug_selector(move || format!("{close_id}-{ix}"))
@@ -201,7 +215,7 @@ pub(crate) fn tab_chip(
                     cx.stop_propagation();
                     on_close(event, window, cx);
                 })
-                .when(dirty, |slot| {
+                .when_some(status, |slot, status| {
                     slot.child(
                         div()
                             .absolute()
@@ -210,7 +224,7 @@ pub(crate) fn tab_chip(
                             .items_center()
                             .justify_center()
                             .group_hover(group.clone(), |s| s.opacity(0.0))
-                            .child(div().size(px(6.0)).rounded_full().bg(theme.text_muted)),
+                            .child(status),
                     )
                 })
                 .child(

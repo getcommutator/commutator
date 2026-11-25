@@ -70,6 +70,8 @@ mod chat_dropzone_tests;
 mod chat_pull_requests;
 #[cfg(test)]
 mod chat_rename_tests;
+#[cfg(test)]
+mod session_card_tests;
 mod command_palette;
 mod file_mutations;
 mod files_panel;
@@ -88,7 +90,7 @@ mod session_info;
 mod session_lanes;
 mod side_chats;
 mod sidebar_pins;
-mod sidebar_sections;
+mod worktree_cleanup;
 mod search_warm;
 pub(crate) mod spaces;
 mod thread_search;
@@ -1153,7 +1155,6 @@ struct SidebarSessionDrag {
 enum SidebarSessionDrop {
     Pinned(usize),
     Regular,
-    Section(String),
 }
 
 struct SidebarSessionTransfer {
@@ -1233,39 +1234,9 @@ struct PinnedSessionDragState {
     autoscroll_active: bool,
 }
 
-/// Drag payload for reordering custom sections by their header.
-#[derive(Clone)]
-struct SidebarSectionDrag {
-    section_id: String,
-    profile_key: String,
-    /// The section order the drag started from.
-    ids: std::sync::Arc<Vec<String>>,
-}
-
-/// Live reorder of the custom sections. The lifted section rides under the
-/// pointer while its siblings slide between slots, as pinned rows do.
-struct SidebarSectionDragState {
-    payload: SidebarSectionDrag,
-    from: usize,
-    over: usize,
-    /// Natural slot heights at lift, shared by hit testing and displacement.
-    heights: Vec<f32>,
-    /// The first slot's top in the list's content coordinates.
-    top: f32,
-    /// The slots' left edge within the list, and their width.
-    left: f32,
-    width: f32,
-    /// The pointer's offset below the lifted section's top.
-    grab_y: f32,
-    pointer: Point<Pixels>,
-    siblings: std::collections::HashMap<String, SidebarSessionSlide>,
-    generation: u64,
-}
-
 type SidebarKeyedRow = (String, f32, AnyElement);
 
 struct SidebarSessionRows {
-    custom_count: usize,
     regular_count: usize,
     rows: Vec<SidebarKeyedRow>,
     pinned_count: usize,
@@ -1320,6 +1291,9 @@ impl Render for SurfaceTabTooltip {
 }
 /// Drag marker for the terminal-panel height handle.
 struct TerminalResize;
+
+/// Drag marker for the Projects sidebar's Agents list height (its top edge).
+struct AgentsResize;
 
 /// Invisible drag ghost — resize drags and contained pinned-session reorders
 /// render nothing at the cursor.
@@ -1892,6 +1866,10 @@ pub struct Shell {
     /// Surface-tab strip scroll (the strip overflows horizontally, t3
     /// ScrollArea-style; drag drop-math reads the offset back out).
     right_tab_scroll: gpui::ScrollHandle,
+    /// The Projects view's chat tabs above the conversation.
+    project_tab_scroll: gpui::ScrollHandle,
+    /// The chat whose tabs' `+` opened the new-chat canvas: its strip stays.
+    new_chat_tabs_from: Option<String>,
     /// Chat outlet, pull request dashboard, or settings pages.
     route: Route,
     settings_focus: FocusHandle,
@@ -1936,6 +1914,10 @@ pub struct Shell {
     chat_rename: Option<ChatRename>,
     /// Chat id awaiting delete confirmation.
     delete_confirm: Option<String>,
+    /// The offer to remove a worktree nothing active runs in any more.
+    worktree_cleanup: Option<worktree_cleanup::WorktreeCleanup>,
+    /// A faint worktree row's context menu.
+    worktree_menu: Option<(worktree_cleanup::WorktreeTarget, Point<Pixels>)>,
     /// Global confirmation/error dialog for the Changes-pane trash action. The
     /// RPC task is retained separately so rerenders do not cancel it.
     discard_working_tree: Option<DiscardWorkingTreeFlow>,
@@ -1943,12 +1925,6 @@ pub struct Shell {
     /// Space-row context menu (dropdown rows): (space id, window position).
     space_menu: popover::Popup<(String, Point<Pixels>)>,
     rename_space_dialog: Option<RenameSpaceDialog>,
-    sidebar_section_migration: Option<(String, crate::state::EngineHandle)>,
-    section_dialog: Option<sidebar_sections::SectionDialog>,
-    section_menu: Option<(String, Point<Pixels>)>,
-    section_header_hover: Option<String>,
-    section_menu_focus: FocusHandle,
-    section_menu_active: Option<usize>,
     /// Space id awaiting delete confirmation (hard delete + session cascade).
     delete_space_confirm: Option<String>,
     /// The add-space palette (device tabs + folder search), `Some`
@@ -1995,9 +1971,6 @@ pub struct Shell {
     pinned_session_drag_generation: u64,
     sidebar_session_transfer: Option<SidebarSessionTransfer>,
     sidebar_session_return: Option<SidebarSessionReturn>,
-    sidebar_section_drag: Option<SidebarSectionDragState>,
-    /// Each custom section's painted bounds, measured every frame.
-    sidebar_section_bounds: std::rc::Rc<std::cell::RefCell<Vec<gpui::Bounds<Pixels>>>>,
     /// Pending pin intents are scoped to the active profile and engine attachment.
     sidebar_pin_write: Option<sidebar_pins::PendingSidebarPins>,
     sidebar_pin_write_generation: u64,
@@ -2123,6 +2096,10 @@ pub struct Shell {
     /// a constrained edge takes over with its bounce cue.
     pane_resize_active: Option<PaneResizeKind>,
     pane_resize_dragging: Option<PaneResizeKind>,
+    /// The Agents list's scroller; its bounds anchor a height drag.
+    agents_scroll: gpui::ScrollHandle,
+    /// (pointer y, list height) where an Agents height drag started.
+    agents_drag_anchor: Option<(f32, f32)>,
     /// The window changed width since the previous frame. Live window
     /// resizing moves layout directly instead of through motion springs.
     viewport_resized: bool,
@@ -2396,6 +2373,8 @@ impl Shell {
             right_tabs: std::collections::HashMap::new(),
             right_tab_drag: None,
             right_tab_scroll: gpui::ScrollHandle::new(),
+            project_tab_scroll: gpui::ScrollHandle::new(),
+            new_chat_tabs_from: None,
             route,
             settings_focus: cx.focus_handle(),
             settings_end_focus: cx.focus_handle(),
@@ -2430,16 +2409,12 @@ impl Shell {
             chat_copy_left: false,
             chat_rename: None,
             delete_confirm: None,
+            worktree_cleanup: None,
+            worktree_menu: None,
             discard_working_tree: None,
             discard_working_tree_task: None,
             space_menu: popover::Popup::default(),
             rename_space_dialog: None,
-            sidebar_section_migration: None,
-            section_dialog: None,
-            section_menu: None,
-            section_header_hover: None,
-            section_menu_focus: cx.focus_handle(),
-            section_menu_active: None,
             delete_space_confirm: None,
             add_space: None,
             project_crumb_menu: popover::Popup::default(),
@@ -2463,8 +2438,6 @@ impl Shell {
             pinned_session_drag_generation: 0,
             sidebar_session_transfer: None,
             sidebar_session_return: None,
-            sidebar_section_drag: None,
-            sidebar_section_bounds: Default::default(),
             sidebar_pin_write: None,
             sidebar_pin_write_generation: 0,
             sidebar_pin_write_notice: None,
@@ -2528,6 +2501,8 @@ impl Shell {
             sidebar_resize_edge: None,
             pane_resize_active: None,
             pane_resize_dragging: None,
+            agents_scroll: gpui::ScrollHandle::new(),
+            agents_drag_anchor: None,
             viewport_resized: false,
             right_tween: None,
             right_edge_bounce: None,
@@ -5829,7 +5804,6 @@ impl Shell {
 
     fn reconcile_sidebar_pins(&mut self, cx: &mut Context<Self>) {
         self.discard_stale_sidebar_pin_writes(cx);
-        self.migrate_sidebar_sections(cx);
         let Some(profile_key) = self.active_sidebar_pin_profile_key(cx) else {
             return;
         };
@@ -5864,17 +5838,6 @@ impl Shell {
     }
 
     fn active_sidebar_pins(&self, cx: &App) -> Vec<String> {
-        let mut pins = self.raw_sidebar_pins(cx);
-        let sections = self.active_sidebar_sections(cx);
-        pins.retain(|id| {
-            !sections
-                .iter()
-                .any(|section| section.session_ids.contains(id))
-        });
-        pins
-    }
-
-    fn raw_sidebar_pins(&self, cx: &App) -> Vec<String> {
         if let Some(pins) = self.optimistic_sidebar_pins(cx) {
             return pins;
         }
@@ -5932,10 +5895,10 @@ impl Shell {
         change: commutator_proto::SidebarPinChange,
         cx: &mut Context<Self>,
     ) -> bool {
-        let mut pinned_session_ids = self.raw_sidebar_pins(cx);
+        let mut pinned_session_ids = self.active_sidebar_pins(cx);
         change.project(&mut pinned_session_ids);
         if !self.validate_sidebar_pin_change(&profile_key, &pinned_session_ids, cx)
-            || self.raw_sidebar_pins(cx) == pinned_session_ids
+            || self.active_sidebar_pins(cx) == pinned_session_ids
         {
             return false;
         }
@@ -5979,11 +5942,6 @@ impl Shell {
         if pins.contains(&chat_id) == pinned {
             return;
         }
-        if pinned && self.raw_sidebar_pins(cx).contains(&chat_id) {
-            self.assign_sidebar_section(&chat_id, None, cx);
-            cx.notify();
-            return;
-        }
         let change = if pinned {
             commutator_proto::SidebarPinChange::Pin {
                 session_id: chat_id.clone(),
@@ -5995,12 +5953,7 @@ impl Shell {
                 session_id: chat_id.clone(),
             }
         };
-        if self.apply_sidebar_pin_change(profile_key, change, cx)
-            && pinned
-            && self.state.read(cx).workspace_scope == Some(WorkspaceScope::Local)
-        {
-            self.assign_sidebar_section(&chat_id, None, cx);
-        }
+        self.apply_sidebar_pin_change(profile_key, change, cx);
         cx.notify();
     }
 
@@ -6055,8 +6008,6 @@ impl Shell {
     /// the keys it records before they can dispatch.
     pub(super) fn overlay_owns_keyboard(&self, cx: &App) -> bool {
         self.command_palette.is_some()
-            || self.section_dialog.is_some()
-            || self.section_menu.is_some()
             || self.add_space.is_some()
             || self.composer.read(cx).pickers().read(cx).is_open()
             || self.open_side_chat_pickers(cx).is_some()
@@ -6123,10 +6074,20 @@ impl Shell {
         }
         self.composer
             .update(cx, |composer, cx| composer.purge_chat(&chat_id, cx));
+        let deleted = self
+            .state
+            .read(cx)
+            .chats
+            .iter()
+            .find(|chat| chat.id == chat_id)
+            .cloned();
         self.mutate(
             serde_json::json!({ "op": "deleteChat", "chatId": chat_id }),
             cx,
         );
+        if let Some(deleted) = deleted {
+            self.offer_worktree_cleanup(&deleted, cx);
+        }
         cx.notify();
     }
 
@@ -6998,6 +6959,10 @@ impl Shell {
     /// The titlebar owns new-session creation regardless of sidebar state. It
     /// remains available on PR screens, even without a selected session.
     pub(super) fn titlebar_plus_alpha(&self, cx: &App) -> f32 {
+        // The Projects view's chat tabs carry their own `+` after the last tab.
+        if !self.project_chat_tabs(cx).is_empty() {
+            return 0.0;
+        }
         titlebar_new_session_alpha(&self.route, self.state.read(cx).selected_chat.is_some())
     }
 
@@ -7651,10 +7616,14 @@ impl Shell {
         // Whether the row wears its project icon. Rows inside a project
         // group leave it to the group header.
         project_icon: bool,
+        // The harness mark at the row's right end instead of before the
+        // title (the Agents panel), when not compact.
+        harness_trailing: bool,
         search_query: Option<&str>,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let harness_trailing = harness_trailing && !self.settings.sidebar_compact;
         // Activity, not position (t3code Sidebar): status is a small colored
         // word + glyph in the row's top-right corner — Working animates the
         // composer-strip spinner, Done wears a check; Idle rows show the
@@ -7704,6 +7673,13 @@ impl Shell {
                 .child(icon)
                 .into_any_element()
         });
+        // With the project's name on its own line, the icon sits by it
+        // rather than by the title.
+        let (label_project_icon, project_icon) = if !compact && show_label {
+            (project_icon, None)
+        } else {
+            (None, project_icon)
+        };
         let content_id = id.clone();
         // Send-truth overrides: a send unadopted past the grace window is
         // FAILED (explicit, with the transcript's retry affordance); a send
@@ -8211,7 +8187,8 @@ impl Shell {
                 },
             )
             .children(hover_card)
-            // Line 1: "project @ device", status word / time-ago right.
+            // Line 1: "project @ device" behind the project's icon, status
+            // word / time-ago right.
             .when(!compact && show_label, |el| {
                 el.child(
                     div()
@@ -8220,6 +8197,7 @@ impl Shell {
                         .flex_row()
                         .items_center()
                         .gap(px(Theme::SPACE_SM))
+                        .children(label_project_icon)
                         .child(sidebar_faded_label(
                             format!("chat-device-{content_id}").into(),
                             true,
@@ -8247,7 +8225,9 @@ impl Shell {
                     }))
                     .children(compact_status)
                     .when_some(
-                        harness.map(crate::pickers::harness_brand_icon),
+                        harness
+                            .filter(|_| !harness_trailing)
+                            .map(crate::pickers::harness_brand_icon),
                         |el, (path, tint)| {
                             el.child(
                                 icon(path)
@@ -8410,7 +8390,20 @@ impl Shell {
                                         .into_any_element()
                                 }),
                         )
-                    }),
+                    })
+                    .when_some(
+                        harness
+                            .filter(|_| harness_trailing)
+                            .map(crate::pickers::harness_brand_icon),
+                        |el, (path, tint)| {
+                            el.child(
+                                icon(path)
+                                    .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                                    .flex_none()
+                                    .text_color(tint.unwrap_or(subline).opacity(0.8)),
+                            )
+                        },
+                    ),
             )
             // Line 3 is structural, not reserved whitespace: compact states
             // omit it completely when both Branch and Pull request are hidden.
@@ -8658,11 +8651,6 @@ impl Shell {
         {
             self.cancel_pinned_session_drag(cx);
         }
-        if self.sidebar_section_drag.is_some()
-            && (!cx.has_active_drag() || !self.sidebar_section_drag_is_valid(cx))
-        {
-            self.cancel_sidebar_section_drag(cx);
-        }
 
         // Keyed rows: (stable key, estimated height, element) — the key + height
         // list drives the §1.6 resort FLIP diff below (attention-bucket
@@ -8672,9 +8660,8 @@ impl Shell {
             .moving_row
             .map(|(row, height)| self.render_moving_sidebar_session(row, height, theme));
         let pinned_count = session_rows.pinned_count;
-        let custom_count = session_rows.custom_count;
-        let regular_start = pinned_count + custom_count;
-        let mut keyed = session_rows.rows;
+        let regular_start = pinned_count;
+        let keyed = session_rows.rows;
         let regular_count = session_rows.regular_count;
         let ungrouped = self.sidebar_organization() == SidebarOrganization::InOneList;
         let regular_body_height = spaces::SIDEBAR_DISCLOSURE_BODY_INSET
@@ -8726,7 +8713,7 @@ impl Shell {
                 order.push((
                     "sidebar-sessions-header".into(),
                     spaces::SIDEBAR_DISCLOSURE_HEADER_HEIGHT
-                        + if show_pinned_section || custom_count > 0 {
+                        + if show_pinned_section {
                             12.0
                         } else {
                             0.0
@@ -8748,7 +8735,6 @@ impl Shell {
         }
         if self.pinned_session_drag.is_none()
             && self.sidebar_session_transfer.is_none()
-            && self.sidebar_section_drag.is_none()
             && self.sidebar_prev_order != order
         {
             let key_order_changed = sidebar_key_order_changed(&self.sidebar_prev_order, &order);
@@ -8790,32 +8776,10 @@ impl Shell {
                     .is_none_or(|drag| drag.preview.as_ref().is_none_or(|gap| gap.pinned))
             })
             .map(|drag| (drag.from, drag.over, drag.prev_over, drag.epoch));
-        // A lifted custom section leaves an empty slot behind and paints in
-        // the list's movement layer; its siblings slide around the gap.
-        let section_offsets = self
-            .sidebar_section_drag_offsets()
-            .filter(|(_, offsets)| offsets.len() == custom_count);
-        let lifted_section = section_offsets.as_ref().and_then(|(from, _)| {
-            let height = self.sidebar_section_drag.as_ref()?.heights[*from];
-            let (_, _, slot) = keyed.get_mut(pinned_count + from)?;
-            let placeholder = div().flex_none().h(px(height)).into_any_element();
-            let section = std::mem::replace(slot, placeholder);
-            self.render_lifted_sidebar_section(section, theme)
-        });
         let list_items: Vec<AnyElement> = keyed
             .into_iter()
             .enumerate()
             .map(|(ix, (key, _, element))| {
-                if let Some((_, offsets)) = &section_offsets
-                    && let Some(offset) =
-                        ix.checked_sub(pinned_count).and_then(|ix| offsets.get(ix))
-                {
-                    return div()
-                        .relative()
-                        .top(px(*offset))
-                        .child(element)
-                        .into_any_element();
-                }
                 if ix < pinned_count
                     && let Some((from, over, prev_over, drag_epoch)) = pinned_drag
                 {
@@ -8884,12 +8848,10 @@ impl Shell {
         let filter_row = self.render_spaces_filter(theme, cx);
         let active_list = if !list_items.is_empty() {
             let mut pinned_items = list_items;
-            let mut custom_items = pinned_items.split_off(pinned_count);
-            let regular_items = custom_items.split_off(custom_count);
+            let regular_items = pinned_items.split_off(pinned_count);
             let regular_empty = regular_items.is_empty();
             let pinned_group = show_pinned_section
                 .then(|| self.render_pinned_section(pinned_items, pinned_body_height, theme, cx));
-            let section_bounds = self.sidebar_section_bounds.clone();
             div()
                 .id("sidebar-active-sessions")
                 .flex()
@@ -8897,20 +8859,6 @@ impl Shell {
                 .gap(px(SIDEBAR_LIST_GAP))
                 .pb(px(Theme::SPACE_SM))
                 .when_some(pinned_group, |el, group| el.child(group))
-                // Each section's painted slot measures the reorder's hit
-                // testing and displacement.
-                .when(!custom_items.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(SIDEBAR_LIST_GAP))
-                            .on_children_prepainted(move |bounds, _, _| {
-                                *section_bounds.borrow_mut() = bounds;
-                            })
-                            .children(custom_items),
-                    )
-                })
                 .when(
                     !regular_items.is_empty() || self.sidebar_session_transfer.is_some(),
                     |el| {
@@ -8980,7 +8928,7 @@ impl Shell {
                                     .into_any_element(),
                                 regular_body_height,
                                 regular_count,
-                                show_pinned_section || custom_count > 0,
+                                show_pinned_section,
                                 theme,
                                 cx,
                             ),
@@ -9047,17 +8995,6 @@ impl Shell {
                             this.cancel_sidebar_session_transfer(cx);
                         },
                     ))
-                    // A section reorder lands wherever it is released in the list.
-                    .on_drag_move::<SidebarSectionDrag>(cx.listener(
-                        |this, event: &gpui::DragMoveEvent<SidebarSectionDrag>, _, cx| {
-                            this.track_sidebar_section_drag(event.event.position, cx);
-                        },
-                    ))
-                    .on_drop::<SidebarSectionDrag>(cx.listener(
-                        |this, payload: &SidebarSectionDrag, _, cx| {
-                            this.finish_sidebar_section_drag(payload, cx);
-                        },
-                    ))
                     .px(px(Theme::SPACE_SM))
                     .flex()
                     .flex_col()
@@ -9066,8 +9003,7 @@ impl Shell {
                     .pt(px(SIDEBAR_LIST_PAD_TOP))
                     .child(active_list)
                     .children(archived_section)
-                    .children(moving_row)
-                    .children(lifted_section),
+                    .children(moving_row),
             )),
         )
         .fade_overflow_y(&self.sidebar_scroll);
@@ -9911,6 +9847,8 @@ impl Shell {
         // path close here; the others remain explicit blockers.
         if self.sync_flow.has_visible_overlay()
             || self.delete_confirm.is_some()
+            || self.worktree_cleanup.is_some()
+            || self.worktree_menu.is_some()
             || self.delete_space_confirm.is_some()
             || self.chat_menu.get().is_some()
             || self.space_menu.get().is_some()
@@ -10206,7 +10144,7 @@ impl Shell {
         }
 
         overlays.extend(self.render_space_overlays(viewport, window, cx));
-        overlays.extend(self.render_section_overlays(viewport, window, cx));
+        overlays.extend(self.render_worktree_cleanup_overlays(viewport, cx));
         if let Some(overlay) = self.render_command_palette(viewport, window, cx) {
             overlays.push(overlay);
         }
@@ -11590,6 +11528,7 @@ impl Shell {
                     active: is_active,
                     title,
                     dirty,
+                    status: None,
                     leading,
                 },
                 &theme,
@@ -12480,6 +12419,7 @@ impl Render for Shell {
             .on_drag_move(cx.listener(Self::on_pull_request_pane_drag))
             .on_drag_move(cx.listener(Self::on_files_panel_drag))
             .on_drag_move(cx.listener(Self::on_terminal_drag))
+            .on_drag_move(cx.listener(Self::on_agents_drag))
             // The panel shortcuts are chat-scoped chrome: in Settings they are
             // no-ops (commutator __root.tsx gates the hotkey on `!isSettings`, and
             // the terminal panel is only mounted on session routes). The

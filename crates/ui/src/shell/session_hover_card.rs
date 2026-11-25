@@ -474,6 +474,7 @@ mod tests {
                     None,
                     None,
                     false,
+                    false,
                     palette.then_some(""),
                     &Theme::default(),
                     cx,

@@ -56,7 +56,7 @@ final class MainTabController: UIViewController, AppRouter, UINavigationControll
             UITab(title: "Pull requests", image: UIImage(systemName: "arrow.triangle.pull"), identifier: "pulls") { _ in prs },
             UITab(title: "Settings", image: UIImage(systemName: "gearshape"), identifier: "settings") { _ in settings },
         ])
-        tabs.tabBar.tintColor = Palette.text
+        tabs.tabBar.tintColor = Palette.accent
         return tabs
     }
 

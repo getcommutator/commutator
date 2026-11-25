@@ -59,12 +59,22 @@ final class StatusGlyph: UIView {
     // Desktop geometry scaled for touch: mini spinner 2 px cells / 1 px gap
     // → 3.5 / 1.5; trailer 2.5 / 1.25 → 3.5 / 1.75; dot 6 → 7.
     private static let ring = [[0, 1], [5, 2], [4, 3]]
+    /// The desktop's `GlyphPalette::for_accent`: a lighter, the plain and a deeper accent.
     private static let glyphTints = [
-        Palette.dynamic(0x424244, 0xF1F1F1),
-        Palette.dynamic(0x18181B, 0xECECEC),
-        Palette.dynamic(0x121214, 0xC2C2C2),
+        accentShade { dark, h, s, b in (h, s * (dark ? 0.72 : 0.78), min(b + (dark ? 0.14 : 0.11), dark ? 0.95 : 0.85)) },
+        Palette.accent,
+        accentShade { dark, h, s, b in (h, s, dark ? b * 0.82 : max(b - 0.09, 0.22)) },
     ]
-    private static let trailerTints = [UIColor(hex: 0xB6D3EF), UIColor(hex: 0xEDB185), UIColor(hex: 0xF888A0)]
+
+    private static func accentShade(_ f: @escaping (Bool, CGFloat, CGFloat, CGFloat) -> (CGFloat, CGFloat, CGFloat)) -> UIColor {
+        UIColor { traits in
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            Palette.accent.resolvedColor(with: traits).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            let (h2, s2, b2) = f(traits.userInterfaceStyle == .dark, h, s, b)
+            return UIColor(hue: h2, saturation: s2, brightness: b2, alpha: a)
+        }
+    }
+    private static var trailerTints: [UIColor] { glyphTints }
 
     /// `gspin_opacity`: hold bright, fall over 45 %, rest dim, snap back over the last 8 %.
     static func opacity(_ t: Double, dim: Double = 0.1) -> Double {

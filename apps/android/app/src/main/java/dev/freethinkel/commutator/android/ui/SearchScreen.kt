@@ -45,13 +45,10 @@ fun SearchScreen(model: AppModel, onBack: () -> Unit, onOpen: (String) -> Unit) 
     var query by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
-    var newSection by remember { mutableStateOf<String?>(null) }
     val actions = RowActions(
         model = model,
         onOpen = onOpen,
         archive = { model.archive(it.id) },
-        sections = workspace?.front?.sections.orEmpty().map { it.id to it.name },
-        newSection = { newSection = it },
     )
     val results = remember(query, workspace) {
         val q = query.trim()
@@ -98,11 +95,6 @@ fun SearchScreen(model: AppModel, onBack: () -> Unit, onOpen: (String) -> Unit) 
             Box(Modifier.padding(horizontal = 16.dp)) {
                 SessionItem(row, i, results.size, actions)
             }
-        }
-    }
-    newSection?.let { chatId ->
-        TextPromptDialog("New section", "", "Create", ZIcons.Folder, onDismiss = { newSection = null }) { name ->
-            model.createSection(name)?.let { id -> model.move(chatId, id) }
         }
     }
 }

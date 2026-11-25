@@ -129,7 +129,7 @@ impl CoreClient {
         (&*self.client.workspace()).into()
     }
 
-    /// Threads page: pinned, sections, recent.
+    /// Threads page: pinned, recent.
     pub fn front_page(&self) -> FrontPage {
         (&self.client.workspace().front).into()
     }
@@ -287,42 +287,6 @@ impl CoreClient {
         before: Option<String>,
     ) -> CoreResult<()> {
         Ok(self.client.move_pin(&chat_id, after, before)?)
-    }
-
-    /// Returns the new section id.
-    pub fn create_section(&self, name: String) -> CoreResult<String> {
-        Ok(self.client.create_section(&name)?)
-    }
-
-    pub fn rename_section(&self, section_id: String, name: String) -> CoreResult<()> {
-        Ok(self.client.rename_section(&section_id, &name)?)
-    }
-
-    pub fn delete_section(&self, section_id: String) -> CoreResult<()> {
-        Ok(self.client.delete_section(&section_id)?)
-    }
-
-    pub fn set_section_collapsed(&self, section_id: String, collapsed: bool) -> CoreResult<()> {
-        Ok(self.client.set_section_collapsed(&section_id, collapsed)?)
-    }
-
-    /// Move a session into a section (`None` = back to recent).
-    pub fn assign_section(&self, chat_id: String, section_id: Option<String>) -> CoreResult<()> {
-        Ok(self.client.assign_section(&chat_id, section_id)?)
-    }
-
-    /// Move a session into a section between its members (`None` at either
-    /// end), as a drop into the section does.
-    pub fn place_session(
-        &self,
-        chat_id: String,
-        section_id: Option<String>,
-        after: Option<String>,
-        before: Option<String>,
-    ) -> CoreResult<()> {
-        Ok(self
-            .client
-            .place_session(&chat_id, section_id, after, before)?)
     }
 
     /// Create (or find) the project for `path` on `device_id`. Returns its id.

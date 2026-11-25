@@ -17,7 +17,7 @@ use commutator_proto::{CheckoutChangeRequestStatus, SidebarPreferences};
 pub(crate) use view::{DeriveContext, device_online};
 pub use view::{
     DeviceView, FrontPage, PROJECT_COLOR_COUNT, ProjectRef, ProjectView, PullRequestGroups,
-    SearchField, SearchHit, SectionView, SessionRow, WorkspaceSnapshot, project_color_index,
+    SearchField, SearchHit, SessionRow, WorkspaceSnapshot, project_color_index,
     relative_time_label,
 };
 

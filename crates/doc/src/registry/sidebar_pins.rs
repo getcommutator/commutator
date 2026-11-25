@@ -1,7 +1,71 @@
 use super::*;
 use commutator_proto::{SidebarPinChange, pin_order_key_between, valid_pin_order_key};
 
+/// One placement register per session, shared with the legacy `pinned` flag.
+const LOCATIONS: &str = "sidebarLocations";
+
 impl RegistryDoc {
+    pub(super) fn observe_sidebar_row(&mut self, kind: &str, id: &str) {
+        if let Some(clock) = self
+            .overlay_row(kind, id)
+            .and_then(|r| r.max_clock().map(str::to_owned))
+        {
+            let mut parts = clock.splitn(3, '-');
+            if let (Some(ms), Some(counter)) = (
+                parts.next().and_then(|v| v.parse::<i64>().ok()),
+                parts.next().and_then(|v| v.parse::<u32>().ok()),
+            ) {
+                if (ms, counter) > (self.clock.last_ms, self.clock.counter) {
+                    self.clock.last_ms = ms;
+                    self.clock.counter = counter;
+                }
+            }
+        }
+    }
+
+    fn sidebar_location(&self, id: &str, pin: Option<&RegistryRow>) -> String {
+        let location = self.overlay_row(LOCATIONS, id);
+        // Older apps write only pinned. Honor a later legacy toggle over the
+        // placement register; a value other than "pinned" (a retired section
+        // id included) reads as unpinned.
+        let location_clock = location.as_ref().and_then(|r| r.clocks.get("location"));
+        let pin_clock = pin.and_then(|r| r.clocks.get("pinned"));
+        if location_clock.is_some() && location_clock >= pin_clock {
+            return location
+                .and_then(|r| {
+                    r.fields
+                        .get("location")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default();
+        }
+        if pin
+            .and_then(|r| r.fields.get("pinned"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            "pinned".into()
+        } else {
+            String::new()
+        }
+    }
+
+    pub(super) fn sidebar_location_is_pinned(&self, id: &str, pin: &RegistryRow) -> bool {
+        self.sidebar_location(id, Some(pin)) == "pinned"
+    }
+
+    pub(super) fn write_sidebar_location(&mut self, id: &str, location: &str) {
+        self.observe_sidebar_row(LOCATIONS, id);
+        self.observe_sidebar_row(KIND_SIDEBAR_PINS, id);
+        self.write(
+            LOCATIONS,
+            id,
+            OpKind::Upsert,
+            fields([("location", json!(location))]),
+        );
+    }
+
     pub fn sidebar_pins_initialized(&self) -> bool {
         self.overlay_row(KIND_PREFERENCES, SIDEBAR_PINS_STATE_ID)
             .is_some()
@@ -36,9 +100,6 @@ impl RegistryDoc {
     }
 
     pub fn change_sidebar_pin(&mut self, change: &SidebarPinChange) -> Result<(), DocError> {
-        if let SidebarPinChange::Section { change } = change {
-            return self.change_sidebar_section(change);
-        }
         let id = change.session_id();
         if id.is_empty()
             || id.len() > 256
@@ -64,7 +125,7 @@ impl RegistryDoc {
             return Err(DocError::Schema("Session no longer exists".into()));
         }
         self.initialize_sidebar_pins();
-        self.observe_sidebar_row("sidebarLocations", id);
+        self.observe_sidebar_row(LOCATIONS, id);
         // Observe this pin's field clocks before a causally subsequent edit,
         // including clocks from a device whose wall clock runs ahead of ours.
         if let Some(row) = self.overlay_row(KIND_SIDEBAR_PINS, id) {

@@ -205,11 +205,13 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
         secondary: argb(c.text_muted),
         tertiary: argb(c.text_faint),
         hairline: argb(c.border),
-        accent: argb(c.solid),
-        toggle_on: argb(if dark { c.text_muted } else { c.solid }),
-        on_accent: argb(c.on_solid),
+        // The theme's accent, not `solid`: most themes' solid is near-black (or white) ink.
+        accent: argb(accent),
+        toggle_on: argb(accent),
+        // White reads better than black on mid tones even at a lower ratio (iOS buttons do this).
+        on_accent: argb(if Color::WHITE.contrast(accent) >= 3.0 { Color::WHITE } else { accent.best_on_color() }),
         control_fill: argb(text.with_alpha(0.075)),
-        accent_soft: argb(c.solid.with_alpha(0.12)),
+        accent_soft: argb(accent.with_alpha(0.12)),
         danger: argb(c.danger),
         success: argb(c.success),
         warning: argb(c.warning),
@@ -225,7 +227,10 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
         .map(|role| {
             use ColorRole::*;
             match role {
-                Text | InlineCodeText | CodeText => app.text,
+                Text | CodeText => app.text,
+                // The desktop's inline code (`crates/ui` theme): accent text on an accent wash.
+                InlineCodeText => argb(accent),
+                InlineCodeBackground => argb(accent.with_alpha(pick(0.10, 0.12))),
                 TextSecondary => app.secondary,
                 TextTertiary => app.tertiary,
                 // Whole blocks (tool output, diff context) paint in it: keep them readable.
@@ -234,7 +239,7 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
                 Danger => app.danger,
                 Success => app.success,
                 Warning => app.warning,
-                InlineCodeBackground | ChipBackground => app.chip,
+                ChipBackground => app.chip,
                 CodeBackground => app.code_background,
                 CodeBorder => app.code_border,
                 QuoteBar => argb(accent.with_alpha(0.45)),

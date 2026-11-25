@@ -13,9 +13,11 @@ fn main() {
             plist.display()
         );
     }
-    println!("cargo:rerun-if-changed=../../dist/windows/commutator.rc");
-    println!("cargo:rerun-if-changed=../../dist/windows/commutator.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Only here: a missing file in rerun-if-changed reruns the script on
+        // every build, and dist/windows isn't in every checkout.
+        println!("cargo:rerun-if-changed=../../dist/windows/commutator.rc");
+        println!("cargo:rerun-if-changed=../../dist/windows/commutator.ico");
         embed_resource::compile_for(
             "../../dist/windows/commutator.rc",
             &["commutator"],

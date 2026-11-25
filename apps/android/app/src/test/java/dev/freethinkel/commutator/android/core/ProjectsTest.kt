@@ -13,7 +13,7 @@ class ProjectsTest {
         deviceId = "mac", deviceName = null, deviceOnline = true, harness = null, harnessLabel = null, model = null,
         modelLabel = null, reasoning = null, branch = null, cwd = cwd, indicator = indicator, hostIndicator = indicator,
         workingSinceMs = null, lastActivityMs = at, timeLabel = "", createdAtMs = 0, unseen = unseen, archived = false,
-        pinned = false, sectionId = null, pullRequest = null, sendState = null, parentChatId = null, roomGen = 0u,
+        pinned = false, pullRequest = null, sendState = null, parentChatId = null, roomGen = 0u,
         sleepUntilMs = null, wokeAtMs = woke, waitsOnProcess = false,
     )
 

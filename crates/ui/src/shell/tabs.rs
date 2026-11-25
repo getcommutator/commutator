@@ -237,6 +237,7 @@ impl Shell {
     /// canvas on that project and wins over the sidebar filter.
     pub(super) fn open_new_session(&mut self, project: Option<String>, cx: &mut Context<Self>) {
         self.command_palette = None;
+        self.new_chat_tabs_from = None;
         self.set_route(Route::Chat, cx);
         self.focus_composer(cx);
         // Pre-hide before the selection flips so the state change can't
@@ -475,9 +476,12 @@ impl Shell {
                                 .debug_selector(|| "right-titlebar-content".into())
                                 .absolute()
                                 .right_0()
-                                .top_0()
+                                // The pane's tabs sit away from the traffic
+                                // lights: undo the band's top pad so the
+                                // chips center in the full titlebar height.
+                                .top(px(-Theme::TITLEBAR_TOP_PAD))
                                 .w(px(content_width))
-                                .h_full()
+                                .h(px(Theme::TITLEBAR_HEIGHT))
                                 .flex()
                                 .flex_row()
                                 .items_center()
@@ -612,78 +616,156 @@ impl Shell {
         // in place of its title.
         let tabs = self.project_chat_tabs(cx);
         let selected_chat = self.state.read(cx).selected_chat.clone();
+        let shell_view = cx.entity_id();
         let tab_strip = (!tabs.is_empty()).then(|| {
-            div()
+            // The canvas the strip's `+` opened: the active tab until its
+            // first message makes it a chat; ✕ goes back where it came from.
+            let new_chat_chip = selected_chat.is_none().then(|| {
+                let back = self.new_chat_tabs_from.clone();
+                crate::surface_chrome::tab_chip(
+                    crate::surface_chrome::TabChip {
+                        id: "project-chat-tab-new-canvas",
+                        close_id: "project-chat-tab-new-canvas-close",
+                        ix: 0,
+                        active: true,
+                        title: "New chat".into(),
+                        dirty: false,
+                        status: None,
+                        leading: crate::surface_chrome::tab_chip_icon(icons::PLUS, true, &theme),
+                    },
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        if let Some(chat_id) = back.clone() {
+                            this.open_chat(chat_id, cx);
+                        }
+                    }),
+                )
+            });
+            let chips = tabs.into_iter().enumerate().map(|(ix, (id, title, harness, status))| {
+                let active = selected_chat.as_deref() == Some(id.as_str());
+                let leading = match harness.map(crate::pickers::harness_brand_icon) {
+                    Some((path, tint)) => icon(path)
+                        .size(px(crate::surface_chrome::TAB_CHIP_ICON))
+                        .text_color(tint.unwrap_or(theme.text_muted))
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                };
+                // Shepherd's agent tab: the loader while it works, its
+                // status otherwise, and ✕ (archive) under the pointer.
+                let status = match status {
+                    commutator_proto::ChatIndicator::Working => Some(
+                        crate::loaders::mini_glyph_spinner(
+                            format!("project-chat-tab-working-{id}"),
+                            2.0,
+                            theme.glyph,
+                            shell_view,
+                            cx,
+                        )
+                        .into_any_element(),
+                    ),
+                    commutator_proto::ChatIndicator::Completed => Some(
+                        icon(icons::CHECK)
+                            .size(px(11.0))
+                            .text_color(spaces::status_dot_color(status, &theme))
+                            .into_any_element(),
+                    ),
+                    commutator_proto::ChatIndicator::Idle => None,
+                    _ => Some(
+                        div()
+                            .size(px(6.0))
+                            .rounded_full()
+                            .bg(spaces::status_dot_color(status, &theme))
+                            .into_any_element(),
+                    ),
+                };
+                let (open_id, menu_id, close_id, middle_id) =
+                    (id.clone(), id.clone(), id.clone(), id.clone());
+                crate::surface_chrome::tab_chip(
+                    crate::surface_chrome::TabChip {
+                        id: "project-chat-tab",
+                        close_id: "project-chat-tab-close",
+                        ix,
+                        active,
+                        title,
+                        dirty: false,
+                        status,
+                        leading,
+                    },
+                    &theme,
+                    cx.listener(move |this, _, _, cx| this.archive_chat(close_id.clone(), cx)),
+                )
+                .aria_label("Chat tab")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_chat(open_id.clone(), cx);
+                }))
+                // The agents list's menu.
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                        this.dismiss_session_card(cx);
+                        this.chat_menu.open(ChatMenuState {
+                            tab: None,
+                            chat_id: menu_id.clone(),
+                            position: event.position,
+                            page: ChatMenuPage::Root,
+                        });
+                        cx.notify();
+                    }),
+                )
+                // Middle-click closes, like every tab strip.
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, _, _, cx| this.archive_chat(middle_id.clone(), cx)),
+                )
+            });
+            let strip = div()
                 .id("project-chat-tabs")
                 .min_w_0()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(2.0))
+                .gap(px(crate::surface_chrome::CONTROL_GAP))
                 .overflow_x_scroll()
-                .children(tabs.into_iter().map(|(id, title, harness, working)| {
-                    use crate::surface_chrome::{
-                        TAB_CHIP_FONT, TAB_CHIP_GAP, TAB_CHIP_HEIGHT, TAB_CHIP_ICON,
-                        TAB_CHIP_PAD_L, TAB_CHIP_PAD_R, TAB_CHIP_SLOT_SIZE,
-                    };
-                    let active = selected_chat.as_deref() == Some(id.as_str());
-                    // The pane tabs' chip (surface_chrome::tab_chip) sized to
-                    // its title, with the working dot in the trailing slot.
-                    crate::surface_chrome::tab(
-                        SharedString::from(format!("project-chat-tab-{id}")),
-                        active,
-                        &theme,
-                    )
-                    .h(px(TAB_CHIP_HEIGHT))
-                    .min_w(px(96.0))
-                    .max_w(px(220.0))
-                    .pl(px(TAB_CHIP_PAD_L))
-                    .pr(px(TAB_CHIP_PAD_R))
-                    .gap(px(TAB_CHIP_GAP))
-                    // A tab is a button, not part of the window's drag area.
-                    .block_mouse_except_scroll()
-                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_chat(id.clone(), cx);
-                    }))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(TAB_CHIP_SLOT_SIZE))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when_some(
-                                harness.map(crate::pickers::harness_brand_icon),
-                                |el, (path, tint)| {
-                                    el.child(
-                                        icon(path)
-                                            .size(px(TAB_CHIP_ICON))
-                                            .text_color(tint.unwrap_or(theme.text_muted)),
-                                    )
-                                },
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(crate::typography::ui_rems(TAB_CHIP_FONT))
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(TAB_CHIP_SLOT_SIZE))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(working, |el| {
-                                el.child(div().size(px(6.0)).rounded_full().bg(theme.accent))
-                            }),
-                    )
-                }))
+                .track_scroll(&self.project_tab_scroll)
+                .children(chips)
+                .children(new_chat_chip)
+                // Chrome's add-tab after the last tab: a new chat where the
+                // open one runs.
+                .child(
+                    div()
+                        .id("project-chat-tab-new")
+                        .size(px(24.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .block_mouse_except_scroll()
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                        .hover(|el| el.bg(crate::theme::wash(0.11)))
+                        .tooltip(crate::settings::widgets::text_tooltip(
+                            ShortcutId::NewSession.label(),
+                        ))
+                        .on_click(cx.listener(|this, _, _, cx| this.new_chat_beside_tabs(cx)))
+                        .child(
+                            icon(icons::PLUS)
+                                .size(px(13.0))
+                                .text_color(theme.text_muted),
+                        ),
+                );
+            // The transcript runs under this band: a wheel over the tabs
+            // scrolls them, never the chat behind.
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .child(crate::surface_chrome::tab_strip_region(
+                    strip,
+                    &self.project_tab_scroll,
+                    &theme,
+                ))
         });
         let tab_strip_absent = tab_strip.is_none();
         let inner = div()
@@ -733,14 +815,52 @@ impl Shell {
                         ),
                 )
             })
-            .child(div().flex_1())
+            // The tab strip takes the free width itself.
+            .when(tab_strip_absent || takeover, |el| el.child(div().flex_1()))
             .children(session_info_toggle)
             .children(trailing);
 
         // The unified window titlebar: full-width on the glass shell, ABOVE
         // the inset card. No bottom border — the card's own hairline is the
         // separation; the glass gutter shows between.
-        let bar = div().h(px(Theme::TITLEBAR_HEIGHT)).flex_none().child(inner);
+        // The new-chat canvas's artwork runs under the band: the tabs get a
+        // surface-toned backdrop that fades into the picture below them.
+        let artwork_fade = !tab_strip_absent
+            && self.state.read(cx).selected_chat.is_none()
+            && crate::settings::current(cx)
+                .new_thread_composer_background
+                .as_ref()
+                .is_some_and(|background| std::path::Path::new(&background.path).is_file());
+        let backdrop = artwork_fade.then(|| {
+            let (solid, soft, clear) = (
+                theme.surface,
+                theme.surface.opacity(0.85),
+                theme.surface.opacity(0.0),
+            );
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .flex()
+                .flex_col()
+                .child(div().h(px(Theme::TITLEBAR_HEIGHT)).bg(gpui::linear_gradient(
+                    180.0,
+                    gpui::linear_color_stop(solid, 0.0),
+                    gpui::linear_color_stop(soft, 1.0),
+                )))
+                .child(div().h(px(28.0)).bg(gpui::linear_gradient(
+                    180.0,
+                    gpui::linear_color_stop(soft, 0.0),
+                    gpui::linear_color_stop(clear, 1.0),
+                )))
+        });
+        let bar = div()
+            .relative()
+            .h(px(Theme::TITLEBAR_HEIGHT))
+            .flex_none()
+            .children(backdrop)
+            .child(inner);
         self.titlebar_drag_region("chat-titlebar", bar, cx)
             .into_any_element()
     }
@@ -876,4 +996,42 @@ mod cycle_tests {
     // `AppState::sidebar_chats` the sidebar and the jump shortcuts read, and
     // `jump_slots_count_the_rows_the_sidebar_draws` (state.rs) covers the
     // space-filter behaviour for all of them.
+}
+
+impl Shell {
+    /// The tab strip's `+`: a new chat in the open chat's project, and in
+    /// its worktree when it runs in one the sidebar knows.
+    fn new_chat_beside_tabs(&mut self, cx: &mut Context<Self>) {
+        let (space_id, branch, from) = {
+            let state = self.state.read(cx);
+            // From the new-chat tab itself: keep the strip's chat.
+            let from = state
+                .selected_chat
+                .clone()
+                .or_else(|| self.new_chat_tabs_from.clone());
+            let Some(chat) = from
+                .as_ref()
+                .and_then(|id| state.chats.iter().find(|chat| &chat.id == id))
+            else {
+                self.open_new_session(None, cx);
+                return;
+            };
+            let space_id = state.space_for_chat(chat).map(|space| space.id.clone());
+            let trim = |path: &str| path.trim().trim_end_matches(['/', '\\']).to_string();
+            let branch = space_id.as_ref().and_then(|id| {
+                let cwd = trim(chat.cwd.as_deref()?);
+                self.sidebar_worktrees.get(id)?.iter().find_map(|r| {
+                    (r.worktree_path.as_deref().map(trim) == Some(cwd.clone()))
+                        .then(|| r.name.clone())
+                })
+            });
+            (space_id, branch, from)
+        };
+        self.open_new_session(space_id.clone(), cx);
+        self.new_chat_tabs_from = from;
+        if let (Some(space_id), Some(branch)) = (space_id, branch) {
+            let pickers = self.composer.read(cx).pickers().clone();
+            pickers.update(cx, |pickers, cx| pickers.use_worktree(space_id, branch, cx));
+        }
+    }
 }

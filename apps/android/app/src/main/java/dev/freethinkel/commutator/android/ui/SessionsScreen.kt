@@ -169,7 +169,7 @@ fun liveSummary(ws: WorkspaceSnapshot): String? {
 
 private fun frontRows(ws: WorkspaceSnapshot): List<SessionRow> {
     val seen = HashSet<String>()
-    return (ws.front.pinned + ws.front.sections.flatMap { it.sessions } + ws.front.recent).filter { seen.add(it.id) }
+    return (ws.front.pinned + ws.front.recent).filter { seen.add(it.id) }
 }
 
 private fun liveCounts(ws: WorkspaceSnapshot): Pair<Int, Int> {
@@ -206,8 +206,6 @@ fun SessionsScreen(
     val collapsedGroups by model.collapsed.collectAsState()
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     val scope = rememberCoroutineScope()
-    var newSection by remember { mutableStateOf<String?>(null) }
-    var renameSection by remember { mutableStateOf<uniffi.commutator_core.SectionView?>(null) }
     var reorder by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     val pull = rememberPullToRefreshState()
@@ -222,23 +220,20 @@ fun SessionsScreen(
         else -> null
     }
 
-    // "New section…" from a row's Move menu files that row into it. Remembered: every row
-    // takes `actions`, so a fresh instance per recomposition re-composes every visible row.
-    val userSections = ws?.front?.sections
-    val actions = remember(model, onOpen, selected, userSections, compact) {
+    // Remembered: every row takes `actions`, so a fresh instance per
+    // recomposition re-composes every visible row.
+    val actions = remember(model, onOpen, selected, compact) {
         RowActions(
             model = model,
             onOpen = onOpen,
             archive = { row -> model.archive(row.id) },
-            sections = userSections.orEmpty().map { it.id to it.name },
-            newSection = { chatId -> newSection = chatId ?: "" },
             selected = selected,
             compact = compact,
         )
     }
     // The Projects view's Chats card: compact rows, no Pin.
     val projectActions = remember(actions) {
-        RowActions(actions.model, actions.onOpen, actions.archive, actions.sections, actions.newSection, actions.selected, activity = false, compact = true)
+        RowActions(actions.model, actions.onOpen, actions.archive, actions.selected, activity = false, compact = true)
     }
 
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -366,19 +361,6 @@ fun SessionsScreen(
                                 menu = listOf(MenuAction("Reorder…", ZIcons.Sort) { reorder = true }),
                             )
                         }
-                        for (section in front.sections) {
-                            val rows = section.sessions.filter(keep)
-                            if (filterTree != null && rows.isEmpty()) continue
-                            group(
-                                section.id, section.name, rows, actions,
-                                collapsed = section.collapsed,
-                                onToggle = { model.setSectionCollapsed(section.id, !section.collapsed) },
-                                menu = listOf(
-                                    MenuAction("Rename section…", ZIcons.Rename) { renameSection = section },
-                                    MenuAction("Delete section", ZIcons.Delete, destructive = true) { model.deleteSection(section.id) },
-                                ),
-                            )
-                        }
                         if (recent.isNotEmpty()) {
                             group(
                                 "recent", "Recent", recent, actions,
@@ -417,10 +399,8 @@ fun SessionsScreen(
                     MenuAction("Compact", ZIcons.RowsCompress, checked = compact) { model.setCompactRows(!compact) },
                 )
                 val more = listOfNotNull(
-                    if (projectsView) null else MenuAction("New section…", ZIcons.Folder) { newSection = "" },
                     if (projectsView) null else MenuAction("Collapse all", ZIcons.Collapse) {
-                        val front = ws?.front ?: return@MenuAction
-                        for (section in front.sections) if (!section.collapsed) model.setSectionCollapsed(section.id, true)
+                        if (ws == null) return@MenuAction
                         val local = listOf("pinned", "recent") +
                             activityGroups(frontRows(ws), owner).map { "activity.project." + (it.first?.id ?: "none") }
                         local.forEach { model.setGroupCollapsed(it, true) }
@@ -454,17 +434,6 @@ fun SessionsScreen(
         )
     }
 
-    newSection?.let { chatId ->
-        TextPromptDialog("New section", "", "Create", ZIcons.Folder, onDismiss = { newSection = null }) { name ->
-            val id = model.createSection(name)
-            if (id != null && chatId.isNotEmpty()) model.move(chatId, id)
-        }
-    }
-    renameSection?.let { section ->
-        TextPromptDialog("Rename section", section.name, "Rename", ZIcons.Rename, onDismiss = { renameSection = null }) { name ->
-            model.renameSection(section.id, name)
-        }
-    }
     if (reorder && ws != null) ReorderPinsSheet(model, ws.front.pinned) { reorder = false }
     if (newProject) NewProjectScreen(model, onDismiss = { newProject = false }) { newProject = false }
 }
@@ -474,13 +443,9 @@ class RowActions(
     val model: AppModel,
     val onOpen: (String) -> Unit,
     val archive: (SessionRow) -> Unit,
-    /** User sections a row can move to (id, name). */
-    val sections: List<Pair<String, String>>,
-    /** Prompt for a new section, filing `chatId` into it (null: just create). */
-    val newSection: (String?) -> Unit,
     /** The chat open beside the list (large screens). */
     val selected: String? = null,
-    /** Pin and Move (menu and swipe): the Chats view's, off in a project's chats. */
+    /** Pin (menu and swipe): the Chats view's, off in a project's chats. */
     val activity: Boolean = true,
     /** One-line rows (the desktop sidebar's Compact). */
     val compact: Boolean = false,
@@ -601,7 +566,6 @@ fun cardColor() = if (LocalDarkTheme.current) MaterialTheme.colorScheme.surfaceC
 @Composable
 fun SessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions) {
     var menu by remember { mutableStateOf(false) }
-    var moving by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
@@ -644,23 +608,10 @@ fun SessionItem(row: SessionRow, index: Int, count: Int, actions: RowActions) {
             (if (actions.activity) {
                 listOf(
                     MenuAction(if (row.pinned) "Unpin" else "Pin", ZIcons.Pin) { model.setPinned(row.id, !row.pinned) },
-                    MenuAction("Move to section…", ZIcons.Folder) { moving = true },
                 )
             } else {
                 emptyList()
             }) + chatMenu(row, actions, rename = { renaming = true }, delete = { deleting = true }),
-        )
-        ChoiceMenu(
-            moving,
-            { moving = false },
-            listOf(
-                MenuSection("Move to section", actions.sections.map { (id, name) ->
-                    MenuChoice(name, row.sectionId == id, leading = { ZIcon(ZIcons.Folder, null, Modifier.size(20.dp)) }) { model.move(row.id, id) }
-                } + listOf(
-                    MenuChoice("No section", row.sectionId == null, leading = { ZIcon(ZIcons.Home, null, Modifier.size(20.dp)) }) { model.move(row.id, null) },
-                    MenuChoice("New section…", false, leading = { ZIcon(ZIcons.Plus, null, Modifier.size(20.dp)) }) { actions.newSection(row.id) },
-                )),
-            ),
         )
     }
     if (renaming) RenameDialog(row.title, onDismiss = { renaming = false }) { model.rename(row.id, it) }
@@ -750,7 +701,7 @@ fun PrBadge(number: ULong, state: PullRequestState) {
 fun RenameDialog(current: String, onDismiss: () -> Unit, onRename: (String) -> Unit) =
     TextPromptDialog("Rename session", current, "Rename", ZIcons.Rename, onDismiss, onRename)
 
-/** A one-field dialog (rename a session, name or rename a section). */
+/** A one-field dialog (rename a session). */
 @Composable
 fun TextPromptDialog(title: String, current: String, confirm: String, icon: Int, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var text by remember { mutableStateOf(current) }

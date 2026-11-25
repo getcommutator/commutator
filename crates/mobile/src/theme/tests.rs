@@ -144,3 +144,11 @@ fn faint_text_stays_readable() {
         assert!(ratio >= 3.5, "{}: faint text is {ratio:.2}", v.id);
     }
 }
+
+#[test]
+fn derived_chrome_accent_is_the_theme_accent() {
+    for v in all_variants().filter(|v| !v.id.starts_with("commutator-")) {
+        let p = phone_palette(v);
+        assert_eq!(p.app.accent, p.roles[ColorRole::Accent as usize], "{}", v.id);
+    }
+}

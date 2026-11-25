@@ -1,4 +1,4 @@
-//! The demo workspace: devices, projects, chats (pinned, sectioned,
+//! The demo workspace: devices, projects, chats (pinned,
 //! projectless, child, archived), live statuses, and PRs in every state.
 
 use chrono::Utc;
@@ -6,8 +6,7 @@ use commutator_doc::RegistryDoc;
 use commutator_proto::{
     ChangeRequestState, ChangeRequestSummary, Chat, ChatConfig, CheckoutChangeRequestStatus,
     ConversationSourceContext, Device, HarnessId, ReasoningLevel, SandboxLevel, Session,
-    SessionStatus, SessionWaiting, SidebarPinChange, SidebarSectionChange, Space, WaitingKind,
-    WaitingOn,
+    SessionStatus, SessionWaiting, SidebarPinChange, Space, WaitingKind, WaitingOn,
 };
 
 use crate::client::ms;
@@ -535,31 +534,6 @@ pub(crate) fn seed(
             before: None,
         })?;
         after = Some(id.into());
-    }
-    for (section, name, members) in [
-        ("section-p0", "P0", &["chat-tabs", "chat-errored"][..]),
-        (
-            "section-mobile",
-            "Mobile",
-            &["chat-ios-scroll", "chat-ios-keyboard"][..],
-        ),
-    ] {
-        doc.change_sidebar_pin(&SidebarPinChange::Section {
-            change: SidebarSectionChange::Create {
-                id: section.into(),
-                name: name.into(),
-            },
-        })?;
-        for member in members {
-            doc.change_sidebar_pin(&SidebarPinChange::Section {
-                change: SidebarSectionChange::Assign {
-                    session_id: (*member).into(),
-                    section_id: Some(section.into()),
-                    after: None,
-                    before: None,
-                },
-            })?;
-        }
     }
     Ok(Seeded { change_requests })
 }

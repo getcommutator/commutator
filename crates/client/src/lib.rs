@@ -15,7 +15,7 @@
 //!   shared tokio runtime ([`runtime::shared`]). Every snapshot read is an
 //!   `Arc` clone — never a network wait, never a whole-doc decode.
 //! - [`WorkspaceSnapshot`] — the derived view models (front page with pins and
-//!   sections, projects, PRs, archived, devices, search), rebuilt only when
+//!   projects, PRs, archived, devices, search), rebuilt only when
 //!   the registry, presence, or time-dependent status actually changes.
 //! - [`SessionHandle`] — one chat: an incrementally maintained transcript
 //!   ([`SessionSnapshot`], per-entry `Arc`s that stay pointer-equal while
@@ -67,7 +67,7 @@ pub use subagents::{SubagentInfo, SubagentSink, SubagentState, SubagentWatch};
 pub use terminal::{TerminalInfo, TerminalLink, TerminalReplies, TerminalSink, TerminalUpdate};
 pub use workspace::{
     DeviceView, FrontPage, ProjectRef, ProjectView, PullRequestGroups, SearchField, SearchHit,
-    SectionView, SessionRow, WorkspaceSnapshot, project_color_index, relative_time_label,
+    SessionRow, WorkspaceSnapshot, project_color_index, relative_time_label,
 };
 pub use commutator_term_link::remote::TerminalPath;
 

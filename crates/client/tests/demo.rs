@@ -45,26 +45,17 @@ fn front_page_mirrors_the_desktop_sidebar() {
     let ws = client.workspace();
     assert!(ws.synced && ws.pins_ready);
     assert_eq!(ids(&ws.front.pinned), ["chat-veil", "chat-picker"]);
-    let sections: Vec<(&str, Vec<&str>)> = ws
-        .front
-        .sections
-        .iter()
-        .map(|s| (s.name.as_str(), ids(&s.sessions)))
-        .collect();
-    assert_eq!(
-        sections,
-        [
-            ("P0", vec!["chat-tabs", "chat-errored"]),
-            ("Mobile", vec!["chat-ios-scroll", "chat-ios-keyboard"]),
-        ]
-    );
     // Recency order; archived + child chats never appear.
     assert_eq!(
         ids(&ws.front.recent),
         [
             "chat-visuals",
             "chat-cjk",
+            "chat-tabs",
+            "chat-errored",
+            "chat-ios-scroll",
             "chat-home",
+            "chat-ios-keyboard",
             "chat-deploy",
             "chat-blog"
         ]
@@ -92,10 +83,6 @@ fn front_page_mirrors_the_desktop_sidebar() {
     assert_eq!(
         ws.session("chat-errored").unwrap().indicator,
         ChatIndicator::Errored
-    );
-    assert_eq!(
-        ws.session("chat-tabs").unwrap().section_id.as_deref(),
-        Some("section-p0")
     );
 
     let prs = &ws.pull_requests;
@@ -138,48 +125,6 @@ fn sidebar_writes_reorder_the_front_page() {
         ["chat-home", "chat-veil", "chat-picker"]
     );
     client.unpin_session("chat-veil").unwrap();
-    let section = client.create_section("Later").unwrap();
-    client
-        .assign_section("chat-deploy", Some(section.clone()))
-        .unwrap();
-    let ws = client.workspace();
-    let later = ws.front.sections.iter().find(|s| s.id == section).unwrap();
-    assert_eq!(ids(&later.sessions), ["chat-deploy"]);
-    assert!(!ids(&ws.front.recent).contains(&"chat-deploy"));
-    // A section lists its members in their placed order, as desktop does,
-    // and a placement out of Pinned unpins.
-    let members = |client: &Client| {
-        let ws = client.workspace();
-        ids(&ws
-            .front
-            .sections
-            .iter()
-            .find(|s| s.id == section)
-            .unwrap()
-            .sessions)
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>()
-    };
-    client
-        .place_session(
-            "chat-home",
-            Some(section.clone()),
-            None,
-            Some("chat-deploy".into()),
-        )
-        .unwrap();
-    assert_eq!(members(&client), ["chat-home", "chat-deploy"]);
-    assert!(!ids(&client.workspace().front.pinned).contains(&"chat-home"));
-    client
-        .place_session(
-            "chat-home",
-            Some(section.clone()),
-            Some("chat-deploy".into()),
-            None,
-        )
-        .unwrap();
-    assert_eq!(members(&client), ["chat-deploy", "chat-home"]);
     // A drop into Pinned lands between its neighbours.
     client
         .pin_session_at("chat-home", None, Some("chat-picker".into()))
@@ -188,15 +133,6 @@ fn sidebar_writes_reorder_the_front_page() {
         ids(&client.workspace().front.pinned),
         ["chat-home", "chat-picker"]
     );
-    assert_eq!(members(&client), ["chat-deploy"]);
-    client.set_section_collapsed(&section, true).unwrap();
-    client.rename_section(&section, "Someday").unwrap();
-    let ws = client.workspace();
-    let later = ws.front.sections.iter().find(|s| s.id == section).unwrap();
-    assert!(later.collapsed);
-    assert_eq!(later.name, "Someday");
-    client.delete_section(&section).unwrap();
-    assert!(ids(&client.workspace().front.recent).contains(&"chat-deploy"));
 
     client.archive_session("chat-cjk").unwrap();
     assert!(ids(&client.workspace().archived).contains(&"chat-cjk"));
@@ -426,7 +362,7 @@ fn warm_sessions_are_capped_and_preload_follows_the_front_page() {
     client.preload_sessions();
     let open = client.open_session_ids();
     assert_eq!(open.len(), commutator_client::PRELOAD_CAP);
-    for id in ["chat-veil", "chat-picker", "chat-tabs", "chat-errored"] {
+    for id in ["chat-veil", "chat-picker", "chat-visuals", "chat-cjk"] {
         assert!(open.iter().any(|o| o == id), "{id} preloaded");
     }
     let attached = client.open_session("chat-home").unwrap();

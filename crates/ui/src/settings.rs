@@ -1061,9 +1061,6 @@ pub struct UiSettings {
     /// Sidebar session filter: a space id, or `None` for "All spaces".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space_filter: Option<String>,
-    /// Custom sidebar organization, isolated between account profiles on this device.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub sidebar_sections_by_profile: HashMap<String, Vec<SidebarSection>>,
     /// Device-local pins for local profiles; synced profiles use registry pins.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub sidebar_pinned_session_ids_by_profile: HashMap<String, Vec<String>>,
@@ -1071,8 +1068,9 @@ pub struct UiSettings {
     /// non-archived sessions. Kept for file compatibility; no longer read.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub tab_order: std::collections::HashMap<String, Vec<String>>,
-    /// Legacy: manual sidebar space order, from when spaces were a sidebar
-    /// list. Kept for file compatibility; no longer read.
+    /// The Projects sidebar's manual project order (project keys, dragged
+    /// into place). Projects not in it follow in the order they were added.
+    /// (Once spaces' sidebar order; stale ids there just match nothing.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub space_order: Vec<String>,
     /// Master switch for session notification chimes. `COMMUTATOR_DISABLE_SOUND`
@@ -1102,6 +1100,9 @@ pub struct UiSettings {
     /// compatibility; no longer read or written by the shell.
     pub right_pane_open: bool,
     pub terminal_height: f32,
+    /// The Projects sidebar's Agents list height, as dragged; `None` takes
+    /// its default share of the sidebar.
+    pub agents_panel_height: Option<f32>,
     /// Legacy — see [`Self::right_pane_open`].
     pub terminal_open: bool,
     /// Customizable shortcut combos (feature-inventory §1.4).
@@ -1235,7 +1236,6 @@ impl Default for UiSettings {
             open_tabs: None,
             space_filter: None,
             sidebar_pinned_session_ids_by_profile: HashMap::new(),
-            sidebar_sections_by_profile: HashMap::new(),
             tab_order: std::collections::HashMap::new(),
             space_order: Vec::new(),
             sound_enabled: true,
@@ -1250,6 +1250,7 @@ impl Default for UiSettings {
             pull_request_pane_width: PULL_REQUEST_PANE_DEFAULT,
             right_pane_open: false,
             terminal_height: TERMINAL_DEFAULT_HEIGHT,
+            agents_panel_height: None,
             terminal_open: false,
             keymap: KeymapConfig::default(),
             escape_stops_active_agent: false,
@@ -1880,7 +1881,6 @@ impl UiSettings {
             last_project_action_by_space_id,
             open_tabs,
             space_filter,
-            sidebar_sections_by_profile,
             sidebar_pinned_session_ids_by_profile,
             tab_order,
             space_order,
@@ -1896,6 +1896,7 @@ impl UiSettings {
             pull_request_pane_width,
             right_pane_open,
             terminal_height,
+            agents_panel_height,
             terminal_open,
             keymap,
             appshots_enabled,
@@ -2150,8 +2151,6 @@ fn min_or(value: f32, min: f32, default: f32) -> f32 {
         default
     }
 }
-
-pub use commutator_proto::SidebarSection;
 
 #[cfg(test)]
 mod tests {
@@ -2931,7 +2930,6 @@ mod tests {
             )]),
             open_tabs: Some(vec!["b".to_string(), "a".to_string()]),
             space_filter: Some("space-1".into()),
-            sidebar_sections_by_profile: HashMap::new(),
             sidebar_pinned_session_ids_by_profile: HashMap::from([
                 (
                     "local".to_string(),
@@ -2959,6 +2957,7 @@ mod tests {
             pull_request_pane_width: 820.0,
             right_pane_open: true,
             terminal_height: 320.0,
+            agents_panel_height: Some(180.0),
             terminal_open: true,
             keymap: KeymapConfig {
                 toggle_sidebar: "mod-shift-s".into(),

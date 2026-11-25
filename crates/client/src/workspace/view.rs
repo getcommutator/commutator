@@ -4,8 +4,7 @@
 //!
 //! Ordering mirrors the desktop sidebar (`Shell::sidebar_visible_order`,
 //! "In one list" + "Last updated"): pinned sessions in their shared manual
-//! order, then the user's sections (each in its placed order), then everything
-//! else by recency ([`commutator_proto::view::sort_active`] keys). Archived and
+//! order, then everything else by recency ([`commutator_proto::view::sort_active`] keys). Archived and
 //! child (side/subagent) chats never appear in the active lists, and a chat
 //! pointing at a deleted project is hidden (projectless chats are first-class).
 
@@ -94,7 +93,6 @@ pub struct SessionRow {
     pub unseen: bool,
     pub archived: bool,
     pub pinned: bool,
-    pub section_id: Option<String>,
     pub pull_request: Option<ChangeRequestSummary>,
     /// Oldest unadopted send from this device, if any.
     pub send_state: Option<SendState>,
@@ -117,19 +115,10 @@ pub struct SessionRow {
     pub waits_on_process: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SectionView {
-    pub id: String,
-    pub name: String,
-    pub collapsed: bool,
-    pub sessions: Vec<Arc<SessionRow>>,
-}
-
 /// The "Threads" page — the desktop sidebar.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrontPage {
     pub pinned: Vec<Arc<SessionRow>>,
-    pub sections: Vec<SectionView>,
     pub recent: Vec<Arc<SessionRow>>,
 }
 
@@ -207,7 +196,7 @@ pub struct WorkspaceSnapshot {
     /// Bumped only when content changed.
     pub revision: u64,
     pub computed_at_ms: i64,
-    /// Sidebar preferences are known (cached or synced) — pin/section edits
+    /// Sidebar preferences are known (cached or synced) — pin edits
     /// are allowed. False on a fresh install before the first registry sync.
     pub pins_ready: bool,
     /// The registry has reached this device at least once (or demo).
@@ -420,7 +409,6 @@ fn hash_row(row: &SessionRow) -> u64 {
     row.unseen.hash(&mut h);
     row.archived.hash(&mut h);
     row.pinned.hash(&mut h);
-    row.section_id.hash(&mut h);
     if let Some(pr) = &row.pull_request {
         pr.number.hash(&mut h);
         pr.url.hash(&mut h);
@@ -448,7 +436,6 @@ struct RowContext<'a> {
     devices: HashMap<&'a str, &'a Device>,
     sessions: HashMap<&'a str, &'a Session>,
     pinned: HashSet<&'a str>,
-    section_of: HashMap<&'a str, &'a str>,
 }
 
 fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<SessionRow> {
@@ -537,7 +524,6 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
         unseen: commutator_proto::view::has_unseen_activity(chat, session),
         archived: chat.archived,
         pinned: rc.pinned.contains(chat.id.as_str()),
-        section_id: rc.section_of.get(chat.id.as_str()).map(|s| (*s).to_owned()),
         pull_request: change_request_for_chat(chat, cx.change_requests).cloned(),
         send_state,
         parent_chat_id: chat.parent_chat_id.clone(),
@@ -566,13 +552,6 @@ pub(crate) fn derive(
 ) -> WorkspaceSnapshot {
     let now_ms = cx.now.timestamp_millis();
     let pinned_order: &[String] = prefs.map_or(&[], |p| p.pinned_session_ids.as_slice());
-    let sections: &[commutator_proto::SidebarSection] = prefs.map_or(&[], |p| p.sections.as_slice());
-    let mut section_of: HashMap<&str, &str> = HashMap::new();
-    for section in sections {
-        for id in &section.session_ids {
-            section_of.entry(id.as_str()).or_insert(section.id.as_str());
-        }
-    }
     let rc = RowContext {
         all_spaces: &state.spaces,
         spaces: state.spaces.iter().map(|s| (s.id.as_str(), s)).collect(),
@@ -583,7 +562,6 @@ pub(crate) fn derive(
             .map(|s| (s.chat_id.as_str(), s))
             .collect(),
         pinned: pinned_order.iter().map(String::as_str).collect(),
-        section_of,
     };
 
     let rows: HashMap<String, Arc<SessionRow>> = state
@@ -614,28 +592,9 @@ pub(crate) fn derive(
         .filter(|id| active_ids.contains(id.as_str()) && seen.insert(id.as_str()))
         .map(|id| rows[id].clone())
         .collect();
-    let section_views: Vec<SectionView> = sections
-        .iter()
-        .map(|section| SectionView {
-            id: section.id.clone(),
-            name: section.name.clone(),
-            collapsed: section.collapsed,
-            // Members keep their placed order, as on desktop.
-            sessions: section
-                .session_ids
-                .iter()
-                .filter(|id| active_ids.contains(id.as_str()) && !rc.pinned.contains(id.as_str()))
-                .filter(|id| rc.section_of.get(id.as_str()) == Some(&section.id.as_str()))
-                .filter(|id| seen.insert(id.as_str()))
-                .map(|id| rows[id].clone())
-                .collect(),
-        })
-        .collect();
     let recent: Vec<Arc<SessionRow>> = active
         .iter()
-        .filter(|c| {
-            !rc.pinned.contains(c.id.as_str()) && !rc.section_of.contains_key(c.id.as_str())
-        })
+        .filter(|c| !rc.pinned.contains(c.id.as_str()))
         .map(|c| row(c))
         .collect();
 
@@ -754,7 +713,6 @@ pub(crate) fn derive(
         synced: cx.synced,
         front: FrontPage {
             pinned,
-            sections: section_views,
             recent,
         },
         projects,
@@ -781,12 +739,6 @@ fn snapshot_hash(s: &WorkspaceSnapshot) -> u64 {
     s.pins_ready.hash(&mut h);
     s.synced.hash(&mut h);
     ids(&mut h, &s.front.pinned);
-    for section in &s.front.sections {
-        section.id.hash(&mut h);
-        section.name.hash(&mut h);
-        section.collapsed.hash(&mut h);
-        ids(&mut h, &section.sessions);
-    }
     ids(&mut h, &s.front.recent);
     for project in &s.projects {
         project.id.hash(&mut h);

@@ -436,11 +436,10 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
     }
 }
 
-/// Where a dragged session lands. Pinned and the user's sections keep a placed
-/// order (shared with desktop); Recent is by activity, so only membership moves.
+/// Where a dragged session lands. Pinned keeps a placed order (shared with
+/// desktop); Recent is by activity, so only membership moves.
 enum SessionDropTarget: Equatable {
     case pinned
-    case section(String)
     case recent
 }
 
@@ -502,14 +501,8 @@ extension SessionListController: UICollectionViewDragDelegate, UICollectionViewD
             } else {
                 app.pin(id, after: slot.after, before: slot.before)
             }
-        case let .section(sectionId):
-            app.place(id, inSection: sectionId, after: slot.after, before: slot.before)
         case .recent:
-            if source == .pinned {
-                app.setPinned(id, false)
-            } else {
-                app.move(id, toSection: nil)
-            }
+            if source == .pinned { app.setPinned(id, false) }
         }
     }
 

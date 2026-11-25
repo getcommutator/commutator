@@ -40,15 +40,49 @@ pub(super) struct SessionDiffs {
     /// Device the running watch targets: `None` the connected engine, else
     /// a remote chat's host (diffs are produced where the checkout lives).
     target: Option<Option<String>>,
+    /// Each checkout's last totals, by checkout id and by folder: the engine
+    /// drops a checkout from the stream while nobody has it open, and while
+    /// it recaptures one a chat was just opened in.
+    last: std::collections::HashMap<String, (u32, u32)>,
     _watch: Option<Task<()>>,
 }
 
 impl SessionDiffs {
     /// The chat's uncommitted line totals; `None` while clean or unknown.
-    fn totals(&self, chat: &commutator_proto::Chat) -> Option<(u32, u32)> {
+    pub(super) fn totals(&self, chat: &commutator_proto::Chat) -> Option<(u32, u32)> {
         crate::changes::resolve_diff(&self.diffs, chat)
             .map(|diff| (diff.additions, diff.deletions))
             .filter(|&(adds, dels)| adds + dels > 0)
+    }
+
+    /// [`Self::totals`], else the checkout's last known ones: the Projects
+    /// sidebar's numbers don't blink out while the engine recaptures.
+    pub(super) fn last_totals(&self, chat: &commutator_proto::Chat) -> Option<(u32, u32)> {
+        if crate::changes::resolve_diff(&self.diffs, chat).is_some() {
+            return self.totals(chat);
+        }
+        [chat.checkout_id.as_deref(), chat.cwd.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|key| self.last.get(key).copied())
+            .filter(|&(adds, dels)| adds + dels > 0)
+    }
+
+    fn remember(&mut self) {
+        // ponytail: temporary diagnostics for the sidebar's vanishing totals.
+        tracing::info!(
+            diffs = ?self
+                .diffs
+                .iter()
+                .map(|d| (d.cwd.as_str(), d.checkout_id.get(..8), d.additions, d.deletions))
+                .collect::<Vec<_>>(),
+            "sidebar-diffs: frame"
+        );
+        for diff in &self.diffs {
+            let totals = (diff.additions, diff.deletions);
+            self.last.insert(diff.checkout_id.clone(), totals);
+            self.last.insert(diff.cwd.clone(), totals);
+        }
     }
 }
 
@@ -95,6 +129,7 @@ impl Shell {
         let Some(engine) = engine else {
             return;
         };
+        tracing::info!(?target, "sidebar-diffs: rewatch");
         self.session_diffs.diffs.clear();
         self.session_diffs.target = Some(target.clone());
         self.session_diffs._watch = Some(cx.spawn(async move |this, cx| {
@@ -122,10 +157,15 @@ impl Shell {
                                 chat.as_ref().and_then(|chat| diffs.totals(chat))
                             };
                             let before = totals(&this.session_diffs);
-                            if crate::changes::apply_diff_frame(
+                            let applied = crate::changes::apply_diff_frame(
                                 &mut this.session_diffs.diffs,
                                 value,
-                            ) && totals(&this.session_diffs) != before
+                            );
+                            this.session_diffs.remember();
+                            if applied
+                                && (totals(&this.session_diffs) != before
+                                // The Projects sidebar shows every checkout's.
+                                || this.settings.sidebar_view == SidebarView::Projects)
                             {
                                 cx.notify();
                             }
