@@ -90,6 +90,7 @@ mod session_info;
 mod session_lanes;
 mod side_chats;
 mod sidebar_pins;
+mod sleep;
 mod worktree_cleanup;
 mod project_reorder;
 mod search_warm;
@@ -201,20 +202,41 @@ fn move_settings_focus(
     }
 }
 
-/// Whether the chat menu's Copy submenu is open beside it.
+/// Which of the chat menu's submenus (Copy, Sleep) is open beside it.
 #[derive(Clone, Copy, PartialEq)]
 enum ChatMenuPage {
     Root,
     Copy,
+    Sleep,
 }
 
-/// Hover-intent keys for the chat menu's rows; only Copy owns a submenu.
+/// Hover-intent keys for the chat menu's rows; Copy and Sleep own submenus.
 const CHAT_MENU_ROW_RENAME: u8 = 0;
 const CHAT_MENU_ROW_PIN: u8 = 1;
 const CHAT_MENU_ROW_ARCHIVE: u8 = 2;
 const CHAT_MENU_ROW_COPY: u8 = 3;
 const CHAT_MENU_ROW_DELETE: u8 = 4;
-const CHAT_MENU_ROW_TAB: u8 = 5;
+const CHAT_MENU_ROW_TAB: u8 = 5; // and the three tab rows after it
+const CHAT_MENU_ROW_SLEEP: u8 = 12;
+
+impl ChatMenuPage {
+    /// The submenu a chat-menu row opens on hover, by its hover key.
+    fn for_row(key: u8) -> Self {
+        match key {
+            CHAT_MENU_ROW_COPY => Self::Copy,
+            CHAT_MENU_ROW_SLEEP => Self::Sleep,
+            _ => Self::Root,
+        }
+    }
+
+    fn row(self) -> Option<u8> {
+        match self {
+            Self::Root => None,
+            Self::Copy => Some(CHAT_MENU_ROW_COPY),
+            Self::Sleep => Some(CHAT_MENU_ROW_SLEEP),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum TabCloseAction {
@@ -1869,6 +1891,9 @@ pub struct Shell {
     /// expanded list ("Show more" reveals another page).
     pub(super) archived_open: bool,
     pub(super) archived_shown: usize,
+    /// The sidebar's Asleep shelf (chats put to sleep): folded by default,
+    /// session-transient.
+    pub(super) asleep_open: bool,
     /// Ephemeral collapsed project/device sections, keyed by organization + id.
     pub(super) sidebar_collapsed_groups: std::collections::HashSet<String>,
     /// In-flight disclosure tweens, shared by device groups, Pinned and Archived.
@@ -2413,6 +2438,7 @@ impl Shell {
             composer_dock: Default::default(),
             new_thread_artwork_ready: Default::default(),
             archived_open: false,
+            asleep_open: false,
             pinned_open: true,
             sessions_open: true,
             archived_shown: 0,
@@ -4923,26 +4949,20 @@ impl Shell {
         crate::toast::show(cx, kind, message);
     }
 
-    fn set_chat_copy_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        let page = if open {
-            ChatMenuPage::Copy
-        } else {
-            ChatMenuPage::Root
-        };
+    fn set_chat_submenu(&mut self, page: ChatMenuPage, cx: &mut Context<Self>) {
         if let Some(menu) = self.chat_menu.open_mut()
             && menu.page != page
         {
             menu.page = page;
-            if !open {
-                self.chat_copy_bounds = None;
-            }
+            // The bounds belong to the submenu that was open.
+            self.chat_copy_bounds = None;
             cx.notify();
         }
     }
 
-    /// Pointer intent over a chat-menu row: hovering Copy opens its submenu,
-    /// any other row closes it — after a grace while the pointer is heading
-    /// into the open submenu.
+    /// Pointer intent over a chat-menu row: hovering Copy or Sleep opens its
+    /// submenu, any other row closes it — after a grace while the pointer is
+    /// heading into the open submenu.
     fn hover_chat_menu_row(
         &mut self,
         key: u8,
@@ -4950,11 +4970,7 @@ impl Shell {
         moved: bool,
         cx: &mut Context<Self>,
     ) {
-        let current = self
-            .chat_menu
-            .as_open()
-            .filter(|menu| menu.page == ChatMenuPage::Copy)
-            .map(|_| CHAT_MENU_ROW_COPY);
+        let current = self.chat_menu.as_open().and_then(|menu| menu.page.row());
         let (bounds, left) = (self.chat_copy_bounds, self.chat_copy_left);
         let action = if moved {
             self.chat_copy_intent
@@ -4966,7 +4982,7 @@ impl Shell {
         match action {
             popover::HoverAction::None => {}
             popover::HoverAction::Open => {
-                self.set_chat_copy_open(key == CHAT_MENU_ROW_COPY, cx);
+                self.set_chat_submenu(ChatMenuPage::for_row(key), cx);
                 self.chat_copy_intent.record_origin(pointer);
             }
             popover::HoverAction::Defer => {
@@ -4975,7 +4991,7 @@ impl Shell {
                         && this.chat_copy_intent.pending() == Some(&key)
                     {
                         this.chat_copy_intent.cancel();
-                        this.set_chat_copy_open(key == CHAT_MENU_ROW_COPY, cx);
+                        this.set_chat_submenu(ChatMenuPage::for_row(key), cx);
                         this.chat_copy_intent.record_origin(pointer);
                     }
                 });
@@ -5016,18 +5032,48 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let submenu = open.then(|| self.render_chat_copy_submenu(chat_id, theme, cx));
+        self.render_chat_submenu_trigger(
+            ChatMenuPage::Copy,
+            "chat-menu-copy",
+            icons::COPY,
+            "Copy",
+            chat_id,
+            open,
+            submenu,
+            theme,
+            cx,
+        )
+    }
+
+    /// A chat-menu row that opens `page`'s submenu beside the menu on hover
+    /// (or click), on whichever side has room.
+    #[allow(clippy::too_many_arguments)]
+    fn render_chat_submenu_trigger(
+        &mut self,
+        page: ChatMenuPage,
+        id: &'static str,
+        glyph: &'static str,
+        label: &'static str,
+        chat_id: &str,
+        open: bool,
+        submenu: Option<AnyElement>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let entity = cx.entity().downgrade();
         let exit_entity = entity.clone();
-        let mut row = popover::menu_row_nav(theme, open, false, format!("chat-menu-copy-{chat_id}"))
-            .id("chat-menu-copy")
+        let mut row = popover::menu_row_nav(theme, open, false, format!("{id}-{chat_id}"))
+            .id(id)
+            .debug_selector(move || id.to_owned())
             .relative()
-            .on_click(cx.listener(|this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
                 this.chat_copy_intent.reset();
-                this.set_chat_copy_open(true, cx);
+                this.set_chat_submenu(page, cx);
                 cx.stop_propagation();
             }))
-            .child(icon(icons::COPY).size(px(16.0)).text_color(theme.text_muted))
-            .child(div().flex_1().child(SharedString::from("Copy")))
+            .child(icon(glyph).size(px(16.0)).text_color(theme.text_muted))
+            .child(div().flex_1().child(SharedString::from(label)))
             .child(
                 icon(icons::ALT_ARROW_RIGHT)
                     .size(px(14.0))
@@ -5063,7 +5109,7 @@ impl Shell {
                                     return;
                                 }
                                 this.chat_copy_intent.reset();
-                                this.set_chat_copy_open(false, cx);
+                                this.set_chat_submenu(ChatMenuPage::Root, cx);
                             });
                         });
                     },
@@ -5071,15 +5117,35 @@ impl Shell {
                 .absolute()
                 .inset_0(),
             );
-        if open {
-            let submenu = self.render_chat_copy_submenu(chat_id, theme, cx);
+        if let Some(submenu) = submenu {
             row = row.child(popover::nested_menu(
-                format!("chat-copy-submenu-{chat_id}"),
+                format!("{id}-submenu-{chat_id}"),
                 submenu,
                 self.chat_copy_left,
             ));
         }
         row.into_any_element()
+    }
+
+    /// A chat submenu's card, recording its bounds so the pointer heading
+    /// into it keeps it open.
+    fn track_chat_submenu_bounds(
+        &self,
+        card: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity().downgrade();
+        card.child(
+            gpui::canvas(
+                move |bounds, _, cx| {
+                    let _ = entity.update(cx, |this, _| this.chat_copy_bounds = Some(bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        )
+        .into_any_element()
     }
 
     /// The Copy submenu's card: what can be copied for this chat.
@@ -5115,8 +5181,7 @@ impl Shell {
                 .child(icon(icons::COPY).size(px(16.0)).text_color(theme.text_muted))
                 .child(label)
         };
-        let entity = cx.entity().downgrade();
-        popover::popover_card(theme)
+        let card = popover::popover_card(theme)
             .w(px(232.0))
             .relative()
             .flex()
@@ -5143,18 +5208,8 @@ impl Shell {
                         move |this, _, _, cx| this.copy_harness_session_id(&session_chat_id, cx),
                     )),
                 )
-            })
-            .child(
-                gpui::canvas(
-                    move |bounds, _, cx| {
-                        let _ = entity.update(cx, |this, _| this.chat_copy_bounds = Some(bounds));
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
-            .into_any_element()
+            });
+        self.track_chat_submenu_bounds(card, cx)
     }
 
     fn copy_commutator_conversation_link(&mut self, chat_id: &str, cx: &mut Context<Self>) {
@@ -9014,7 +9069,8 @@ impl Shell {
             })
             .collect();
 
-        // t3code's archived accordion, below the active list.
+        // t3code's archived accordion, below the active list; Asleep over it.
+        let asleep_section = self.render_asleep_section(theme, cx);
         let archived_section = self.render_archived_section(theme, cx);
 
         let primary_actions = self.render_sidebar_primary_actions(theme, cx);
@@ -9187,6 +9243,7 @@ impl Shell {
                             .child(div().flex_shrink_0().child(working)),
                         None => el.child(active_list),
                     })
+                    .children(asleep_section)
                     .children(archived_section)
                     .children(moving_row),
             )),
@@ -10242,6 +10299,7 @@ impl Shell {
                 .flex()
                 .flex_col();
             let copy_open = menu_state.page == ChatMenuPage::Copy;
+            let sleep_open = menu_state.page == ChatMenuPage::Sleep;
             let menu = if chat_id.is_empty() {
                 menu
             } else {
@@ -10276,8 +10334,10 @@ impl Shell {
                                     .text_color(theme.text_muted),
                             )
                             .child(SharedString::from("Archive"));
+                    let sleep = self.render_chat_sleep_row(&chat_id, sleep_open, &theme, cx);
                     let copy = self.render_chat_copy_trigger(&chat_id, copy_open, &theme, cx);
                     menu.child(self.chat_menu_hover_row(CHAT_MENU_ROW_PIN, pin, cx))
+                        .child(self.chat_menu_hover_row(CHAT_MENU_ROW_SLEEP, sleep, cx))
                         .child(self.chat_menu_hover_row(CHAT_MENU_ROW_ARCHIVE, archive, cx))
                         .child(self.chat_menu_hover_row(CHAT_MENU_ROW_COPY, copy, cx))
                 };
