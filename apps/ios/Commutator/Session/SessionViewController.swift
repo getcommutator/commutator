@@ -349,6 +349,7 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
     }
 
     private var hasAppeared = false
+    private var loaderConstraints: [NSLayoutConstraint] = []
     /// Set by the split for the moment it moves this page between its
     /// shells, so the move doesn't read as closing the session.
     var relocating = false
@@ -380,12 +381,13 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         if loader.superview == nil {
             loader.translatesAutoresizingMaskIntoConstraints = false
             view.insertSubview(loader, aboveSubview: list)
-            NSLayoutConstraint.activate([
+            loaderConstraints = [
                 loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
                 loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
                 loader.widthAnchor.constraint(equalToConstant: 12),
                 loader.heightAnchor.constraint(equalToConstant: 12),
-            ])
+            ]
+            NSLayoutConstraint.activate(loaderConstraints)
             loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
         }
         loader.alpha = 1
@@ -398,9 +400,23 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
 
     private func renderEmptyNotice(_ notice: SessionChrome.EmptyNotice?) {
         guard let notice else {
+            if let row = emptyNoticeRow, loader.superview === row.stack {
+                row.stack.removeArrangedSubview(loader)
+                loader.removeFromSuperview()
+                loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
+                row.stack.insertArrangedSubview(row.glyph, at: 0)
+                loaderConstraints = [
+                    loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                    loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
+                    loader.widthAnchor.constraint(equalToConstant: 12),
+                    loader.heightAnchor.constraint(equalToConstant: 12),
+                ]
+                NSLayoutConstraint.activate(loaderConstraints)
+            }
             emptyNoticeRow?.stack.isHidden = true
             return
         }
+        let pairOpeningLoader = holdingTranscript && notice.isWorking && loader.superview != nil && loader.alpha > 0
         // It's the answer the loader was holding out for: there's nothing to reveal.
         if holdingTranscript {
             reportedOpen = true
@@ -409,7 +425,34 @@ final class SessionViewController: UIViewController, UIGestureRecognizerDelegate
         let row = emptyNoticeRow ?? makeEmptyNotice()
         emptyNoticeRow = row
         row.label.text = notice.text
-        row.glyph.kind = notice.isWorking ? .spinner : .dot(Palette.warning)
+        if pairOpeningLoader {
+            row.stack.removeArrangedSubview(row.glyph)
+            row.glyph.removeFromSuperview()
+            if loader.superview !== row.stack {
+                NSLayoutConstraint.deactivate(loaderConstraints)
+                loader.removeFromSuperview()
+                row.stack.insertArrangedSubview(loader, at: 0)
+                NSLayoutConstraint.activate([
+                    loader.widthAnchor.constraint(equalToConstant: 12),
+                    loader.heightAnchor.constraint(equalToConstant: 12),
+                ])
+            }
+        } else {
+            if loader.superview === row.stack {
+                row.stack.removeArrangedSubview(loader)
+                loader.removeFromSuperview()
+                loader.transform = CGAffineTransform(scaleX: 1.75, y: 1.75)
+                row.stack.insertArrangedSubview(row.glyph, at: 0)
+                loaderConstraints = [
+                    loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                    loader.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor, constant: -40),
+                    loader.widthAnchor.constraint(equalToConstant: 12),
+                    loader.heightAnchor.constraint(equalToConstant: 12),
+                ]
+                NSLayoutConstraint.activate(loaderConstraints)
+            }
+            row.glyph.kind = notice.isWorking ? .spinner : .dot(Palette.warning)
+        }
         row.stack.isHidden = false
     }
 
