@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest # arm64
+    runs-on: macos-26 # arm64; Xcode 26+ compiles the .icon app icon
     steps:
       - uses: actions/checkout@v4
 

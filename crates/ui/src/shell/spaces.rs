@@ -1294,6 +1294,7 @@ mod pinned_session_tests {
                 shell.settings.sidebar_show_branch = true;
                 shell.settings.sidebar_compact = compact;
                 shell.settings.sidebar_show_project_label = show_label;
+                shell.archived_open = true; // folded by default; these checks need its rows
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Local);
                     state.local_device_id = Some("local".into());
@@ -1892,6 +1893,8 @@ mod pinned_session_tests {
                 );
                 shell.settings.sidebar_organization = SidebarOrganization::InOneList;
                 shell.reduced_motion = true;
+                // Archived rows must be drawn: their copy shares the row key.
+                shell.archived_open = true;
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Local);
                     state.local_device_id = Some("local".into());
@@ -5300,12 +5303,17 @@ impl Shell {
                     })
                 });
         }
-        self.archived_open
+        (self.asleep_open
             && self
-                .archived_sidebar_chats(cx)
+                .asleep_sidebar_chats(Utc::now(), cx)
                 .iter()
-                .take(self.archived_shown.max(ARCHIVED_INITIAL_ROWS))
-                .any(|chat| chat.id == chat_id)
+                .any(|(_, chat, _)| chat.id == chat_id))
+            || (self.archived_open
+                && self
+                    .archived_sidebar_chats(cx)
+                    .iter()
+                    .take(self.archived_shown.max(ARCHIVED_INITIAL_ROWS))
+                    .any(|chat| chat.id == chat_id))
     }
 
     /// The group a chat's row sits under when the sidebar groups by device or
@@ -6056,13 +6064,28 @@ impl Shell {
     }
 
     /// Open whatever hides `chat_id`'s sidebar row — the sidebar itself, the
-    /// Pinned / Sessions / Archived disclosure, its custom section or group,
+    /// Pinned / Sessions / Asleep / Archived disclosure, its custom section or group,
     /// the Archived page — so an inline rename has a row to draw on. Each
     /// disclosure opens with its usual motion. False when the row cannot be
     /// shown: the project filter hides it (the filter is the user's to
     /// clear), or a synced section could not be expanded. Either way the
     /// sidebar notice says why.
     pub(super) fn reveal_sidebar_chat(&mut self, chat_id: &str, cx: &mut Context<Self>) -> bool {
+        if self
+            .asleep_sidebar_chats(Utc::now(), cx)
+            .iter()
+            .any(|(_, chat, _)| chat.id == chat_id)
+        {
+            if !self.asleep_open {
+                self.asleep_open = true;
+                self.queue_sidebar_reveal("asleep");
+            }
+            if self.settings.sidebar_collapsed {
+                self.toggle_sidebar(cx);
+            }
+            cx.notify();
+            return true;
+        }
         let (active, archived) = {
             let state = self.state.read(cx);
             let active = state
@@ -7267,6 +7290,115 @@ impl Shell {
         // The active list already provides the spacing above Archived.
         let section = section.child(body);
         Some(section.into_any_element())
+    }
+
+    /// The Asleep shelf's chats under the project filter, soonest to wake first.
+    fn asleep_sidebar_chats(
+        &self,
+        now: chrono::DateTime<Utc>,
+        cx: &App,
+    ) -> Vec<(ChatIndicator, commutator_proto::Chat, chrono::DateTime<Utc>)> {
+        self.state
+            .read(cx)
+            .asleep_chats(now, self.settings.space_filter.as_deref())
+            .into_iter()
+            .map(|(status, chat, until)| (status, chat.clone(), until))
+            .collect()
+    }
+
+    /// Chats put to sleep, out of the list until they wake (or ask for the
+    /// person): a folded shelf like Archived, each row's corner saying how soon.
+    pub(super) fn render_asleep_section(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let now = Utc::now();
+        let rows = self.asleep_sidebar_chats(now, cx);
+        if rows.is_empty() {
+            return None;
+        }
+        let rows: Vec<_> = {
+            let state = self.state.read(cx);
+            rows.into_iter()
+                .map(|(status, chat, until)| (self.sidebar_chat_data(status, chat, state), until))
+                .collect()
+        };
+        let total = rows.len();
+        let open = self.asleep_open;
+        let body_height = SIDEBAR_DISCLOSURE_BODY_INSET
+            + rows
+                .iter()
+                .map(|(row, _)| {
+                    sidebar_row_height(
+                        self.settings.sidebar_compact,
+                        self.settings.sidebar_show_project_label,
+                        row.branch.is_some(),
+                        row.change_request.is_some(),
+                    )
+                })
+                .sum::<f32>()
+            + total.saturating_sub(1) as f32 * SIDEBAR_LIST_GAP;
+        self.begin_queued_sidebar_reveal("asleep", open, body_height);
+        let chevron = self.sidebar_disclosure_chevron("asleep", open, theme);
+        let header = sidebar_disclosure_header(
+            theme,
+            None,
+            "Asleep".into(),
+            (!open).then_some(total),
+            None,
+            chevron,
+        )
+        .id("asleep-toggle")
+        .debug_selector(|| "asleep-toggle".into())
+        .on_click(cx.listener(move |this, _, _, cx| {
+            let was_open = this.asleep_open;
+            this.begin_sidebar_disclosure_motion(
+                "asleep",
+                if was_open { body_height } else { 0.0 },
+                if was_open { 0.0 } else { body_height },
+            );
+            this.asleep_open = !was_open;
+            cx.notify();
+        }));
+        let selected = self.state.read(cx).selected_chat.clone();
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .pt(px(SIDEBAR_DISCLOSURE_BODY_INSET))
+            .gap(px(SIDEBAR_LIST_GAP));
+        for (row, until) in rows {
+            let chat = row.chat;
+            let harness = self
+                .settings
+                .sidebar_show_harness
+                .then(|| chat.config.as_ref().map(|c| c.harness))
+                .flatten();
+            list = list.child(self.render_chat_row(
+                chat.id.clone(),
+                transcript::single_line(&chat.title.clone().unwrap_or_else(|| "New session".into()))
+                    .into(),
+                super::sleep::wakes_in(until, now).into(),
+                row.folder.into(),
+                row.branch.map(SharedString::from),
+                row.change_request,
+                harness,
+                row.status,
+                selected.as_deref() == Some(chat.id.as_str()),
+                false,
+                false,
+                None,
+                None,
+                self.settings.sidebar_show_project_icon,
+                false,
+                None,
+                theme,
+                cx,
+            ));
+        }
+        let body = div().w_full().flex().flex_col().child(list).into_any_element();
+        let body = self.render_sidebar_disclosure_body("asleep", open, body_height, body);
+        Some(div().flex().flex_col().child(header).child(body).into_any_element())
     }
 
     // ---- add-space flow ----

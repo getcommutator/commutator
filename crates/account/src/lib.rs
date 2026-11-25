@@ -324,6 +324,40 @@ pub async fn push(
     send(reqwest::Client::new().post(push_url(server_url, "/push")).json(&note), token).await
 }
 
+/// A phone's Live Activity (`PUT /activity/target`): its ActivityKit push
+/// token (`apns`, hex; `environment` `sandbox` or `production`) or the
+/// phone's FCM token (`fcm`).
+pub async fn set_activity_target(
+    server_url: &str,
+    token: &str,
+    platform: &str,
+    push_token: &str,
+    environment: &str,
+) -> Result<(), Error> {
+    let body = serde_json::json!({ "platform": platform, "token": push_token, "environment": environment });
+    send(reqwest::Client::new().put(push_url(server_url, "/activity/target")).json(&body), token).await
+}
+
+/// This phone's Live Activity went away (`DELETE /activity/target`).
+pub async fn remove_activity_target(server_url: &str, token: &str) -> Result<(), Error> {
+    send(reqwest::Client::new().delete(push_url(server_url, "/activity/target")), token).await
+}
+
+/// A machine's chat changed phase, for the account's Live Activities (`POST
+/// /activity`): `working`, `input`, `failed`, `done`, or `idle` (gone from
+/// the card).
+pub async fn activity(
+    server_url: &str,
+    token: &str,
+    chat_id: &str,
+    title: &str,
+    project: Option<&str>,
+    phase: &str,
+) -> Result<(), Error> {
+    let row = serde_json::json!({ "chatId": chat_id, "title": title, "project": project, "phase": phase });
+    send(reqwest::Client::new().post(push_url(server_url, "/activity")).json(&row), token).await
+}
+
 fn push_url(server_url: &str, path: &str) -> String {
     format!("{}{path}", server_url.trim().trim_end_matches('/'))
 }

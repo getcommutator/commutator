@@ -71,3 +71,52 @@ async fn a_machine_notifies_its_own_accounts_phones() {
     assert_eq!(gone.status(), 204);
     assert!(app.push_targets_for(&me, "done").unwrap().is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machines_feed_the_cards_phones_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::open(
+        Config {
+            public_url: "http://unused".into(),
+            google_client_id: "unused".into(),
+            google_client_secret: "unused".into(),
+            allowed_emails: vec!["me@example.com".into()],
+            ice_servers: Vec::new(),
+        },
+        &dir.path().join("db"),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(axum::serve(listener, commutator_server::router(app.clone())).into_future());
+    let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
+    let (_, machine) = app.create_device(&me, "laptop", Kind::Machine, None).unwrap();
+    let (phone_id, phone) = app.create_device(&me, "phone", Kind::Client, None).unwrap();
+    let http = reqwest::Client::new();
+
+    let post = |token: &str, phase: &str| {
+        http.post(format!("{url}/activity"))
+            .bearer_auth(token)
+            .json(&json!({"chatId": "c1", "title": "Fix it", "project": "commutator", "phase": phase}))
+            .send()
+    };
+    assert_eq!(post(&machine, "working").await.unwrap().status(), 202);
+    assert_eq!(post(&machine, "bogus").await.unwrap().status(), 400);
+    assert_eq!(post(&phone, "working").await.unwrap().status(), 403, "only machines report");
+    let state = app.activities_of(&me).unwrap();
+    assert_eq!((state.active, state.rows[0].phase.as_str()), (1, "working"));
+
+    let card = json!({"platform": "apns", "token": "ab12cd", "environment": "sandbox"});
+    let put = http.put(format!("{url}/activity/target")).bearer_auth(&phone).json(&card).send().await.unwrap();
+    assert_eq!(put.status(), 204);
+    assert_eq!(
+        app.activity_targets_of(&me).unwrap(),
+        vec![(phone_id, "apns".into(), "ab12cd".into(), "sandbox".into())]
+    );
+    let gone = http.delete(format!("{url}/activity/target")).bearer_auth(&phone).send().await.unwrap();
+    assert_eq!(gone.status(), 204);
+    assert!(app.activity_targets_of(&me).unwrap().is_empty());
+
+    assert_eq!(post(&machine, "idle").await.unwrap().status(), 202);
+    assert!(app.activities_of(&me).is_none(), "nothing left on the card");
+}

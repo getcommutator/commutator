@@ -161,6 +161,11 @@ final class RowView: UIView {
         return r.offsetBy(dx: sv.frame.minX - sv.contentOffset.x, dy: sv.frame.minY)
     }
 
+    /// The code/table scroller under `point` (row coordinates), if any.
+    func scroller(at point: CGPoint) -> UIScrollView? {
+        scrollers.first { !$0.isHidden && $0.frame.contains(point) }
+    }
+
     /// The text offset nearest `point` (row coordinates) and how far it is.
     func textOffset(at point: CGPoint) -> (offset: Int, distance: CGFloat)? {
         guard let model else { return nil }

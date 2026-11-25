@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Session notifications (Push): Android 13+ asks for it. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The agents' card as an Android 16 Live Update (Push). -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <application
         android:name=".CommutatorApplication"
@@ -51,6 +53,9 @@
             android:name=".core.DeliveryService"
             android:exported="false"
             android:foregroundServiceType="shortService|dataSync" />
+        <receiver
+            android:name=".core.ActivityDismissReceiver"
+            android:exported="false" />
         <service
             android:name=".core.PushService"
             android:exported="false">

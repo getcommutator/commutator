@@ -152,6 +152,36 @@ pub async fn server_remove_push_target(server_url: String, token: String) -> Cor
     .await
 }
 
+/// This phone's Live Activity: `platform` `apns` (the card's ActivityKit push
+/// token, hex; `environment` `sandbox` or `production`) or `fcm` (the phone's
+/// FCM token; Android shows it as an ongoing notification).
+#[uniffi::export]
+pub async fn server_set_activity_target(
+    server_url: String,
+    token: String,
+    platform: String,
+    push_token: String,
+    environment: String,
+) -> CoreResult<()> {
+    on_runtime(async move {
+        commutator_account::set_activity_target(&server_url, &token, &platform, &push_token, &environment)
+            .await
+            .map_err(|e| zc::ClientError::Network(e.to_string()))
+    })
+    .await
+}
+
+/// This phone's Live Activity went away.
+#[uniffi::export]
+pub async fn server_remove_activity_target(server_url: String, token: String) -> CoreResult<()> {
+    on_runtime(async move {
+        commutator_account::remove_activity_target(&server_url, &token)
+            .await
+            .map_err(|e| zc::ClientError::Network(e.to_string()))
+    })
+    .await
+}
+
 /// Sign out: remove this device from the account. The platform forgets
 /// the saved sign-in whether or not the server could be reached.
 #[uniffi::export]

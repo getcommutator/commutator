@@ -421,7 +421,12 @@ final class AppModel {
 
     private var lastDeliveryActivity = Date.distantPast
 
-    func noteDeliveryActivity() { lastDeliveryActivity = Date() }
+    /// The person sent something (a new chat or a message): also brings up
+    /// the agents' Live Activity.
+    func noteDeliveryActivity() {
+        lastDeliveryActivity = Date()
+        Task { @MainActor in LiveActivities.shared.armForLocalWork() }
+    }
 
     private var deliveryBackgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var deliveryBackgroundDeadline: DispatchWorkItem?

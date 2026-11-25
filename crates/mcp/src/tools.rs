@@ -176,7 +176,7 @@ fn catalog() -> Vec<ToolDef> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "kind": { "type": "string", "enum": ["subagent", "side", "chat"], "description": "subagent (default with a parent or origin chat): delegated work, listed under the parent's Subagents. side: a side conversation for the person, needs a parent or origin. chat: standalone, no parent allowed. Omitted: chat when `cwd` or `branch` is given (work in a checkout of its own, seen in the sidebar), else subagent with a parent/origin, chat otherwise." },
+                    "kind": { "type": "string", "enum": ["subagent", "side", "chat"], "description": "subagent (default with a parent or origin chat): delegated work, listed under the parent's Subagents. side: a side conversation for the person, needs a parent or origin. chat: standalone, no parent allowed. Omitted: chat when `worktree`, `cwd` or `branch` is given (work in a checkout of its own, seen in the sidebar), else subagent with a parent/origin, chat otherwise." },
                     "project": { "type": "string", "description": "Project id, path, or name. Belongs to a specific device; when device is supplied, search only there. Optional." },
                     "device": { "type": "string", "description": "Host device (id or name). With project, it must own that project. Without either, use the local engine." },
                     "parent": { "type": "string", "description": "Parent chat to record (id, prefix, or title). Defaults to the chat you are speaking from." },
@@ -187,8 +187,9 @@ fn catalog() -> Vec<ToolDef> {
                     "access": { "type": "string", "enum": ["supervised", "auto-accept-edits", "auto", "full-access"], "description": "What the agent may do without asking: supervised asks before commands and file changes, auto-accept-edits applies edits and asks before the rest, auto lets the agent's own reviewer (Claude Code's auto mode, Codex's auto-review) approve safe actions and ask about the rest, full-access asks nothing. Questions go to the person in the chat. Must be one of the harness's accessModes (list_harnesses). Defaults to the access of the chat you are speaking from, and never exceeds it: more is lowered to it (the reply's accessCapped says so)." },
                     "plan": { "type": "boolean", "default": false, "description": "Plan mode: explore and propose a plan before changing anything. Only for harnesses with supportsPlan." },
                     "title": { "type": "string", "description": "Sidebar title. Otherwise the engine titles it from the first exchange." },
-                    "branch": { "type": "string", "description": "Branch label to record on the chat." },
+                    "branch": { "type": "string", "description": "Branch label to record on the chat. With worktree, the new worktree's name (its branch is commutator/<name>)." },
                     "cwd": { "type": "string", "description": "Working directory override (an existing worktree path). Defaults to the project folder." },
+                    "worktree": { "type": "boolean", "default": false, "description": "Run the chat in a new worktree of the project, as the app's New Worktree does (under ~/.commutator/worktrees, the project's setup Action run in it), branched from your chat's branch when you're in the same project, else the project's HEAD. Prefer it for work that should land on a branch of its own. Needs project; not with cwd." },
                     "prompt": { "type": "string", "description": "First message to send right away." },
                     "wait": { "type": "boolean", "default": false, "description": "With prompt: block until the first turn finishes and return the reply." },
                     "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 600 }
@@ -730,10 +731,23 @@ struct CreateChatArgs {
     title: Option<String>,
     branch: Option<String>,
     cwd: Option<String>,
+    #[serde(default)]
+    worktree: bool,
     prompt: Option<String>,
     #[serde(default)]
     wait: bool,
     timeout_secs: Option<u64>,
+}
+
+/// A worktree name from a branch-like label: `feature/PR Redesign` → `feature-pr-redesign`.
+fn worktree_name(label: &str) -> String {
+    let slug: String = label
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    slug.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
 #[derive(Deserialize)]
@@ -1256,6 +1270,47 @@ impl Tools {
         Ok(summary)
     }
 
+    /// A new worktree of `space` (`CreateWorktree` on its device, which runs the
+    /// project's setup Action), from the calling chat's branch when that chat
+    /// is in the same project, else the project's HEAD. `name` (slugged) names
+    /// its folder and `commutator/<name>` branch; the engine picks one without.
+    async fn create_worktree(
+        &self,
+        space: &Space,
+        device_id: &str,
+        name: Option<&str>,
+    ) -> anyhow::Result<commutator_proto::Worktree> {
+        let base = match self.commutator.origin().chat_id.as_deref() {
+            Some(origin) => self
+                .commutator
+                .resolve_chat(origin)
+                .await
+                .ok()
+                .filter(|c| c.space_id.as_deref() == Some(space.id.as_str()))
+                .and_then(|c| c.branch)
+                .filter(|b| !b.trim().is_empty()),
+            None => None,
+        };
+        let mut params = json!({
+            "repoPath": space.path,
+            "branch": base.as_deref().unwrap_or("HEAD"),
+            "spaceId": space.id,
+        });
+        if let Some(name) = name.map(worktree_name).filter(|n| !n.is_empty()) {
+            params["name"] = json!(name);
+        }
+        if self.commutator.local_device_id().await? != device_id {
+            params["targetDeviceId"] = json!(device_id);
+        }
+        let outcome: commutator_proto::CreateWorktreeOutcome = serde_json::from_value(
+            self.commutator
+                .call(commutator_rpc::methods::CREATE_WORKTREE, params)
+                .await
+                .context("creating the worktree")?,
+        )?;
+        Ok(outcome.worktree)
+    }
+
     async fn create_chat(&self, args: CreateChatArgs) -> anyhow::Result<Value> {
         // Parent: the explicit `parent` argument, else the chat this server
         // speaks for. Resolved so a prefix/title works and a typo fails loud.
@@ -1273,9 +1328,14 @@ impl Tools {
         // child of this one. An explicit kind or parent still decides.
         let own_checkout = args.kind.is_none()
             && explicit_parent.is_none()
-            && [&args.cwd, &args.branch]
-                .iter()
-                .any(|v| v.as_deref().is_some_and(|v| !v.trim().is_empty()));
+            && (args.worktree
+                || [&args.cwd, &args.branch]
+                    .iter()
+                    .any(|v| v.as_deref().is_some_and(|v| !v.trim().is_empty())));
+        anyhow::ensure!(
+            !args.worktree || args.cwd.as_deref().is_none_or(|c| c.trim().is_empty()),
+            "worktree makes a new checkout; pass cwd only for an existing one"
+        );
         let parent_chat_id = if args.kind == Some(ChatKind::Chat) || own_checkout {
             None
         } else {
@@ -1401,6 +1461,31 @@ impl Tools {
             plan: args.plan,
         };
 
+        // A worktree of its own, made by the project's engine before the row so
+        // the chat starts there.
+        let mut branch = args
+            .branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .map(str::to_owned);
+        let mut cwd = args
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned);
+        if args.worktree {
+            let space = space
+                .as_ref()
+                .context("worktree needs a project (pass project)")?;
+            let worktree = self
+                .create_worktree(space, &device_id, branch.as_deref())
+                .await?;
+            cwd = Some(worktree.path);
+            branch = Some(worktree.branch);
+        }
+
         let chat_id = uuid::Uuid::new_v4().to_string();
         let mut mutate = json!({
             "op": "createChat",
@@ -1418,20 +1503,9 @@ impl Tools {
                 _ => commutator_proto::ChildKind::Subagent,
             });
         }
-        if let Some(branch) = args
-            .branch
-            .as_deref()
-            .map(str::trim)
-            .filter(|b| !b.is_empty())
-        {
+        if let Some(branch) = &branch {
             mutate["branch"] = json!(branch);
         }
-        let mut cwd = args
-            .cwd
-            .as_deref()
-            .map(str::trim)
-            .filter(|c| !c.is_empty())
-            .map(str::to_owned);
         // A projectless chat runs in its own scratch folder on a host that
         // creates them; naming it here keeps createChat and the first run
         // in agreement.
@@ -1479,6 +1553,10 @@ impl Tools {
             "title": args.title,
             "parentChatId": parent_chat_id,
         });
+        if args.worktree {
+            result["cwd"] = json!(cwd);
+            result["branch"] = json!(branch);
+        }
         if let Some(capped) = &capped {
             result["accessCapped"] = json!(capped);
         }
@@ -1496,7 +1574,7 @@ impl Tools {
                 title: args.title.clone(),
                 archived: false,
                 cwd: cwd.clone(),
-                branch: args.branch.clone(),
+                branch: branch.clone(),
                 checkout_id: None,
                 source_context: None,
                 config: Some(config),
@@ -2253,6 +2331,19 @@ mod tests {
                         .push((method.to_owned(), params.clone()));
                     RpcReply::Value(json!({ "id": "img:1", "name": params["name"] }))
                 }
+                methods::CREATE_WORKTREE => {
+                    self.writes
+                        .lock()
+                        .unwrap()
+                        .push((method.to_owned(), params.clone()));
+                    let name = params["name"].as_str().unwrap_or("quiet-otter").to_owned();
+                    RpcReply::Value(json!({
+                        "repoPath": params["repoPath"],
+                        "path": format!("/home/me/.commutator/worktrees/comet/{name}"),
+                        "branch": format!("commutator/{name}"),
+                        "name": name,
+                    }))
+                }
                 methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE => {
                     self.writes
                         .lock()
@@ -2751,6 +2842,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(created["parentChatId"], "chat-beta-2");
+    }
+
+    #[tokio::test]
+    async fn create_chat_makes_its_own_worktree() {
+        let world = Arc::new(World::default());
+        let tools = tools(
+            world.clone(),
+            Origin {
+                chat_id: Some("chat-alpha-1".into()),
+                ..Default::default()
+            },
+        );
+        let created = tools
+            .call(
+                "create_chat",
+                json!({ "project": "space-1", "worktree": true, "branch": "PR Redesign" }),
+            )
+            .await
+            .unwrap();
+        assert!(created["parentChatId"].is_null(), "{created}");
+        assert_eq!(created["branch"], "commutator/pr-redesign");
+        let writes = world.writes.lock().unwrap();
+        let (_, made) = writes
+            .iter()
+            .find(|(m, _)| m == methods::CREATE_WORKTREE)
+            .expect("a worktree");
+        assert_eq!(made["repoPath"], "/repo/comet");
+        assert_eq!(made["spaceId"], "space-1");
+        assert_eq!(made["name"], "pr-redesign");
+        // Alpha records no branch: the project's HEAD.
+        assert_eq!(made["branch"], "HEAD");
+        assert!(made.get("targetDeviceId").is_none());
+        let (_, row) = writes
+            .iter()
+            .find(|(m, p)| m == methods::MUTATE && p["op"] == "createChat")
+            .expect("the chat row");
+        assert_eq!(row["cwd"], "/home/me/.commutator/worktrees/comet/pr-redesign");
+        assert_eq!(row["branch"], "commutator/pr-redesign");
+        drop(writes);
+
+        let err = tools
+            .call("create_chat", json!({ "project": "space-1", "worktree": true, "cwd": "/tmp/wt" }))
+            .await
+            .unwrap_err();
+        assert!(err.contains("existing one"), "{err}");
+        let err = tools
+            .call("create_chat", json!({ "worktree": true }))
+            .await
+            .unwrap_err();
+        assert!(err.contains("needs a project"), "{err}");
     }
 
     #[tokio::test]

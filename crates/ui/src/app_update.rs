@@ -7,11 +7,10 @@
 //! may be attached to a daemon of another version, whose status describes
 //! that binary rather than the app the user is looking at.
 //!
-//! Lifecycle, idiomatic to desktop updaters (Sparkle, VS Code, Zed): a found
-//! release downloads in the background and is verified, the strip offers
-//! "restart to apply", and a staged update the user never restarts for is
-//! installed when the app quits — so nobody stays on a stale version just
-//! because they never clicked. `COMMUTATOR_AUTO_UPDATE=0` keeps it report-only.
+//! Lifecycle: a found release shows "Update available" and downloads when the
+//! user clicks it (strip or dialog); once verified the strip offers "restart to
+//! apply", and a downloaded update the user never restarts for is installed
+//! when the app quits. `COMMUTATOR_AUTO_UPDATE=1` downloads in the background.
 
 use std::path::{Path, PathBuf};
 
@@ -66,7 +65,7 @@ pub enum StripAction {
 pub struct AppUpdate {
     install: InstallKind,
     blocker: Option<UpdateBlocker>,
-    /// Background download + install on quit (`COMMUTATOR_AUTO_UPDATE` unset or on).
+    /// Background download without a click (`COMMUTATOR_AUTO_UPDATE=1`).
     automatic: bool,
     data_dir: PathBuf,
     checker: Updater,
@@ -338,9 +337,6 @@ impl AppUpdate {
     /// Quit hook: a staged update the user never restarted for installs now,
     /// so the next launch is current. Runs synchronously inside the quit.
     fn install_on_quit(&mut self) {
-        if !self.automatic {
-            return;
-        }
         let Flow::Ready { version, staged } = &self.flow else {
             return;
         };

@@ -2102,9 +2102,9 @@ impl AppState {
     }
 
     /// The sidebar's active list exactly as it is drawn: [`Self::overview_chats`]
-    /// narrowed to the current project filter. The jump shortcuts and their
-    /// hints both count positions here, so neither can drift from the rows on
-    /// screen.
+    /// narrowed to the current project filter, without the chats asleep (they
+    /// sit on the Asleep shelf). The jump shortcuts and their hints both count
+    /// positions here, so neither can drift from the rows on screen.
     pub fn sidebar_chats(
         &self,
         now: DateTime<Utc>,
@@ -2113,8 +2113,26 @@ impl AppState {
         let in_filter = self.project_filter(space_filter);
         self.overview_chats(now)
             .into_iter()
-            .filter(|(_, chat)| in_filter(chat))
+            .filter(|(_, chat)| in_filter(chat) && asleep_until(chat, now).is_none())
             .collect()
+    }
+
+    /// The Asleep shelf: chats put to sleep that haven't woken yet, under the
+    /// project filter, soonest to wake first.
+    pub fn asleep_chats(
+        &self,
+        now: DateTime<Utc>,
+        space_filter: Option<&str>,
+    ) -> Vec<(ChatIndicator, &Chat, DateTime<Utc>)> {
+        let in_filter = self.project_filter(space_filter);
+        let mut rows: Vec<_> = self
+            .overview_chats(now)
+            .into_iter()
+            .filter(|(_, chat)| in_filter(chat))
+            .filter_map(|(status, chat)| Some((status, chat, asleep_until(chat, now)?)))
+            .collect();
+        rows.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.id.cmp(&b.1.id)));
+        rows
     }
 
     /// The sidebar's project filter matches by repository: it stores one
@@ -5603,6 +5621,33 @@ mod tests {
     }
 
     #[test]
+    fn asleep_chats_leave_the_list_for_their_shelf_until_they_wake() {
+        let now = Utc::now();
+        let sleep = |until: DateTime<Utc>, woke_at| commutator_proto::ChatSleep {
+            until,
+            at: now - chrono::Duration::hours(1),
+            woke_at,
+        };
+        let mut late = chat("late", 0, Some(1));
+        late.sleep = Some(sleep(now + chrono::Duration::hours(3), None));
+        let mut soon = chat("soon", 1, Some(2));
+        soon.sleep = Some(sleep(now + chrono::Duration::hours(1), None));
+        let mut due = chat("due", 2, Some(3));
+        due.sleep = Some(sleep(now - chrono::Duration::minutes(1), None));
+        let mut asked = chat("asked", 3, Some(4));
+        asked.sleep = Some(sleep(now + chrono::Duration::hours(2), Some(now)));
+        let mut state = AppState::new();
+        state.apply_chats(vec![late, soon, due, asked, chat("awake", 4, Some(5))]);
+        let mut listed: Vec<&str> =
+            state.sidebar_chats(now, None).into_iter().map(|(_, c)| c.id.as_str()).collect();
+        listed.sort();
+        assert_eq!(listed, ["asked", "awake", "due"]);
+        let shelf: Vec<&str> =
+            state.asleep_chats(now, None).into_iter().map(|(_, c, _)| c.id.as_str()).collect();
+        assert_eq!(shelf, ["soon", "late"]);
+    }
+
+    #[test]
     fn side_chats_remain_addressable_but_do_not_appear_in_sidebar() {
         let mut state = AppState::new();
         let main = chat("main", 0, None);
@@ -6180,5 +6225,13 @@ impl AppState {
             checkout_id: Some(snapshot.checkout_id.clone()),
         };
         self.change_requests.store(key, snapshot);
+    }
+}
+
+/// When a chat put to sleep wakes, while it still sleeps; `None` awake or woken.
+pub(crate) fn asleep_until(chat: &Chat, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    match chat.sleep_state(now) {
+        commutator_proto::SleepState::Asleep { until } => Some(until),
+        _ => None,
     }
 }
