@@ -87,7 +87,10 @@ impl Shell {
     pub(super) fn ensure_project_actions(&mut self, cx: &mut Context<Self>) {
         let context = self.project_action_context(cx);
         let key = context.as_ref().map(|context| context.key.clone());
-        let changed = self.project_actions.activate(key.clone());
+        let chat_id = context.as_ref().map(|context| context.chat_id.clone());
+        let chat_changed = self.project_actions.loaded_chat != chat_id;
+        self.project_actions.loaded_chat = chat_id;
+        let changed = self.project_actions.activate(key.clone()) || chat_changed;
         let needs_load = key.as_ref().is_some_and(|key| {
             !self.project_actions.cache.contains_key(key)
                 || matches!(

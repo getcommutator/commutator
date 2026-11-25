@@ -162,6 +162,11 @@ impl Shell {
                                 value,
                             );
                             this.session_diffs.remember();
+                            if applied && totals(&this.session_diffs) != before {
+                                // The checkout moved, commutator.json maybe
+                                // with it: refetch the Actions on next render.
+                                this.project_actions.loaded_chat = None;
+                            }
                             if applied
                                 && (totals(&this.session_diffs) != before
                                 // The Projects sidebar shows every checkout's.

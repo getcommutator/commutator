@@ -64,6 +64,9 @@ pub struct ProjectActionEditor {
 
 pub struct ProjectActionsController {
     pub active: Option<ProjectActionsKey>,
+    /// The chat the active list was last fetched for: switching chats
+    /// revalidates, so a new or edited commutator.json shows up.
+    pub loaded_chat: Option<String>,
     pub generation: u64,
     mutation_generation: u64,
     pub cache: HashMap<ProjectActionsKey, ProjectActionsStatus>,
@@ -78,6 +81,7 @@ impl Default for ProjectActionsController {
     fn default() -> Self {
         Self {
             active: None,
+            loaded_chat: None,
             generation: 0,
             mutation_generation: 0,
             cache: HashMap::new(),
