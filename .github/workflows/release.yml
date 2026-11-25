@@ -121,3 +121,32 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" commutator-*-android-*.apk --repo "$GITHUB_REPOSITORY"
+
+  # Whether the iOS app changed since the previous tag: apps/ios, scripts/ios, or a crate the iOS core links.
+  ios-changes:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - id: diff
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
+          # ponytail: Cargo.lock is left out (every version bump touches it), so an external crate's update alone
+          # doesn't count; diff the lock's entries for the iOS tree if that matters
+          PATHS=$(cargo tree -p commutator-mobile --target aarch64-apple-ios --prefix none -e normal,build \
+            | grep -oE "\($PWD/[^)]+\)" | sed "s|($PWD/||;s|)|/|" | sort -u)
+          if [[ -z "$PREV" ]] || git diff --name-only "$PREV" HEAD -- apps/ios/ scripts/ios/ rust-toolchain.toml $PATHS | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "since ${PREV:-the start}: changed=$(grep -c changed=true "$GITHUB_OUTPUT" || true)" >> "$GITHUB_STEP_SUMMARY"
+
+  testflight:
+    needs: ios-changes
+    if: needs.ios-changes.outputs.changed == 'true'
+    uses: ./.github/workflows/testflight.yml
+    secrets: inherit

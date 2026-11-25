@@ -1,4 +1,4 @@
-# A TestFlight build of the iOS app, by hand from the Actions tab (any branch). It archives a Release device build (the
+# A TestFlight build of the iOS app, by hand from the Actions tab (any branch) or as part of a release. It archives a Release device build (the
 # Rust core builds in the archive's "Rust core" phase, profile mobile-dist), signs it automatically through an App Store
 # Connect API key, and uploads it. Build numbers are UTC minutes (YYYYMMDDHHMM), the scheme local uploads use, so they
 # only grow and need no App Store Connect lookup.
@@ -9,6 +9,8 @@ name: testflight
 
 on:
   workflow_dispatch:
+  # from release.yml, on a tag whose changes reach the iOS app
+  workflow_call:
 
 concurrency:
   group: testflight

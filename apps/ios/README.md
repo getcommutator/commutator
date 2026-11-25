@@ -154,7 +154,8 @@ cut).
 
 ## TestFlight release
 
-Run the **testflight** workflow (`.github/workflows/testflight.yml`) from
+A release tag runs it on its own when the iOS app changed since the previous tag (`ios-changes` in
+`release.yml`). By hand: run the **testflight** workflow (`.github/workflows/testflight.yml`) from
 GitHub Actions, on `main` or any branch. It installs the Rust iOS target,
 archives (device, Release — the Rust core builds in the archive) with
 automatic signing for team `Z7PK4B5KU2`, and uploads a TestFlight build. The
