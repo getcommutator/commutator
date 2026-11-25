@@ -10765,8 +10765,7 @@ impl Shell {
                         .items_center()
                         .child(
                             icon(icons::COMMUTATOR_LOGO)
-                                .w(px(41.9))
-                                .h(px(48.0))
+                                .size(px(48.0))
                                 .text_color(theme.text.opacity(0.09)),
                         )
                         .child(

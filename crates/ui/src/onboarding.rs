@@ -747,8 +747,7 @@ impl Onboarding {
             .text_center()
             .child(
                 icon(icons::COMMUTATOR_LOGO)
-                    .w(px(36.6))
-                    .h(px(42.0))
+                    .size(px(42.0))
                     .text_color(theme.text),
             )
             .child(
