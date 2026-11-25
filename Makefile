@@ -2,8 +2,9 @@ VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 TARGET  := target/release
 APP     := target/Commutator.app
 DEV_APP := target/Commutator-dev.app
-ICONSET := target/commutator.iconset
-ICNS    := target/commutator.icns
+ICON    := dist/macos/Commutator.icon
+ICONDIR := target/icon
+ICNS    := $(ICONDIR)/Commutator.icns
 SIGN_ID ?= Developer ID Application: Egor Kolesnikov (Z7PK4B5KU2)
 NOTARY_PROFILE ?= commutator
 CODESIGN = codesign --force --options runtime --timestamp --entitlements dist/macos/entitlements.plist --sign "$(SIGN_ID)"
@@ -17,7 +18,7 @@ define bundle
 	sed 's/__VERSION__/$(VERSION)/g' dist/macos/Info.plist > $(1)/Contents/Info.plist
 	cp $(2)/commutator $(1)/Contents/MacOS/commutator
 	cp $(2)/commutator-engine "$(1)/Contents/MacOS/Commutator Engine"
-	cp $(ICNS) $(1)/Contents/Resources/commutator.icns
+	cp $(ICNS) $(ICONDIR)/Assets.car $(1)/Contents/Resources/
 	$(3) "$(1)/Contents/MacOS/Commutator Engine"
 	$(3) $(1)
 endef
@@ -30,13 +31,12 @@ app: build $(ICNS)
 	codesign --verify --strict --verbose=2 $(APP)
 	@echo "→ $(APP)"
 
-$(ICNS): assets/icon.png
-	rm -rf $(ICONSET) && mkdir -p $(ICONSET)
-	for s in 16 32 128 256 512; do \
-		sips -s format png -z $$s $$s $< --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
-		sips -s format png -z $$((s*2)) $$((s*2)) $< --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
-	done
-	iconutil -c icns $(ICONSET) -o $@
+# Icon Composer icon -> Assets.car (macOS 26+ draws it without the grey legacy plate)
+# plus Commutator.icns for older systems. Needs Xcode 26+.
+$(ICNS): $(ICON)/icon.json $(wildcard $(ICON)/Assets/*)
+	rm -rf $(ICONDIR) && mkdir -p $(ICONDIR)
+	xcrun actool $(ICON) --compile $(ICONDIR) --platform macosx --minimum-deployment-target 13.0 \
+		--app-icon Commutator --include-all-app-icons --output-partial-info-plist $(ICONDIR)/partial.plist >/dev/null
 
 # For testing: the dev profile (incremental, our crates unoptimized), signed
 # ad hoc. Distribution builds go through `app`.
@@ -70,4 +70,4 @@ release: notarize
 		--title v$(VERSION) --generate-notes
 
 clean:
-	rm -rf $(APP) $(DEV_APP) $(ICONSET) $(ICNS)
+	rm -rf $(APP) $(DEV_APP) $(ICONDIR)

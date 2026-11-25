@@ -31,7 +31,13 @@ magick "$T/ink.png" -negate -colorspace gray -alpha off "$IOS/AppIcon1024-tinted
 magick icon-light.png -resize 64% -background "$PAPER" -gravity center -extent 1024x1024 -resize 432x432 \
   PNG24:"$DRAWABLE/ic_launcher_commutator.png"
 
-# macOS: 824 px rounded square on the 1024 grid, transparent corners, soft drop shadow
+# macOS app icon: Icon Composer layers (light + dark) that `make` compiles into Assets.car;
+# the system draws the squircle, so the art is a full square with the drawing at 82%.
+ICON=$ROOT/dist/macos/Commutator.icon/Assets
+magick icon-light.png -resize 82% -background "$PAPER" -gravity center -extent 1024x1024 PNG24:"$ICON/art.png"
+magick icon-dark.png -resize 82% -background "$NIGHT" -gravity center -extent 1024x1024 PNG24:"$ICON/art-dark.png"
+
+# README / legacy: 824 px rounded square on the 1024 grid, transparent corners, soft drop shadow
 magick icon-light.png -resize 824x824 "$T/mac.png"
 magick -size 824x824 xc:none -fill white -draw "roundrectangle 0,0 823,823 185,185" "$T/mask.png"
 magick "$T/mac.png" "$T/mask.png" -alpha off -compose CopyOpacity -composite "$T/mac-r.png"
