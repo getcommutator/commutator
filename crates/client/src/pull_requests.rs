@@ -4,7 +4,9 @@
 
 use std::collections::HashSet;
 
-use commutator_proto::{ChangeRequestFilter, ChangeRequestListItem, ChangeRequestPage};
+use commutator_proto::{
+    ChangeRequestFilter, ChangeRequestListItem, ChangeRequestPage, ChangeRequestStateFilter,
+};
 use commutator_rpc::methods;
 
 use crate::Client;
@@ -28,13 +30,14 @@ pub struct PullRequestListing {
 }
 
 impl Client {
-    /// First page of `filter`'s pull requests in each GitHub repository with a
+    /// First page of `filter`'s pull requests in `state` in each GitHub repository with a
     /// project on an online device, asked of that device. `refresh` reaches
     /// GitHub; otherwise the device's stored copy answers when it has one.
     // ponytail: first page per repository only; paging when someone has 50+ open in one repo.
     pub async fn pull_requests(
         &self,
         filter: ChangeRequestFilter,
+        state: ChangeRequestStateFilter,
         refresh: bool,
     ) -> PullRequestListing {
         if self.inner.is_demo() {
@@ -61,6 +64,7 @@ impl Client {
             let mut params = serde_json::json!({
                 "targetDeviceId": device,
                 "filter": filter,
+                "state": state,
                 "refresh": refresh,
                 "cached": !refresh,
             });

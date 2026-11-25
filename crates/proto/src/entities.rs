@@ -1388,6 +1388,27 @@ pub enum ChangeRequestFilter {
     Reviewing,
 }
 
+/// Which lifecycle states a listing asks for. Absent from older clients,
+/// which list open requests only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeRequestStateFilter {
+    #[default]
+    Open,
+    Merged,
+    Closed,
+    All,
+}
+
+/// A label on a change request; `color` is hex without `#` when the
+/// provider gives one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestLabel {
+    pub name: String,
+    pub color: String,
+}
+
 /// Provider-neutral change request metadata for global listing surfaces.
 ///
 /// Unlike [`ChangeRequestSummary`], this contract is not tied to a checkout
@@ -1422,6 +1443,12 @@ pub struct ChangeRequestListItem {
     pub mergeability: ChangeRequestMergeability,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Absent from older engines.
+    #[serde(default)]
+    pub labels: Vec<ChangeRequestLabel>,
+    /// The source branch. Absent from older engines.
+    #[serde(default)]
+    pub head_ref_name: String,
 }
 
 /// One page of a repository-scoped listing, newest updates first.
@@ -1473,6 +1500,33 @@ pub struct ChangeRequestDetail {
     /// reviews are the viewer's. Absent from older engines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub viewer_login: Option<String>,
+    // The rest is absent from older engines.
+    pub labels: Vec<ChangeRequestLabel>,
+    /// Who is asked to review and hasn't yet; a team has its `name` only.
+    pub review_requests: Vec<ChangeRequestActor>,
+    pub commits: Vec<ChangeRequestCommit>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub merged_at: String,
+    pub closed_at: String,
+    /// Set while the request merges once its checks pass.
+    pub auto_merge_request: Option<ChangeRequestAutoMerge>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestCommit {
+    pub oid: String,
+    pub message_headline: String,
+    pub committed_date: String,
+    pub authors: Vec<ChangeRequestActor>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestAutoMerge {
+    /// `MERGE`, `SQUASH` or `REBASE`.
+    pub merge_method: String,
 }
 
 impl ChangeRequestDetail {
@@ -1506,6 +1560,23 @@ pub struct ChangeRequestReviewThread {
 #[serde(default, rename_all = "camelCase")]
 pub struct ChangeRequestActor {
     pub login: String,
+    /// Absent from older engines; empty when unknown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub avatar_url: String,
+    /// Display name, or a team's name. Absent from older engines.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+impl ChangeRequestActor {
+    /// The avatar to show: the provider's, else GitHub's by login.
+    pub fn avatar(&self, provider: &str) -> Option<String> {
+        if !self.avatar_url.is_empty() {
+            return Some(self.avatar_url.clone());
+        }
+        (provider == "github" && !self.login.is_empty())
+            .then(|| format!("https://github.com/{}.png?size=64", self.login))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -2130,6 +2201,8 @@ mod tests {
                 mergeability: ChangeRequestMergeability::Conflicting,
                 created_at: Utc.with_ymd_and_hms(2026, 8, 10, 9, 30, 0).unwrap(),
                 updated_at: Utc.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap(),
+                labels: Vec::new(),
+                head_ref_name: String::new(),
             };
 
             let value = serde_json::to_value(&item).unwrap();
@@ -2208,6 +2281,8 @@ mod tests {
             mergeability: ChangeRequestMergeability::Mergeable,
             created_at: Utc.with_ymd_and_hms(2026, 8, 10, 9, 30, 0).unwrap(),
             updated_at: Utc.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap(),
+            labels: Vec::new(),
+            head_ref_name: String::new(),
         })
         .unwrap();
         value.as_object_mut().unwrap().remove("reviewDecision");

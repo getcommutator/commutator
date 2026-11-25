@@ -35,7 +35,7 @@ const GITHUB_REPOSITORY_QUERY: &str =
 const GITHUB_OUTPUT_LIMIT: usize = 1024 * 1024;
 const GITHUB_RESULT_LIMIT: &str = "20";
 const GITHUB_JSON_FIELDS: &str = "number,title,url,state,baseRefName,headRefName,updatedAt,isCrossRepository,headRepositoryOwner";
-const GITHUB_SEARCH_QUERY: &str = "query($search: String!, $owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { nameWithOwner } search(query: $search, type: ISSUE, first: 50, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { author { login } headRefOid viewerDidAuthor viewerLatestReviewRequest { id } reviewRequests(first: 100) { nodes { id } pageInfo { hasNextPage } } statusCheckRollup { commit { oid } state contexts { totalCount checkRunCountsByState { state count } statusContextCountsByState { state count } } } number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
+const GITHUB_SEARCH_QUERY: &str = "query($search: String!, $owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { nameWithOwner } search(query: $search, type: ISSUE, first: 50, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { author { login avatarUrl } headRefName labels(first: 20) { nodes { name color } } headRefOid viewerDidAuthor viewerLatestReviewRequest { id } reviewRequests(first: 100) { nodes { id } pageInfo { hasNextPage } } statusCheckRollup { commit { oid } state contexts { totalCount checkRunCountsByState { state count } statusContextCountsByState { state count } } } number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
 
 const GITHUB_PR_METADATA_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { headRefOid viewerDidAuthor viewerLatestReviewRequest { id } reviewRequests(first: 100) { nodes { id } pageInfo { hasNextPage } } statusCheckRollup { commit { oid } state contexts(first: 100) { nodes { ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } totalCount checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }";
 
@@ -538,6 +538,44 @@ impl GitHubCli {
         rest_comment(&value)
     }
 
+    /// Approve, merge, mark ready, close or reopen a pull request with `gh`.
+    /// Explicit user action only; never retried. A refusal comes back as
+    /// `gh`'s own first line, which says why (conflicts, a branch rule).
+    pub async fn act(&self, url: &str, action: &ChangeRequestAction) -> Result<(), ActError> {
+        let url = validated_pull_request_url(url).map_err(ActError::Request)?;
+        let args: Vec<String> = match action {
+            ChangeRequestAction::Approve => vec!["pr".into(), "review".into(), url.clone(), "--approve".into()],
+            ChangeRequestAction::Ready => vec!["pr".into(), "ready".into(), url.clone()],
+            ChangeRequestAction::Close => vec!["pr".into(), "close".into(), url.clone()],
+            ChangeRequestAction::Reopen => vec!["pr".into(), "reopen".into(), url.clone()],
+            ChangeRequestAction::DisableAutoMerge => vec!["pr".into(), "merge".into(), url.clone(), "--disable-auto".into()],
+            ChangeRequestAction::Merge { method, auto } => {
+                let mut args = vec!["pr".into(), "merge".into(), url.clone(), format!("--{}", method.flag())];
+                if *auto {
+                    args.push("--auto".into());
+                }
+                args
+            }
+        };
+        let output = self
+            .runner
+            .run(ProcessRequest { args, ..github_request() })
+            .await
+            .map_err(|e| ActError::Request(classify_run_error(e)))?;
+        self.evict_detail(&url).await;
+        if output.success {
+            return Ok(());
+        }
+        let said = String::from_utf8_lossy(&output.stderr);
+        let line = said.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+        match classify_github_failure(&output.stderr) {
+            ChangeRequestError::CommandFailed if !line.is_empty() => {
+                Err(ActError::Refused(line.chars().take(300).collect()))
+            }
+            error => Err(ActError::Request(error)),
+        }
+    }
+
     /// The pull request's detail no longer as cached (a write changed it).
     async fn evict_detail(&self, url: &str) {
         let key = format!("false:{url}:");
@@ -618,7 +656,7 @@ impl GitHubCli {
             url: c["url"].as_str().unwrap_or_default().into(),
             viewer_did_author: true,
             body: c["body"].as_str().ok_or(ChangeRequestError::Decode)?.into(),
-            author: commutator_proto::ChangeRequestActor { login: c["author"]["login"].as_str().unwrap_or_default().into() },
+            author: commutator_proto::ChangeRequestActor { login: c["author"]["login"].as_str().unwrap_or_default().into(), ..Default::default() },
             created_at: c["createdAt"].as_str().unwrap_or_default().into(),
             ..Default::default()
         })
@@ -712,7 +750,7 @@ impl GitHubCli {
         if diff {
             args.push("--color=never".into());
         } else {
-            args.extend(["--json".into(), "title,body,url,number,author,baseRefName,headRefName,headRefOid,baseRefOid,state,isDraft,reviewDecision,mergeable,additions,deletions,comments,reviews,files,statusCheckRollup".into()]);
+            args.extend(["--json".into(), "title,body,url,number,author,baseRefName,headRefName,headRefOid,baseRefOid,state,isDraft,reviewDecision,mergeable,additions,deletions,comments,reviews,files,statusCheckRollup,labels,reviewRequests,commits,createdAt,updatedAt,mergedAt,closedAt,autoMergeRequest".into()]);
         }
         let output = self
             .runner
@@ -946,7 +984,7 @@ impl GitHubCli {
         login
     }
 
-    /// One page of open pull requests, 50 at a time, newest updates first.
+    /// One page of pull requests in `state`, 50 at a time, newest updates first.
     ///
     /// `cached` asks for the first page's on-disk copy, whatever its age, so
     /// the board can show it at once and refresh behind it; without one it
@@ -955,6 +993,7 @@ impl GitHubCli {
         &self,
         repository: &str,
         filter: commutator_proto::ChangeRequestFilter,
+        state: commutator_proto::ChangeRequestStateFilter,
         after: Option<&str>,
         refresh: bool,
         cached: bool,
@@ -976,13 +1015,13 @@ impl GitHubCli {
         if cached
             && !refresh
             && let Some((store, account)) = &stored
-            && let Some(page) = store.load(account, repository, filter).await
+            && let Some(page) = store.load(account, repository, filter, state).await
         {
             return Ok(page);
         }
-        let page = self.fetch_list_page(repository, filter, after, refresh).await?;
+        let page = self.fetch_list_page(repository, filter, state, after, refresh).await?;
         if let Some((store, account)) = stored {
-            store.save(&account, repository, filter, &page).await;
+            store.save(&account, repository, filter, state, &page).await;
         }
         Ok(page)
     }
@@ -991,17 +1030,18 @@ impl GitHubCli {
         &self,
         repository: &str,
         filter: commutator_proto::ChangeRequestFilter,
+        state: commutator_proto::ChangeRequestStateFilter,
         after: Option<&str>,
         refresh: bool,
     ) -> Result<commutator_proto::ChangeRequestPage, ChangeRequestError> {
         let repository = repository.to_ascii_lowercase();
-        let key = format!("list:{repository}:{filter:?}:{}", after.unwrap_or_default());
+        let key = format!("list:{repository}:{filter:?}:{state:?}:{}", after.unwrap_or_default());
         let github = self.clone();
         let after = after.map(str::to_owned);
         let result = self
             .cached_pr_request(key, refresh, async move {
                 let page = github
-                    .fetch_filtered_page(&repository, filter, after.as_deref())
+                    .fetch_filtered_page(&repository, filter, state, after.as_deref())
                     .await?;
                 serde_json::to_value(page).map_err(|_| ChangeRequestError::Decode)
             })
@@ -1013,9 +1053,10 @@ impl GitHubCli {
         &self,
         repository: &str,
         filter: commutator_proto::ChangeRequestFilter,
+        state: commutator_proto::ChangeRequestStateFilter,
         after: Option<&str>,
     ) -> Result<commutator_proto::ChangeRequestPage, ChangeRequestError> {
-        let (page, canonical) = self.fetch_scoped_search(repository, filter, after).await?;
+        let (page, canonical) = self.fetch_scoped_search(repository, filter, state, after).await?;
         if after.is_none()
             && page.items.is_empty()
             && let Some(canonical) = canonical
@@ -1025,7 +1066,7 @@ impl GitHubCli {
             // does. Follow only that verified canonical name, at most once.
             // Clients adopt the canonical name, so later pages query it directly.
             return self
-                .fetch_scoped_search(&canonical, filter, None)
+                .fetch_scoped_search(&canonical, filter, state, None)
                 .await
                 .map(|result| result.0);
         }
@@ -1036,6 +1077,7 @@ impl GitHubCli {
         &self,
         repository: &str,
         filter: commutator_proto::ChangeRequestFilter,
+        state: commutator_proto::ChangeRequestStateFilter,
         after: Option<&str>,
     ) -> Result<(commutator_proto::ChangeRequestPage, Option<String>), ChangeRequestError> {
         let (owner, name) = repository
@@ -1045,6 +1087,12 @@ impl GitHubCli {
             commutator_proto::ChangeRequestFilter::All => "",
             commutator_proto::ChangeRequestFilter::Authored => "author:@me ",
             commutator_proto::ChangeRequestFilter::Reviewing => "review-requested:@me ",
+        };
+        let state = match state {
+            commutator_proto::ChangeRequestStateFilter::Open => "is:open ",
+            commutator_proto::ChangeRequestStateFilter::Merged => "is:merged ",
+            commutator_proto::ChangeRequestStateFilter::Closed => "is:closed is:unmerged ",
+            commutator_proto::ChangeRequestStateFilter::All => "",
         };
         let request = ProcessRequest {
             args: vec![
@@ -1057,7 +1105,7 @@ impl GitHubCli {
                 "-f".into(),
                 format!("name={name}"),
                 "-f".into(),
-                format!("search=is:pr is:open {qualifier}repo:{repository} sort:updated-desc"),
+                format!("search=is:pr {state}{qualifier}repo:{repository} sort:updated-desc"),
             ]
             .into_iter()
             .chain(
@@ -1669,6 +1717,16 @@ struct GhSearchPullRequest {
     is_draft: bool,
     additions: u64,
     deletions: u64,
+    #[serde(default)]
+    head_ref_name: String,
+    #[serde(default)]
+    labels: Option<GhLabels>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GhLabels {
+    #[serde(default)]
+    nodes: Vec<Option<commutator_proto::ChangeRequestLabel>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2090,7 +2148,6 @@ fn to_list_item(
         || name.is_empty()
         || repository_parts.next().is_some()
         || repository.chars().any(char::is_whitespace)
-        || !matches!(pull_request.state, GhPullRequestState::Open)
     {
         return Err(ChangeRequestError::Decode);
     }
@@ -2131,7 +2188,59 @@ fn to_list_item(
         mergeability: pull_request.mergeable.into(),
         created_at: pull_request.created_at,
         updated_at: pull_request.updated_at,
+        labels: pull_request
+            .labels
+            .unwrap_or_default()
+            .nodes
+            .into_iter()
+            .flatten()
+            .collect(),
+        head_ref_name: pull_request.head_ref_name,
     })
+}
+
+/// What `ActOnChangeRequest` does to a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "camelCase")]
+pub enum ChangeRequestAction {
+    Approve,
+    /// `auto` merges once required checks pass.
+    Merge {
+        #[serde(default)]
+        method: MergeMethod,
+        #[serde(default)]
+        auto: bool,
+    },
+    DisableAutoMerge,
+    Ready,
+    Close,
+    Reopen,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeMethod {
+    #[default]
+    Squash,
+    Merge,
+    Rebase,
+}
+
+impl MergeMethod {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Squash => "squash",
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ActError {
+    Request(ChangeRequestError),
+    /// GitHub said no, in its words.
+    Refused(String),
 }
 
 /// Where a line comment goes: a file of the pull request, a line of it on
@@ -2178,6 +2287,7 @@ fn rest_comment(value: &serde_json::Value) -> Result<commutator_proto::ChangeReq
         body: value["body"].as_str().ok_or(ChangeRequestError::Decode)?.into(),
         author: commutator_proto::ChangeRequestActor {
             login: value["user"]["login"].as_str().unwrap_or_default().into(),
+            ..Default::default()
         },
         created_at: value["created_at"].as_str().unwrap_or_default().into(),
         ..Default::default()
@@ -2413,8 +2523,28 @@ mod tests {
     const PR: &str = "https://github.com/acme/commutator/pull/7";
 
     #[tokio::test]
+    async fn actions_run_gh_and_say_why_a_refusal_failed() {
+        let runner = FakeProcessRunner::with_responses([
+            command_success(Vec::new()),
+            command_failure("X Pull request acme/commutator#7 is not mergeable: the merge commit cannot be cleanly created.\n"),
+        ]);
+        let github = GitHubCli::with_runner(runner.clone());
+        let merge: ChangeRequestAction =
+            serde_json::from_value(serde_json::json!({"action": "merge", "auto": true})).unwrap();
+        assert_eq!(merge, ChangeRequestAction::Merge { method: MergeMethod::Squash, auto: true });
+        github.act(PR, &merge).await.unwrap();
+        assert_eq!(runner.requests()[0].args, ["pr", "merge", PR, "--squash", "--auto"]);
+        match github.act(PR, &ChangeRequestAction::Approve).await {
+            Err(ActError::Refused(why)) => assert!(why.contains("not mergeable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(runner.requests()[1].args, ["pr", "review", PR, "--approve"]);
+    }
+
+    #[tokio::test]
     async fn gitlab_lists_are_cached_in_memory_and_on_disk() {
         use commutator_proto::ChangeRequestFilter::All;
+        use commutator_proto::ChangeRequestStateFilter::Open;
         let mr = br#"{"data":{"currentUser":{"username":"me"},"project":{"mergeRequests":{"nodes":[{"iid":"7","title":"Fix","webUrl":"https://git.acme.dev/a/b/-/merge_requests/7","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z"}]}}}}"#;
         // One auth check and one list call: every later read is cached.
         let runner = FakeProcessRunner::with_responses([command_success(Vec::new()), command_success(mr.to_vec())]);
@@ -2423,13 +2553,13 @@ mod tests {
         let project = gitlab::GitLabProject { host: "git.acme.dev".into(), path: "a/b".into() };
         assert!(github.is_gitlab(&project).await);
         assert!(github.is_gitlab(&project).await);
-        let first = github.list_gitlab_page(&project, All, None, false, false).await.unwrap();
-        let again = github.list_gitlab_page(&project, All, None, false, false).await.unwrap();
+        let first = github.list_gitlab_page(&project, All, Open, None, false, false).await.unwrap();
+        let again = github.list_gitlab_page(&project, All, Open, None, false, false).await.unwrap();
         assert_eq!((first.items.len(), again), (1, first.clone()));
         assert_eq!(runner.requests().len(), 2);
         // A new engine (empty memory, same data directory) answers from disk.
         let restarted = GitHubCli::with_runner(FakeProcessRunner::with_responses([])).with_store(dir.path());
-        let stored = restarted.list_gitlab_page(&project, All, None, false, true).await.unwrap();
+        let stored = restarted.list_gitlab_page(&project, All, Open, None, false, true).await.unwrap();
         assert_eq!(stored.items[0].url, first.items[0].url);
     }
 
@@ -3335,6 +3465,7 @@ mod tests {
             .list_page(
                 "acme/commutator",
                 commutator_proto::ChangeRequestFilter::All,
+                commutator_proto::ChangeRequestStateFilter::Open,
                 None,
                 false,
                 false,
@@ -3392,6 +3523,7 @@ mod tests {
             .list_page(
                 repository,
                 commutator_proto::ChangeRequestFilter::Authored,
+                commutator_proto::ChangeRequestStateFilter::Open,
                 None,
                 refresh,
                 false,
@@ -3529,13 +3661,13 @@ mod tests {
         let github = GitHubCli::with_runner(runner.clone());
         let filter = commutator_proto::ChangeRequestFilter::All;
         let first = github
-            .list_page("acme/commutator", filter, None, false, false)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, false)
             .await
             .unwrap();
         assert_eq!(first.next_cursor.as_deref(), Some("Y3Vyc29yOjUw"));
         assert_eq!(first.total_count, Some(120));
         let second = github
-            .list_page("acme/commutator", filter, first.next_cursor.as_deref(), false, false)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, first.next_cursor.as_deref(), false, false)
             .await
             .unwrap();
         assert_eq!(second.items[0].number, 2);
@@ -3550,7 +3682,7 @@ mod tests {
         );
         assert_eq!(
             github
-                .list_page("acme/commutator", filter, Some("x repo:other/x"), false, false)
+                .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, Some("x repo:other/x"), false, false)
                 .await,
             Err(ChangeRequestError::Decode),
             "cursors cannot smuggle search qualifiers"
@@ -3583,7 +3715,7 @@ mod tests {
         let filter = commutator_proto::ChangeRequestFilter::All;
         // Nothing stored yet: a cached read goes to GitHub and stores it.
         let first = github
-            .list_page("acme/commutator", filter, None, false, true)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, true)
             .await
             .unwrap();
         assert_eq!(first.items[0].title, "first");
@@ -3592,7 +3724,7 @@ mod tests {
         let relaunched = GitHubCli::with_runner(runner.clone()).with_store(dir.path());
         *relaunched.account.lock().await = Some((Instant::now(), Some("me".into())));
         let stored = relaunched
-            .list_page("acme/commutator", filter, None, false, true)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, true)
             .await
             .unwrap();
         assert_eq!(stored.items[0].title, "first");
@@ -3603,12 +3735,12 @@ mod tests {
         );
         // Refresh always reaches GitHub and replaces the stored page.
         let refreshed = relaunched
-            .list_page("acme/commutator", filter, None, true, false)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, true, false)
             .await
             .unwrap();
         assert_eq!(refreshed.items[0].title, "refreshed");
         let stored = relaunched
-            .list_page("acme/commutator", filter, None, false, true)
+            .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, true)
             .await
             .unwrap();
         assert_eq!(stored.items[0].title, "refreshed");
@@ -3624,7 +3756,7 @@ mod tests {
                 .store
                 .as_ref()
                 .unwrap()
-                .load("other", "acme/commutator", filter)
+                .load("other", "acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open)
                 .await
                 .is_none()
         );
@@ -3686,12 +3818,12 @@ mod tests {
         let github = GitHubCli::with_runner(runner.clone());
         for (index, filter) in [All, Authored, Reviewing].into_iter().enumerate() {
             github
-                .list_page("acme/commutator", filter, None, false, false)
+                .list_page("acme/commutator", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, false)
                 .await
                 .unwrap();
             assert_eq!(runner.requests().len(), index + 1);
             github
-                .list_page("ACME/COMMUTATOR", filter, None, false, false)
+                .list_page("ACME/COMMUTATOR", filter, commutator_proto::ChangeRequestStateFilter::Open, None, false, false)
                 .await
                 .unwrap();
             assert_eq!(runner.requests().len(), index + 1);
@@ -3708,7 +3840,7 @@ mod tests {
             );
         }
         github
-            .list_page("acme/commutator", All, None, false, false)
+            .list_page("acme/commutator", All, commutator_proto::ChangeRequestStateFilter::Open, None, false, false)
             .await
             .unwrap();
         assert_eq!(runner.requests().len(), 3);
@@ -3880,13 +4012,13 @@ mod tests {
             cache
                 .entries
                 .iter()
-                .all(|entry| entry.0 != "list:a/repo-0:Authored:")
+                .all(|entry| entry.0 != "list:a/repo-0:Authored:Open:")
         );
         assert!(
             cache
                 .entries
                 .iter()
-                .any(|entry| entry.0 == "list:a/repo-25:Authored:")
+                .any(|entry| entry.0 == "list:a/repo-25:Authored:Open:")
         );
     }
 
@@ -4022,7 +4154,7 @@ mod tests {
             ("/repository/nameWithOwner", serde_json::json!("commutator")),
             ("/repository/nameWithOwner", serde_json::json!("a/b/c")),
             ("/url", serde_json::json!("file:///tmp/pr")),
-            ("/state", serde_json::json!("CLOSED")),
+            ("/state", serde_json::json!("DRAFTED")),
             ("/mergeable", serde_json::json!("BLOCKED")),
         ] {
             let mut item = base.clone();

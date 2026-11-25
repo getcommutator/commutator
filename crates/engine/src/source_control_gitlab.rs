@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use commutator_proto::change_request_assessment::{ChangeRequestCi, CiState};
 use commutator_proto::{
     ChangeRequestActor, ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability,
-    ChangeRequestPage, ChangeRequestReviewDecision, ChangeRequestState,
+    ChangeRequestLabel, ChangeRequestPage, ChangeRequestReviewDecision, ChangeRequestState,
+    ChangeRequestStateFilter,
 };
 use serde::Deserialize;
 
@@ -58,17 +59,18 @@ pub fn parse_remote(remote_url: &str) -> Option<GitLabProject> {
     })
 }
 
-/// One page of a project's open merge requests, most recently updated
+/// One page of a project's merge requests in `$state`, most recently updated
 /// first, with what the board shows of each — as Shepherd's list asks it.
-const MERGE_REQUESTS: &str = "query($path: ID!, $after: String, $author: String, $reviewer: String) {
+const MERGE_REQUESTS: &str = "query($path: ID!, $state: MergeRequestState, $after: String, $author: String, $reviewer: String) {
   currentUser { username }
   project(fullPath: $path) {
-    mergeRequests(state: opened, first: 50, after: $after, sort: UPDATED_DESC, authorUsername: $author, reviewerUsername: $reviewer) {
+    mergeRequests(state: $state, first: 50, after: $after, sort: UPDATED_DESC, authorUsername: $author, reviewerUsername: $reviewer) {
       count
       pageInfo { hasNextPage endCursor }
       nodes {
-        iid title webUrl draft createdAt updatedAt approved conflicts detailedMergeStatus diffHeadSha
-        author { username }
+        iid title webUrl state draft createdAt updatedAt approved conflicts detailedMergeStatus diffHeadSha sourceBranch
+        author { username name avatarUrl }
+        labels { nodes { title color } }
         reviewers { nodes { username mergeRequestInteraction { reviewState } } }
         headPipeline { status jobs { count } }
         diffStatsSummary { additions deletions }
@@ -121,6 +123,12 @@ struct MergeRequest {
     title: String,
     web_url: String,
     #[serde(default)]
+    state: String,
+    #[serde(default)]
+    source_branch: String,
+    #[serde(default)]
+    labels: Option<Connection<Label>>,
+    #[serde(default)]
     draft: bool,
     #[serde(default)]
     author: Option<User>,
@@ -143,8 +151,20 @@ struct MergeRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct User {
     username: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Label {
+    title: String,
+    #[serde(default)]
+    color: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -211,6 +231,7 @@ impl GitHubCli {
         &self,
         project: &GitLabProject,
         filter: ChangeRequestFilter,
+        state: ChangeRequestStateFilter,
         after: Option<&str>,
         refresh: bool,
         cached: bool,
@@ -224,7 +245,7 @@ impl GitHubCli {
         if cached
             && !refresh
             && let Some(store) = &store
-            && let Some(page) = store.load(&account, &project.path, filter).await
+            && let Some(page) = store.load(&account, &project.path, filter, state).await
         {
             return Ok(page);
         }
@@ -235,14 +256,14 @@ impl GitHubCli {
         let value = self
             .cached_pr_request(
                 format!(
-                    "gitlab:list:{}/{}:{filter:?}:{}",
+                    "gitlab:list:{}/{}:{filter:?}:{state:?}:{}",
                     project.host,
                     project.path.to_ascii_lowercase(),
                     after.unwrap_or_default()
                 ),
                 refresh,
                 async move {
-                    let page = github.fetch_gitlab_page(&fetched, filter, cursor.as_deref()).await?;
+                    let page = github.fetch_gitlab_page(&fetched, filter, state, cursor.as_deref()).await?;
                     serde_json::to_value(page).map_err(|_| ChangeRequestError::Decode)
                 },
             )
@@ -250,7 +271,7 @@ impl GitHubCli {
         let page: ChangeRequestPage =
             serde_json::from_value(value).map_err(|_| ChangeRequestError::Decode)?;
         if let Some(store) = store {
-            store.save(&account, &project.path, filter, &page).await;
+            store.save(&account, &project.path, filter, state, &page).await;
         }
         Ok(page)
     }
@@ -277,9 +298,16 @@ impl GitHubCli {
         &self,
         project: &GitLabProject,
         filter: ChangeRequestFilter,
+        state: ChangeRequestStateFilter,
         after: Option<&str>,
     ) -> Result<ChangeRequestPage, ChangeRequestError> {
-        let mut vars = vec![("path", project.path.clone())];
+        let state = match state {
+            ChangeRequestStateFilter::Open => "opened",
+            ChangeRequestStateFilter::Merged => "merged",
+            ChangeRequestStateFilter::Closed => "closed",
+            ChangeRequestStateFilter::All => "all",
+        };
+        let mut vars = vec![("path", project.path.clone()), ("state", state.to_owned())];
         if let Some(after) = after {
             vars.push(("after", after.to_owned()));
         }
@@ -381,7 +409,12 @@ fn page(project: &GitLabProject, data: ListData) -> Result<ChangeRequestPage, Ch
 }
 
 fn item(project: &GitLabProject, me: Option<&str>, mr: MergeRequest) -> Option<ChangeRequestListItem> {
-    let author = mr.author.map(|a| a.username).unwrap_or_default();
+    let (author, author_name, avatar) = mr
+        .author
+        .map(|a| (a.username, a.name.unwrap_or_default(), a.avatar_url.unwrap_or_default()))
+        .unwrap_or_default();
+    // A self-hosted GitLab gives its own avatars as a path.
+    let avatar = if avatar.starts_with('/') { format!("https://{}{avatar}", project.host) } else { avatar };
     let reviewers = mr.reviewers.map(|r| r.nodes).unwrap_or_default();
     let changes_requested = reviewers.iter().any(|r| {
         r.merge_request_interaction
@@ -417,14 +450,18 @@ fn item(project: &GitLabProject, me: Option<&str>, mr: MergeRequest) -> Option<C
         provider: "gitlab".into(),
         viewer_did_author: me.map(|me| me == author),
         viewer_review_requested: me.map(|me| reviewers.iter().any(|r| r.username == me)),
-        author: ChangeRequestActor { login: author },
+        author: ChangeRequestActor { login: author, avatar_url: avatar, name: author_name },
         repository: project.path.clone(),
         head_ref_oid: mr.diff_head_sha.unwrap_or_default(),
         ci,
         number: mr.iid.parse().ok()?,
         title: mr.title.split_whitespace().collect::<Vec<_>>().join(" "),
         url: mr.web_url,
-        state: ChangeRequestState::Open,
+        state: match mr.state.as_str() {
+            "merged" => ChangeRequestState::Merged,
+            "closed" => ChangeRequestState::Closed,
+            _ => ChangeRequestState::Open,
+        },
         is_draft: mr.draft,
         review_decision,
         additions: stats.as_ref().map_or(0, |s| s.additions),
@@ -439,6 +476,17 @@ fn item(project: &GitLabProject, me: Option<&str>, mr: MergeRequest) -> Option<C
         },
         created_at: mr.created_at,
         updated_at: mr.updated_at,
+        labels: mr
+            .labels
+            .map(|l| l.nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| ChangeRequestLabel {
+                name: l.title,
+                color: l.color.unwrap_or_default().trim_start_matches('#').to_owned(),
+            })
+            .collect(),
+        head_ref_name: mr.source_branch,
     })
 }
 
@@ -470,7 +518,8 @@ mod tests {
                 "pageInfo": { "hasNextPage": true, "endCursor": "eyJpZCI6IjEifQ" },
                 "nodes": [{
                     "iid": "7", "title": "Fix  it", "webUrl": "https://gitlab.com/a/b/-/merge_requests/7",
-                    "draft": false, "author": { "username": "ann" },
+                    "state": "merged", "sourceBranch": "fix", "labels": { "nodes": [{ "title": "bug", "color": "#d9534f" }] },
+                    "draft": false, "author": { "username": "ann", "avatarUrl": "/uploads/a.png" },
                     "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00.000+03:00",
                     "approved": true, "conflicts": false, "detailedMergeStatus": "CONFLICT", "diffHeadSha": "abc",
                     "reviewers": { "nodes": [
@@ -495,5 +544,8 @@ mod tests {
         assert_eq!(item.review_decision, ChangeRequestReviewDecision::ChangesRequested);
         assert_eq!((item.ci.state, item.ci.total_count), (CiState::Pending, 17));
         assert_eq!((item.additions, item.deletions, item.head_ref_oid.as_str()), (3, 1, "abc"));
+        assert_eq!((item.state, item.head_ref_name.as_str()), (ChangeRequestState::Merged, "fix"));
+        assert_eq!(item.labels, [ChangeRequestLabel { name: "bug".into(), color: "d9534f".into() }]);
+        assert_eq!(item.author.avatar_url, "https://gitlab.com/uploads/a.png");
     }
 }

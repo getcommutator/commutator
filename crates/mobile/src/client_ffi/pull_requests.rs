@@ -116,7 +116,15 @@ impl CoreClient {
             PullRequestFilter::All => ChangeRequestFilter::All,
         };
         let listing = commutator_client::runtime::run(async move {
-            Ok::<_, commutator_client::ClientError>(client.pull_requests(filter, refresh).await)
+            Ok::<_, commutator_client::ClientError>(
+                client
+                    .pull_requests(
+                        filter,
+                        commutator_proto::ChangeRequestStateFilter::Open,
+                        refresh,
+                    )
+                    .await,
+            )
         })
         .await
         .unwrap_or_default();

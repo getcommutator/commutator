@@ -14,11 +14,13 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
-use commutator_proto::{ChangeRequestFilter, ChangeRequestListItem, ChangeRequestPage};
+use commutator_proto::{
+    ChangeRequestFilter, ChangeRequestListItem, ChangeRequestPage, ChangeRequestStateFilter,
+};
 
 const FILE_NAME: &str = "pull-requests.sqlite3";
 /// The schema below; older files are rebuilt (it's a cache).
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 /// Queries older than this are dropped on write.
 const MAX_AGE_DAYS: i64 = 30;
 /// At most this many queries are kept, most recently fetched first. Pull
@@ -54,10 +56,11 @@ impl ChangeRequestStore {
         account: &str,
         repository: &str,
         filter: ChangeRequestFilter,
+        state: ChangeRequestStateFilter,
     ) -> Option<ChangeRequestPage> {
         let inner = self.inner.clone();
         let (account, repository) = (account.to_owned(), repository.to_ascii_lowercase());
-        let filter = filter_key(filter);
+        let filter = filter_key(filter, state);
         tokio::task::spawn_blocking(move || {
             inner.with_conn(|conn| {
                 let Some((fetched_at, next_cursor, total_count)) = conn
@@ -119,6 +122,7 @@ impl ChangeRequestStore {
         account: &str,
         repository: &str,
         filter: ChangeRequestFilter,
+        state: ChangeRequestStateFilter,
         page: &ChangeRequestPage,
     ) {
         let Some(items) = page
@@ -135,7 +139,7 @@ impl ChangeRequestStore {
         let total_count = page.total_count.and_then(|count| i64::try_from(count).ok());
         let inner = self.inner.clone();
         let (account, repository) = (account.to_owned(), repository.to_ascii_lowercase());
-        let filter = filter_key(filter);
+        let filter = filter_key(filter, state);
         let saved = tokio::task::spawn_blocking(move || {
             inner.with_conn_mut(|conn| {
                 let tx = conn.transaction()?;
@@ -303,11 +307,19 @@ fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-fn filter_key(filter: ChangeRequestFilter) -> &'static str {
-    match filter {
+/// The query's `filter` column: the relationship, and the state unless it's
+/// open (`authored`, `all:merged`).
+fn filter_key(filter: ChangeRequestFilter, state: ChangeRequestStateFilter) -> String {
+    let filter = match filter {
         ChangeRequestFilter::All => "all",
         ChangeRequestFilter::Authored => "authored",
         ChangeRequestFilter::Reviewing => "reviewing",
+    };
+    match state {
+        ChangeRequestStateFilter::Open => filter.to_owned(),
+        ChangeRequestStateFilter::Merged => format!("{filter}:merged"),
+        ChangeRequestStateFilter::Closed => format!("{filter}:closed"),
+        ChangeRequestStateFilter::All => format!("{filter}:any"),
     }
 }
 
@@ -337,6 +349,8 @@ mod tests {
             mergeability: ChangeRequestMergeability::Unknown,
             created_at: DateTime::UNIX_EPOCH,
             updated_at: DateTime::UNIX_EPOCH,
+            labels: Vec::new(),
+            head_ref_name: String::new(),
         }
     }
 
@@ -359,16 +373,17 @@ mod tests {
         let store = ChangeRequestStore::new(dir.path());
         let now = Utc::now();
         let all = ChangeRequestFilter::All;
-        assert!(store.load("me", "acme/commutator", all).await.is_none());
+        assert!(store.load("me", "acme/commutator", all, ChangeRequestStateFilter::Open).await.is_none());
         store
             .save(
                 "me",
                 "Acme/Commutator",
                 all,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(2, "two"), item(1, "one")], now),
             )
             .await;
-        let loaded = store.load("me", "acme/commutator", all).await.unwrap();
+        let loaded = store.load("me", "acme/commutator", all, ChangeRequestStateFilter::Open).await.unwrap();
         assert_eq!(titles(&loaded), ["two", "one"], "order is kept");
         assert_eq!(loaded.next_cursor.as_deref(), Some("Y3Vyc29yOjUw"));
         assert_eq!(loaded.total_count, Some(2));
@@ -379,11 +394,15 @@ mod tests {
             ("me", "acme/commutator", ChangeRequestFilter::Authored),
             ("me", "acme/other", all),
         ] {
-            assert!(store.load(account, repository, filter).await.is_none());
+            assert!(store.load(account, repository, filter, ChangeRequestStateFilter::Open).await.is_none());
+        }
+        // Nor another state.
+        for state in [ChangeRequestStateFilter::Merged, ChangeRequestStateFilter::All] {
+            assert!(store.load("me", "acme/commutator", all, state).await.is_none());
         }
         // It persists across instances (a relaunch).
         let reopened = ChangeRequestStore::new(dir.path());
-        let loaded = reopened.load("me", "acme/commutator", all).await.unwrap();
+        let loaded = reopened.load("me", "acme/commutator", all, ChangeRequestStateFilter::Open).await.unwrap();
         assert_eq!(titles(&loaded), ["two", "one"]);
     }
 
@@ -398,6 +417,7 @@ mod tests {
                 "me",
                 "acme/commutator",
                 ChangeRequestFilter::Authored,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(1, "CI running")], earlier),
             )
             .await;
@@ -407,11 +427,12 @@ mod tests {
                 "me",
                 "acme/commutator",
                 ChangeRequestFilter::All,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(2, "other"), item(1, "CI passed")], now),
             )
             .await;
         let authored = store
-            .load("me", "acme/commutator", ChangeRequestFilter::Authored)
+            .load("me", "acme/commutator", ChangeRequestFilter::Authored, ChangeRequestStateFilter::Open)
             .await
             .unwrap();
         assert_eq!(titles(&authored), ["CI passed"]);
@@ -426,6 +447,7 @@ mod tests {
                 "me",
                 "acme/commutator",
                 ChangeRequestFilter::Reviewing,
+                ChangeRequestStateFilter::Open,
                 &page(
                     vec![item(1, "stale")],
                     earlier - chrono::Duration::minutes(1),
@@ -433,7 +455,7 @@ mod tests {
             )
             .await;
         let all = store
-            .load("me", "acme/commutator", ChangeRequestFilter::All)
+            .load("me", "acme/commutator", ChangeRequestFilter::All, ChangeRequestStateFilter::Open)
             .await
             .unwrap();
         assert_eq!(titles(&all), ["other", "CI passed"]);
@@ -450,6 +472,7 @@ mod tests {
                 "me",
                 "acme/commutator",
                 all,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(1, "one"), item(2, "two")], now),
             )
             .await;
@@ -459,11 +482,12 @@ mod tests {
                 "me",
                 "acme/commutator",
                 all,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(1, "one")], now + chrono::Duration::seconds(5)),
             )
             .await;
         assert_eq!(
-            titles(&store.load("me", "acme/commutator", all).await.unwrap()),
+            titles(&store.load("me", "acme/commutator", all, ChangeRequestStateFilter::Open).await.unwrap()),
             ["one"]
         );
         // An older read of the same query never replaces a newer one.
@@ -472,11 +496,12 @@ mod tests {
                 "me",
                 "acme/commutator",
                 all,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(3, "three")], now - chrono::Duration::seconds(5)),
             )
             .await;
         assert_eq!(
-            titles(&store.load("me", "acme/commutator", all).await.unwrap()),
+            titles(&store.load("me", "acme/commutator", all, ChangeRequestStateFilter::Open).await.unwrap()),
             ["one"]
         );
         let count = |table: &str| {
@@ -506,12 +531,13 @@ mod tests {
                 "me",
                 "acme/old",
                 ChangeRequestFilter::All,
+                ChangeRequestStateFilter::Open,
                 &page(vec![item(1, "one")], old),
             )
             .await;
         assert!(
             store
-                .load("me", "acme/old", ChangeRequestFilter::All)
+                .load("me", "acme/old", ChangeRequestFilter::All, ChangeRequestStateFilter::Open)
                 .await
                 .is_none()
         );
