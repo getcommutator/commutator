@@ -702,8 +702,14 @@ final class TranscriptListView: UIScrollView, RowViewDelegate, UIScrollViewDeleg
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
         let point = tap.location(in: self)
-        // A tap over a selection only dismisses it (UITextInteraction does).
-        guard selection == nil else { return }
+        // A tap away from the selection (and its handles) dismisses it:
+        // UITextInteraction doesn't for a non-editable custom input. A tap on
+        // it is UIKit's (the edit menu).
+        if let range = selectedTextRange {
+            let near = selectionRects(for: range).contains { $0.rect.insetBy(dx: -24, dy: -24).contains(point) }
+            if !near { clearSelection() }
+            return
+        }
         guard let row = visible.values.first(where: { !$0.isHidden && $0.frame.contains(point) }),
               let url = row.link(at: tap.location(in: row))
         else { return }
