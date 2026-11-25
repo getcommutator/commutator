@@ -2139,44 +2139,47 @@ impl Pickers {
         // The card stays open on a pick (user request): model and traits
         // share one popover now, and adjusting the tray right after choosing
         // a model is the expected flow. Esc, click-out, or the chip close it.
+        // Any pick — new chat or existing — is the sticky last-used model for
+        // its harness, so the next new chat opens on it.
+        if let Some(harness) = self.effective_harness(cx) {
+            let label = self
+                .models
+                .get(&harness)
+                .and_then(|l| l.ready())
+                .and_then(|models| models.iter().find(|m| m.id == model_id))
+                .map(|m| m.label.clone())
+                .unwrap_or_else(|| model_id.clone());
+            self.defaults.remember_model(harness, model_id.clone(), label);
+            self.save_defaults();
+        }
         if self.state.read(cx).selected_chat.is_some() {
             // Existing chat: persist to the chat row (Mutate setChatConfig) —
             // survives restarts and syncs; next runs in this chat use it.
             self.update_chat_config(cx, move |config| config.model = Some(model_id));
         } else {
-            // New chat: draft pick + sticky last-used memory for this harness.
-            // Effort follows the model: its own remembered level, if any.
-            self.config.model = Some(model_id.clone());
+            // New chat: draft pick. Effort follows the model: its own
+            // remembered level, if any.
+            self.config.model = Some(model_id);
             self.config.reasoning = None;
-            if let Some(harness) = self.effective_harness(cx) {
-                let label = self
-                    .models
-                    .get(&harness)
-                    .and_then(|l| l.ready())
-                    .and_then(|models| models.iter().find(|m| m.id == model_id))
-                    .map(|m| m.label.clone())
-                    .unwrap_or_else(|| model_id.clone());
-                self.defaults.remember_model(harness, model_id, label);
-                self.save_defaults();
-            }
         }
         cx.notify();
     }
 
     fn pick_reasoning(&mut self, level: ReasoningLevel, cx: &mut Context<Self>) {
-        // Always a concrete selection (no toggle-back-to-default).
+        // Always a concrete selection (no toggle-back-to-default). Remembered
+        // for the next new chat whichever chat it was picked in.
+        if let Some(harness) = self.effective_harness(cx) {
+            let model = self.effective_model_id(cx).map(str::to_owned);
+            self.defaults
+                .remember_reasoning(harness, model.as_deref(), level);
+        } else {
+            self.defaults.reasoning = Some(level);
+        }
+        self.save_defaults();
         if self.state.read(cx).selected_chat.is_some() {
             self.update_chat_config(cx, move |config| config.reasoning = Some(level));
         } else {
             self.config.reasoning = Some(level);
-            if let Some(harness) = self.effective_harness(cx) {
-                let model = self.effective_model_id(cx).map(str::to_owned);
-                self.defaults
-                    .remember_reasoning(harness, model.as_deref(), level);
-            } else {
-                self.defaults.reasoning = Some(level);
-            }
-            self.save_defaults();
         }
         cx.notify();
     }
@@ -6947,6 +6950,27 @@ mod tests {
             });
             state.update(cx, |state, _| state.apply_sessions(Vec::new()));
             assert!(!pickers.read(cx).harness_locked(cx), "unlocks when the turn ends");
+        });
+    }
+
+    #[gpui::test]
+    fn saved_chat_pick_becomes_the_new_chat_default(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let (_state, pickers) = side_chat_picker(false, cx);
+            pickers.update(cx, |pickers, cx| {
+                let harness = pickers.effective_harness(cx).unwrap();
+                pickers.pick_model("picked-in-chat".into(), cx);
+                pickers.pick_reasoning(ReasoningLevel::Low, cx);
+                assert_eq!(
+                    pickers.defaults.model_for(harness).map(|m| m.id.as_str()),
+                    Some("picked-in-chat")
+                );
+                assert_eq!(
+                    pickers.defaults.reasoning_for(harness, Some("picked-in-chat")),
+                    Some(ReasoningLevel::Low)
+                );
+            });
         });
     }
 
