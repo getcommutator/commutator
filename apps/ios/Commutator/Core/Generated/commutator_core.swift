@@ -4050,7 +4050,8 @@ public protocol TerminalSessionProtocol: AnyObject, Sendable {
     func selection()  -> TerminalSelection?
     
     /**
-     * Colors resolve for this appearance from the next frame.
+     * Colors resolve for this appearance, and the selected theme, from the next frame. Always
+     * redraws: the apps also call this on a theme change, which keeps the appearance.
      */
     func setDark(dark: Bool) 
     
@@ -4309,7 +4310,8 @@ open func selection() -> TerminalSelection?  {
 }
     
     /**
-     * Colors resolve for this appearance from the next frame.
+     * Colors resolve for this appearance, and the selected theme, from the next frame. Always
+     * redraws: the apps also call this on a theme change, which keeps the appearance.
      */
 open func setDark(dark: Bool)  {try! rustCall() {
         uniffiCallStatus in
@@ -19912,7 +19914,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_terminalsession_selection() != 10367) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_terminalsession_set_dark() != 20746) {
+    if (uniffi_commutator_mobile_checksum_method_terminalsession_set_dark() != 10236) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_terminalsession_set_focused() != 53838) {
