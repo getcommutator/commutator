@@ -100,6 +100,7 @@ usvg = "0.46"
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
+tiny-skia = "0.11"
 fontdb.workspace = true
 ttf-parser.workspace = true
 uuid.workspace = true

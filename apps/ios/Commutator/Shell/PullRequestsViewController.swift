@@ -22,11 +22,13 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         var review = "all"
         var checks = "all"
         var repository = ""
+        var state = "open"
+        var labels: [String] = []
 
         /// How many differ from the defaults (the first chip fills when any do).
         var active: Int {
             let d = Filters()
-            return [involvement != d.involvement, !author.isEmpty, draft != d.draft, review != d.review, checks != d.checks, !repository.isEmpty].filter { $0 }.count
+            return [state != d.state, !labels.isEmpty, involvement != d.involvement, !author.isEmpty, draft != d.draft, review != d.review, checks != d.checks, !repository.isEmpty].filter { $0 }.count
         }
     }
 
@@ -142,8 +144,14 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         loadTask?.cancel()
         loading = true
         if all.isEmpty { spinner.startAnimating(); empty.isHidden = true }
+        let state: PullRequestStateFilter = switch filters.state {
+        case "merged": .merged
+        case "closed": .closed
+        case "all": .all
+        default: .open
+        }
         loadTask = Task { @MainActor [weak self] in
-            let list = await client.listPullRequests(filter: .all, refresh: refresh)
+            let list = await client.listPullRequests(filter: .all, state: state, refresh: refresh)
             guard let self, !Task.isCancelled else { return }
             self.loading = false
             self.spinner.stopAnimating()
@@ -197,7 +205,7 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         } else if all.isEmpty, let failure = lastList?.failures.first {
             empty.text = "\(failure.message)\n\(failure.repository)"
         } else {
-            empty.text = all.isEmpty ? "No open pull requests." : "No pull requests match."
+            empty.text = all.isEmpty ? (filters.state == "open" ? "No open pull requests." : "No pull requests.") : "No pull requests match."
         }
     }
 
@@ -211,6 +219,7 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         let f = filters
         if !f.author.isEmpty, pr.author != f.author { return false }
         if !f.repository.isEmpty, pr.repository != f.repository { return false }
+        if !f.labels.isEmpty, !pr.labels.contains(where: { f.labels.contains($0.name) }) { return false }
         if f.draft == "only", !pr.isDraft { return false }
         if f.draft == "hide", pr.isDraft { return false }
         if f.review != "all", Self.reviewKey(pr.review) != f.review { return false }
@@ -227,6 +236,7 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
             let ok: Bool = switch key {
             case "author" where !value.isEmpty: value == "me" ? pr.authored : pr.author.lowercased().contains(value)
             case "repo" where !value.isEmpty: pr.repository.lowercased().contains(value)
+            case "label" where !value.isEmpty: pr.labels.contains { $0.name.lowercased().contains(value) }
             case "is" where !value.isEmpty:
                 switch value {
                 case "draft": pr.isDraft
@@ -279,6 +289,7 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         ("updated", "Recently updated", "clock.arrow.circlepath"), ("stale", "Least recently updated", "clock"),
         ("newest", "Newest", "sparkles"), ("largest", "Largest", "arrow.up.right"), ("smallest", "Smallest", "arrow.down.right"),
     ]
+    private static let states: [Choice] = [("open", "Open", "arrow.triangle.pull"), ("merged", "Merged", "arrow.triangle.merge"), ("closed", "Closed", "xmark.circle"), ("all", "All", "square.stack")]
     private static let involvements: [Choice] = [("all", "All PRs", "square.stack"), ("authored", "Authored", "pencil.line"), ("reviewing", "Reviewing", "eye")]
     private static let drafts: [Choice] = [("all", "All", "square.stack"), ("only", "Drafts only", "pencil.and.outline"), ("hide", "Hide drafts", "eye.slash")]
     private static let reviews: [Choice] = [
@@ -288,8 +299,18 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
     private static let checks: [Choice] = [("all", "All", "square.stack"), ("passing", "Passing", "checkmark.circle"), ("failing", "Failing", "xmark.circle"), ("pending", "Pending", "circle.dotted")]
 
     private func set(_ change: (inout Filters) -> Void) {
+        let state = filters.state
         change(&filters)
-        render()
+        // The state is the listing's own: ask for it anew.
+        if filters.state != state {
+            all = []
+            items = [:]
+            loaded = false
+            render()
+            load(refresh: false)
+        } else {
+            render()
+        }
     }
 
     private func chips() -> [UIButton] {
@@ -314,6 +335,19 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
             })
         }
 
+        /// Labels: any of the picked, the menu staying open while you tick.
+        func labelsMenu() -> UIMenu {
+            let counts = Dictionary(all.flatMap { $0.labels.map { ($0.name, 1) } }, uniquingKeysWith: +)
+            let ordered = counts.keys.sorted { (counts[$0]!, $1) > (counts[$1]!, $0) }
+            return UIMenu(children: [
+                UIAction(title: "Any", image: UIImage(systemName: "square.stack"), state: f.labels.isEmpty ? .on : .off) { [weak self] _ in self?.set { $0.labels = [] } },
+            ] + ordered.map { name in
+                UIAction(title: name, subtitle: "\(counts[name]!)", attributes: .keepsMenuPresented, state: f.labels.contains(name) ? .on : .off) { [weak self] _ in
+                    self?.set { $0.labels = $0.labels.contains(name) ? $0.labels.filter { $0 != name } : $0.labels + [name] }
+                }
+            })
+        }
+
         let active = f.active
         let reset = UIAction(title: "Clear Filters", image: UIImage(systemName: "xmark"), attributes: active == 0 ? .disabled : []) { [weak self] _ in
             self?.set { $0 = Filters(sort: $0.sort) }
@@ -321,8 +355,10 @@ final class PullRequestsViewController: UIViewController, UICollectionViewDelega
         let first = UIMenu(children: [UIMenu(title: "Sort", options: .displayInline, children: menu(Self.sorts, f.sort, \.sort).children), reset])
         return [
             Self.chip(nil, symbol: "line.3.horizontal.decrease", active: active > 0, menu: first, chevron: false, label: "Sort and filters"),
+            Self.chip(label(Self.states, f.state), symbol: nil, active: f.state != "open", menu: menu(Self.states, f.state, \.state)),
             Self.chip(label(Self.involvements, f.involvement), symbol: nil, active: f.involvement != "all", menu: menu(Self.involvements, f.involvement, \.involvement)),
             Self.chip(f.author.isEmpty ? "Author" : f.author, symbol: nil, active: !f.author.isEmpty, menu: names(\.author, any: "Anyone", \.author)),
+            Self.chip(f.labels.isEmpty ? "Labels" : f.labels.count == 1 ? f.labels[0] : "\(f.labels.count) labels", symbol: nil, active: !f.labels.isEmpty, menu: labelsMenu()),
             Self.chip(f.review == "all" ? "Review" : label(Self.reviews, f.review), symbol: nil, active: f.review != "all", menu: menu(Self.reviews, f.review, \.review)),
             Self.chip(f.checks == "all" ? "Checks" : label(Self.checks, f.checks), symbol: nil, active: f.checks != "all", menu: menu(Self.checks, f.checks, \.checks)),
             Self.chip(f.draft == "all" ? "Draft" : label(Self.drafts, f.draft), symbol: nil, active: f.draft != "all", menu: menu(Self.drafts, f.draft, \.draft)),
@@ -486,6 +522,7 @@ final class PullRequestCell: UICollectionViewListCell {
     private let conflict = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
     private let title = UILabel()
     private let author = UILabel()
+    private let avatar = AvatarView()
     private let repo = UILabel()
     private let chips = UIStackView()
     private let ci = UIImageView()
@@ -527,7 +564,7 @@ final class PullRequestCell: UICollectionViewListCell {
         let top = UIStackView(arrangedSubviews: [title, size])
         top.spacing = 10
         top.alignment = .firstBaseline
-        let meta = UIStackView(arrangedSubviews: [author, repo, chips, UIView(), time])
+        let meta = UIStackView(arrangedSubviews: [avatar, author, repo, chips, UIView(), time])
         meta.spacing = 8
         meta.alignment = .center
         let column = UIStackView(arrangedSubviews: [top, meta])
@@ -565,12 +602,14 @@ final class PullRequestCell: UICollectionViewListCell {
     func configure(_ pr: PullRequestItem) {
         icon.image = PRIcon.image(side: 20)
         // The conflict is the badge; the icon keeps the open tone under it.
-        icon.tintColor = switch pr.tone {
-        case .open, .conflict: Palette.success
-        case .draft: Palette.tertiary
-        case .changesRequested: Palette.warning
+        icon.tintColor = switch (pr.state, pr.tone) {
+        case (.merged, _): Palette.projectDots[2]
+        case (.closed, _): Palette.danger
+        case (_, .draft): Palette.tertiary
+        case (_, .changesRequested): Palette.warning
+        default: Palette.success
         }
-        conflict.isHidden = pr.tone != .conflict
+        conflict.isHidden = pr.tone != .conflict || pr.state != .open
 
         let text = NSMutableAttributedString(
             string: "\(pr.provider == "gitlab" ? "!" : "#")\(pr.number)  ",
@@ -581,10 +620,19 @@ final class PullRequestCell: UICollectionViewListCell {
         title.lineBreakMode = .byTruncatingTail
 
         author.text = pr.author
+        avatar.load(pr.authorAvatarUrl)
         repo.text = pr.repository
+        // Shepherd's: the first three labels, then how many more.
         chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for word in pr.status.components(separatedBy: " · ") where !word.isEmpty {
-            chips.addArrangedSubview(Self.chip(word))
+        for label in pr.labels.prefix(3) {
+            chips.addArrangedSubview(Self.chip(label.name))
+        }
+        if pr.labels.count > 3 {
+            let more = UILabel()
+            more.text = "+\(pr.labels.count - 3)"
+            more.font = Fonts.ui(.sans, TypeScale.size(12.5))
+            more.textColor = Palette.secondary
+            chips.addArrangedSubview(more)
         }
         time.text = relativeTimeLabel(atMs: pr.updatedAtMs, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
 
@@ -602,7 +650,7 @@ final class PullRequestCell: UICollectionViewListCell {
         stats.isHidden = pr.additions == 0 && pr.deletions == 0
 
         accessibilityIdentifier = "pull-request-\(pr.number)"
-        accessibilityLabel = [pr.title, "\(pr.repository) #\(pr.number)", pr.author, pr.tone == .conflict ? "Conflicts" : nil, pr.status, time.text]
+        accessibilityLabel = [pr.title, "\(pr.repository) #\(pr.number)", pr.author, pr.tone == .conflict ? "Conflicts" : nil, pr.labels.map(\.name).joined(separator: ", "), time.text]
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
@@ -624,5 +672,35 @@ final class PullRequestCell: UICollectionViewListCell {
             label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -3),
         ])
         return box
+    }
+}
+
+/// An author's picture, 18 pt round; hidden until it loads. Kept for the session.
+final class AvatarView: UIImageView {
+    private static let cache = NSCache<NSString, UIImage>()
+    private var url: String?
+
+    init() {
+        super.init(frame: .zero)
+        contentMode = .scaleAspectFill
+        clipsToBounds = true
+        layer.cornerRadius = 9
+        backgroundColor = Palette.chip
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([widthAnchor.constraint(equalToConstant: 18), heightAnchor.constraint(equalToConstant: 18)])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func load(_ url: String?) {
+        self.url = url
+        image = url.flatMap { Self.cache.object(forKey: $0 as NSString) }
+        isHidden = url == nil
+        guard image == nil, let url, let remote = URL(string: url) else { return }
+        Task { @MainActor [weak self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: remote), let image = UIImage(data: data) else { return }
+            Self.cache.setObject(image, forKey: url as NSString)
+            if self?.url == url { self?.image = image }
+        }
     }
 }

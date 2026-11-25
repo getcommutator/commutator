@@ -173,7 +173,19 @@ impl ClientInner {
     }
 
     pub(crate) fn mark_seen(self: &Arc<Self>, chat_id: &str) {
-        let _ = self.registry_write(|doc| doc.set_chat_seen(chat_id, Utc::now()));
+        let at = Utc::now();
+        // The workspace replica updates immediately for this device, but in
+        // local mode the engine owns a separate registry copy. Forward the
+        // same marker so it can enter the synced registry and reach the other
+        // devices (including the desktop sidebar).
+        let _ = self.registry_write(|doc| doc.set_chat_seen(chat_id, at));
+        if let Some(local) = self.local() {
+            local.mutate(serde_json::json!({
+                "op": "markChatSeen",
+                "chatId": chat_id,
+                "at": at.timestamp_millis(),
+            }));
+        }
     }
 
     pub(crate) fn recompute_connectivity(self: &Arc<Self>) {

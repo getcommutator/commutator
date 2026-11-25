@@ -12,9 +12,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use commutator_proto::{AuthState, WorkspaceScope};
 use gpui::{App, Global, Task};
 use serde::{Deserialize, Serialize};
-use commutator_proto::{AuthState, WorkspaceScope};
 
 pub mod accounts;
 pub mod appearance;
@@ -127,6 +127,55 @@ pub enum NewThreadBackgroundEffect {
     Ascii,
     Halftone,
     Scanlines,
+}
+
+/// Animated terminal cursor trail style.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalCursorEffect {
+    None,
+    #[default]
+    #[serde(other)]
+    Warp,
+    Sweep,
+    Comet,
+    Blaze,
+    /// Blaze narrowing to a point where the cursor was.
+    BlazeTapered,
+    /// Only Blaze's glow around the cursor.
+    BlazeNoTrail,
+    Rainbow,
+    Gradient,
+    Frozen,
+}
+
+impl TerminalCursorEffect {
+    pub const ALL: [Self; 10] = [
+        Self::None,
+        Self::Warp,
+        Self::Sweep,
+        Self::Comet,
+        Self::Blaze,
+        Self::BlazeTapered,
+        Self::BlazeNoTrail,
+        Self::Rainbow,
+        Self::Gradient,
+        Self::Frozen,
+    ];
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Warp => "Warp",
+            Self::Sweep => "Sweep",
+            Self::Comet => "Comet",
+            Self::Blaze => "Blaze",
+            Self::BlazeTapered => "Blaze, tapered",
+            Self::BlazeNoTrail => "Blaze, no trail",
+            Self::Rainbow => "Rainbow",
+            Self::Gradient => "Gradient",
+            Self::Frozen => "Frozen",
+        }
+    }
 }
 
 impl NewThreadBackgroundEffect {
@@ -644,7 +693,9 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
     let data_dir = cx
         .try_global::<SettingsStore>()
         .map(|store| store.data_dir.clone())
-        .ok_or_else(|| "Unable to remove the image. Restart Commutator and try again.".to_string())?;
+        .ok_or_else(|| {
+            "Unable to remove the image. Restart Commutator and try again.".to_string()
+        })?;
     let mut next = current(cx);
     let previous = next.new_thread_composer_background.take();
     next.wallpaper_source = None;
@@ -1144,6 +1195,8 @@ pub struct UiSettings {
     /// qualify, including compatible Nerd Fonts.
     pub terminal_font_family: crate::typography::UiFontFamily,
     pub terminal_font_size: f32,
+    /// Trail animation used when the terminal cursor moves.
+    pub terminal_cursor_effect: TerminalCursorEffect,
     /// Family and absolute pixel size for code, diffs, and file editors.
     pub code_font_family: crate::typography::UiFontFamily,
     pub code_font_size: f32,
@@ -1270,6 +1323,7 @@ impl Default for UiSettings {
             ui_font_size: crate::typography::UiFontSize::default(),
             terminal_font_family: crate::typography::UiFontFamily::GeistMono,
             terminal_font_size: crate::typography::TERMINAL_FONT_SIZE_DEFAULT,
+            terminal_cursor_effect: TerminalCursorEffect::default(),
             code_font_family: crate::typography::UiFontFamily::GeistMono,
             code_font_size: crate::typography::CODE_FONT_SIZE_DEFAULT,
             theme_selection: commutator_theme::ThemeSelection::default(),
@@ -1812,7 +1866,10 @@ impl UiSettings {
             .or_default()
     }
 
-    pub fn skill_completion(&self, harness: commutator_proto::HarnessId) -> SkillCompletionSettings {
+    pub fn skill_completion(
+        &self,
+        harness: commutator_proto::HarnessId,
+    ) -> SkillCompletionSettings {
         self.skill_completion_by_harness
             .get(&harness)
             .copied()
@@ -2244,7 +2301,10 @@ mod tests {
 
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.composer_send_behavior, ComposerSendBehavior::Enter);
-        assert!(!loaded.queue_follow_ups, "a send into a live turn steers by default");
+        assert!(
+            !loaded.queue_follow_ups,
+            "a send into a live turn steers by default"
+        );
         assert!(loaded.open_web_links_in_commutator);
         assert!(loaded.new_thread_composer_background.is_none());
         assert_eq!(
@@ -3352,7 +3412,10 @@ mod tests {
         .unwrap();
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.appearance, crate::appearance::AppearanceMode::System);
-        assert_eq!(loaded.surface, commutator_theme::SurfacePreference::ThemeDefault);
+        assert_eq!(
+            loaded.surface,
+            commutator_theme::SurfacePreference::ThemeDefault
+        );
         assert_eq!(loaded.sidebar_width, 300.0);
         assert!(loaded.sidebar_pinned_session_ids_by_profile.is_empty());
         assert!(!loaded.sound_enabled, "other keys still parse");

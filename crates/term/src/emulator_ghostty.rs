@@ -1,0 +1,929 @@
+//! Adapted from Zeron's crates/ui/src/terminal/emulator.rs (MIT, see assets/NOTICE).
+//! The terminal emulator core: Ghostty's libghostty-vt (the `ghostty-vt` crate, built from Ghostty's source with
+//! Zig 0.16) wrapped as a pure state machine.
+//!
+//! Bytes in ([`Emulator::feed`] — the decoded `SubscribeTerminal` Data frames),
+//! grid snapshots out ([`Emulator::line`], [`Emulator::cursor`]). No I/O, no
+//! timers, no gpui: the panel owns RPC and scheduling, the view owns paint.
+//! That split makes the whole escape-sequence surface unit-testable with
+//! scripted byte strings.
+//!
+//! Selection lives here too ([`Emulator::start_selection`] and friends): the
+//! terminal holds the installed selection and keeps it on its text as output
+//! moves the grid; word and line bounds are Ghostty's own rules.
+//!
+//! API notes for the pinned `ghostty-vt 0.7.0` (Ghostty `b40acce`):
+//! - Snapshots read through a `RenderState` (the C API's render path); the
+//!   handles are `!Send`, which suits an emulator living inside a gpui entity.
+//! - Query responses (DSR/DA/…) surface as `Event::PtyWrite` after `vt_write`;
+//!   [`Emulator::feed`] returns them so the panel can write them back.
+
+use std::cell::RefCell;
+use std::sync::Arc;
+
+use ghostty_vt::render::{CellIterator, CursorVisualStyle, Dirty, RowIterator};
+use ghostty_vt::screen::{CellContentTag, CellWide, GridRef, Screen};
+use ghostty_vt::selection::{
+    FormatOptions, SelectLineOptions, SelectWordBetweenOptions, Selection,
+};
+use ghostty_vt::style::{Style, StyleColor, Underline};
+use ghostty_vt::terminal::{Mode, Point, PointCoordinate, PointSpace, ScrollViewport};
+use ghostty_vt::{Error, Event, RenderState, Terminal, TerminalOptions, key, mouse};
+
+/// A cell in viewport coordinates (row 0 = top). herdr owns scrollback, so the
+/// viewport is the whole local grid and a point needs no history offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GridPoint {
+    pub row: usize,
+    pub col: usize,
+}
+
+/// Which half of a cell the pointer is on: a drag starting on a cell's right
+/// half leaves that cell out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// Selection granularity: a drag, a double-click word, a triple-click row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionType {
+    Simple,
+    Semantic,
+    Lines,
+}
+
+/// A cell's paint color, decoupled from the palette: the view resolves these
+/// against the theme (default fg/bg, 256-color index, or direct RGB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellColor {
+    /// Default foreground.
+    Foreground,
+    /// Default background.
+    Background,
+    /// Indexed color: 0-15 ANSI, 16-231 color cube, 232-255 grayscale ramp.
+    Indexed(u8),
+    /// Direct 24-bit color.
+    Rgb(u8, u8, u8),
+}
+
+fn map_color(color: StyleColor, default: CellColor) -> CellColor {
+    match color {
+        StyleColor::None => default,
+        StyleColor::Palette(ix) => CellColor::Indexed(ix.0),
+        StyleColor::Rgb(c) => CellColor::Rgb(c.r, c.g, c.b),
+    }
+}
+
+/// The line under an underlined cell, as SGR 4:n names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnderlineStyle {
+    #[default]
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+/// One rendered cell: char + colors + the flags paint cares about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellSnapshot {
+    pub ch: char,
+    /// The whole grapheme cluster, `ch` first, when the cell holds more than `ch`: a flag, a skin tone, a ZWJ
+    /// sequence, a letter and its combining marks.
+    pub cluster: Option<std::sync::Arc<str>>,
+    pub fg: CellColor,
+    pub bg: CellColor,
+    pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    /// How `underline` is drawn (SGR 4:1 to 4:5); curly is for spelling and diagnostics.
+    pub underline_style: UnderlineStyle,
+    pub strikethrough: bool,
+    pub inverse: bool,
+    pub hidden: bool,
+    /// A double-width char (occupies this cell plus the next spacer cell).
+    pub wide: bool,
+    /// The spacer half of a wide char — never shaped, only background-painted.
+    pub wide_spacer: bool,
+    /// Inside the active selection: the view paints a wash over this cell.
+    pub selected: bool,
+    /// Typed locally and shown before the remote echo confirms it.
+    pub predicted: bool,
+}
+
+impl CellSnapshot {
+    /// Effective paint colors after INVERSE/HIDDEN resolution.
+    pub fn display_colors(&self) -> (CellColor, CellColor) {
+        let (fg, bg) = if self.inverse {
+            (self.bg, self.fg)
+        } else {
+            (self.fg, self.bg)
+        };
+        if self.hidden { (bg, bg) } else { (fg, bg) }
+    }
+}
+
+/// Cursor position in viewport coordinates (row 0 = top of the visible grid).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorSnapshot {
+    pub row: usize,
+    pub col: usize,
+}
+
+/// How the cursor paints, as the program set it (DECSCUSR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorShape {
+    Block,
+    Beam,
+    Underline,
+    HollowBlock,
+}
+
+/// Which pointer events the program asks the panel to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseTracking {
+    Click,
+    Drag,
+    Motion,
+}
+
+/// The render-path handles, reused across snapshots. Behind a `RefCell`
+/// because updating them mutates, while snapshots are `&self` reads.
+struct Render {
+    state: RenderState,
+    rows: RowIterator,
+    cells: CellIterator,
+    /// The rows as last read: a row Ghostty did not mark dirty since is taken from here, not read cell by cell again.
+    /// Shared with the frames that read them, so a clean row is not copied.
+    lines: Vec<Arc<Vec<CellSnapshot>>>,
+}
+
+/// The selection being made: its granularity and where it started.
+#[derive(Debug, Clone, Copy)]
+struct Anchor {
+    ty: SelectionType,
+    point: GridPoint,
+    side: Side,
+}
+
+/// A selection in screen points, for [`Emulator::restore_selection`]: the anchor of one being made and the
+/// installed ends, top-left first.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectionState {
+    anchor: Option<Anchor>,
+    ends: Option<(GridPoint, GridPoint)>,
+}
+
+/// The emulator: a pure fold of PTY bytes into a renderable grid.
+pub struct Emulator {
+    term: Terminal,
+    render: RefCell<Render>,
+    anchor: Option<Anchor>,
+    bell: bool,
+    /// Fed a program's own bytes rather than herdr's frames ([`Self::raw`]).
+    raw: bool,
+}
+
+/// Ghostty's default scrollback cap (bytes, an estimate): far more than the lines either backend hands over.
+const SCROLLBACK: usize = 10_000_000;
+
+impl Emulator {
+    pub fn new(cols: u16, rows: u16) -> Self {
+        // Commutator receives a byte stream rather than a remote viewport, so
+        // Ghostty keeps local scrollback just as the previous emulator did.
+        Self::sized(cols, rows, SCROLLBACK)
+    }
+
+    /// For a program's own output, as herdr-core streams it: this terminal is the real one, with its history and
+    /// its reflow on a resize.
+    pub fn raw(cols: u16, rows: u16) -> Self {
+        Self {
+            raw: true,
+            ..Self::sized(cols, rows, SCROLLBACK)
+        }
+    }
+
+    /// herdr's history as `pane.read` gives it (`source: recent`, `format: ansi`): the lines above its screen, then
+    /// the screen, wrapped at this width, no newline after the last. The grid holds them all, viewed at the live
+    /// bottom, so [`Self::scroll_to_offset`] walks back through them without asking herdr.
+    pub fn with_history(text: &str, cols: u16, rows: u16) -> Self {
+        let mut e = Self::sized(cols, rows, SCROLLBACK);
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                e.feed(b"\r\n");
+            }
+            e.feed(b"\x1b[0m");
+            e.feed(line.strip_suffix('\r').unwrap_or(line).as_bytes());
+        }
+        e
+    }
+
+    /// `max_scrollback`: bytes of history the terminal keeps (0: none).
+    fn sized(cols: u16, rows: u16, max_scrollback: usize) -> Self {
+        let term = Terminal::new(TerminalOptions {
+            cols: cols.max(2),
+            rows: rows.max(1),
+            max_scrollback,
+        })
+        .expect("libghostty-vt terminal");
+        let render = Render {
+            state: RenderState::new().expect("libghostty-vt render state"),
+            rows: RowIterator::new().expect("libghostty-vt row iterator"),
+            cells: CellIterator::new().expect("libghostty-vt cell iterator"),
+            lines: Vec::new(),
+        };
+        Self {
+            term,
+            render: RefCell::new(render),
+            anchor: None,
+            bell: false,
+            raw: false,
+        }
+    }
+
+    /// Advance the state machine over decoded PTY output. Returns bytes the
+    /// terminal wants written back to the PTY (DSR/DA query responses etc.).
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+        self.term.vt_write(bytes);
+        let mut responses = Vec::new();
+        for event in self.term.events() {
+            match event {
+                Event::PtyWrite(bytes) => responses.extend_from_slice(&bytes),
+                Event::Bell => self.bell = true,
+                _ => {}
+            }
+        }
+        responses
+    }
+
+    /// Ghostty handles synchronized output inside `vt_write`; no external
+    /// deadline or flush is required by this backend.
+    pub fn sync_deadline(&self) -> Option<std::time::Instant> {
+        None
+    }
+
+    pub fn finish_sync(&mut self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        // ponytail: no pixel size; only CSI 14/16 t size reports would want it.
+        if self.raw {
+            let _ = self.term.resize(cols.max(2), rows.max(1), 0, 0);
+            return;
+        }
+        // No reflow: herdr repaints the whole grid at the new size, and until then a reflow shows its frame at the
+        // old width rewrapped (Ghostty reflows only under wraparound).
+        let wrap = self.term.mode(Mode::WRAPAROUND).unwrap_or(true);
+        let _ = self.term.set_mode(Mode::WRAPAROUND, false);
+        let _ = self.term.resize(cols.max(2), rows.max(1), 0, 0);
+        let _ = self.term.set_mode(Mode::WRAPAROUND, wrap);
+    }
+
+    pub fn cols(&self) -> usize {
+        self.term.cols().map_or(0, usize::from)
+    }
+
+    pub fn rows(&self) -> usize {
+        self.term.rows().map_or(0, usize::from)
+    }
+
+    /// OSC title, if the running program set one.
+    pub fn title(&self) -> Option<&str> {
+        self.term.title().ok().filter(|t| !t.is_empty())
+    }
+
+    /// True once a BEL arrived; reading clears it.
+    pub fn take_bell(&mut self) -> bool {
+        std::mem::take(&mut self.bell)
+    }
+
+    /// Arrow keys should send SS3 (`ESC O A`) instead of CSI.
+    pub fn app_cursor_mode(&self) -> bool {
+        self.term.mode(Mode::DECCKM).unwrap_or(false)
+    }
+
+    /// The app is on the alternate screen (vim, less): it has no history of its own.
+    pub fn alt_screen(&self) -> bool {
+        self.term
+            .active_screen()
+            .is_ok_and(|s| s == Screen::Alternate)
+    }
+
+    pub fn alternate_scroll(&self) -> bool {
+        self.term.mode(Mode::ALT_SCROLL).unwrap_or(false)
+    }
+
+    pub fn focus_reporting(&self) -> bool {
+        self.term.mode(Mode::FOCUS_EVENT).unwrap_or(false)
+    }
+
+    pub fn cursor_style(&self) -> (CursorShape, bool) {
+        let shape = match self
+            .render
+            .borrow_mut()
+            .state
+            .update(&self.term)
+            .ok()
+            .and_then(|s| s.cursor_visual_style().ok())
+        {
+            Some(CursorVisualStyle::Bar) => CursorShape::Beam,
+            Some(CursorVisualStyle::Underline) => CursorShape::Underline,
+            Some(CursorVisualStyle::BlockHollow) => CursorShape::HollowBlock,
+            _ => CursorShape::Block,
+        };
+        (shape, self.term.mode(Mode::CURSOR_BLINKING).unwrap_or(true))
+    }
+
+    /// Pastes should be wrapped in `ESC [200~` / `ESC [201~`.
+    /// The program reads the mouse.
+    pub fn mouse_capture(&self) -> bool {
+        self.term.is_mouse_tracking().unwrap_or(false)
+    }
+
+    pub fn mouse_tracking(&self) -> Option<MouseTracking> {
+        if self.term.mode(Mode::ANY_MOUSE).unwrap_or(false) {
+            Some(MouseTracking::Motion)
+        } else if self.term.mode(Mode::BUTTON_MOUSE).unwrap_or(false) {
+            Some(MouseTracking::Drag)
+        } else if self.term.mode(Mode::NORMAL_MOUSE).unwrap_or(false)
+            || self.term.mode(Mode::X10_MOUSE).unwrap_or(false)
+        {
+            Some(MouseTracking::Click)
+        } else {
+            None
+        }
+    }
+
+    pub fn sgr_mouse(&self) -> bool {
+        self.term.mode(Mode::SGR_MOUSE).unwrap_or(false)
+    }
+
+    /// The kitty keyboard flags the program asked for.
+    pub fn keyboard_flags(&self) -> u16 {
+        self.term
+            .kitty_keyboard_flags()
+            .map_or(0, |f| u16::from(f.bits()))
+    }
+
+    /// A mouse event as the program asked to hear it, nothing if it did not: `action` is `down`, `up`, `drag` or
+    /// `move`, `button` `left`, `right`, `middle`, or `up` or `down` for the wheel; `mods` as herdr's (1 shift, 2
+    /// ctrl, 4 alt). Empty for a program that does not read this.
+    pub fn mouse_report(
+        &self,
+        action: &str,
+        button: &str,
+        col: u16,
+        row: u16,
+        mods: u8,
+    ) -> Vec<u8> {
+        // cells stand in for pixels: only the SGR-pixels format would tell them apart
+        const CELL: u32 = 10;
+        let (Ok(mut encoder), Ok(mut event)) = (mouse::Encoder::new(), mouse::Event::new()) else {
+            return Vec::new();
+        };
+        encoder
+            .set_options_from_terminal(&self.term)
+            .set_any_button_pressed(action == "drag")
+            .set_size(mouse::EncoderSize {
+                screen_width: self.cols() as u32 * CELL,
+                screen_height: self.rows() as u32 * CELL,
+                cell_width: CELL,
+                cell_height: CELL,
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_right: 0,
+                padding_left: 0,
+            });
+        event.set_action(match action {
+            "down" => mouse::Action::Press,
+            "up" => mouse::Action::Release,
+            _ => mouse::Action::Motion,
+        });
+        event.set_button(match (action, button) {
+            ("move", _) => None,
+            (_, "right") => Some(mouse::Button::Right),
+            (_, "middle") => Some(mouse::Button::Middle),
+            (_, "up") => Some(mouse::Button::Four),
+            (_, "down") => Some(mouse::Button::Five),
+            _ => Some(mouse::Button::Left),
+        });
+        let mut held = key::Mods::empty();
+        held.set(key::Mods::SHIFT, mods & 1 != 0);
+        held.set(key::Mods::CTRL, mods & 2 != 0);
+        held.set(key::Mods::ALT, mods & 4 != 0);
+        event.set_mods(held);
+        let at = |cell: u16| (u32::from(cell) * CELL + CELL / 2) as f32;
+        event.set_position(mouse::Position {
+            x: at(col),
+            y: at(row),
+        });
+        let mut bytes = Vec::new();
+        let _ = encoder.encode_to_vec(&event, &mut bytes);
+        bytes
+    }
+
+    pub fn bracketed_paste_mode(&self) -> bool {
+        self.term.mode(Mode::BRACKETED_PASTE).unwrap_or(false)
+    }
+
+    pub fn live_cursor(&self) -> CursorSnapshot {
+        let (row, col) = self.cursor_cell().unwrap_or_default();
+        CursorSnapshot { row, col }
+    }
+
+    pub fn live_char(&self, row: usize, col: usize) -> Option<char> {
+        self.line(row).get(col).map(|cell| cell.ch)
+    }
+
+    /// Lines kept above the screen (0 but in a [`Self::with_history`] copy: herdr owns history).
+    pub fn history_lines(&self) -> usize {
+        self.term.scrollback_rows().unwrap_or(0)
+    }
+
+    /// Lines the view is scrolled back from the live bottom.
+    pub fn display_offset(&self) -> usize {
+        self.term
+            .scrollbar()
+            .map_or(0, |s| s.total.saturating_sub(s.offset + s.len) as usize)
+    }
+
+    /// Scroll the view to `offset` lines back from the live bottom (clamped to the history).
+    pub fn scroll_to_offset(&mut self, offset: usize) {
+        let top = self.history_lines().saturating_sub(offset);
+        self.term.scroll_viewport(ScrollViewport::Row(top));
+    }
+
+    pub fn scroll(&mut self, delta: i32) {
+        let next = if delta >= 0 {
+            self.display_offset().saturating_add(delta as usize)
+        } else {
+            self.display_offset()
+                .saturating_sub(delta.unsigned_abs() as usize)
+        };
+        self.scroll_to_offset(next);
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_to_offset(0);
+    }
+
+    // ---- selection ----
+    //
+    // The terminal owns the installed selection and moves it with its text
+    // as output scrolls the grid. What stays here is the anchor of the one
+    // being made, so each pointer move rebuilds it from anchor to pointer.
+
+    /// A cell of the viewport (row 0 = top of the visible area).
+    fn viewport_ref(&self, row: usize, col: usize) -> Option<GridRef<'_>> {
+        let (x, y) = (u16::try_from(col).ok()?, u32::try_from(row).ok()?);
+        self.term
+            .grid_ref(Point::Viewport(PointCoordinate { x, y }))
+            .ok()
+    }
+
+    /// A cell by its screen point: the history and the screen, so it stays on its text as the viewport moves.
+    fn grid_ref(&self, point: GridPoint) -> Option<GridRef<'_>> {
+        let (x, y) = (
+            u16::try_from(point.col).ok()?,
+            u32::try_from(point.row).ok()?,
+        );
+        self.term
+            .grid_ref(Point::Screen(PointCoordinate { x, y }))
+            .ok()
+    }
+
+    fn point_of(&self, grid_ref: &GridRef<'_>) -> Option<GridPoint> {
+        let c = self
+            .term
+            .point_from_grid_ref(grid_ref, PointSpace::Screen)
+            .ok()??;
+        Some(GridPoint {
+            row: c.y as usize,
+            col: c.x as usize,
+        })
+    }
+
+    /// A selection's ends, top-left first.
+    fn bounds(&self, selection: Option<Selection<'_>>) -> Option<(GridPoint, GridPoint)> {
+        let selection = selection?;
+        let (a, b) = (
+            self.point_of(&selection.start())?,
+            self.point_of(&selection.end())?,
+        );
+        Some((a.min(b), a.max(b)))
+    }
+
+    /// The screen point under a viewport cell. Selections keep these, so they hold on their text when the view
+    /// scrolls.
+    pub fn grid_point(&self, viewport_row: usize, col: usize) -> GridPoint {
+        let col = col.min(self.cols().saturating_sub(1));
+        self.viewport_ref(viewport_row, col)
+            .and_then(|r| self.point_of(&r))
+            .unwrap_or(GridPoint {
+                row: viewport_row,
+                col,
+            })
+    }
+
+    /// The selection as it stands, in screen points: what [`Self::restore_selection`] carries to another grid.
+    pub fn selection_state(&self) -> SelectionState {
+        SelectionState {
+            anchor: self.anchor,
+            ends: self.bounds(self.term.selection().ok().flatten()),
+        }
+    }
+
+    /// Installs a selection taken from another grid, its rows moved by `shift` (the history difference between
+    /// the two). A row that falls off the top of this grid drops the selection.
+    pub fn restore_selection(&mut self, state: SelectionState, shift: isize) {
+        let moved = |p: GridPoint| {
+            Some(GridPoint {
+                row: p.row.checked_add_signed(shift)?,
+                ..p
+            })
+        };
+        self.anchor = state.anchor.and_then(|a| {
+            Some(Anchor {
+                point: moved(a.point)?,
+                ..a
+            })
+        });
+        let ends = state.ends.and_then(|(a, b)| Some((moved(a)?, moved(b)?)));
+        let selection = ends.and_then(|(start, end)| {
+            Some(Selection::new(
+                self.grid_ref(start)?,
+                self.grid_ref(end)?,
+                false,
+            ))
+        });
+        let _ = self.term.set_selection(selection.as_ref());
+    }
+
+    /// Begin a selection. `ty` picks the granularity: [`SelectionType::Simple`]
+    /// for a drag, `Semantic` for a double-click word, `Lines` for a triple-
+    /// click row.
+    pub fn start_selection(&mut self, ty: SelectionType, point: GridPoint, side: Side) {
+        self.anchor = Some(Anchor { ty, point, side });
+        self.update_selection(point, side);
+    }
+
+    /// Extend the in-progress selection to `point`. No-op without one.
+    pub fn update_selection(&mut self, point: GridPoint, side: Side) {
+        let Some(anchor) = self.anchor else { return };
+        let range = match anchor.ty {
+            SelectionType::Simple => {
+                simple_range((anchor.point, anchor.side), (point, side), self.cols())
+            }
+            // Ghostty's double-click drag: the nearest word from each end toward the other.
+            SelectionType::Semantic => {
+                let word = |from, to| {
+                    let options =
+                        SelectWordBetweenOptions::new(self.grid_ref(from)?, self.grid_ref(to)?);
+                    self.bounds(self.term.select_word_between(options).ok()?)
+                };
+                union(word(anchor.point, point), word(point, anchor.point))
+            }
+            SelectionType::Lines => {
+                let line = |at| {
+                    self.bounds(
+                        self.term
+                            .select_line(SelectLineOptions::new(self.grid_ref(at)?))
+                            .ok()?,
+                    )
+                };
+                union(line(anchor.point), line(point))
+            }
+        };
+        let selection = range.and_then(|(start, end)| {
+            Some(Selection::new(
+                self.grid_ref(start)?,
+                self.grid_ref(end)?,
+                false,
+            ))
+        });
+        let _ = self.term.set_selection(selection.as_ref());
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.anchor = None;
+        let _ = self.term.set_selection(None);
+    }
+
+    /// The selected text, or `None` when there is no selection or it covers
+    /// nothing (a click without a drag leaves an empty one behind).
+    pub fn selection_text(&self) -> Option<String> {
+        // Ghostty's copy: plain text, soft wraps joined, trailing blanks trimmed.
+        let options = FormatOptions::new().with_unwrap(true).with_trim(true);
+        let bytes = self.term.format_selection_alloc(options).ok()??;
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
+        // A row selection pastes as a row, line break included (Ghostty's trim drops it).
+        if self.anchor.is_some_and(|a| a.ty == SelectionType::Lines) && !text.is_empty() {
+            text.push('\n');
+        }
+        Some(text).filter(|s| !s.is_empty())
+    }
+
+    /// Whether a non-empty selection is active — drives the copy action and
+    /// the "clear it" branch on the next click.
+    pub fn has_selection(&self) -> bool {
+        self.term.selection().is_ok_and(|s| s.is_some())
+    }
+
+    /// Snapshot one viewport row (0 = top).
+    // ponytail: snapshots the whole viewport; only hover and tests ask for one row.
+    pub fn line(&self, viewport_row: usize) -> Vec<CellSnapshot> {
+        self.lines()
+            .into_iter()
+            .nth(viewport_row)
+            .unwrap_or_default()
+    }
+
+    /// All viewport rows, top to bottom. A row that has not changed since the last read is the same `Arc`.
+    pub fn lines(&self) -> Vec<Vec<CellSnapshot>> {
+        self.read_lines()
+            .unwrap_or_default()
+            .into_iter()
+            .map(Arc::unwrap_or_clone)
+            .collect()
+    }
+
+    fn read_lines(&self) -> Result<Vec<Arc<Vec<CellSnapshot>>>, Error> {
+        let mut render = self.render.borrow_mut();
+        let Render {
+            state,
+            rows,
+            cells,
+            lines: cache,
+        } = &mut *render;
+        let plain = Style::default();
+        let snapshot = state.update(&self.term)?;
+        let full = snapshot.dirty()? == Dirty::Full;
+        let mut lines = Vec::with_capacity(self.rows());
+        {
+            let mut row_iter = rows.update(&snapshot)?;
+            while let Some(row) = row_iter.next() {
+                let selected = row.selection()?.map(|s| s.start_x..=s.end_x);
+                // the selection is taken afresh for a clean row too: a changed one may leave the row clean
+                if let Some(mut line) = cache
+                    .get(lines.len())
+                    .filter(|l| !full && l.len() == self.cols() && !row.dirty().unwrap_or(true))
+                    .cloned()
+                {
+                    let in_selection =
+                        |col: usize| selected.as_ref().is_some_and(|r| r.contains(&(col as u16)));
+                    if line
+                        .iter()
+                        .enumerate()
+                        .any(|(col, cell)| cell.selected != in_selection(col))
+                    {
+                        for (col, cell) in Arc::make_mut(&mut line).iter_mut().enumerate() {
+                            cell.selected = in_selection(col);
+                        }
+                    }
+                    lines.push(line);
+                    continue;
+                }
+                let mut line = Vec::with_capacity(self.cols());
+                let mut cell_iter = cells.update(row)?;
+                while let Some(cell) = cell_iter.next() {
+                    let raw = cell.raw_cell()?;
+                    let style = if cell.has_styling()? {
+                        cell.style()?
+                    } else {
+                        plain
+                    };
+                    // An erase with a background set stores the color in the cell, not a style.
+                    let tag = raw.content_tag()?;
+                    let bg = match tag {
+                        CellContentTag::BgColorPalette => {
+                            CellColor::Indexed(raw.bg_color_palette()?.0)
+                        }
+                        CellContentTag::BgColorRgb => {
+                            let c = raw.bg_color_rgb()?;
+                            CellColor::Rgb(c.r, c.g, c.b)
+                        }
+                        _ => map_color(style.bg_color, CellColor::Background),
+                    };
+                    let wide = raw.wide()?;
+                    let col = line.len() as u16;
+                    let cluster = match tag {
+                        CellContentTag::CodepointGrapheme => {
+                            let mut text = String::new();
+                            cell.graphemes_utf8(&mut text)?;
+                            Some(text.into())
+                        }
+                        _ => None,
+                    };
+                    line.push(CellSnapshot {
+                        ch: char::from_u32(raw.codepoint()?)
+                            .filter(|&c| c != '\0')
+                            .unwrap_or(' '),
+                        cluster,
+                        fg: map_color(style.fg_color, CellColor::Foreground),
+                        bg,
+                        bold: style.bold,
+                        dim: style.faint,
+                        italic: style.italic,
+                        underline: style.underline != Underline::None,
+                        underline_style: match style.underline {
+                            Underline::Double => UnderlineStyle::Double,
+                            Underline::Curly => UnderlineStyle::Curly,
+                            Underline::Dotted => UnderlineStyle::Dotted,
+                            Underline::Dashed => UnderlineStyle::Dashed,
+                            _ => UnderlineStyle::Single,
+                        },
+                        strikethrough: style.strikethrough,
+                        inverse: style.inverse,
+                        hidden: style.invisible,
+                        wide: wide == CellWide::Wide,
+                        wide_spacer: matches!(wide, CellWide::SpacerTail | CellWide::SpacerHead),
+                        selected: selected.as_ref().is_some_and(|r| r.contains(&col)),
+                        predicted: false,
+                    });
+                }
+                lines.push(Arc::new(line));
+            }
+        }
+        snapshot.clean()?;
+        cache.clone_from(&lines);
+        Ok(lines)
+    }
+
+    /// Cursor in viewport coordinates; `None` when hidden.
+    pub fn cursor(&self) -> Option<CursorSnapshot> {
+        if !self.term.is_cursor_visible().ok()? {
+            return None;
+        }
+        let (row, col) = self.cursor_cell()?;
+        Some(CursorSnapshot { row, col })
+    }
+
+    pub fn line_above(&self) -> Option<Vec<CellSnapshot>> {
+        // The panel uses this only for sub-row scroll interpolation. Ghostty
+        // exposes a viewport snapshot; whole-row scrollback remains available.
+        None
+    }
+
+    /// The cursor's (row, col) in viewport coordinates, shown or hidden: an IME composes there (agent TUIs hide the
+    /// cursor and park it at their input). `None` while the viewport is scrolled back off the cursor's line: the
+    /// terminal's own cursor_x/y are on the active screen and would pin it to a row of old history.
+    pub fn cursor_cell(&self) -> Option<(usize, usize)> {
+        let at = self
+            .render
+            .borrow_mut()
+            .state
+            .update(&self.term)
+            .ok()?
+            .cursor_viewport()
+            .ok()??;
+        Some((at.y as usize, at.x as usize))
+    }
+
+    fn hyperlink(&self, row: usize, col: usize) -> Option<String> {
+        let grid_ref = self.viewport_ref(row, col)?;
+        let mut buf = vec![0; 512];
+        let len = match grid_ref.hyperlink_uri(&mut buf) {
+            Err(Error::OutOfSpace { required }) => {
+                buf.resize(required, 0);
+                grid_ref.hyperlink_uri(&mut buf).ok()?
+            }
+            other => other.ok()?,
+        };
+        (len > 0).then(|| String::from_utf8_lossy(&buf[..len]).into_owned())
+    }
+
+    /// Whether a viewport row soft-wraps into the next: one line of the program's that the grid's width cut.
+    pub fn wraps(&self, viewport_row: usize) -> bool {
+        self.viewport_ref(viewport_row, 0)
+            .and_then(|r| r.row().ok())
+            .is_some_and(|r| r.is_wrapped().unwrap_or(false))
+    }
+
+    /// The OSC 8 hyperlink at a viewport cell: the cells around it with the same URI, a range per row and top first,
+    /// on into the rows a soft wrap joins it to; and the URI.
+    pub fn hyperlink_at(
+        &self,
+        viewport_row: usize,
+        col: usize,
+    ) -> Option<(Vec<(usize, std::ops::Range<usize>)>, String)> {
+        let uri = self.hyperlink(viewport_row, col)?;
+        let cols = self.cols();
+        let same = |row: usize, c: usize| self.hyperlink(row, c).as_ref() == Some(&uri);
+        let span = |row: usize, c: usize| {
+            let start = (0..c)
+                .rev()
+                .take_while(|&x| same(row, x))
+                .last()
+                .unwrap_or(c);
+            let end = (c + 1..cols)
+                .take_while(|&x| same(row, x))
+                .last()
+                .unwrap_or(c)
+                + 1;
+            start..end
+        };
+        let mut spans = vec![(viewport_row, span(viewport_row, col))];
+        while let Some((row, cells)) = spans.first().cloned() {
+            if cells.start != 0
+                || row == 0
+                || spans.len() >= MAX_WRAPPED_ROWS
+                || !self.wraps(row - 1)
+                || !same(row - 1, cols - 1)
+            {
+                break;
+            }
+            spans.insert(0, (row - 1, span(row - 1, cols - 1)));
+        }
+        while let Some((row, cells)) = spans.last().cloned() {
+            if cells.end != cols
+                || row + 1 >= self.rows()
+                || spans.len() >= MAX_WRAPPED_ROWS
+                || !self.wraps(row)
+                || !same(row + 1, 0)
+            {
+                break;
+            }
+            spans.push((row + 1, span(row + 1, 0)));
+        }
+        Some((spans, uri))
+    }
+
+    /// Test/diagnostic helper: a viewport row as trimmed text (wide-char
+    /// spacers skipped).
+    pub fn row_text(&self, viewport_row: usize) -> String {
+        let mut text: String = self
+            .line(viewport_row)
+            .iter()
+            .filter(|c| !c.wide_spacer)
+            .map(|c| c.ch)
+            .collect();
+        while text.ends_with(' ') {
+            text.pop();
+        }
+        text
+    }
+}
+
+/// How many rows a link joined by soft wraps reaches, its own included: a link longer than that is cut, so a row
+/// of one never walks the whole history.
+pub const MAX_WRAPPED_ROWS: usize = 16;
+
+/// A drag's cells, top-left first: the side of each end says whether its cell is in.
+fn simple_range(
+    a: (GridPoint, Side),
+    b: (GridPoint, Side),
+    cols: usize,
+) -> Option<(GridPoint, GridPoint)> {
+    let ((mut start, start_side), (mut end, end_side)) = if a.0 <= b.0 { (a, b) } else { (b, a) };
+    if start_side == Side::Right {
+        start = if start.col + 1 < cols {
+            GridPoint {
+                col: start.col + 1,
+                ..start
+            }
+        } else {
+            GridPoint {
+                row: start.row + 1,
+                col: 0,
+            }
+        };
+    }
+    if end_side == Side::Left {
+        end = match end.col {
+            0 => GridPoint {
+                row: end.row.checked_sub(1)?,
+                col: cols.saturating_sub(1),
+            },
+            col => GridPoint {
+                col: col - 1,
+                ..end
+            },
+        };
+    }
+    (start <= end).then_some((start, end))
+}
+
+/// The span covering both ranges.
+fn union(
+    a: Option<(GridPoint, GridPoint)>,
+    b: Option<(GridPoint, GridPoint)>,
+) -> Option<(GridPoint, GridPoint)> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some((a.0.min(b.0), a.1.max(b.1))),
+        (a, b) => a.or(b),
+    }
+}
+
+impl std::fmt::Debug for Emulator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Emulator")
+            .field("cols", &self.cols())
+            .field("rows", &self.rows())
+            .finish()
+    }
+}

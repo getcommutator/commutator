@@ -9,4 +9,9 @@ publish.workspace = true
 # pure state machine, plus local echo prediction. The desktop panel and the
 # mobile core both paint it.
 [dependencies]
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 alacritty_terminal.workspace = true
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+ghostty-vt = { version = "=0.7.0", default-features = false }

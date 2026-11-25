@@ -106,44 +106,32 @@ pub fn commutator_loader(
         }))
 }
 
-pub use commutator_proto::motion::{GSPIN_DIM, GSPIN_ROW_TINTS};
-
 /// The gradient matrix spinner (WorkingIndicator), ported from commutator's
 /// gradient-spin.tsx: a 3×3 grid of round cells tinted per row from the
-/// sunrise gradient. Each cell pulses opacity once per 750ms period; the
-/// per-cell phase follows the "arrow-up" pattern (the pulse enters at the
-/// bottom edge and converges toward the top-center cell), so the wave reads
-/// as travelling upward.
+/// selected activity accent. Every cell stays fully opaque.
 pub fn gradient_spinner(
     _id: &'static str,
-    _theme: &Theme,
+    theme: &Theme,
     cell_px: f32,
-    view: EntityId,
-    cx: &mut App,
+    _view: EntityId,
+    _cx: &mut App,
 ) -> impl IntoElement {
-    let center = (MATRIX_SIDE as f32 - 1.0) / 2.0;
-    let max = MATRIX_SIDE as f32 - 1.0 + center;
-    let pulse = motion::activity_pulse_slow(view, cx);
+    let tint = theme.busy;
     div()
         .flex()
         .flex_col()
         .gap(px(cell_px / 2.0))
         .children((0..MATRIX_SIDE).map(move |row| {
-            let tint: gpui::Hsla = gpui::rgb(GSPIN_ROW_TINTS[row]).into();
             div()
                 .flex()
                 .flex_row()
                 .gap(px(cell_px / 2.0))
                 .children((0..MATRIX_SIDE).map(move |col| {
-                    // Distance of this cell from the wave origin, normalized
-                    // into a phase offset (gradient-spin's `--gspin-phase`).
-                    let d = MATRIX_SIDE as f32 - 1.0 - row as f32 + (col as f32 - center).abs();
-                    let phase = if max == 0.0 { 0.0 } else { d / (max + 1.0) };
                     div()
                         .size(px(cell_px))
                         .rounded(px(cell_px / 2.0))
                         .bg(tint)
-                        .opacity(pulse.opacity(phase, GSPIN_DIM))
+                        .opacity(1.0)
                 }))
         }))
 }
@@ -232,23 +220,18 @@ struct MiniSpinnerView {
 
 impl Render for MiniSpinnerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        mini_spinner_cells(self.cell_px, self.row_tints, cx.entity_id(), cx)
+        mini_spinner_cells(self.cell_px, self.row_tints)
     }
 }
 
 fn mini_spinner_cells(
     cell_px: f32,
     row_tints: [gpui::Hsla; 3],
-    view: EntityId,
-    cx: &mut App,
 ) -> impl IntoElement {
     const COLS: usize = 2;
     const ROWS: usize = 3;
     /// Clockwise ring position of each `(row, col)` cell, top-left first:
     /// (0,0) → (0,1) → (1,1) → (2,1) → (2,0) → (1,0).
-    const RING: [[usize; COLS]; ROWS] = [[0, 1], [5, 2], [4, 3]];
-    const RING_LEN: f32 = (COLS * ROWS) as f32;
-    let pulse = motion::activity_pulse(view, cx);
     div()
         .flex()
         .flex_col()
@@ -260,12 +243,11 @@ fn mini_spinner_cells(
                 .flex_row()
                 .gap(px(cell_px / 2.0))
                 .children((0..COLS).map(move |col| {
-                    let phase = RING[row][col] as f32 / RING_LEN;
                     div()
                         .size(px(cell_px))
                         .rounded(px(cell_px / 2.0))
                         .bg(tint)
-                        .opacity(pulse.opacity(phase, GSPIN_DIM))
+                        .opacity(1.0)
                 }))
         }))
 }

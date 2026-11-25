@@ -3175,20 +3175,15 @@ pub(super) struct RenameSpaceDialog {
 pub(crate) fn status_dot_color(status: ChatIndicator, theme: &Theme) -> gpui::Hsla {
     match status {
         // Preset activity tone, not warning amber: running is routine.
-        // Non-done statuses sit well below full
-        // strength: at full alpha the colored words shouted across the
-        // whole sidebar (user request) — only Done keeps its pop.
-        ChatIndicator::Working => theme.busy.opacity(0.55),
+        ChatIndicator::Working => theme.busy,
         // Blue: "asking you a question" must read differently from "busy
         // working" at a glance.
-        ChatIndicator::AwaitingInput => theme.accent.opacity(0.6),
+        ChatIndicator::AwaitingInput => theme.accent,
         // Not working, not done: background work will wake it.
         ChatIndicator::Waiting => theme.text_muted.opacity(0.55),
         ChatIndicator::Errored => theme.danger.opacity(0.65),
         // Green: finished-but-unseen reads as "ready for you".
-        ChatIndicator::Completed => {
-            theme.success.opacity(0.9) // emerald-400
-        }
+        ChatIndicator::Completed => theme.success, // emerald-400
         ChatIndicator::Idle => crate::theme::ink(0.14),
     }
 }

@@ -7,15 +7,15 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use commutator_theme::vscode::{ImportReport, SourceCompilation};
+use commutator_theme::{
+    CustomThemeEntry, CustomThemeStatus, InstallMode, SurfacePreference, SurfaceTreatment,
+    ThemeRegistry, ThemeSelection,
+};
 use gpui::{
     AnyElement, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
     KeyDownEvent, ObjectFit, Pixels, Point, Render, ScrollDelta, SharedString, StyledImage as _,
     Subscription, Window, div, img, point, prelude::*, px,
-};
-use commutator_theme::vscode::{ImportReport, SourceCompilation};
-use commutator_theme::{
-    CustomThemeEntry, CustomThemeStatus, InstallMode,
-    SurfacePreference, SurfaceTreatment, ThemeRegistry, ThemeSelection,
 };
 
 use crate::appearance::{self, AppearanceMode};
@@ -327,6 +327,7 @@ pub struct AppearancePage {
     dark_theme_select: widgets::SelectState,
     surface_select: widgets::SelectState,
     background_effect_select: widgets::SelectState,
+    terminal_cursor_effect_select: widgets::SelectState,
     reduce_motion_select: widgets::SelectState,
     import_dialog: Option<ImportDialog>,
     background_adjustment_dialog: Option<BackgroundAdjustmentDialog>,
@@ -709,6 +710,7 @@ impl AppearancePage {
             dark_theme_select: widgets::SelectState::default(),
             surface_select: widgets::SelectState::default(),
             background_effect_select: widgets::SelectState::default(),
+            terminal_cursor_effect_select: widgets::SelectState::default(),
             reduce_motion_select: widgets::SelectState::default(),
             import_dialog: None,
             background_adjustment_dialog: None,
@@ -2044,8 +2046,7 @@ impl AppearancePage {
             .position(|(id, _)| *id == selected_id)
             .unwrap_or_default();
         let options = variants.iter().map(|(id, name)| {
-            let sample =
-                Theme::for_selection(appearance_kind, id, surface);
+            let sample = Theme::for_selection(appearance_kind, id, surface);
             widgets::SelectOption::new(name.clone())
                 .leading(move || palette_preview(&sample).into_any_element())
         });
@@ -3939,6 +3940,42 @@ impl Render for AppearancePage {
             .child(self.render_transcript_width(&theme, window, cx))
             .children(self.render_math_rows(&theme, cx));
         let mut font_section = widgets::section(&theme, "Fonts and layout", font_rows);
+        let cursor_settings = crate::settings::current(cx);
+        let effects = crate::settings::TerminalCursorEffect::ALL;
+        let effect_control = widgets::select(
+            "terminal-cursor-effect",
+            "Cursor effect",
+            &theme,
+            |page: &mut Self| &mut page.terminal_cursor_effect_select,
+        )
+        .options(
+            effects
+                .into_iter()
+                .map(|effect| widgets::SelectOption::new(effect.label())),
+            effects
+                .into_iter()
+                .position(|effect| effect == cursor_settings.terminal_cursor_effect)
+                .unwrap_or(0),
+        )
+        .width(160.0)
+        .on_select(|_, ix, _, cx| {
+            crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |settings| {
+                settings.terminal_cursor_effect = effects[ix]
+            });
+            cx.notify();
+        })
+        .render(&self.terminal_cursor_effect_select, cx);
+        let cursor_section = widgets::section_card(&theme).child(
+            widgets::card_row(&theme, true)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(160.0))
+                        .child(widgets::row_title(&theme, "Cursor effect")),
+                )
+                .child(effect_control),
+        );
+        let cursor_section = widgets::section(&theme, "Terminal cursor", cursor_section);
         for kind in FontKind::ALL {
             let (requested, effective) = (kind.requested(cx), kind.effective(cx));
             if requested != effective {
@@ -4044,6 +4081,7 @@ impl Render for AppearancePage {
                                         .children(library_rows),
                                 )
                                 .child(font_section)
+                                .child(cursor_section)
                                 .when_some(library_warning, |page, warning| {
                                     page.child(
                                         div()
@@ -4282,7 +4320,9 @@ mod tests {
             10
         );
         assert_eq!(
-            registry.variants_for(commutator_theme::Appearance::Dark).count(),
+            registry
+                .variants_for(commutator_theme::Appearance::Dark)
+                .count(),
             20
         );
     }

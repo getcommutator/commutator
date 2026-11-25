@@ -51,6 +51,7 @@ import uniffi.commutator_core.PullRequestFilter
 import uniffi.commutator_core.PullRequestItem
 import uniffi.commutator_core.PullRequestList
 import uniffi.commutator_core.PullRequestSection
+import uniffi.commutator_core.PullRequestStateFilter
 import uniffi.commutator_core.PullRequestTone
 import uniffi.commutator_core.relativeTimeLabel
 
@@ -79,7 +80,7 @@ fun PullRequestsScreen(model: AppModel, onBack: () -> Unit) {
     val context = LocalContext.current
     LaunchedEffect(client, filter) {
         list = null
-        list = client?.listPullRequests(filter, false)
+        list = client?.listPullRequests(filter, PullRequestStateFilter.OPEN, false)
     }
     val state = rememberLazyListState()
     PullToRefreshBox(
@@ -87,7 +88,7 @@ fun PullRequestsScreen(model: AppModel, onBack: () -> Unit) {
         onRefresh = {
             scope.launch {
                 refreshing = true
-                list = client?.listPullRequests(filter, true) ?: list
+                list = client?.listPullRequests(filter, PullRequestStateFilter.OPEN, true) ?: list
                 refreshing = false
             }
         },

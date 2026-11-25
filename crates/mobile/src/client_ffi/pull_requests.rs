@@ -6,10 +6,11 @@
 use commutator_proto::change_request_assessment::{AttentionReason, Blocker, CiState, Facts};
 use commutator_proto::{
     ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability,
-    ChangeRequestReviewDecision,
+    ChangeRequestReviewDecision, ChangeRequestState,
 };
 
 use super::CoreClient;
+use super::types::PullRequestState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PullRequestFilter {
@@ -18,6 +19,22 @@ pub enum PullRequestFilter {
     /// Your review requested.
     Reviewing,
     All,
+}
+
+/// Which pull requests to list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PullRequestStateFilter {
+    Open,
+    Merged,
+    Closed,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PullRequestLabel {
+    pub name: String,
+    /// Hex without `#`; empty when the host gave none.
+    pub color: String,
 }
 
 /// The desktop board's sections, in display order.
@@ -83,6 +100,13 @@ pub struct PullRequestItem {
     /// Your review is asked for (the Reviewing group).
     pub review_requested: bool,
     pub review: PullRequestReview,
+    /// Open, merged or closed (a draft is `is_draft` on an open one).
+    pub state: PullRequestState,
+    pub labels: Vec<PullRequestLabel>,
+    /// The author's picture; GitHub's by login when the host gave none.
+    pub author_avatar_url: Option<String>,
+    /// The source branch; empty from older engines.
+    pub branch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -107,6 +131,7 @@ impl CoreClient {
     pub async fn list_pull_requests(
         &self,
         filter: PullRequestFilter,
+        state: PullRequestStateFilter,
         refresh: bool,
     ) -> PullRequestList {
         let client = self.client.clone();
@@ -120,7 +145,20 @@ impl CoreClient {
                 client
                     .pull_requests(
                         filter,
-                        commutator_proto::ChangeRequestStateFilter::Open,
+                        match state {
+                            PullRequestStateFilter::Open => {
+                                commutator_proto::ChangeRequestStateFilter::Open
+                            }
+                            PullRequestStateFilter::Merged => {
+                                commutator_proto::ChangeRequestStateFilter::Merged
+                            }
+                            PullRequestStateFilter::Closed => {
+                                commutator_proto::ChangeRequestStateFilter::Closed
+                            }
+                            PullRequestStateFilter::All => {
+                                commutator_proto::ChangeRequestStateFilter::All
+                            }
+                        },
                         refresh,
                     )
                     .await,
@@ -209,6 +247,21 @@ fn item(p: &ChangeRequestListItem) -> PullRequestItem {
             ChangeRequestReviewDecision::ReviewRequired => PullRequestReview::ReviewRequired,
             ChangeRequestReviewDecision::Unknown => PullRequestReview::None,
         },
+        state: match p.state {
+            ChangeRequestState::Merged => PullRequestState::Merged,
+            ChangeRequestState::Closed => PullRequestState::Closed,
+            ChangeRequestState::Open => PullRequestState::Open,
+        },
+        labels: p
+            .labels
+            .iter()
+            .map(|l| PullRequestLabel {
+                name: l.name.clone(),
+                color: l.color.clone(),
+            })
+            .collect(),
+        author_avatar_url: p.author.avatar(&p.provider),
+        branch: p.head_ref_name.clone(),
     }
 }
 

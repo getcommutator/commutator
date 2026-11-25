@@ -8,18 +8,24 @@
 //! - [`TerminalElement`] — a custom gpui element that measures cell metrics
 //!   from the real mono font (the "font probe"), reports the resulting
 //!   cols×rows back to the panel, and paints the grid: background quads for
-//!   non-default cells, one `ShapedLine` per row (same font whatever the
-//!   colors — paint never changes layout), and the cursor block.
+//!   non-default cells, column-pinned shaped rows with ligatures, Ghostty
+//!   sprite glyphs, and the cursor block.
 
 use gpui::{
-    App, Bounds, Entity, GlobalElementId, Hsla, LayoutId, Modifiers, PaintQuad, Pixels, ShapedLine,
-    SharedString, Style, TextRun, Window, fill, font, outline, point, px, relative, size,
+    App, Bounds, Entity, GlobalElementId, Hsla, LayoutId, Modifiers, PaintQuad, PathBuilder,
+    Pixels, RenderImage, ShapedLine, SharedString, Style, TextRun, Window, fill, font, outline,
+    point, px, relative, size,
 };
+use std::collections::HashMap;
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Instant;
 
 use crate::theme::{Appearance, Theme, rgb_to_hsl};
 
 use super::emulator::{CellColor, CellSnapshot, CursorShape, Side};
 use super::panel::TerminalPanel;
+use super::sprite;
 
 /// Default terminal font metrics; the rendered values come from the theme.
 pub const TERM_FONT_SIZE: f32 = 13.0;
@@ -28,7 +34,15 @@ pub const TERM_LINE_HEIGHT: f32 = 18.0;
 /// default's row rhythm.
 const TERM_LINE_HEIGHT_RATIO: f32 = TERM_LINE_HEIGHT / TERM_FONT_SIZE;
 /// Inner padding of the grid area.
-pub const TERM_PADDING: f32 = 12.0;
+pub const TERM_PADDING: f32 = 2.0;
+
+/// Nerd Font families commonly installed alongside a user's terminal font.
+/// Keep the configured mono font first; these only fill glyphs it lacks.
+const NERD_FONT_FALLBACKS: [&str; 3] = [
+    "Symbols Nerd Font Mono",
+    "IoskeleyMonoNL Nerd Font Mono",
+    "FiraCode Nerd Font Mono",
+];
 
 /// Debounce for `ResizeTerminal` after viewport-driven size changes.
 pub const RESIZE_DEBOUNCE_MS: u64 = 80;
@@ -586,13 +600,17 @@ impl TerminalElement {
 
 pub struct TerminalPrepaint {
     bg_quads: Vec<PaintQuad>,
-    /// Selection wash. Painted after [`Self::bg_quads`] and before the glyphs:
-    /// it has to tint a cell's own background rather than replace it, and it
-    /// must not wash out the text it is highlighting.
-    sel_quads: Vec<PaintQuad>,
+    /// Connected, rounded selection shapes, painted over backgrounds and
+    /// under glyphs.
+    selection: Vec<(gpui::Path<Pixels>, Hsla)>,
     /// Per row, its top edge and the shaped segments with the grid COLUMN
     /// each one starts at. Not one line per row: see [`shape_row`].
     lines: Vec<(Pixels, Vec<(usize, ShapedLine)>)>,
+    /// Ghostty-style vector sprites for box drawing, Powerline, Braille,
+    /// blocks, and legacy computing glyphs.
+    glyphs: Vec<(Pixels, CustomGlyph)>,
+    sprite_stroke: f32,
+    trail: Vec<(gpui::Path<Pixels>, gpui::Background)>,
     /// Grid cell advance, so paint can place segments by column.
     cell_w: Pixels,
     /// Grid row height, so paint places rows on the same baselines prepaint
@@ -604,12 +622,330 @@ pub struct TerminalPrepaint {
     marked: Option<(PaintQuad, gpui::Point<Pixels>, ShapedLine)>,
 }
 
-/// Selection corner rounding, capped for small fonts.
-const SELECTION_RADIUS: f32 = 3.0;
 /// Beam and underline cursor thickness.
 const CURSOR_BAR: f32 = 2.0;
 /// Extra selection opacity at the instant of a copy (the flash eases out).
 const COPY_FLASH_ALPHA: f32 = 0.3;
+/// Rounded selection corners as a share of a terminal row.
+const SELECTION_RADIUS: f32 = 0.15;
+
+/// Merge row spans into connected selection shapes, retaining separate shapes
+/// when adjacent rows only touch at an edge.
+fn selection_outlines(rows: &[(usize, Range<usize>)]) -> Vec<Vec<gpui::Point<usize>>> {
+    rows.chunk_by(|(a, x), (b, y)| a + 1 == *b && x.start < y.end && y.start < x.end)
+        .map(|shape| {
+            let side = |edge: fn(&Range<usize>) -> usize| {
+                shape
+                    .chunk_by(|(_, a), (_, b)| edge(a) == edge(b))
+                    .flat_map(|run| {
+                        [
+                            point(edge(&run[0].1), run[0].0),
+                            point(edge(&run[0].1), run[run.len() - 1].0 + 1),
+                        ]
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let mut corners = side(|cols| cols.end);
+            corners.extend(side(|cols| cols.start).into_iter().rev());
+            corners
+        })
+        .collect()
+}
+
+/// Filled path through grid corners, with a small curve at each corner.
+fn rounded_selection_path(
+    corners: &[gpui::Point<Pixels>],
+    radius: Pixels,
+) -> Option<gpui::Path<Pixels>> {
+    let mut path = PathBuilder::fill();
+    for (ix, &at) in corners.iter().enumerate() {
+        let toward = |to: gpui::Point<Pixels>| {
+            let t = (radius / ((to.x - at.x).abs() + (to.y - at.y).abs())).min(0.5);
+            point(at.x + (to.x - at.x) * t, at.y + (to.y - at.y) * t)
+        };
+        let enter = toward(corners[(ix + corners.len() - 1) % corners.len()]);
+        if ix == 0 {
+            path.move_to(enter);
+        } else {
+            path.line_to(enter);
+        }
+        path.curve_to(toward(corners[(ix + 1) % corners.len()]), at);
+    }
+    path.close();
+    path.build().ok()
+}
+
+#[derive(Default)]
+struct CursorTrailState {
+    at: Option<(Bounds<Pixels>, Instant)>,
+    from: Option<Bounds<Pixels>>,
+}
+
+impl CursorTrailState {
+    const DURATION: f32 = 0.2;
+    const TRAIL_SIZE: f32 = 0.8;
+    const MIN_DISTANCE: f32 = 1.5;
+    const THICKNESS_X: f32 = 0.9;
+    const CORNERS: [(f32, f32); 4] = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)];
+
+    fn track(
+        &mut self,
+        rect: Bounds<Pixels>,
+        now: Instant,
+    ) -> Option<(Bounds<Pixels>, Bounds<Pixels>, f32)> {
+        if self.at.is_none_or(|(at, _)| at != rect) {
+            self.from = self.at.map(|(at, _)| at);
+            self.at = Some((rect, now));
+        }
+        Some((
+            self.from?,
+            self.at?.0,
+            now.duration_since(self.at?.1).as_secs_f32(),
+        ))
+    }
+
+    fn corners(rect: Bounds<Pixels>) -> [gpui::Point<f32>; 4] {
+        let c = rect.center();
+        let (hw, hh) = (
+            f32::from(rect.size.width) * 0.5 * Self::THICKNESS_X,
+            f32::from(rect.size.height) * 0.5,
+        );
+        Self::CORNERS.map(|(x, y)| point(f32::from(c.x) + x * hw, f32::from(c.y) + y * hh))
+    }
+
+    fn warp(from: Bounds<Pixels>, to: Bounds<Pixels>, t: f32) -> Option<[gpui::Point<Pixels>; 4]> {
+        let (to, from) = (Self::corners(to), Self::corners(from));
+        let (dx, dy) = (to[2].x - from[2].x, to[2].y - from[2].y);
+        let height = to[2].y - to[1].y;
+        if t >= Self::DURATION || dx.hypot(dy) <= height * Self::MIN_DISTANCE {
+            return None;
+        }
+        let sign = |v: f32| if v.abs() < 0.5 { 0.0 } else { v.signum() };
+        let (sx, sy) = (sign(dx), sign(dy));
+        let lead = Self::DURATION * (1.0 - Self::TRAIL_SIZE);
+        Some(std::array::from_fn(|i| {
+            let (cx, cy) = Self::CORNERS[i];
+            let dot = if sx != 0.0 && cx == sx {
+                2.0
+            } else {
+                cx * sx + cy * sy
+            };
+            let duration = match dot {
+                d if d >= 0.5 => lead,
+                d if d >= -0.5 => (lead + Self::DURATION) / 2.0,
+                _ => Self::DURATION,
+            };
+            let x = (t / duration).clamp(0.0, 1.0);
+            let p = (1.0 - (x - 1.0).powi(2)).sqrt();
+            point(
+                px(from[i].x + (to[i].x - from[i].x) * p),
+                px(from[i].y + (to[i].y - from[i].y) * p),
+            )
+        }))
+    }
+}
+
+type TrailShape = (Vec<gpui::Point<f32>>, gpui::Background);
+
+fn trail_shapes(
+    effect: crate::settings::TerminalCursorEffect,
+    from: Bounds<Pixels>,
+    to: Bounds<Pixels>,
+    t: f32,
+    color: Hsla,
+    ansi: &[Hsla; 16],
+) -> Option<Vec<TrailShape>> {
+    use crate::settings::TerminalCursorEffect::{
+        Blaze, BlazeNoTrail, BlazeTapered, Comet, Frozen, Gradient, Rainbow, Sweep, Warp,
+    };
+    type P = gpui::Point<f32>;
+    let quad = |r: Bounds<Pixels>| {
+        let (o, s) = (r.origin.map(f32::from), r.size.map(f32::from));
+        [
+            o,
+            point(o.x + s.width, o.y),
+            point(o.x + s.width, o.y + s.height),
+            point(o.x, o.y + s.height),
+        ]
+    };
+    let lerp = |a: P, b: P, k: f32| point(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+    let grow = |q: [P; 4], d: f32| {
+        std::array::from_fn::<P, 4, _>(|i| {
+            let (x, y) = CursorTrailState::CORNERS[i];
+            point(q[i].x + x * d, q[i].y + y * d)
+        })
+    };
+    let cubic = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
+    let (a, b) = (quad(from), quad(to));
+    let (ca, cb) = (lerp(a[0], a[2], 0.5), lerp(b[0], b[2], 0.5));
+    let travel = (cb.x - ca.x).hypot(cb.y - ca.y);
+    let (w, h) = (f32::from(to.size.width), f32::from(to.size.height));
+    let back = |k: f32| b.map(|p| point(p.x + (ca.x - cb.x) * k, p.y + (ca.y - cb.y) * k));
+    let angle = (cb.x - ca.x).atan2(ca.y - cb.y).to_degrees();
+    Some(match effect {
+        Warp => vec![(
+            CursorTrailState::warp(from, to, t)?
+                .map(|p| p.map(f32::from))
+                .to_vec(),
+            color.into(),
+        )],
+        Sweep if t < 0.2 && travel > h * 1.5 => vec![(
+            hull(b.into_iter().chain(back(0.5 * (1.0 - cubic(t / 0.2))))),
+            color.into(),
+        )],
+        Blaze | BlazeTapered | BlazeNoTrail | Frozen if t < 0.3 => {
+            let e = (1.0 - t / 0.3).powi(3);
+            let (core, glow) = if effect == Frozen {
+                (ansi[6], ansi[4])
+            } else {
+                (color, color)
+            };
+            let tail: Vec<P> = match effect {
+                BlazeNoTrail => Vec::new(),
+                BlazeTapered => vec![lerp(cb, ca, e)],
+                _ => back(e).to_vec(),
+            };
+            const HALO: f32 = 3.0;
+            let halo = grow(b, HALO)
+                .into_iter()
+                .chain(tail.iter().flat_map(|&p| grow([p; 4], HALO)));
+            let mut shapes = vec![(hull(halo), glow.opacity(0.5 * e).into())];
+            if effect != BlazeNoTrail {
+                shapes.push((hull(b.into_iter().chain(tail)), core.into()));
+            }
+            shapes
+        }
+        Comet if t < 0.32 && travel >= w * 1.5 => {
+            let age = t / 0.32;
+            let tail = lerp(ca, cb, cubic(age));
+            let r = h * 0.42;
+            let tint = Hsla {
+                l: color.l + (1.0 - color.l) * 0.25,
+                ..color
+            };
+            let ramp = |alpha: f32| {
+                gpui::linear_gradient(
+                    angle,
+                    gpui::linear_color_stop(tint.opacity(0.0), 0.0),
+                    gpui::linear_color_stop(tint.opacity(alpha), 1.0),
+                )
+            };
+            let fade = 1.0 - age;
+            vec![
+                (capsule(tail, cb, r * 0.45, r * 2.2), ramp(0.3 * fade)),
+                (capsule(tail, cb, r * 0.2, r), ramp(fade)),
+            ]
+        }
+        Rainbow | Gradient if t < if effect == Rainbow { 0.5 } else { 0.25 } => {
+            let duration = if effect == Rainbow { 0.5 } else { 0.25 };
+            let sign = |v: f32| if v.abs() < 0.5 { 0.0 } else { v.signum() };
+            let (sx, sy) = (sign(cb.x - ca.x), sign(cb.y - ca.y));
+            let dots = CursorTrailState::CORNERS.map(|(x, y)| x * sx + y * sy);
+            let least = dots.iter().copied().fold(f32::MAX, f32::min);
+            let (slow, fast) = (cubic(t / duration), cubic(2.0 * t / duration));
+            let lagging = (0..4).map(|i| {
+                lerp(
+                    a[i],
+                    b[i],
+                    if least < 0.0 && dots[i] == least {
+                        slow
+                    } else {
+                        fast
+                    },
+                )
+            });
+            let fill = if effect == Rainbow {
+                const RING: [usize; 6] = [1, 3, 2, 6, 4, 5];
+                let at = (((cb.x + cb.y) / 600.0 + t * 2.0).fract() * 6.0) as usize;
+                gpui::linear_gradient(
+                    angle,
+                    gpui::linear_color_stop(ansi[RING[at % 6]].opacity(0.0), 0.0),
+                    gpui::linear_color_stop(ansi[RING[(at + 2) % 6]], 1.0),
+                )
+            } else {
+                gpui::linear_gradient(
+                    180.0,
+                    gpui::linear_color_stop(ansi[3].opacity(0.8), 0.0),
+                    gpui::linear_color_stop(ansi[4].opacity(0.8), 1.0),
+                )
+            }
+            .color_space(gpui::ColorSpace::Oklab);
+            vec![(hull(b.into_iter().chain(lagging)), fill)]
+        }
+        _ => return None,
+    })
+}
+
+fn hull(points: impl IntoIterator<Item = gpui::Point<f32>>) -> Vec<gpui::Point<f32>> {
+    let mut points: Vec<_> = points.into_iter().collect();
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    if points.len() < 3 {
+        return points;
+    }
+    let turn = |o: gpui::Point<f32>, a: gpui::Point<f32>, b: gpui::Point<f32>| {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+    let mut hull = Vec::with_capacity(points.len() * 2);
+    for &p in &points {
+        while hull.len() >= 2 && turn(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+            hull.pop();
+        }
+        hull.push(p);
+    }
+    let lower = hull.len() + 1;
+    for &p in points[..points.len() - 1].iter().rev() {
+        while hull.len() >= lower && turn(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+            hull.pop();
+        }
+        hull.push(p);
+    }
+    hull.pop();
+    hull
+}
+
+fn capsule(
+    tail: gpui::Point<f32>,
+    head: gpui::Point<f32>,
+    r0: f32,
+    r1: f32,
+) -> Vec<gpui::Point<f32>> {
+    let along = (head.y - tail.y).atan2(head.x - tail.x);
+    let arc = |c: gpui::Point<f32>, r: f32, start: f32| {
+        (0..=8).map(move |i| {
+            let a = start + std::f32::consts::PI * i as f32 / 8.0;
+            point(c.x + r * a.cos(), c.y + r * a.sin())
+        })
+    };
+    let half = std::f32::consts::FRAC_PI_2;
+    arc(head, r1, along - half)
+        .chain(arc(tail, r0, along + half))
+        .collect()
+}
+
+fn trail_path(points: &[gpui::Point<f32>]) -> Option<gpui::Path<Pixels>> {
+    let mut builder = PathBuilder::fill();
+    let mut points = points.iter();
+    let first = points.next()?;
+    builder.move_to(point(px(first.x), px(first.y)));
+    for p in points {
+        builder.line_to(point(px(p.x), px(p.y)));
+    }
+    builder.close();
+    builder.build().ok()
+}
+
+#[derive(Clone, Copy)]
+struct CustomGlyph {
+    col: usize,
+    ch: char,
+    cells: usize,
+    color: Hsla,
+}
+
+#[derive(Default)]
+struct CustomGlyphCache(HashMap<(char, u32, u32, u32, [u8; 4]), (Arc<RenderImage>, u32, u32)>);
+
+impl gpui::Global for CustomGlyphCache {}
 
 impl gpui::IntoElement for TerminalElement {
     type Element = Self;
@@ -623,7 +959,7 @@ impl gpui::Element for TerminalElement {
     type PrepaintState = TerminalPrepaint;
 
     fn id(&self) -> Option<gpui::ElementId> {
-        None
+        Some(("terminal-grid", self.panel.entity_id()).into())
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -645,7 +981,7 @@ impl gpui::Element for TerminalElement {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _state: &mut Self::RequestLayoutState,
@@ -653,21 +989,16 @@ impl gpui::Element for TerminalElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let theme = Theme::of(cx).clone();
-        // Ligatures OFF. A terminal is a fixed grid: the shaper must emit one
-        // cell-width advance per character, and a contextual substitution
-        // (Geist Mono ligates `--`, `->`, …) collapses several cells into
-        // fewer glyphs, so the row renders SHORT while the cursor — a quad at
-        // `cell_w * col` — stays on the true column. That is the `codex
-        // --yolo` → `codex--yolo` report: the space is in the grid and went
-        // to the pty (the command runs), only the painted run lost a cell.
-        // The landing page disables the same three features on its ASCII art
-        // for the same reason.
+        // Keep ligatures enabled, as in Shepherd. `shape_row` pins shaped
+        // glyphs back to their source cells, so substitutions such as `->`
+        // remain visually connected without shifting later columns.
         let mut mono = font(theme.font_terminal.clone());
-        mono.features = gpui::FontFeatures(std::sync::Arc::new(vec![
-            ("liga".into(), 0),
-            ("calt".into(), 0),
-            ("dlig".into(), 0),
-        ]));
+        mono.fallbacks = Some(gpui::FontFallbacks::from_fonts(
+            NERD_FONT_FALLBACKS
+                .iter()
+                .map(|family| (*family).to_string())
+                .collect(),
+        ));
         // Font probe: measure the actual advance of the resolved mono font so
         // cols/rows track real glyph metrics, not a guessed aspect ratio.
         let font_size = px(theme.terminal_font_size);
@@ -709,8 +1040,11 @@ impl gpui::Element for TerminalElement {
         let Some(snapshot) = snapshot else {
             return TerminalPrepaint {
                 bg_quads: Vec::new(),
-                sel_quads: Vec::new(),
+                selection: Vec::new(),
                 lines: Vec::new(),
+                glyphs: Vec::new(),
+                sprite_stroke: 1.0,
+                trail: Vec::new(),
                 cell_w,
                 line_h,
                 cursor: None,
@@ -719,8 +1053,9 @@ impl gpui::Element for TerminalElement {
         };
 
         let mut bg_quads = Vec::new();
-        let mut sel_quads = Vec::new();
+        let mut selection_spans = Vec::new();
         let mut lines = Vec::with_capacity(snapshot.lines.len() + 1);
+        let mut glyphs = Vec::new();
         // A partial scroll shifts every row down by the fraction and reveals
         // the history row above; the content mask clips both edges.
         let shift = line_h * snapshot.scroll_frac;
@@ -733,32 +1068,13 @@ impl gpui::Element for TerminalElement {
         let row_count = rows.len();
         let mut selection = theme.terminal.selection;
         selection.a = (selection.a + COPY_FLASH_ALPHA * snapshot.copy_flash).min(0.9);
-        let radius = px(SELECTION_RADIUS.min(f32::from(line_h) / 4.0));
-
         for (row_ix, row) in rows.iter().copied().enumerate() {
             let y = origin.y + shift + line_h * (first_row + row_ix as i32) as f32;
-            // Selected runs, merged the same way background runs are: one quad
-            // per contiguous span instead of one per cell.
-            let mut sel_start: Option<usize> = None;
-            for col in 0..=row.len() {
-                let selected = row.get(col).is_some_and(|cell| cell.selected);
-                match (sel_start, selected) {
-                    (None, true) => sel_start = Some(col),
-                    (Some(start), false) => {
-                        sel_quads.push(
-                            fill(
-                                Bounds::new(
-                                    point(origin.x + cell_w * start as f32, y),
-                                    size(cell_w * (col - start) as f32, line_h),
-                                ),
-                                selection,
-                            )
-                            .corner_radii(radius),
-                        );
-                        sel_start = None;
-                    }
-                    _ => {}
-                }
+            if let (Some(start), Some(end)) = (
+                row.iter().position(|cell| cell.selected),
+                row.iter().rposition(|cell| cell.selected),
+            ) {
+                selection_spans.push((row_ix, start..end + 1));
             }
             // Merge consecutive non-default background cells into quads. A
             // run touching the grid's edge carries its color into the padding
@@ -803,10 +1119,44 @@ impl gpui::Element for TerminalElement {
                     _ => {}
                 }
             }
-            lines.push((y, shape_row(row, &theme, &mono, font_size, window)));
+            let display_row = first_row + row_ix as i32;
+            let cursor_col = snapshot
+                .cursor
+                .filter(|cursor| cursor.row as i32 == display_row)
+                .map(|cursor| cursor.col);
+            let shaped = shape_row(
+                row,
+                y,
+                &theme,
+                &mono,
+                font_size,
+                cell_w,
+                cursor_col,
+                window,
+                &mut glyphs,
+            );
+            lines.push((y, shaped));
         }
 
-        let cursor = snapshot.cursor.filter(|_| snapshot.cursor_on).map(|c| {
+        let selection_radius = line_h * SELECTION_RADIUS;
+        let selection_paths = selection_outlines(&selection_spans)
+            .iter()
+            .filter_map(|corners| {
+                let at = |c: &gpui::Point<usize>| {
+                    point(
+                        origin.x + cell_w * c.x as f32,
+                        origin.y + shift + line_h * (first_row + c.y as i32) as f32,
+                    )
+                };
+                rounded_selection_path(
+                    &corners.iter().map(at).collect::<Vec<_>>(),
+                    selection_radius,
+                )
+                .map(|path| (path, selection))
+            })
+            .collect();
+
+        let cursor_cell = snapshot.cursor.filter(|_| snapshot.cursor_on).map(|c| {
             let cell = Bounds::new(
                 point(
                     origin.x + cell_w * c.col as f32,
@@ -814,6 +1164,43 @@ impl gpui::Element for TerminalElement {
                 ),
                 size(cell_w, line_h),
             );
+            match (self.focused, snapshot.cursor_shape) {
+                (true, CursorShape::Beam) => Bounds::new(cell.origin, size(px(CURSOR_BAR), line_h)),
+                (true, CursorShape::Underline) => Bounds::new(
+                    point(cell.left(), cell.bottom() - px(CURSOR_BAR)),
+                    size(cell_w, px(CURSOR_BAR)),
+                ),
+                _ => cell,
+            }
+        });
+        let settings = crate::settings::current(cx);
+        let mut trail = Vec::new();
+        if self.focused
+            && !cx.reduce_motion()
+            && settings.terminal_cursor_effect != crate::settings::TerminalCursorEffect::None
+        {
+            if let (Some(id), Some(rect)) = (id, cursor_cell) {
+                let effect = settings.terminal_cursor_effect;
+                let (shapes, _) =
+                    window.with_element_state(id, |previous: Option<CursorTrailState>, window| {
+                        let mut state = previous.unwrap_or_default();
+                        let shapes = state.track(rect, Instant::now()).and_then(|(from, to, t)| {
+                            trail_shapes(from, to, t, effect, theme.cursor, &theme.terminal.ansi)
+                        });
+                        if shapes.is_some() {
+                            window.request_animation_frame();
+                        }
+                        (shapes, state)
+                    });
+                trail.extend(
+                    shapes
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(points, fill)| trail_path(&points).map(|path| (path, fill))),
+                );
+            }
+        }
+        let cursor = cursor_cell.map(|cell| {
             let bar = px(CURSOR_BAR);
             match (self.focused, snapshot.cursor_shape) {
                 (false, _) | (true, CursorShape::HollowBlock) => {
@@ -830,6 +1217,7 @@ impl gpui::Element for TerminalElement {
                     theme.cursor.opacity(1.0),
                 ),
             }
+            .corner_radii(px(1.0))
         });
 
         // Composition text sits over the cursor cell on an opaque backdrop,
@@ -870,8 +1258,11 @@ impl gpui::Element for TerminalElement {
 
         TerminalPrepaint {
             bg_quads,
-            sel_quads,
+            selection: selection_paths,
             lines,
+            glyphs,
+            sprite_stroke: theme.terminal_font_size * 0.05,
+            trail,
             cell_w,
             line_h,
             cursor,
@@ -898,8 +1289,11 @@ impl gpui::Element for TerminalElement {
             for quad in prepaint.bg_quads.drain(..) {
                 window.paint_quad(quad);
             }
-            for quad in prepaint.sel_quads.drain(..) {
-                window.paint_quad(quad);
+            for (path, color) in prepaint.selection.drain(..) {
+                window.paint_path(path, color);
+            }
+            for (path, color) in prepaint.trail.drain(..) {
+                window.paint_path(path, color);
             }
             let cell_w = prepaint.cell_w;
             for (y, segments) in &prepaint.lines {
@@ -914,6 +1308,12 @@ impl gpui::Element for TerminalElement {
                         cx,
                     );
                 }
+            }
+            for (y, glyph) in &prepaint.glyphs {
+                let left = origin.x + cell_w * glyph.col as f32;
+                let bounds =
+                    Bounds::new(point(left, *y), size(cell_w * glyph.cells as f32, line_h));
+                paint_custom_glyph(glyph, bounds, prepaint.sprite_stroke, window, cx);
             }
             if let Some(cursor) = prepaint.cursor.take() {
                 window.paint_quad(cursor);
@@ -938,56 +1338,87 @@ impl gpui::Element for TerminalElement {
     }
 }
 
-/// Shape one grid row into COLUMN-PINNED segments.
-///
-/// A terminal is a fixed grid, but a shaped line places glyphs by their font
-/// advances. Those agree only while every glyph is monospace-width — the row's
-/// `cell_w` IS the mono font's em advance. The moment a glyph resolves through
-/// FONT FALLBACK (box drawing `│─╭`, arrows `→`, emoji, CJK) its advance is
-/// whatever that other font uses, and the whole rest of the line slides out of
-/// the grid: box borders land a few pixels off (user report: "one of the pipes
-/// is broken"), and a double-width glyph whose fallback advances only one cell
-/// swallows the column after it (user report: `codex --yolo` rendering as
-/// `codex--yolo`). Backgrounds, selection and the cursor never drifted because
-/// those are quads placed at `cell_w * col`.
-///
-/// So: runs of ASCII shape together (guaranteed cell-width in a mono font),
-/// and every other glyph is its own segment pinned at its own column. Wide
-/// spacers are still skipped — the wide glyph covers both columns, and the
-/// NEXT segment re-pins regardless.
+/// Paint a Ghostty sprite at the exact device-pixel dimensions of its grid
+/// cell. Cache the tinted result so ordinary terminal redraws only reuse the
+/// existing GPUI image.
+fn paint_custom_glyph(
+    glyph: &CustomGlyph,
+    bounds: Bounds<Pixels>,
+    stroke: f32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let scale = window.scale_factor();
+    let device = |v: Pixels| (f32::from(v) * scale).round();
+    let (left, top) = (device(bounds.left()), device(bounds.top()));
+    let w = (device(bounds.right()) - left).max(1.0) as u32;
+    let h = (device(bounds.bottom()) - top).max(1.0) as u32;
+    let thickness = (stroke * scale).ceil().max(1.0) as u32;
+    let rgba = gpui::Rgba::from(glyph.color);
+    let color = [rgba.r, rgba.g, rgba.b, rgba.a].map(|c| (c * 255.0).round() as u8);
+    let key = (glyph.ch, w, h, thickness, color);
+
+    let cache = cx.default_global::<CustomGlyphCache>();
+    let (image, pad_x, pad_y) = match cache.0.get(&key) {
+        Some(hit) => hit.clone(),
+        None => {
+            let metrics = sprite::Metrics {
+                cell_width: w / glyph.cells as u32,
+                cell_height: h,
+                box_thickness: thickness,
+            };
+            let Some(drawn) = sprite::render(glyph.ch, w, h, &metrics) else {
+                return;
+            };
+            let [r, g, b, a] = color;
+            let bgra: Vec<u8> = drawn
+                .alpha
+                .iter()
+                .flat_map(|&coverage| [b, g, r, (coverage as u16 * a as u16 / 255) as u8])
+                .collect();
+            let Some(buffer) = image::RgbaImage::from_raw(drawn.width, drawn.height, bgra) else {
+                return;
+            };
+            let image = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
+            if cache.0.len() >= 4096 {
+                for (_, (old, _, _)) in cache.0.drain() {
+                    let _ = window.drop_image(old);
+                }
+            }
+            let hit = (image, drawn.padding_x, drawn.padding_y);
+            cache.0.insert(key, hit.clone());
+            hit
+        }
+    };
+    let image_size = image.size(0);
+    let logical = |v: f32| px(v / scale);
+    let sprite_bounds = Bounds::new(
+        point(logical(left - pad_x as f32), logical(top - pad_y as f32)),
+        size(
+            logical(image_size.width.0 as f32),
+            logical(image_size.height.0 as f32),
+        ),
+    );
+    let _ = window.paint_image(sprite_bounds, Default::default(), image, 0, false);
+}
+
+/// Shape a row with ligatures enabled, then snap shaped glyph clusters back to
+/// their source grid columns. This keeps fallback glyph advances and ligature
+/// substitutions from moving later terminal cells.
 fn shape_row(
     row: &[CellSnapshot],
+    row_y: Pixels,
     theme: &Theme,
     mono: &gpui::Font,
     font_size: Pixels,
+    cell_w: Pixels,
+    cursor_col: Option<usize>,
     window: &Window,
+    glyphs: &mut Vec<(Pixels, CustomGlyph)>,
 ) -> Vec<(usize, ShapedLine)> {
-    fn flush(
-        segments: &mut Vec<(usize, ShapedLine)>,
-        text: &mut String,
-        runs: &mut Vec<TextRun>,
-        seg_col: usize,
-        font_size: Pixels,
-        window: &Window,
-    ) {
-        if text.is_empty() {
-            return;
-        }
-        let shaped = window.text_system().shape_line(
-            SharedString::from(std::mem::take(text)),
-            font_size,
-            runs,
-            None,
-        );
-        segments.push((seg_col, shaped));
-        runs.clear();
-    }
-
-    let mut segments: Vec<(usize, ShapedLine)> = Vec::new();
-    let mut text = String::with_capacity(row.len());
-    let mut runs: Vec<TextRun> = Vec::new();
-    let mut seg_col = 0usize;
-
+    let mut segments = Vec::new();
+    let mut segment = ShapedSegment::default();
+    let mut rtl_run = false;
     for (col, cell) in row.iter().enumerate() {
         if cell.wide_spacer {
             continue;
@@ -1018,13 +1449,36 @@ fn shape_row(
         if cell.dim {
             color.a *= 0.6;
         }
-        let mut cell_font = mono.clone();
-        cell_font.weight = if cell.bold {
+        let at_cursor = cursor_col == Some(col);
+        let rtl_fit = rtl_run.then(|| cell_w * (col - segment.col) as f32);
+        if !ch.is_ascii() && sprite::has_char(ch) {
+            segment.flush(rtl_fit, &mut segments, font_size, cell_w, window);
+            rtl_run = false;
+            glyphs.push((
+                row_y,
+                CustomGlyph {
+                    col,
+                    ch,
+                    cells: if cell.wide { 2 } else { 1 },
+                    color,
+                },
+            ));
+            continue;
+        }
+        let rtl = is_rtl(ch) && !cell.wide;
+        let joins_rtl = rtl_run && (rtl || ch == ' ');
+        if !joins_rtl && (at_cursor || rtl || rtl_run) {
+            segment.flush(rtl_fit, &mut segments, font_size, cell_w, window);
+        }
+        if segment.text.is_empty() {
+            segment.col = col;
+        }
+        let font_weight = if cell.bold {
             gpui::FontWeight::BOLD
         } else {
             gpui::FontWeight::NORMAL
         };
-        cell_font.style = if cell.italic {
+        let font_style = if cell.italic {
             gpui::FontStyle::Italic
         } else {
             gpui::FontStyle::Normal
@@ -1041,46 +1495,117 @@ fn shape_row(
             cell.underline.then_some(gpui::UnderlineStyle {
                 color: Some(color),
                 thickness: px(1.0),
-                wavy: false,
+                wavy: cell.underline_style == crate::terminal::emulator::UnderlineStyle::Curly,
             })
         };
-        let len = ch.len_utf8();
-        text.push(ch);
-        match runs.last_mut() {
+        let strikethrough = cell.strikethrough.then_some(gpui::StrikethroughStyle {
+            color: Some(color),
+            thickness: px(1.0),
+        });
+        let mut encoded = [0; 4];
+        let text = cell
+            .cluster
+            .as_deref()
+            .filter(|_| !cell.hidden)
+            .unwrap_or_else(|| ch.encode_utf8(&mut encoded));
+        let len = text.len();
+        segment.text.push_str(text);
+        segment.cols.extend(std::iter::repeat_n(col, len));
+        match segment.runs.last_mut() {
             Some(last)
-                if last.color == color && last.font == cell_font && last.underline == underline =>
+                if last.color == color
+                    && last.font.weight == font_weight
+                    && last.font.style == font_style
+                    && last.underline == underline
+                    && last.strikethrough == strikethrough =>
             {
                 last.len += len;
             }
-            _ => runs.push(TextRun {
+            _ => segment.runs.push(TextRun {
                 len,
-                font: cell_font,
+                font: gpui::Font {
+                    weight: font_weight,
+                    style: font_style,
+                    ..mono.clone()
+                },
                 color,
                 background_color: None,
                 underline,
-                strikethrough: None,
+                strikethrough,
             }),
         }
-        if pinned {
-            flush(
-                &mut segments,
-                &mut text,
-                &mut runs,
-                seg_col,
-                font_size,
-                window,
-            );
+        rtl_run = rtl || joins_rtl;
+        if at_cursor && !rtl_run {
+            segment.flush(None, &mut segments, font_size, cell_w, window);
         }
     }
-    flush(
-        &mut segments,
-        &mut text,
-        &mut runs,
-        seg_col,
-        font_size,
-        window,
-    );
+    let rtl_fit = rtl_run.then(|| cell_w * (row.len().saturating_sub(segment.col)) as f32);
+    segment.flush(rtl_fit, &mut segments, font_size, cell_w, window);
     segments
+}
+
+#[derive(Default)]
+struct ShapedSegment {
+    text: String,
+    /// Source terminal column for every UTF-8 byte in `text`.
+    cols: Vec<usize>,
+    runs: Vec<TextRun>,
+    col: usize,
+}
+
+impl ShapedSegment {
+    fn flush(
+        &mut self,
+        rtl_fit: Option<Pixels>,
+        out: &mut Vec<(usize, ShapedLine)>,
+        font_size: Pixels,
+        cell_w: Pixels,
+        window: &Window,
+    ) {
+        if self.text.is_empty() {
+            return;
+        }
+        let text = SharedString::from(std::mem::take(&mut self.text));
+        let system = window.text_system();
+        let mut shaped = system.shape_line(text.clone(), font_size, &self.runs, None);
+        match rtl_fit {
+            Some(fit) if shaped.width > fit => {
+                shaped =
+                    system.shape_line(text, font_size * (fit / shaped.width), &self.runs, None);
+            }
+            Some(_) => {}
+            None => snap_to_cells(&mut shaped, &self.cols, self.col, cell_w),
+        }
+        out.push((self.col, shaped));
+        self.runs.clear();
+        self.cols.clear();
+    }
+}
+
+/// Move shaped glyph clusters to their source terminal columns while keeping
+/// the offsets between glyphs in the same cluster.
+fn snap_to_cells(line: &mut ShapedLine, cols: &[usize], segment_col: usize, cell_w: Pixels) {
+    let mut runs = line.runs.clone();
+    let mut cluster = (usize::MAX, px(0.0));
+    for glyph in runs.iter_mut().flat_map(|run| run.glyphs.iter_mut()) {
+        let col = cols.get(glyph.index).copied().unwrap_or(segment_col);
+        if col != cluster.0 {
+            cluster = (col, glyph.position.x);
+        }
+        glyph.position.x = cell_w * (col - segment_col) as f32 + (glyph.position.x - cluster.1);
+    }
+    **line = Arc::new(gpui::LineLayout {
+        font_size: line.font_size,
+        width: line.width,
+        ascent: line.ascent,
+        descent: line.descent,
+        runs,
+        len: line.len,
+    });
+}
+
+fn is_rtl(ch: char) -> bool {
+    matches!(ch, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFC}')
 }
 
 #[cfg(test)]
