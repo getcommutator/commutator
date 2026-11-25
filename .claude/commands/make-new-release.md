@@ -1,12 +1,12 @@
 ---
-description: Bump Commutator's version, tag it and push, so CI publishes the macOS and Android release
+description: Bump Commutator's version, tag it and push, so CI publishes the macOS, Android and Linux release
 argument-hint: "[patch|minor|major|X.Y.Z]"
 ---
 
 Release a new Commutator version. Pushing the tag `v<version>` is the whole release: `.github/workflows/release.yml`
 then notarizes the macOS app and creates the GitHub release (`make release`: the app tarball and `manifest.json` the
-desktop updater reads, the dmg, notes from `--generate-notes`), and its `android` jobs attach the signed APK the phone's
-updater looks for. When the iOS app changed since the previous tag (`apps/ios/`, `scripts/ios/` or a crate the iOS core
+desktop updater reads, the dmg, notes from `--generate-notes`), and its `publish` job attaches the signed APK the phone's
+updater looks for and the Linux engine builds `install.sh` downloads. When the iOS app changed since the previous tag (`apps/ios/`, `scripts/ios/` or a crate the iOS core
 links; the `ios-changes` job decides), the same run uploads a TestFlight build too (`testflight.yml`). `make release` names the release after `[workspace.package] version` in `Cargo.toml`, not after the
 tag, so the two must match.
 
@@ -30,6 +30,7 @@ Argument: `$ARGUMENTS`. Empty means `patch`; `minor` and `major` bump that part;
    `git push origin main v<new>`.
 5. Find the run with `gh run list --workflow release.yml --branch v<new> --limit 1` and `gh run watch <id>
    --exit-status` in the background. When it ends, report the release URL (`gh release view v<new> --json url -q .url`)
-   and check its assets hold the macOS tarball, `manifest.json`, the dmg and `commutator-<new>-android-*.apk`. Say
+   and check its assets hold the macOS tarball, `manifest.json`, the dmg, `commutator-<new>-android-*.apk` and
+   `commutator-<new>-linux-{x86_64,aarch64}.tar.gz`. Say
    whether TestFlight ran (the `testflight` job, or skipped: no iOS changes) and its build number from the run summary.
    On a failure, the failing job's log.

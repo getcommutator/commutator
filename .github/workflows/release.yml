@@ -109,18 +109,51 @@ jobs:
           name: Commutator-android
           path: target/commutator-*-android-*.apk
 
-  # Onto the release the macOS job creates (gh release create), once it exists.
-  android-publish:
+  # The engine for a Linux server, no desktop window (`--no-default-features`), as
+  # commutator-<version>-linux-<arch>.tar.gz for scripts/install.sh. Built on Debian 12 (glibc 2.36),
+  # so it runs on that and anything newer; aarch64 on GitHub's arm runner.
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: rust:1-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update -qq && apt-get install -y -qq cmake clang
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ matrix.arch }}
+      - name: Build
+        run: |
+          cargo build --release --locked -p commutator --no-default-features --bin commutator
+          ./target/release/commutator --version
+      - name: Package
+        run: |
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' Cargo.toml)
+          tar -czf "target/commutator-$VERSION-linux-${{ matrix.arch }}.tar.gz" -C target/release commutator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Commutator-linux-${{ matrix.arch }}
+          path: target/commutator-*-linux-*.tar.gz
+
+  # The Android and Linux builds onto the release the macOS job creates (gh release create), once it exists.
+  publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, android]
+    needs: [build, android, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Commutator-android
+          pattern: Commutator-*
+          merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" commutator-*-android-*.apk --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$GITHUB_REF_NAME" commutator-*-android-*.apk commutator-*-linux-*.tar.gz --repo "$GITHUB_REPOSITORY"
 
   # Whether the iOS app changed since the previous tag: apps/ios, scripts/ios, or a crate the iOS core links.
   ios-changes:

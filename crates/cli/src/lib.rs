@@ -67,8 +67,12 @@ enum Command {
         server: Option<String>,
         /// Show a code to paste instead of a callback to this machine's
         /// browser (over SSH, or with no browser here).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "code")]
         paste: bool,
+        /// Sign in with a pair code from another of the account's devices
+        /// (the desktop app's Add a server), no browser at all.
+        #[arg(long, value_name = "CODE")]
+        code: Option<String>,
     },
     /// Sign this machine out of its Commutator server.
     Logout,
@@ -122,7 +126,7 @@ enum DaemonCommand {
 pub enum EngineCommand {
     Headless,
     Engine,
-    Login { server: Option<String>, paste: bool },
+    Login { server: Option<String>, paste: bool, code: Option<String> },
     Logout,
     Status,
     Sync,
@@ -231,7 +235,7 @@ pub fn run(version: &'static str, engines: Engines) -> Launch {
     match cli.command {
         Some(Command::Headless) => engine(EngineCommand::Headless),
         Some(Command::Engine) => engine(EngineCommand::Engine),
-        Some(Command::Login { server, paste }) => engine(EngineCommand::Login { server, paste }),
+        Some(Command::Login { server, paste, code }) => engine(EngineCommand::Login { server, paste, code }),
         Some(Command::Logout) => engine(EngineCommand::Logout),
         Some(Command::Status) => engine(EngineCommand::Status),
         Some(Command::Sync) => engine(EngineCommand::Sync),

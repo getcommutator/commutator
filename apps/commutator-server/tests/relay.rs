@@ -164,3 +164,48 @@ async fn a_machine_may_host_only_itself() {
         other => panic!("hosted someone else's room: {other:?}"),
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pair_code_signs_a_new_machine_in_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, url) = serve(&dir.path().join("db")).await;
+    let me = app.upsert_user("sub-me", "me@example.com", None).unwrap();
+    let (_, phone_token) = app.create_device(&me, "phone", Kind::Client, None).unwrap();
+    let http = reqwest::Client::new();
+
+    let pair: serde_json::Value = http
+        .post(format!("{url}/devices/pair"))
+        .bearer_auth(&phone_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let code = pair["code"].as_str().unwrap();
+    let redeem = || {
+        http.post(format!("{url}/auth/pair"))
+            .json(&serde_json::json!({"code": code, "name": "vps", "deviceId": "engine-1"}))
+            .send()
+    };
+    let signed_in: serde_json::Value = redeem().await.unwrap().json().await.unwrap();
+    assert_eq!(signed_in["deviceId"], "engine-1");
+    let listed = devices(&url, signed_in["token"].as_str().unwrap()).await;
+    let vps = listed.as_array().unwrap().iter().find(|d| d["id"] == "engine-1").unwrap();
+    assert_eq!(vps["name"], "vps");
+    assert_eq!(vps["kind"], "machine");
+    // One use only.
+    assert_eq!(redeem().await.unwrap().status(), 400);
+    // Only a signed-in device gets codes.
+    let anon = http.post(format!("{url}/devices/pair")).send().await.unwrap();
+    assert_eq!(anon.status(), 401);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_signs_in_to_this_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, url) = serve(&dir.path().join("db")).await;
+    let script = reqwest::get(format!("{url}/install.sh")).await.unwrap().text().await.unwrap();
+    assert!(script.starts_with("#!/bin/sh"));
+    assert!(script.contains("SERVER=\"${COMMUTATOR_SERVER_URL:-http://unused}\""));
+}

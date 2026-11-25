@@ -201,6 +201,20 @@ impl SignIn {
     }
 }
 
+/// Sign this machine in with a pair code another of the account's devices
+/// made (the desktop's Add a server): no browser, so a server can sign in alone.
+pub async fn pair(server_url: &str, code: &str, device_id: &str, name: &str) -> anyhow::Result<Account> {
+    let redeemed = commutator_account::redeem_pair(server_url, code, name, Some(device_id)).await?;
+    Ok(Account {
+        server_url: server_url.trim().trim_end_matches('/').to_owned(),
+        token: redeemed.token,
+        device_id: redeemed.device_id,
+        email: redeemed.email,
+        name: redeemed.name,
+        picture: redeemed.picture,
+    })
+}
+
 /// Read one HTTP request off a loopback connection and return its `code` if
 /// it is the callback, leaving it to be answered ([`redirect`]); anything
 /// else gets a 404 here.

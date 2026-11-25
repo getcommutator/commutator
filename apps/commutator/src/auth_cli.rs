@@ -4,20 +4,25 @@
 
 use std::io::IsTerminal;
 
-use commutator_engine::account::{Account, Callback, SignIn, server_url};
+use commutator_engine::account::{Account, Callback, SignIn, pair, server_url};
 use commutator_engine::{EngineConfig, InstanceLock};
 
-/// `commutator login [SERVER] [--paste]`.
+/// `commutator login [SERVER] [--paste | --code CODE]`.
 pub async fn login(
     config: EngineConfig,
     server: Option<String>,
     paste: bool,
+    code: Option<String>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let saved = Account::load(&config.data_dir);
     let server = server_url(server, saved.as_ref());
     let device_id = commutator_engine::device_id(&config.data_dir)?;
     let name = commutator_engine::device_name(&device_id);
+    if let Some(code) = code {
+        let account = pair(&server, &code, &device_id, &name).await?;
+        return signed_in(&config, &account);
+    }
     // Over SSH the browser is on another machine: its callback can't reach here.
     let paste = paste || std::env::var_os("SSH_CONNECTION").is_some();
     let callback = if paste {
@@ -43,6 +48,10 @@ pub async fn login(
         println!("Waiting for the browser…");
         sign_in.wait().await?
     };
+    signed_in(&config, &account)
+}
+
+fn signed_in(config: &EngineConfig, account: &Account) -> anyhow::Result<()> {
     account.save(&config.data_dir)?;
     println!(
         "\nSigned in as {} on {}.",

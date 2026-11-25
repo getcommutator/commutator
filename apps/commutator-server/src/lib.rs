@@ -26,6 +26,13 @@
 //! - `GET  /auth/google/callback`: Google's redirect; sends the one-time code
 //!   to `redirect`, or shows it to paste.
 //! - `POST /auth/redeem {code, verifier}` → `{token, deviceId, user}`.
+//! - `POST /devices/pair` (bearer) → `{code, expiresIn}`: a one-time code a
+//!   new machine signs in with, no browser (the desktop's Add a server,
+//!   `install.sh --code`); `POST /auth/pair {code, name, deviceId?}` redeems it
+//!   → `{token, deviceId, user}`. No PKCE: the code goes from the signed-in
+//!   device to the machine by hand, so it is the secret; one use, short-lived.
+//! - `GET  /install.sh`: `scripts/install.sh` with this server's address, for
+//!   `curl -fsSL {server}/install.sh | sh -s -- --code {pair code}`.
 //! - `GET  /me`, `GET /devices`, `DELETE /devices/{id}` (bearer).
 //! - `GET  /device/{id}/ws?role=host|client[&connId]` (bearer): the relay.
 //! - `GET  /preview/ws?device={id}` (bearer): WebRTC signaling between the
@@ -54,6 +61,8 @@ const GOOGLE_USERINFO: &str = "https://openidconnect.googleapis.com/v1/userinfo"
 /// How long a started sign-in waits for Google, and a one-time code for its redeem.
 const SIGN_IN_TTL: Duration = Duration::from_secs(10 * 60);
 const CODE_TTL: Duration = Duration::from_secs(5 * 60);
+/// How long a pair code waits for the machine to install and redeem it.
+const PAIR_TTL: Duration = Duration::from_secs(10 * 60);
 
 pub struct Config {
     /// Where devices and Google reach this server (`https://…`, no trailing `/`).
@@ -76,6 +85,8 @@ pub struct App {
     signing_in: Mutex<HashMap<String, SignIn>>,
     /// One-time code → a signed-in user waiting for the device to redeem.
     codes: Mutex<HashMap<String, Grant>>,
+    /// Pair codes → (user, expiry).
+    pairs: Mutex<HashMap<String, (String, Instant)>>,
     rooms: relay::Rooms,
     signaling: signal::Signaling,
     http: reqwest::Client,
@@ -197,6 +208,7 @@ impl App {
             db: Mutex::new(db),
             signing_in: Mutex::default(),
             codes: Mutex::default(),
+            pairs: Mutex::default(),
             rooms: relay::Rooms::default(),
             signaling: signal::Signaling::default(),
             http: reqwest::Client::builder()
@@ -325,6 +337,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/auth/google", get(start_sign_in))
         .route("/auth/google/callback", get(google_callback))
         .route("/auth/redeem", post(redeem))
+        .route("/auth/pair", post(redeem_pair))
+        .route("/install.sh", get(install_script))
+        .route("/devices/pair", post(start_pair))
         .route("/me", get(me))
         .route("/devices", get(list_devices))
         .route("/devices/:id", delete(remove_device))
@@ -559,13 +574,8 @@ async fn redeem(State(app): State<Arc<App>>, Json(body): Json<Redeem>) -> Respon
         return fail(StatusCode::BAD_REQUEST, "unknown or used code");
     }
     let wanted = body.device_id.as_deref();
-    if let Some(id) = wanted {
-        let well_formed = !id.is_empty()
-            && id.len() <= 64
-            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
-        if !well_formed || app.owner_of(id).is_some_and(|owner| owner != grant.user) {
-            return fail(StatusCode::CONFLICT, "that device id is taken");
-        }
+    if !app.id_free_for(wanted, &grant.user) {
+        return fail(StatusCode::CONFLICT, "that device id is taken");
     }
     let (device_id, token) = match app.create_device(&grant.user, &grant.name, grant.kind, wanted) {
         Ok(created) => created,
@@ -588,7 +598,97 @@ async fn redeem(State(app): State<Arc<App>>, Json(body): Json<Redeem>) -> Respon
     }
 }
 
+/// The engine installer for a Linux server, signing in to this server.
+async fn install_script(State(app): State<Arc<App>>) -> Response {
+    let script = include_str!("../../../scripts/install.sh").replace("__SERVER__", &app.config.public_url);
+    ([(axum::http::header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")], script).into_response()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairCode {
+    code: String,
+    /// Seconds.
+    expires_in: u64,
+}
+
+/// A code for a new machine of the caller's account.
+async fn start_pair(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Response {
+    let device = match app.authenticate(&headers, q.token.as_deref()) {
+        Ok(device) => device,
+        Err(status) => return status.into_response(),
+    };
+    let code = random();
+    {
+        let mut pairs = lock(&app.pairs);
+        pairs.retain(|_, (_, expires)| *expires > Instant::now());
+        pairs.insert(code.clone(), (device.user, Instant::now() + PAIR_TTL));
+    }
+    Json(PairCode {
+        code,
+        expires_in: PAIR_TTL.as_secs(),
+    })
+    .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RedeemPair {
+    code: String,
+    /// The machine's name (its hostname).
+    name: String,
+    /// The machine's own engine device id, as for `/auth/redeem`.
+    device_id: Option<String>,
+}
+
+async fn redeem_pair(State(app): State<Arc<App>>, Json(body): Json<RedeemPair>) -> Response {
+    let Some((user, expires)) = lock(&app.pairs).remove(body.code.trim()) else {
+        return fail(StatusCode::BAD_REQUEST, "unknown or used code");
+    };
+    if expires <= Instant::now() {
+        return fail(StatusCode::BAD_REQUEST, "unknown or used code");
+    }
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > 128 {
+        return fail(StatusCode::BAD_REQUEST, "a name is needed");
+    }
+    let wanted = body.device_id.as_deref();
+    if !app.id_free_for(wanted, &user) {
+        return fail(StatusCode::CONFLICT, "that device id is taken");
+    }
+    let (device_id, token) = match app.create_device(&user, name, Kind::Machine, wanted) {
+        Ok(created) => created,
+        Err(err) => {
+            tracing::error!(error = %err, "creating device");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "could not add the device");
+        }
+    };
+    match app.user_view(&user) {
+        Some(user) => Json(Redeemed {
+            token,
+            device_id,
+            user,
+        })
+        .into_response(),
+        None => fail(StatusCode::INTERNAL_SERVER_ERROR, "account vanished"),
+    }
+}
+
 impl App {
+    /// A device id a sign-in may keep: none asked, or well formed and not another account's.
+    fn id_free_for(&self, wanted: Option<&str>, user: &str) -> bool {
+        wanted.is_none_or(|id| {
+            !id.is_empty()
+                && id.len() <= 64
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && self.owner_of(id).is_none_or(|owner| owner == user)
+        })
+    }
+
     fn user_view(&self, user: &str) -> Option<UserView> {
         lock(&self.db)
             .query_row(

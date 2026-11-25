@@ -18,11 +18,16 @@ fn main() -> anyhow::Result<()> {
     match commutator_cli::run(commutator_update::current_version(), Engines::InProcess) {
         Launch::Done(result) => result,
         Launch::Engine(command) => commutator_app::run_engine_command(command),
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", feature = "ui"))]
         Launch::Appshot => commutator_ui::appshots::request_running_appshot(
             &commutator_app::engine_config_from_env().data_dir,
         )
         .map_err(anyhow::Error::msg),
+        #[cfg(all(target_os = "linux", not(feature = "ui")))]
+        Launch::Appshot => anyhow::bail!("this build has no window (a server's): run `commutator headless`"),
+        #[cfg(not(feature = "ui"))]
+        Launch::Window { .. } => anyhow::bail!("this build has no window (a server's): run `commutator headless`"),
+        #[cfg(feature = "ui")]
         Launch::Window { open_url, safe_mode: _ } => {
             let engine = commutator_app::engine_config_from_env();
             commutator_ui::run_app(commutator_ui::UiConfig {

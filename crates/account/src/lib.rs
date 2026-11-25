@@ -112,20 +112,6 @@ impl SignIn {
     /// Trade the one-time code for this device's token. `device_id` keeps an
     /// id the device already has (a machine's engine device id).
     pub async fn redeem(&self, code: &str, device_id: Option<&str>) -> Result<Redeemed, Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Body {
-            token: String,
-            device_id: String,
-            user: User,
-        }
-        #[derive(Deserialize)]
-        struct User {
-            email: String,
-            name: Option<String>,
-            #[serde(default)]
-            picture: Option<String>,
-        }
         let response = reqwest::Client::new()
             .post(format!("{}/auth/redeem", self.server_url))
             .json(&serde_json::json!({
@@ -135,25 +121,93 @@ impl SignIn {
             }))
             .timeout(Duration::from_secs(15))
             .send()
-            .await
-            .map_err(|err| Error::Network(err.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(Error::Refused(format!("{status}: {}", body.trim())));
-        }
-        let body: Body = response
-            .json()
-            .await
-            .map_err(|err| Error::Network(err.to_string()))?;
-        Ok(Redeemed {
-            token: body.token,
-            device_id: body.device_id,
-            email: body.user.email,
-            name: body.user.name,
-            picture: body.user.picture,
-        })
+            .await;
+        redeemed(response).await
     }
+}
+
+/// A one-time code a new machine signs in to `token`'s account with
+/// (`POST /devices/pair`; the desktop's Add a server).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairCode {
+    pub code: String,
+    /// Seconds it stays good for.
+    pub expires_in: u64,
+}
+
+pub async fn pair_code(server_url: &str, token: &str) -> Result<PairCode, Error> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/devices/pair", server_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(Error::Refused(status.to_string()));
+    }
+    response
+        .json()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))
+}
+
+/// Sign this machine in with a [`PairCode`]'s code, no browser
+/// (`POST /auth/pair`; `commutator login --code`).
+pub async fn redeem_pair(
+    server_url: &str,
+    code: &str,
+    name: &str,
+    device_id: Option<&str>,
+) -> Result<Redeemed, Error> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/auth/pair", server_url.trim().trim_end_matches('/')))
+        .json(&serde_json::json!({
+            "code": code.trim(),
+            "name": name,
+            "deviceId": device_id,
+        }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+    redeemed(response).await
+}
+
+/// `/auth/redeem`'s and `/auth/pair`'s answer.
+async fn redeemed(response: reqwest::Result<reqwest::Response>) -> Result<Redeemed, Error> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Body {
+        token: String,
+        device_id: String,
+        user: User,
+    }
+    #[derive(Deserialize)]
+    struct User {
+        email: String,
+        name: Option<String>,
+        #[serde(default)]
+        picture: Option<String>,
+    }
+    let response = response.map_err(|err| Error::Network(err.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(Error::Refused(format!("{status}: {}", body.trim())));
+    }
+    let body: Body = response
+        .json()
+        .await
+        .map_err(|err| Error::Network(err.to_string()))?;
+    Ok(Redeemed {
+        token: body.token,
+        device_id: body.device_id,
+        email: body.user.email,
+        name: body.user.name,
+        picture: body.user.picture,
+    })
 }
 
 /// The code of a callback URL (`commutator://auth?code=…`, or a loopback

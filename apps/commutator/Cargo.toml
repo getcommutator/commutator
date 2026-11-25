@@ -18,6 +18,12 @@ path = "src/main.rs"
 name = "commutator-engine"
 path = "src/bin/commutator-engine.rs"
 
+# `ui`: the desktop window. A server's build leaves it out (`--no-default-features`):
+# no GPUI, so no X11/Wayland libraries to build with or to run.
+[features]
+default = ["ui"]
+ui = ["dep:commutator-ui"]
+
 [dependencies]
 commutator-engine.workspace = true
 commutator-rpc.workspace = true
@@ -26,7 +32,7 @@ commutator-cli.workspace = true
 commutator-mcp.workspace = true
 commutator-notify.workspace = true
 commutator-sync.workspace = true
-commutator-ui.workspace = true
+commutator-ui = { workspace = true, optional = true }
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true
