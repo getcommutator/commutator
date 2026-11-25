@@ -117,6 +117,19 @@ pub(crate) enum Content {
     Working { since_ms: Option<i64>, streaming: bool },
     /// An agent visual: its height comes from its worker.
     Visual(Arc<crate::visual::VisualSlot>),
+    /// The settled turn's "N changed files" card.
+    Changes(Changes),
+}
+
+/// Files the turn-end card lists before "+N more".
+const CHANGES_MAX_FILES: usize = 8;
+
+pub(crate) struct Changes {
+    title: PText,
+    add: PText,
+    del: PText,
+    files: Vec<super::tools::StatRow>,
+    more: Option<PText>,
 }
 
 /// A width-independent row: identity, top gap class and prepared content.
@@ -534,6 +547,13 @@ impl RowBuilder {
             }
         }
         flush_tools(self, ctx, &mut rows, &mut tools, &mut group_ix, true);
+        if !streaming {
+            let stats = commutator_doc::turn_diff_stats(&entry.parts);
+            if !stats.is_empty() {
+                let gap = gap_for(&rows, false);
+                rows.push(Placed { core: Arc::new(changes_row(ctx, &entry.id, &stats)), gap });
+            }
+        }
         rows
     }
 
@@ -697,7 +717,7 @@ struct UserChip {
 }
 
 /// The link an image chip opens: the host attachment ref, percent-encoded.
-fn image_preview_link(reference: &str) -> String {
+pub(crate) fn image_preview_link(reference: &str) -> String {
     let mut out = String::from("commutator-preview://image?ref=");
     for byte in reference.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -847,6 +867,103 @@ fn chip_row(ctx: &mut Ctx, entry_id: &str, part_id: &str, icon: &'static str, co
         }),
         copy_text: text.to_owned(),
     }
+}
+
+/// The paths with their shared folder dropped (no chat cwd here): one file
+/// reads as its name, a turn inside `crates/ui/src` as paths below it.
+fn trim_common_dir(paths: &[&str]) -> Vec<String> {
+    let dir = |p: &str| p.rfind('/').map_or(0, |i| i + 1);
+    let mut common = &paths[0][..dir(paths[0])];
+    for p in &paths[1..] {
+        while !p.starts_with(common) {
+            common = &common[..common[..common.len() - 1].rfind('/').map_or(0, |i| i + 1)];
+        }
+    }
+    paths.iter().map(|p| p[common.len()..].to_owned()).collect()
+}
+
+/// The turn-end card: "N changed files +A −D" over one line per file.
+/// Rides `RowKind::Chip` so the native bindings don't change; it paints
+/// from the same primitives as everything else.
+fn changes_row(ctx: &mut Ctx, entry_id: &str, stats: &[commutator_doc::ToolDiffStat]) -> RowCore {
+    let (size, lh) = TYPE.small;
+    let medium = ctx.typo.style(Family::Sans, Weight::Medium, false, size);
+    let regular = ctx.typo.style(Family::Sans, Weight::Regular, false, size);
+    let mono = ctx.typo.style(Family::Mono, Weight::Regular, false, size * 0.9);
+    let lh = ctx.typo.px(lh);
+    let additions: u64 = stats.iter().map(|s| s.additions).sum();
+    let deletions: u64 = stats.iter().map(|s| s.deletions).sum();
+    let title = match stats.len() {
+        1 => "1 changed file".to_owned(),
+        n => format!("{n} changed files"),
+    };
+    let paths: Vec<&str> = stats.iter().map(|s| s.path.as_str()).collect();
+    let names = trim_common_dir(&paths);
+    let files = stats
+        .iter()
+        .zip(&names)
+        .take(CHANGES_MAX_FILES)
+        .map(|(s, name)| super::tools::StatRow {
+            icon: file_icon_asset(&s.path),
+            path: prepare_plain(ctx, name, regular, lh, ColorRole::TextSecondary, WhiteSpace::Pre),
+            add: prepare_plain(ctx, &format!("+{}", s.additions), mono, lh, ColorRole::Success, WhiteSpace::Pre),
+            del: prepare_plain(ctx, &format!("−{}", s.deletions), mono, lh, ColorRole::Danger, WhiteSpace::Pre),
+        })
+        .collect();
+    let more = stats.len().checked_sub(CHANGES_MAX_FILES).filter(|&n| n > 0);
+    let copy_text = std::iter::once(title.clone()).chain(names).collect::<Vec<_>>().join("\n");
+    RowCore {
+        key: row_key(&format!("{entry_id}#changes")),
+        version: next_version(),
+        kind: RowKind::Chip,
+        entry_id: Arc::from(entry_id),
+        content: Content::Changes(Changes {
+            title: prepare_plain(ctx, &title, medium, lh, ColorRole::Text, WhiteSpace::Pre),
+            add: prepare_plain(ctx, &format!("+{additions}"), mono, lh, ColorRole::Success, WhiteSpace::Pre),
+            del: prepare_plain(ctx, &format!("−{deletions}"), mono, lh, ColorRole::Danger, WhiteSpace::Pre),
+            files,
+            more: more.map(|n| prepare_plain(ctx, &format!("+{n} more"), regular, lh, ColorRole::TextTertiary, WhiteSpace::Pre)),
+        }),
+        copy_text,
+    }
+}
+
+fn place_changes(c: &Changes, px: Px, x: f32, top: f32, cw: f32, out: Option<&mut DisplayBuilder>) -> f32 {
+    let pad = px.v(12.0);
+    let row_h = px.v(26.0);
+    let header_h = px.v(30.0);
+    let lines = c.files.len() + c.more.is_some() as usize;
+    let h = pad + header_h + lines as f32 * row_h + pad * 0.5;
+    let Some(o) = out else { return h };
+    o.fill(x, top, cw, h, px.v(14.0), ColorRole::CodeBackground);
+    let left = x + pad;
+    let right = x + cw - pad;
+    let mid = |row_top: f32, row: f32, t: &PText| row_top + (row - t.lh) / 2.0;
+    let hy = top + pad * 0.5;
+    let tw = c.title.p.max_content_width();
+    place_text(&c.title, left, mid(hy, header_h, &c.title), tw + 1.0, Some(o));
+    let aw = c.add.p.max_content_width();
+    let ax = left + tw + px.v(8.0);
+    place_text(&c.add, ax, mid(hy, header_h, &c.add), aw + 1.0, Some(o));
+    place_text(&c.del, ax + aw + px.v(6.0), mid(hy, header_h, &c.del), c.del.p.max_content_width() + 1.0, Some(o));
+    let icon = px.v(14.0);
+    for (i, f) in c.files.iter().enumerate() {
+        let ry = hy + header_h + i as f32 * row_h;
+        o.widget(WidgetKind::Icon { name: f.icon.clone(), color: ColorRole::TextSoft }, (left, ry + (row_h - icon) / 2.0, icon, icon), None);
+        let dw = f.del.p.max_content_width();
+        let aw = f.add.p.max_content_width();
+        let dx = right - dw;
+        let ax = dx - px.v(6.0) - aw;
+        place_text(&f.del, dx, mid(ry, row_h, &f.del), dw + 1.0, Some(o));
+        place_text(&f.add, ax, mid(ry, row_h, &f.add), aw + 1.0, Some(o));
+        let path_x = left + icon + px.v(8.0);
+        place_text_lines(&f.path, path_x, mid(ry, row_h, &f.path), (ax - px.v(8.0) - path_x).max(1.0), 1, px, o);
+    }
+    if let Some(more) = &c.more {
+        let ry = hy + header_h + c.files.len() as f32 * row_h;
+        place_text(more, left, mid(ry, row_h, more), more.p.max_content_width() + 1.0, Some(o));
+    }
+    h
 }
 
 fn notice_row(ctx: &mut Ctx, entry_id: &str, part_id: &str, message: &str) -> RowCore {
@@ -1028,6 +1145,7 @@ pub(crate) fn place_row(
         Content::Block(b) => place(b, px, x, top, cw, out),
         Content::User(u) => place_user(u, px, x, top, cw, out),
         Content::Tools(t) => place_tools(t, px, x, top, cw, out),
+        Content::Changes(c) => place_changes(c, px, x, top, cw, out),
         Content::Chip(c) => {
             let h = px.v(CHIP_LINE);
             if let Some(out) = out.as_deref_mut() {
@@ -1261,6 +1379,7 @@ pub(crate) fn content_heap_bytes(content: &Content) -> usize {
         Content::User(u) => u.sender.as_ref().map_or(0, |c| c.p.heap_bytes()) + u.text.p.heap_bytes() + u.more.p.heap_bytes() + u.files.iter().map(|(_, n)| n.p.heap_bytes()).sum::<usize>(),
         Content::Tools(t) => super::tools::heap_bytes(t),
         Content::Chip(c) => c.text.p.heap_bytes(),
+        Content::Changes(c) => c.title.p.heap_bytes() + c.files.iter().map(|f| f.path.p.heap_bytes()).sum::<usize>(),
         Content::Caption { text, .. } => text.p.heap_bytes(),
         Content::Notice(n) => n.text.p.heap_bytes(),
         Content::Image { reference } => reference.len(),

@@ -1105,6 +1105,11 @@ pub enum RowKind {
         source_chat_id: SharedString,
         source_title: SharedString,
     },
+    /// The settled turn's "N changed files" card: per-file counts its file
+    /// tools reported ([`commutator_doc::turn_diff_stats`]).
+    TurnChanges {
+        stats: Arc<Vec<commutator_doc::ToolDiffStat>>,
+    },
     /// The provider-switch seam: a labeled divider over `[logo] From → [logo] To`.
     SwitchMarker {
         from: SharedString,
@@ -1801,6 +1806,8 @@ pub fn rows_for_entry(
                 };
                 rows_for_entry(&work_entry, pending, false, parse)
             };
+            // The turn's card follows the reply, not the folded work.
+            inner.retain(|row| !matches!(row.kind, RowKind::TurnChanges { .. }));
             for row in &mut inner {
                 row.turn_start = false;
                 row.timestamp = None;
@@ -1845,6 +1852,29 @@ pub fn rows_for_entry(
         );
     }
 
+    if !streaming {
+        let stats = commutator_doc::turn_diff_stats(&entry.parts);
+        if !stats.is_empty() {
+            let mut key = Vec::new();
+            for stat in &stats {
+                key.extend_from_slice(stat.path.as_bytes());
+                key.extend_from_slice(&stat.additions.to_le_bytes());
+                key.extend_from_slice(&stat.deletions.to_le_bytes());
+            }
+            rows.push(Row {
+                id: format!("{}#changes", entry.id).into(),
+                version: fnv1a(&key),
+                turn_start: false,
+                kind: RowKind::TurnChanges {
+                    stats: Arc::new(stats),
+                },
+                entry_id: entry_id.clone(),
+                timestamp: None,
+                copy_text: None,
+                compact_fold: None,
+            });
+        }
+    }
     if let Some(first) = rows.first_mut() {
         first.turn_start = true;
     }
@@ -7634,6 +7664,9 @@ impl Transcript {
                 from_harness,
                 to_harness,
             } => switch_marker(from.clone(), to.clone(), *from_harness, *to_harness, &theme),
+            RowKind::TurnChanges { stats } => {
+                turn_changes_card(&row.id, stats, workspace_root.as_deref(), &theme)
+            }
         };
         // Diagram fences this row just requested start rendering after layout.
         self.ensure_diagram_worker(cx);
@@ -9167,6 +9200,129 @@ fn error_chip(
             )
             .overflow_hidden()
             .w_full(),
+        )
+        .into_any_element()
+}
+
+/// Files listed on the turn-end card before "+N more".
+const TURN_CHANGES_MAX_FILES: usize = 8;
+
+/// The settled turn's "N changed files +A −D" card: one row per file the
+/// turn's tools touched, and "Open diff" bringing up the changes pane.
+fn turn_changes_card(
+    id: &SharedString,
+    stats: &[commutator_doc::ToolDiffStat],
+    workspace_root: Option<&str>,
+    theme: &Theme,
+) -> AnyElement {
+    let additions: u64 = stats.iter().map(|s| s.additions).sum();
+    let deletions: u64 = stats.iter().map(|s| s.deletions).sum();
+    let counts = |additions: u64, deletions: u64| {
+        div()
+            .flex_none()
+            .flex()
+            .gap(px(6.0))
+            .font_family(theme.font_mono.clone())
+            .child(div().text_color(theme.success).child(SharedString::from(format!("+{additions}"))))
+            .child(div().text_color(theme.danger).child(SharedString::from(format!("−{deletions}"))))
+    };
+    let relative = |path: &str| -> SharedString {
+        workspace_root
+            .and_then(|root| path.strip_prefix(root.trim_end_matches('/')))
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(path)
+            .to_owned()
+            .into()
+    };
+    let title = match stats.len() {
+        1 => "1 changed file".to_owned(),
+        n => format!("{n} changed files"),
+    };
+    let header = div()
+        .h(px(28.0))
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(
+            div()
+                .flex_none()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme.text)
+                .child(SharedString::from(title)),
+        )
+        .child(counts(additions, deletions))
+        .child(div().flex_1())
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-open-diff")))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(8.0))
+                .py(px(3.0))
+                .rounded(px(6.0))
+                .text_color(theme.text_muted)
+                .cursor_pointer()
+                .hover(|s| s.bg(crate::theme::ink(0.08)))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(crate::shell::OpenTurnDiff), cx)
+                })
+                .child(SharedString::from("Open diff")),
+        );
+    let files = stats.iter().take(TURN_CHANGES_MAX_FILES).map(|stat| {
+        div()
+            .h(px(24.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                crate::file_icons::icon(
+                    crate::file_icons::FileIconIdentity::file(&stat.path),
+                    theme.appearance,
+                )
+                .size(px(14.0))
+                .flex_none(),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(relative(&stat.path)),
+            )
+            .child(counts(stat.additions, stat.deletions))
+    });
+    let more = stats.len().saturating_sub(TURN_CHANGES_MAX_FILES);
+    div()
+        .py(px(4.0))
+        .w_full()
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .rounded(px(10.0))
+                .border_1()
+                .border_color(crate::theme::hairline(0.08))
+                .bg(crate::theme::ink(0.045))
+                .px(px(12.0))
+                .py(px(6.0))
+                .text_size(crate::typography::ui_rems(12.5))
+                .child(header)
+                .children(files)
+                .when(more > 0, |card| {
+                    card.child(
+                        div()
+                            .h(px(24.0))
+                            .flex()
+                            .items_center()
+                            .text_color(theme.text_faint)
+                            .child(SharedString::from(format!("+{more} more"))),
+                    )
+                }),
         )
         .into_any_element()
 }

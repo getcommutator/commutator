@@ -206,6 +206,36 @@ pub fn diff_stat(diff: &ToolDiff) -> ToolDiffStat {
     }
 }
 
+/// The files a turn's tools changed, one entry per path in first-touch
+/// order: the turn-end "N changed files" card on every viewport.
+///
+/// ponytail: sums each edit's own counts, so a line edited twice counts
+/// twice and shell-made edits (`sed`, codegen) are missed; a host-side git
+/// diff of the turn is the upgrade when that matters.
+pub fn turn_diff_stats(parts: &[MessagePart]) -> Vec<ToolDiffStat> {
+    let mut out: Vec<ToolDiffStat> = Vec::new();
+    for part in parts {
+        let MessagePart::Tool { is_error: false, diff, diff_stats, .. } = part else {
+            continue;
+        };
+        let stats = match (diff_stats, diff) {
+            (Some(stats), _) => stats.clone(),
+            (None, Some(diff)) => vec![diff_stat(diff)],
+            (None, None) => continue,
+        };
+        for stat in stats {
+            match out.iter_mut().find(|o| o.path == stat.path) {
+                Some(o) => {
+                    o.additions += stat.additions;
+                    o.deletions += stat.deletions;
+                }
+                None => out.push(stat),
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MessageStatus {
@@ -842,10 +872,10 @@ pub fn sanitize_tool_call(call: &ToolCall) -> ToolCall {
             url: url.clone(),
             prompt: None,
         },
-        ToolCall::Mcp { server, tool, .. } => ToolCall::Mcp {
+        ToolCall::Mcp { server, tool, input } => ToolCall::Mcp {
             server: server.clone(),
             tool: tool.clone(),
-            input: spawn_badge(call),
+            input: spawn_badge(call).or_else(|| mcp_command(input.as_ref())),
         },
         ToolCall::Unknown { name, .. } => ToolCall::Unknown {
             name: name.clone(),
@@ -880,6 +910,14 @@ fn spawn_badge(call: &ToolCall) -> Option<serde_json::Value> {
         })
         .collect();
     (!kept.is_empty()).then(|| serde_json::Value::Object(kept))
+}
+
+/// An MCP shell tool's `command` (Commutator's `run_command` and the like), so
+/// the chip says what ran. Same exposure as an `Exec` call, which keeps its
+/// command whole; every other argument still stays host-local.
+fn mcp_command(input: Option<&serde_json::Value>) -> Option<serde_json::Value> {
+    let command = input?.get("command")?.as_str()?.trim();
+    (!command.is_empty()).then(|| serde_json::json!({ "command": command }))
 }
 
 /// Deterministic continuation id: `"{root}#c{n}"`.
@@ -1366,6 +1404,61 @@ mod tests {
                 input: None,
             }
         );
+    }
+
+    /// A turn's changes merge per file in first-touch order; failed calls
+    /// and calls without a diff don't count.
+    #[test]
+    fn turn_diff_stats_merge_per_file() {
+        let stat = |path: &str, additions, deletions| ToolDiffStat { path: path.into(), additions, deletions };
+        let tool = |id: &str, is_error, diff_stats: Option<Vec<ToolDiffStat>>| MessagePart::Tool {
+            id: id.into(),
+            call: ToolCall::EditFile { path: "x".into(), old_string: None, new_string: None },
+            is_error,
+            resolved: true,
+            output: None,
+            diff: None,
+            output_ref: None,
+            output_bytes: None,
+            diff_ref: None,
+            diff_stats,
+            subagent_ref: None,
+            subagent_status: None,
+            subagent_tail: None,
+            preview_paths: Vec::new(),
+            exit_code: None,
+            output_truncated: false,
+            output_lines: None,
+            review: None,
+        };
+        let parts = [
+            tool("1", false, Some(vec![stat("b.rs", 2, 1)])),
+            tool("2", false, Some(vec![stat("a.rs", 4, 0)])),
+            tool("3", true, Some(vec![stat("c.rs", 9, 9)])),
+            tool("4", false, None),
+            tool("5", false, Some(vec![stat("b.rs", 1, 0)])),
+        ];
+        assert_eq!(turn_diff_stats(&parts), vec![stat("b.rs", 3, 1), stat("a.rs", 4, 0)]);
+    }
+
+    /// An MCP shell call keeps its command for the chip and nothing else.
+    #[test]
+    fn sanitize_keeps_an_mcp_command_only() {
+        let call = ToolCall::Mcp {
+            server: "commutator".into(),
+            tool: "run_command".into(),
+            input: Some(serde_json::json!({ "command": "sleep 2", "device": "mac" })),
+        };
+        let clean = sanitize_tool_call(&call);
+        assert_eq!(
+            clean,
+            ToolCall::Mcp {
+                server: "commutator".into(),
+                tool: "run_command".into(),
+                input: Some(serde_json::json!({ "command": "sleep 2" })),
+            }
+        );
+        assert_eq!(sanitize_tool_call(&clean), clean);
     }
 
     /// A spawn that named no model keeps no input at all — `None`, not an

@@ -198,6 +198,111 @@ fn messages_the_agent_sent_show_as_one_line_naming_the_recipient() {
     assert!(frame.display(3).unwrap().text.ends_with(" b"));
 }
 
+/// A file call on an image makes its badge a viewer link, and the row's
+/// toggle steps around it so the tap reaches the link; other files don't.
+#[test]
+fn image_file_badge_opens_the_image() {
+    let read = |id: &str, path: &str| MessagePart::Tool {
+        id: id.into(),
+        call: commutator_proto::ToolCall::ReadFile { path: path.into() },
+        is_error: false,
+        resolved: true,
+        output: None,
+        diff: None,
+        output_ref: None,
+        output_bytes: None,
+        diff_ref: None,
+        diff_stats: None,
+        subagent_ref: None,
+        subagent_status: None,
+        subagent_tail: None,
+        preview_paths: Vec::new(),
+        exit_code: None,
+        output_truncated: false,
+        output_lines: None,
+        review: None,
+    };
+    let mut w = worker(390.0);
+    w.input = TranscriptInput {
+        entries: vec![Arc::new(SessionMessageEntry {
+            id: "a".into(),
+            role: MessageRole::Assistant,
+            parts: vec![read("k1", "/repo/shot one.png"), read("k2", "/repo/main.rs")],
+            created_at: 0,
+            device_id: String::new(),
+            status: Some(MessageStatus::Complete),
+            continuation_of: None,
+            duration_ms: None,
+        })],
+        ..Default::default()
+    };
+    let key = w.pass().placement(0).unwrap().key;
+    w.builder.expanded.insert(key);
+    w.builder.invalidate(key);
+    let frame = w.pass();
+    let d = frame.display(0).unwrap();
+    let urls: Vec<_> = d.links.iter().map(|l| l.url.as_str()).collect();
+    assert_eq!(urls, ["commutator-preview://image?ref=%2Frepo%2Fshot%20one.png"]);
+    let link = &d.links[0];
+    let toggles: Vec<_> = d.widgets.iter().filter(|w| matches!(w.kind, display::WidgetKind::ToolToggle { .. })).collect();
+    assert_eq!(toggles.len(), 3, "the image row's toggle splits in two");
+    assert!(toggles.iter().all(|t| t.y + t.h <= link.y || t.y >= link.y + link.h || t.x + t.w <= link.x || t.x >= link.x + link.w));
+}
+
+/// A settled turn that edited files ends on the "N changed files" card,
+/// paths below their shared folder; a streaming turn shows none yet.
+#[test]
+fn settled_turn_ends_with_its_changed_files() {
+    let edit = |id: &str, path: &str, additions| MessagePart::Tool {
+        id: id.into(),
+        call: commutator_proto::ToolCall::EditFile { path: path.into(), old_string: None, new_string: None },
+        is_error: false,
+        resolved: true,
+        output: None,
+        diff: None,
+        output_ref: None,
+        output_bytes: None,
+        diff_ref: None,
+        diff_stats: Some(vec![commutator_doc::ToolDiffStat { path: path.into(), additions, deletions: 1 }]),
+        subagent_ref: None,
+        subagent_status: None,
+        subagent_tail: None,
+        preview_paths: Vec::new(),
+        exit_code: None,
+        output_truncated: false,
+        output_lines: None,
+        review: None,
+    };
+    let entry = |status| {
+        Arc::new(SessionMessageEntry {
+            id: "a".into(),
+            role: MessageRole::Assistant,
+            parts: vec![
+                edit("k1", "/repo/crates/ui/a.rs", 3),
+                edit("k2", "/repo/crates/doc/b.rs", 2),
+                MessagePart::Text { id: "t".into(), text: "Done.".into() },
+            ],
+            created_at: 0,
+            device_id: String::new(),
+            status: Some(status),
+            continuation_of: None,
+            duration_ms: None,
+        })
+    };
+    let mut w = worker(390.0);
+    w.input = TranscriptInput { entries: vec![entry(MessageStatus::Complete)], ..Default::default() };
+    let frame = w.pass();
+    let last = frame.display(frame.row_count() - 1).unwrap();
+    assert!(last.text.contains("2 changed files"), "{}", last.text);
+    assert!(last.text.contains("ui/a.rs") && last.text.contains("doc/b.rs") && !last.text.contains("/repo"), "{}", last.text);
+    assert!(last.text.contains("+5") && last.text.contains("−2"), "{}", last.text);
+
+    let mut live = worker(390.0);
+    live.input = TranscriptInput { entries: vec![entry(MessageStatus::Streaming)], ..Default::default() };
+    let frame = live.pass();
+    assert!((0..frame.row_count()).all(|i| !frame.display(i).unwrap().text.contains("changed file")));
+}
+
 fn transcript_one(text: &str) -> TranscriptInput {
     debug_input(vec![DebugEntry { id: "a".into(), user: false, text: text.into(), streaming: false }], false)
 }

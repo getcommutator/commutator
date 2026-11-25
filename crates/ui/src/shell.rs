@@ -118,6 +118,8 @@ actions!(
         RandomWallpaper,
         ToggleSidebar,
         ToggleChanges,
+        /// A turn's "Open diff": show the chat's diff tab.
+        OpenTurnDiff,
         ToggleFiles,
         AddSpacePalette,
         ToggleCommandPalette,
@@ -3765,6 +3767,20 @@ impl Shell {
     fn add_diff_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let changes = cx.new(|cx| Changes::new(self.state.clone(), cx));
         self.register_diff_surface(changes, window, cx);
+    }
+
+    /// A turn card's "Open diff": the chat's diff tab if it has one, else a
+    /// fresh one, with the pane brought up.
+    fn open_turn_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let existing = self
+            .right_tabs
+            .get(&self.panel_key(cx))
+            .and_then(|tabs| tabs.iter().find(|t| matches!(t, RightSurface::Diff(_))).copied());
+        match existing {
+            Some(tab) => self.set_right_active(tab, cx),
+            None => self.add_diff_surface(window, cx),
+        }
+        self.set_surfaces_open(true, cx);
     }
 
     /// Open or focus a session-owned editor tab. The explorer is independent.
@@ -12585,6 +12601,9 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|this, _: &PrevSession, window, cx| {
                 this.cycle_navigation(false, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenTurnDiff, window, cx| {
+                this.open_turn_diff(window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleChanges, window, cx| {
                 if matches!(this.route, Route::PullRequests) {

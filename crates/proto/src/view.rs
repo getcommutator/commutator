@@ -756,7 +756,13 @@ fn tool_chip_content_raw(call: &crate::ToolCall) -> (&'static str, String) {
             let done = items.iter().filter(|i| i.done).count();
             ("Todo", format!("{done}/{} done", items.len()))
         }
-        ToolCall::Mcp { server, tool, .. } => ("MCP", format!("{server} · {tool}")),
+        ToolCall::Mcp { server, tool, input } => (
+            "MCP",
+            match input.as_ref().and_then(|i| i.get("command")?.as_str()) {
+                Some(command) => format!("{server} · {tool} · {command}"),
+                None => format!("{server} · {tool}"),
+            },
+        ),
         // Subagent spawns decode as Unknown named "Agent[: <description>]"
         // (every native driver's convention): label them "Agent" with the
         // description as the detail — "Tool · Agent: scan repo" read as two

@@ -49,6 +49,8 @@ pub(crate) struct ToolLine {
     pub detail: Option<PText>,
     /// File calls show a badge: (file-icon asset, basename).
     pub badge: Option<(String, PText)>,
+    /// The badge's link when its file is an image: opens it full size.
+    pub badge_link: Option<String>,
     pub failed: bool,
     pub running: bool,
     pub key: u64,
@@ -184,6 +186,14 @@ fn file_path(call: &ToolCall) -> Option<&str> {
         ToolCall::ApplyPatch { path } => path.as_deref(),
         _ => None,
     }
+}
+
+/// The viewer link for a file call's image, read off the host like an
+/// attachment. ponytail: absolute paths only (the layout has no chat cwd;
+/// agents report absolute ones), and no SVG (UIImage can't decode it).
+fn image_link(path: &str) -> Option<String> {
+    let image = commutator_proto::attachment_mentions::is_image_path(path) && !path.to_ascii_lowercase().ends_with(".svg");
+    (image && path.starts_with('/')).then(|| super::rows::image_preview_link(path))
 }
 
 fn wrap_cols(line: &str, cols: usize) -> Vec<String> {
@@ -857,6 +867,7 @@ impl RowBuilder {
                         } else {
                             file_path(call).map(|p| (file_icon_asset(p), prepare_plain(ctx, basename(p), st.label, st.lh, if *is_error { ColorRole::Danger } else { ColorRole::TextSoft }, WhiteSpace::Pre)))
                         };
+                        let badge_link = if agents { None } else { file_path(call).and_then(image_link) };
                         let detail_color = if agents && !*is_error { ColorRole::TextSoft } else { color };
                         let detail = (badge.is_none() && !detail.is_empty()).then(|| prepare_plain(ctx, &detail, st.label, st.lh, detail_color, WhiteSpace::Pre));
                         let open = !agents && self.detail_open.get(&dkey).copied().unwrap_or(false);
@@ -877,6 +888,7 @@ impl RowBuilder {
                             label: prepare_plain(ctx, label, if agents { medium } else { st.label }, st.lh, color, WhiteSpace::Pre),
                             detail,
                             badge,
+                            badge_link,
                             failed: *is_error,
                             running,
                             key: dkey,
@@ -905,6 +917,7 @@ impl RowBuilder {
                             label: prepare_plain(ctx, "Thought process", st.label, st.lh, ColorRole::TextSecondary, WhiteSpace::Pre),
                             detail: None,
                             badge: None,
+                            badge_link: None,
                             failed: false,
                             running: false,
                             key: dkey,
@@ -993,6 +1006,8 @@ fn place_line_header(line: &ToolLine, px: Px, x: f32, ry: f32, cw: f32, o: &mut 
     place_text(&line.label, tx, ry + (row_h - line.label.lh) / 2.0, lw + 1.0, Some(o));
     let dx = tx + lw + d(px, 8.0);
     let avail = (x + cw - dx).max(0.0);
+    // An image badge is a link; the row's toggle steps around it.
+    let mut link_span = None;
     if let Some((asset, name)) = &line.badge {
         let bh = d(px, 22.0);
         let by = ry + (row_h - bh) / 2.0;
@@ -1009,13 +1024,26 @@ fn place_line_header(line: &ToolLine, px: Px, x: f32, ry: f32, cw: f32, o: &mut 
                 None,
             );
             place_text_lines(name, dx + d(px, 27.0), ry + (row_h - name.lh) / 2.0, (bw - d(px, 33.0)).max(1.0), 1, px, o);
+            if let Some(url) = &line.badge_link {
+                o.links.push(super::display::LinkHit { x: dx, y: by, w: bw, h: bh, url: url.clone(), scroller: o.scroller });
+                link_span = Some((dx, dx + bw));
+            }
         }
     } else if let Some(detail) = &line.detail {
         if avail > 1.0 {
             place_text_lines(detail, dx, ry + (row_h - detail.lh) / 2.0, avail, 1, px, o);
         }
     }
-    o.widget(WidgetKind::ToolToggle { detail: line.key, open: line.open }, (x, ry, cw, row_h), None);
+    let toggle = WidgetKind::ToolToggle { detail: line.key, open: line.open };
+    match link_span {
+        Some((start, end)) => {
+            o.widget(toggle.clone(), (x, ry, start - x, row_h), None);
+            o.widget(toggle, (end, ry, (x + cw - end).max(0.0), row_h), None);
+        }
+        None => {
+            o.widget(toggle, (x, ry, cw, row_h), None);
+        }
+    }
 }
 
 /// Inline detail under a row: blocks in the text column, each preceded by a
