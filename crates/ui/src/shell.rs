@@ -1047,6 +1047,78 @@ pub(crate) fn sidebar_faded_label(
 const SIDEBAR_FOOTER_ACTION_SIZE: f32 = SIDEBAR_FOOTER_BUTTON_SIZE;
 /// Breathing room between the account trigger and its adjacent action.
 const SIDEBAR_FOOTER_ACTION_GAP: f32 = 4.0;
+/// Height of one primary-action row at the top of the sidebar.
+const SIDEBAR_ACTION_ROW_HEIGHT: f32 = 32.0;
+/// Glyph size in a primary-action row.
+const SIDEBAR_ACTION_ICON_SIZE: f32 = 16.0;
+
+/// One row of the sidebar's primary actions ("New chat", "Search",
+/// "Pull requests") above the project filter: glyph, label, optional
+/// shortcut hint, and the shared hover/active wash.
+fn sidebar_action_row(
+    id: &'static str,
+    icon_path: &'static str,
+    label: &'static str,
+    hint: Option<SharedString>,
+    active: bool,
+    theme: &Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let fade_key = format!("sidebar-action-{id}");
+    div()
+        .id(id)
+        .debug_selector(move || id.to_owned())
+        .role(gpui::Role::Button)
+        .aria_label(label)
+        .tab_index(0)
+        .focus_visible(|s| s.border_2().border_color(theme.accent))
+        .h(px(SIDEBAR_ACTION_ROW_HEIGHT))
+        .w_full()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(Theme::SPACE_SM))
+        .px(px(Theme::SPACE_SM))
+        .rounded(px(8.0))
+        .text_size(crate::typography::ui_rems(13.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(if active {
+            theme.text
+        } else {
+            motion::hover_blend(&fade_key, theme.text.opacity(0.8), theme.text)
+        })
+        .bg(if active {
+            theme.glass_hover()
+        } else {
+            motion::hover_blend(
+                &fade_key,
+                theme.glass_hover().opacity(0.0),
+                theme.glass_hover(),
+            )
+        })
+        .on_hover(motion::hover_listener(&fade_key))
+        .cursor_pointer()
+        .on_click(on_click)
+        .child(
+            icon(icon_path)
+                .flex_none()
+                .size(px(SIDEBAR_ACTION_ICON_SIZE))
+                .text_color(if active {
+                    theme.text
+                } else {
+                    motion::hover_blend(&fade_key, theme.text_muted, theme.text)
+                }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(SharedString::from(label)),
+        )
+        .when_some(hint, |row, hint| row.child(popover::kbd_hint(theme, &hint)))
+}
 
 /// A chat row's inline title editor, swapped in for its faded title while
 /// the chat is renamed in place: the title's 13/17 type in an accent-ringed
@@ -6967,6 +7039,11 @@ impl Shell {
     /// The titlebar owns new-session creation regardless of sidebar state. It
     /// remains available on PR screens, even without a selected session.
     pub(super) fn titlebar_plus_alpha(&self, cx: &App) -> f32 {
+        // The expanded sidebar carries its own New chat row, so the titlebar
+        // action would duplicate it; the + returns when the sidebar collapses.
+        if !self.settings.sidebar_collapsed {
+            return 0.0;
+        }
         // The Projects view's chat tabs carry their own `+` after the last tab.
         if !self.project_chat_tabs(cx).is_empty() {
             return 0.0;
@@ -7384,7 +7461,7 @@ impl Shell {
         // The footer uses the chat sidebar's theme so the account and
         // settings buttons render identically in both places.
         let footer_theme = Theme::of(cx).clone();
-        let footer = self.render_sidebar_footer_row(&footer_theme, cx);
+        let footer = self.render_sidebar_footer_row(&footer_theme, true, cx);
         let outlet = self.settings_outlet(section, window, cx);
         div()
             .id("settings-page")
@@ -8645,6 +8722,80 @@ impl Shell {
         )
     }
 
+    /// The primary actions at the top of the chat sidebar — New chat, Search,
+    /// and Pull requests — above the project filter, as Shepherd's sidebar
+    /// keeps them.
+    fn render_sidebar_primary_actions(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let new_chat_combo = self.settings.keymap.get(ShortcutId::NewSession);
+        let new_chat_hint: SharedString = badge_combo(if new_chat_combo.is_empty() {
+            ShortcutId::NewSession.default_combo()
+        } else {
+            new_chat_combo
+        })
+        .into();
+        let search_hint: SharedString = badge_combo("mod-k").into();
+        let on_pull_requests = matches!(self.route, Route::PullRequests);
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(SIDEBAR_LIST_GAP))
+            .px(px(Theme::SPACE_SM))
+            .pt(px(8.0))
+            .pb(px(4.0))
+            // The Projects sidebar leads with New project; chats start from
+            // its rows.
+            .child(if self.settings.sidebar_view == SidebarView::Projects {
+                sidebar_action_row(
+                    "sidebar-new-project",
+                    icons::PLUS,
+                    "New project",
+                    None,
+                    false,
+                    theme,
+                    cx.listener(|this, _, _, cx| this.open_add_space(cx)),
+                )
+            } else {
+                sidebar_action_row(
+                    "sidebar-new-chat",
+                    icons::PLUS,
+                    "New chat",
+                    Some(new_chat_hint),
+                    false,
+                    theme,
+                    cx.listener(|this, _, _, cx| this.open_new_session(None, cx)),
+                )
+            })
+            .child(sidebar_action_row(
+                "sidebar-search",
+                icons::MAGNIFER,
+                "Search",
+                Some(search_hint),
+                false,
+                theme,
+                cx.listener(|this, _, window, cx| this.toggle_command_palette(window, cx)),
+            ))
+            .child(sidebar_action_row(
+                "open-pull-requests",
+                icons::PULL_REQUEST,
+                "Pull requests",
+                None,
+                on_pull_requests,
+                theme,
+                cx.listener(|this, _, _, cx| {
+                    // Leaving Settings through this row is a plain route
+                    // change; nothing there should grab focus on the way out.
+                    this.settings_focus_pending = false;
+                    this.open_pull_requests(cx);
+                }),
+            ))
+            .into_any_element()
+    }
+
     fn render_chat_sidebar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         self.reconcile_session_hover_card(cx);
         if self.sidebar_session_transfer.as_ref().is_some_and(|drag| {
@@ -8866,6 +9017,7 @@ impl Shell {
         // t3code's archived accordion, below the active list.
         let archived_section = self.render_archived_section(theme, cx);
 
+        let primary_actions = self.render_sidebar_primary_actions(theme, cx);
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
         let filter_row = self.render_spaces_filter(theme, cx);
@@ -9027,8 +9179,14 @@ impl Shell {
                     // No "Sessions" header (user request) — the list
                     // is the whole column; a little air stands in.
                     .pt(px(SIDEBAR_LIST_PAD_TOP))
-                    .child(active_list)
-                    .children(working_section)
+                    // Working sits at the bottom, over Archived: the list
+                    // takes the room above it. Archived is always last.
+                    .map(|el| match working_section {
+                        Some(working) => el
+                            .child(div().flex_grow(1.0).flex_shrink_0().child(active_list))
+                            .child(div().flex_shrink_0().child(working)),
+                        None => el.child(active_list),
+                    })
                     .children(archived_section)
                     .children(moving_row),
             )),
@@ -9048,6 +9206,7 @@ impl Shell {
             .flex_col()
             // (No titlebar strip: the unified window titlebar spans the whole
             // window above this column.)
+            .child(primary_actions)
             .child(filter_row)
             .child(sidebar_lists)
             .children(agents_panel)
@@ -9067,7 +9226,7 @@ impl Shell {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .child(self.render_sidebar_footer_row(theme, cx)),
+                    .child(self.render_sidebar_footer_row(theme, false, cx)),
             )
             .into_any_element()
     }
@@ -9415,9 +9574,15 @@ impl Shell {
     /// the right. Shared by the chat sidebar and the settings page so both
     /// sit in one position. Local runtimes advertise their storage boundary
     /// and offer sync; synced runtimes offer sign-out.
-    /// Account, settings, and the Pull requests entry. Chat and Settings both
-    /// render this exact row so the footer holds still across the swap.
-    fn render_sidebar_footer_row(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    /// Account, settings, and (on Settings, which has no primary-action
+    /// block) the Pull requests entry. Chat and Settings both render this
+    /// exact row so the footer holds still across the swap.
+    fn render_sidebar_footer_row(
+        &mut self,
+        theme: &Theme,
+        show_pull_requests: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         div()
             .id("sidebar-footer-row")
             .debug_selector(|| "sidebar-footer-row".into())
@@ -9429,7 +9594,7 @@ impl Shell {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(self.render_sidebar_footer(theme, cx)),
+                    .child(self.render_sidebar_footer(theme, show_pull_requests, cx)),
             )
             .into_any_element()
     }
@@ -9481,23 +9646,30 @@ impl Shell {
             .into_any_element()
     }
 
-    fn render_sidebar_footer(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sidebar_footer(
+        &mut self,
+        theme: &Theme,
+        show_pull_requests: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (user_line, menu_identity) = {
             let state = self.state.read(cx);
             sidebar_account_identity(state.workspace_scope, self.sync_flow, state.auth_user())
         };
-        self.render_user_menu(user_line, menu_identity, theme, cx)
+        self.render_user_menu(user_line, menu_identity, show_pull_requests, theme, cx)
     }
 
     fn render_user_menu(
         &mut self,
         user_line: SharedString,
         menu_identity: SharedString,
+        show_pull_requests: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Pull requests sits just left of Settings, in the same action group.
-        let pull_requests = self.render_pull_requests_button(theme, cx);
+        // On Settings, where the chat sidebar's primary actions are absent,
+        // Pull requests sits just left of Settings in the same action group.
+        let pull_requests = show_pull_requests.then(|| self.render_pull_requests_button(theme, cx));
         let theme = &theme.for_popup();
         let open = self.user_menu.is_open();
         let state = self.state.read(cx);
@@ -9735,7 +9907,9 @@ impl Shell {
                     .flex_none()
                     .items_center()
                     .gap(px(2.0))
-                    .child(pull_requests)
+                    .when_some(pull_requests, |el, pull_requests| {
+                        el.child(pull_requests)
+                    })
                     .child(
                         div()
                             .id("settings-trigger")
@@ -10314,15 +10488,15 @@ impl Shell {
         let fade_key = format!("pane-resize-{id}");
         let hover_highlight = motion::hover_blend(
             &fade_key,
-            theme.border_strong.opacity(0.0),
-            theme.border_strong,
+            theme.accent.opacity(0.0),
+            theme.accent,
         );
         let active = self.pane_resize_active == Some(kind);
         let constrained = self.pane_resize_dragging == Some(kind) && !active;
         let highlight = if constrained {
-            theme.border_strong.opacity(0.0)
+            theme.accent.opacity(0.0)
         } else if active {
-            theme.border_strong
+            theme.accent
         } else {
             hover_highlight
         };
@@ -14946,7 +15120,7 @@ mod exit_regressions {
                 self.0.update(cx, |shell, cx| {
                     div()
                         .w(px(256.0))
-                        .child(shell.render_sidebar_footer(&Theme::default(), cx))
+                        .child(shell.render_sidebar_footer(&Theme::default(), false, cx))
                 })
             }
         }
@@ -15001,7 +15175,7 @@ mod exit_regressions {
                 self.0.update(cx, |shell, cx| {
                     div()
                         .w(px(256.0))
-                        .child(shell.render_sidebar_footer_row(&Theme::default(), cx))
+                        .child(shell.render_sidebar_footer_row(&Theme::default(), true, cx))
                 })
             }
         }
@@ -15476,14 +15650,25 @@ mod exit_regressions {
                         window.draw(cx).clear();
                     });
                     cx.run_until_parked();
-                    let new_session = cx.debug_bounds("titlebar-new-session").unwrap();
                     let tab = cx.debug_bounds("pull-request-tab-0").unwrap();
                     // Covering the board, the tabs sit just past the cluster
-                    // like the chat pane's in takeover.
-                    assert!(
-                        tab.left() >= new_session.right(),
-                        "PR tab overlaps New session: width={width}, collapsed={collapsed}, fullscreen={fullscreen}, tab={tab:?}, new_session={new_session:?}"
-                    );
+                    // like the chat pane's in takeover. The expanded sidebar
+                    // carries New chat itself, so the titlebar + is gone and
+                    // the tabs start past the sidebar seam instead.
+                    if collapsed {
+                        let new_session = cx.debug_bounds("titlebar-new-session").unwrap();
+                        assert!(
+                            tab.left() >= new_session.right(),
+                            "PR tab overlaps New session: width={width}, collapsed={collapsed}, fullscreen={fullscreen}, tab={tab:?}, new_session={new_session:?}"
+                        );
+                    } else {
+                        assert!(cx.debug_bounds("titlebar-new-session").is_none());
+                        let sidebar = cx.debug_bounds("sidebar-column").unwrap();
+                        assert!(
+                            tab.left() >= sidebar.right() - px(1.0),
+                            "PR tab overlaps the sidebar: width={width}, fullscreen={fullscreen}, tab={tab:?}, sidebar={sidebar:?}"
+                        );
+                    }
                     let toggle = cx.debug_bounds("toggle-pull-request-pane").unwrap();
                     assert!(toggle.left() >= tab.right() && toggle.right() <= px(width));
                     // The pull request's own header is the pane's toolbar,
