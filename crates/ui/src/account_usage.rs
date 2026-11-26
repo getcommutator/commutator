@@ -37,15 +37,22 @@ pub fn used_fraction(account: &AgentAccount) -> Option<f32> {
         .reduce(f32::max)
 }
 
-/// The harness's live account, when it reports usage. Pure.
+/// The harness's live account, when it reports usage. Several logins can be
+/// live at once (OpenCode keeps an API key per provider, all "In use"), so
+/// the one with usage windows wins over a live one without. Pure.
 pub fn active_account(
     snapshot: &AgentAccountsSnapshot,
     harness: HarnessId,
 ) -> Option<&AgentAccount> {
-    snapshot
-        .accounts
-        .iter()
-        .find(|account| account.harness == harness && account.active)
+    let live = || {
+        snapshot
+            .accounts
+            .iter()
+            .filter(move |account| account.harness == harness && account.active)
+    };
+    live()
+        .find(|account| !account.usage_windows.is_empty())
+        .or_else(|| live().next())
 }
 
 /// Loads (and switches) the accounts of the composer's target device.
@@ -524,5 +531,20 @@ mod tests {
             Some("Codex-true")
         );
         assert!(active_account(&snapshot, HarnessId::Cursor).is_none());
+    }
+
+    #[test]
+    fn a_live_login_with_usage_wins_over_a_live_one_without() {
+        let snapshot = AgentAccountsSnapshot {
+            accounts: vec![
+                account(HarnessId::Opencode, true, &[]),
+                account(HarnessId::Opencode, true, &[0.05, 0.4]),
+            ],
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            used_fraction(active_account(&snapshot, HarnessId::Opencode).unwrap()),
+            Some(0.4)
+        );
     }
 }
