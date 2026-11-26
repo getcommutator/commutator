@@ -148,8 +148,8 @@ pub fn gradient_spinner(
         }))
 }
 
-/// A 2×3 activity glyph sized for compact status slots. Its color is an
-/// explicit accent-preset role supplied by the caller, while brightness snakes
+/// A 2×3 activity glyph sized for compact status slots. Every cell uses the
+/// preset's exact accent color; only opacity changes as brightness snakes
 /// around the grid's perimeter as a tiny radial chase.
 pub fn mini_glyph_spinner(
     key: impl Into<SharedString>,
@@ -158,7 +158,7 @@ pub fn mini_glyph_spinner(
     view: EntityId,
     cx: &mut App,
 ) -> impl IntoElement {
-    mini_spinner_tinted(key, cell_px, palette.rows(), view, cx)
+    mini_spinner_tinted(key, cell_px, [palette.mid; 3], view, cx)
 }
 
 /// Grayscale variant for surfaces where an accent would pull focus (the
