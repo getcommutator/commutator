@@ -1208,6 +1208,30 @@ impl std::fmt::Debug for Emulator {
 mod tests {
     use super::*;
 
+    /// Per-frame cost of an nvim session: feed one keystroke's redraw, then
+    /// the snapshot a paint takes. `NVIM_CAPTURE=<script(1) output> cargo test
+    /// -p commutator-term --release frame_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore = "bench: needs a capture"]
+    fn frame_cost() {
+        let bytes = std::fs::read(std::env::var("NVIM_CAPTURE").unwrap()).unwrap();
+        let mut e = Emulator::raw(120, 40);
+        let chunks: Vec<&[u8]> = bytes.chunks(256).collect();
+        let (mut feed, mut snap) = (Vec::new(), Vec::new());
+        for chunk in &chunks {
+            let t = std::time::Instant::now();
+            e.feed(chunk);
+            feed.push(t.elapsed().as_secs_f64() * 1e6);
+            let t = std::time::Instant::now();
+            std::hint::black_box((e.lines(), e.cursor()));
+            snap.push(t.elapsed().as_secs_f64() * 1e6);
+        }
+        for (name, mut v) in [("feed 256B", feed), ("lines+cursor", snap)] {
+            v.sort_by(f64::total_cmp);
+            println!("{name}: p50 {:.0}µs p95 {:.0}µs max {:.0}µs", v[v.len() / 2], v[v.len() * 95 / 100], v[v.len() - 1]);
+        }
+    }
+
     fn emu(cols: u16, rows: u16) -> Emulator {
         Emulator::new(cols, rows)
     }

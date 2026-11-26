@@ -868,13 +868,18 @@ async fn pump_output(
         true
     };
 
-    // The first byte of a burst waits out a quiet gap before it leaves: a
-    // program's redraw is many small writes (vim's filetree emits dozens per
-    // keystroke), and one event carries the whole update — the viewer paints
-    // the redraw's END state, never a fragment's mid-cursor. Continuous
-    // streams pace at the same interval, so throughput is unchanged.
+    // A burst leaves after a QUIET_GAP lull, or `batch` after its first byte
+    // at the latest: a program's redraw is many small writes (vim's filetree
+    // emits dozens per keystroke), and one event carries the whole update —
+    // the viewer paints the redraw's END state, never a fragment's
+    // mid-cursor — while a keystroke's echo waits only the lull, not the
+    // whole batch. Events stay at least `batch` apart, so a stream's
+    // throughput is unchanged.
+    const QUIET_GAP: Duration = Duration::from_micros(300);
     let flush = tokio::time::sleep(batch);
     tokio::pin!(flush);
+    let mut burst_start = tokio::time::Instant::now();
+    let mut last_emit = tokio::time::Instant::now() - batch;
     let mut buffer = Vec::new();
     let mut raw_open = true;
     let mut exit_code = None;
@@ -883,17 +888,17 @@ async fn pump_output(
         tokio::select! {
             chunk = raw_rx.recv(), if raw_open => match chunk {
                 Some(chunk) => {
-                    let was_empty = buffer.is_empty();
+                    let now = tokio::time::Instant::now();
+                    if buffer.is_empty() {
+                        burst_start = now;
+                    }
                     buffer.extend_from_slice(&chunk);
                     // Whatever the reader already has queued rides along.
                     while let Ok(more) = raw_rx.try_recv() {
                         buffer.extend_from_slice(&more);
                     }
-                    if was_empty {
-                        flush
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + batch);
-                    }
+                    let due = (now + QUIET_GAP).min(burst_start + batch);
+                    flush.as_mut().reset(due.max(last_emit + batch));
                 },
                 None => raw_open = false,
             },
@@ -936,11 +941,7 @@ async fn pump_output(
                 if !emit(std::mem::take(&mut buffer)) {
                     return;
                 }
-                // Keep the pace even mid-stream: the next event is at least
-                // one interval out.
-                flush
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + batch);
+                last_emit = tokio::time::Instant::now();
             }
         }
     }
@@ -1551,6 +1552,64 @@ mod windows_shell_tests {
 mod initial_command_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    /// Keystroke → first output event, through the real PTY pump, in nvim on a
+    /// long file. `cargo test -p commutator-engine --lib nvim_keystroke_latency -- --ignored --nocapture`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "bench: needs nvim"]
+    async fn nvim_keystroke_latency() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("long.rs");
+        let text: String = (0..5000)
+            .map(|i| format!("fn line_{i}() {{ let x = {i}; println!(\"{{x}}\"); }}\n"))
+            .collect();
+        std::fs::write(&file, text).unwrap();
+        let terminals = Terminals::new();
+        let session = terminals
+            .open_with_shell(root.path().to_str().unwrap(), 120, 40, Some("/bin/sh"))
+            .unwrap();
+        let mut rx = terminals.subscribe(&session.id, None).unwrap();
+        async fn quiet(
+            rx: &mut mpsc::UnboundedReceiver<TerminalEvent>,
+            gap: u64,
+        ) -> (usize, Vec<u8>) {
+            let (mut n, mut out) = (0, Vec::new());
+            while let Ok(Some(e)) =
+                tokio::time::timeout(Duration::from_millis(gap), rx.recv()).await
+            {
+                if let TerminalEvent::Data { data, .. } = e {
+                    out.extend(BASE64.decode(data).unwrap());
+                }
+                n += 1;
+            }
+            (n, out)
+        }
+        terminals
+            .write_bytes(&session.id, format!("exec nvim -u NONE -i NONE {}\r", file.display()).as_bytes())
+            .unwrap();
+        let (_, out) = quiet(&mut rx, 1500).await;
+        assert!(out.windows(7).any(|w| w == b"line_10"), "nvim did not draw the file");
+
+        let (mut first, mut events) = (Vec::new(), Vec::new());
+        for _ in 0..100 {
+            let sent = std::time::Instant::now();
+            terminals.write_bytes(&session.id, b"j").unwrap();
+            let _ = rx.recv().await.unwrap();
+            first.push(sent.elapsed().as_secs_f64() * 1000.0);
+            let (n, _) = quiet(&mut rx, 30).await;
+            events.push(n + 1);
+        }
+        first.sort_by(f64::total_cmp);
+        let pct = |p: f64| first[((first.len() - 1) as f64 * p) as usize];
+        println!(
+            "j → first Data: p50 {:.2}ms p95 {:.2}ms max {:.2}ms; events/key max {}",
+            pct(0.5),
+            pct(0.95),
+            first[first.len() - 1],
+            events.iter().max().unwrap()
+        );
+        terminals.write_bytes(&session.id, b"\x1b:qa!\r").unwrap();
+    }
 
     #[cfg(unix)]
     #[tokio::test]
