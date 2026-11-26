@@ -219,19 +219,35 @@ fn provider_error_from_log(session_id: &str, offset: u64) -> Option<String> {
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut text = String::new();
     file.take(1 << 20).read_to_string(&mut text).ok()?;
+    unrecovered_stream_error(&text, session_id)
+}
+
+/// The session's last main-agent `stream error` that nothing followed: a
+/// line that restarts or moves the loop for this session (`stream`, `loop`,
+/// `process`) clears the error before it, because opencode retries transient
+/// provider refusals itself (a burst 429 whose next `stream` line recovers
+/// the step ~7s later, observed live) and a recovered error must not fail a
+/// turn that keeps working. `None` when every error in `text` was recovered.
+fn unrecovered_stream_error(text: &str, session_id: &str) -> Option<String> {
     let needle = format!("session.id={session_id} ");
-    text.lines().rev().find_map(|line| {
-        if !(line.contains("message=\"stream error\"")
-            && line.contains(&needle)
-            && line.contains("small=false"))
+    let mut fatal: Option<String> = None;
+    for line in text.lines().filter(|line| line.contains(&needle)) {
+        if line.contains("message=\"stream error\"") && line.contains("small=false") {
+            // A line without the quoted `error.error=` payload is not itself
+            // the fatal error, and must not clear an earlier one.
+            if let Some(rest) = line.split("error.error=\"").nth(1) {
+                let rest = rest.trim_end().trim_end_matches('"');
+                let rest = rest.strip_prefix("AI_APICallError: ").unwrap_or(rest);
+                fatal = Some(rest.to_owned());
+            }
+        } else if line.contains("message=stream ")
+            || line.contains("message=loop ")
+            || line.contains("message=process ")
         {
-            return None;
+            fatal = None;
         }
-        let rest = line.split("error.error=\"").nth(1)?;
-        let rest = rest.trim_end().trim_end_matches('"');
-        let rest = rest.strip_prefix("AI_APICallError: ").unwrap_or(rest);
-        Some(rest.to_owned())
-    })
+    }
+    fatal
 }
 
 fn stall_bound() -> Option<Duration> {
@@ -5790,6 +5806,93 @@ mod context_tests {
                 tokens: Some(12),
                 window: None
             })
+        );
+    }
+}
+
+#[cfg(test)]
+mod log_scrape_tests {
+    use super::*;
+
+    const SES: &str = "ses_fixture";
+
+    fn log_line(message: &str, extra: &str) -> String {
+        format!(
+            "timestamp=2026-11-26T15:46:38.651Z level=INFO run=f message={message} \
+             session.id={SES} {extra}"
+        )
+    }
+
+    fn error_line(small: bool, error: &str) -> String {
+        format!(
+            "timestamp=2026-11-26T15:46:38.651Z level=ERROR run=f message=\"stream error\" \
+             providerID=opencode-go modelID=glm-5.3 session.id={SES} small={small} \
+             agent=build mode=primary error.error=\"{error}\""
+        )
+    }
+
+    fn joined(lines: &[String]) -> String {
+        lines.join("\n")
+    }
+
+    #[test]
+    fn a_stream_error_nothing_follows_is_the_failure() {
+        let text = joined(&[
+            log_line("loop", "step=0"),
+            error_line(false, "AI_APICallError: OpenCode Go usage limit reached (5-hour)."),
+        ]);
+        assert_eq!(
+            unrecovered_stream_error(&text, SES).as_deref(),
+            Some("OpenCode Go usage limit reached (5-hour).")
+        );
+    }
+
+    #[test]
+    fn an_error_the_loop_recovered_is_ignored() {
+        // Live case: a burst 429 at step N, opencode's own retry ~7s later,
+        // the turn keeps working — the quiet check must not fail it.
+        let text = joined(&[
+            log_line("loop", "step=3"),
+            error_line(false, "AI_APICallError: Rate limit exceeded. Please try again later."),
+            log_line("stream", "providerID=opencode-go modelID=glm-5.3 small=false agent=build"),
+            log_line("loop", "step=4"),
+        ]);
+        assert_eq!(unrecovered_stream_error(&text, SES), None);
+    }
+
+    #[test]
+    fn a_later_recovered_error_supersedes_an_earlier_fatal_one() {
+        let text = joined(&[
+            error_line(false, "AI_APICallError: First died."),
+            log_line("stream", "providerID=opencode-go small=false agent=build"),
+            error_line(false, "AI_APICallError: Second died."),
+        ]);
+        assert_eq!(
+            unrecovered_stream_error(&text, SES).as_deref(),
+            Some("Second died.")
+        );
+    }
+
+    #[test]
+    fn title_agent_errors_are_not_the_run() {
+        let text = joined(&[error_line(true, "AI_RetryError: Failed after 3 attempts.")]);
+        assert_eq!(unrecovered_stream_error(&text, SES), None);
+    }
+
+    #[test]
+    fn other_sessions_and_malformed_lines_do_not_clear_the_failure() {
+        let text = joined(&[
+            error_line(false, "AI_APICallError: OpenCode Go usage limit reached."),
+            // Our session's error line with the payload cut off, and a busy
+            // line from another chat sharing the log: neither moves our loop.
+            "timestamp=x level=ERROR run=f message=\"stream error\" providerID=opencode-go \
+             session.id=ses_fixture small=false agent=build mode=primary"
+                .to_owned(),
+            "timestamp=x level=INFO run=f message=loop session.id=ses_other step=9".to_owned(),
+        ]);
+        assert_eq!(
+            unrecovered_stream_error(&text, SES).as_deref(),
+            Some("OpenCode Go usage limit reached.")
         );
     }
 }
