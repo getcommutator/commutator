@@ -200,23 +200,23 @@ strip = "debuginfo"
 
 # freethinkel/zui: every zui crate is patched, so gpui-base and the UI share one gpui.
 [patch."https://github.com/zeronsh/zui"]
-collections = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-derive_refineable = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_linux = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_macos = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_macros = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_platform = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_shared_string = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_tokio = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_util = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_web = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_wgpu = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-gpui_windows = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-http_client = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-media = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-perf = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-refineable = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-scheduler = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-sum_tree = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
-util_macros = { git = "https://github.com/freethinkel/zui", rev = "38b9e0f47d28a90da3bfa01d3827c8685f660b89" }
+collections = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+derive_refineable = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_linux = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_macos = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_macros = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_platform = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_shared_string = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_tokio = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_util = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_web = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_wgpu = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+gpui_windows = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+http_client = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+media = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+perf = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+refineable = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+scheduler = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+sum_tree = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
+util_macros = { git = "https://github.com/freethinkel/zui", rev = "c38c651d7d0e13bf8fcce5b040f3e247302efc2f" }
