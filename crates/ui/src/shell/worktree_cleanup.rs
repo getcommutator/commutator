@@ -41,9 +41,12 @@ pub(super) fn space_row_menu(space: &commutator_proto::Space) -> RowMenu {
     }
 }
 
-/// What the dialog's field becomes: spaces to dashes, so "login fix" works.
+/// What the dialog's field becomes: its leading `commutator/` branch
+/// prefix is dropped, then spaces to dashes, so "login fix" works.
 fn worktree_name(text: &str) -> String {
-    text.trim().split_whitespace().collect::<Vec<_>>().join("-")
+    let typed = text.trim();
+    let typed = typed.strip_prefix("commutator/").unwrap_or(typed);
+    typed.split_whitespace().collect::<Vec<_>>().join("-")
 }
 
 /// A linked worktree of `repo_path` on `device_id`.
@@ -66,8 +69,17 @@ pub(super) struct WorktreeCleanup {
     /// it's gone, so none is left in a folder that isn't there.
     active_chats: Vec<String>,
     delete_archived: bool,
-    deleting: bool,
     error: Option<SharedString>,
+}
+
+/// A worktree being deleted on its host right now: its rows dim with a
+/// spinner until the RPC answers.
+impl Shell {
+    pub(super) fn is_deleting_worktree(&self, device_id: &str, path: &str) -> bool {
+        self.deleting_worktrees.iter().any(|target| {
+            target.device_id == device_id && same_path(&target.worktree_path, path)
+        })
+    }
 }
 
 fn trim_path(path: &str) -> &str {
@@ -112,13 +124,21 @@ impl Shell {
     }
 
     /// Start a chat in `space_id`, in the worktree that has `branch` checked
-    /// out when given.
-    fn new_chat_in(&mut self, space_id: String, branch: Option<String>, cx: &mut Context<Self>) {
+    /// out at `path` when given (the session runs in that folder, not the
+    /// project's).
+    fn new_chat_in(
+        &mut self,
+        space_id: String,
+        worktree: Option<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
         self.worktree_menu = None;
         self.open_new_session(Some(space_id.clone()), cx);
-        if let Some(branch) = branch {
+        if let Some((branch, path)) = worktree {
             let pickers = self.composer.read(cx).pickers().clone();
-            pickers.update(cx, |pickers, cx| pickers.use_worktree(space_id, branch, cx));
+            pickers.update(cx, |pickers, cx| {
+                pickers.use_worktree(space_id, branch, path, cx)
+            });
         }
         cx.notify();
     }
@@ -126,6 +146,14 @@ impl Shell {
     fn open_new_worktree(&mut self, menu: RowMenu, cx: &mut Context<Self>) {
         self.worktree_menu = None;
         let name = cx.new(|cx| ComposerInput::new("Name (optional)", cx));
+        // The field shows the whole branch name — `commutator/` then a
+        // generated adjective-noun — all of it selected, so typing
+        // replaces it wholesale; emptied, the host picks its own.
+        name.update(cx, |input, cx| {
+            let suggested = commutator_engine::repos::suggested_worktree_name();
+            input.set_text(format!("commutator/{suggested}"), cx);
+            input.select_all_text(cx);
+        });
         let events = cx.subscribe(&name, |this: &mut Shell, _, event, cx| match event {
             ComposerInputEvent::Submitted => this.create_new_worktree(cx),
             ComposerInputEvent::Edited => {
@@ -206,7 +234,11 @@ impl Shell {
                 this.new_worktree = None;
                 // Re-list the project's worktrees so its row shows up.
                 this.sidebar_worktrees_for = None;
-                this.new_chat_in(space_id, Some(outcome.worktree.branch), cx);
+                this.new_chat_in(
+                    space_id,
+                    Some((outcome.worktree.branch, outcome.worktree.path)),
+                    cx,
+                );
             })
             .ok();
         })
@@ -291,7 +323,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.worktree_menu = None;
-        if self.worktree_cleanup.is_some() {
+        if self.worktree_cleanup.is_some()
+            || self.is_deleting_worktree(&target.device_id, &target.worktree_path)
+        {
             return;
         }
         let (engine, local) = {
@@ -375,7 +409,6 @@ impl Shell {
                     archived_chats,
                     active_chats,
                     delete_archived: false,
-                    deleting: false,
                     error: None,
                 });
                 cx.notify();
@@ -385,8 +418,11 @@ impl Shell {
         .detach();
     }
 
+    /// The dialog closes at once: the worktree's row dims with a spinner
+    /// until the host answers, then drops with the refreshed refs (or the
+    /// row comes back with an error toast).
     fn confirm_worktree_cleanup(&mut self, cx: &mut Context<Self>) {
-        let Some(dialog) = self.worktree_cleanup.as_mut().filter(|d| !d.deleting) else {
+        let Some(dialog) = self.worktree_cleanup.take() else {
             return;
         };
         let (engine, local) = {
@@ -394,13 +430,11 @@ impl Shell {
             (state.engine().cloned(), state.local_device_id.clone())
         };
         let Some(engine) = engine else {
-            dialog.error = Some("Engine not connected".into());
-            cx.notify();
+            self.show_notice(crate::toast::ToastKind::Error, "Engine not connected", cx);
             return;
         };
-        dialog.deleting = true;
-        dialog.error = None;
         let target = dialog.target.clone();
+        self.deleting_worktrees.push(target.clone());
         let mut params = serde_json::Map::new();
         params.insert("repoPath".into(), target.repo_path.clone().into());
         params.insert("worktreePath".into(), target.worktree_path.clone().into());
@@ -414,16 +448,19 @@ impl Shell {
                 .call(methods::DELETE_WORKTREE, serde_json::Value::Object(params))
                 .await;
             this.update(cx, |this, cx| {
-                let Some(dialog) = this.worktree_cleanup.as_mut() else {
-                    return;
-                };
+                this.deleting_worktrees.retain(|deleting| {
+                    deleting.device_id != target.device_id
+                        || !same_path(&deleting.worktree_path, &target.worktree_path)
+                });
                 if let Err(error) = result {
-                    dialog.deleting = false;
-                    dialog.error = Some(format!("Couldn’t delete the worktree: {error}").into());
+                    this.show_notice(
+                        crate::toast::ToastKind::Error,
+                        format!("Couldn’t delete the worktree: {error}"),
+                        cx,
+                    );
                     cx.notify();
                     return;
                 }
-                let dialog = this.worktree_cleanup.take().unwrap();
                 for chat_id in dialog.active_chats {
                     this.set_chat_archived(chat_id, true, cx);
                 }
@@ -464,7 +501,9 @@ impl Shell {
         // A worktree whose branch isn't known yet can't be picked for a chat.
         let new_chat = match &menu.worktree {
             Some((None, _)) => None,
-            Some((Some(branch), _)) => Some(Some(branch.clone())),
+            Some((Some(branch), target)) => {
+                Some(Some((branch.clone(), target.worktree_path.clone())))
+            }
             None => Some(None),
         };
         let mut card = popover::popover_card(theme)
@@ -473,12 +512,12 @@ impl Shell {
                 this.worktree_menu = None;
                 cx.notify();
             }));
-        if let Some(branch) = new_chat {
+        if let Some(worktree) = new_chat {
             let space_id = menu.space_id.clone();
             card = card.child(item("row-menu-new-chat", icons::PEN_NEW_SQUARE, "New chat").on_click(
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.new_chat_in(space_id.clone(), branch.clone(), cx);
+                    this.new_chat_in(space_id.clone(), worktree.clone(), cx);
                 }),
             ));
         }
@@ -637,7 +676,6 @@ impl Shell {
         };
         let archived = dialog.archived_chats.len();
         let delete_archived = dialog.delete_archived;
-        let deleting = dialog.deleting;
         let error = dialog.error.clone();
         let checkbox = (archived > 0).then(|| {
             div()
@@ -724,17 +762,9 @@ impl Shell {
                             })),
                     )
                     .child(
-                        popover::btn_danger(
-                            &theme,
-                            if deleting {
-                                "Deleting…"
-                            } else {
-                                "Delete worktree"
-                            },
-                        )
-                        .id("worktree-cleanup-confirm")
-                        .opacity(if deleting { 0.6 } else { 1.0 })
-                        .on_click(cx.listener(|this, _, _, cx| this.confirm_worktree_cleanup(cx))),
+                        popover::btn_danger(&theme, "Delete worktree")
+                            .id("worktree-cleanup-confirm")
+                            .on_click(cx.listener(|this, _, _, cx| this.confirm_worktree_cleanup(cx))),
                     ),
             )
             .into_any_element();
@@ -759,6 +789,9 @@ mod tests {
     fn a_typed_worktree_name_dashes_its_spaces() {
         assert_eq!(worktree_name("  login  fix "), "login-fix");
         assert_eq!(worktree_name("   "), "");
+        // The field's `commutator/` branch prefix doesn't become the name.
+        assert_eq!(worktree_name("commutator/login fix"), "login-fix");
+        assert_eq!(worktree_name("commutator/"), "");
     }
 
     #[test]

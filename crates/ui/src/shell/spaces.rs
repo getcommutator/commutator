@@ -4735,7 +4735,9 @@ impl Shell {
                 .into_any_element(),
         );
         popover::popover_card(theme)
-            .w(px(self.sidebar_content_width() - 2.0 * Theme::SPACE_SM))
+            // Fixed at the minimum sidebar's content width; the menu must
+            // not swell with a dragged-out sidebar (user request).
+            .w(px(crate::settings::SIDEBAR_MIN - 2.0 * Theme::SPACE_SM))
             .track_focus(&focus)
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                 this.sidebar_view_menu_key(event, cx)
@@ -4855,8 +4857,9 @@ impl Shell {
                 }
             }))
             .child(popover::picker_icon_slot(art))
-            // The label takes the remaining room and fades at its edge when
-            // the selected project's name is too long.
+            // The label takes the remaining room; the picked project's name
+            // rolls between values like the composer chips (roll_text), and
+            // at rest fades at its edge when the name is too long.
             .child(
                 div()
                     .flex_1()
@@ -4865,20 +4868,15 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
-                    .child(motion::fade_quick(
-                        SharedString::from(format!(
-                            "spaces-filter-text-{}",
-                            filter.as_deref().unwrap_or("all")
-                        )),
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(super::sidebar_faded_label(
-                                "spaces-filter-label".into(),
-                                false,
-                                label,
-                            )),
-                    ))
+                    .child(crate::roll_text::rolling(
+                        format!("spaces-filter-label-{}", cx.entity_id()),
+                        label.clone(),
+                        cx.reduce_motion(),
+                    )
+                    .unwrap_or_else(|| {
+                        super::sidebar_faded_label("spaces-filter-label".into(), false, label)
+                            .into_any_element()
+                    }))
                     // Disconnected glyph, not the word (user request).
                     .when(offline, |el| {
                         el.child(
@@ -5768,12 +5766,38 @@ impl Shell {
                 project_tree_subline(theme, branch.into(), diff, pr)
             });
         let row_height = project_tree_row_height(compact);
-        let status = self.render_project_tree_status(
-            key,
-            project_tree_status(rows.iter().map(|row| row.status)),
-            theme,
-            cx,
-        );
+        // Its worktree's deletion under way: the row dims with a spinner
+        // where the status sits and takes no clicks, until the host answers.
+        let deleting_worktree = nested
+            && rows.first().is_some_and(|row| {
+                row.chat
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|cwd| self.is_deleting_worktree(&row.chat.device_id, cwd))
+            });
+        let status = if deleting_worktree {
+            div()
+                .flex_none()
+                .size(px(13.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(loaders::mini_mono_spinner(
+                    format!("sidebar-project-{key}-deleting"),
+                    2.0,
+                    theme.text_muted,
+                    self.sidebar_pane.entity_id(),
+                    cx,
+                ))
+                .into_any_element()
+        } else {
+            self.render_project_tree_status(
+                key,
+                project_tree_status(rows.iter().map(|row| row.status)),
+                theme,
+                cx,
+            )
+        };
         // A project's menu: New chat, Create worktree…, Reveal in Finder; a
         // worktree's swaps Create for Delete worktree…, as a faint one's.
         let menu = rows.first().map(|row| &row.chat).and_then(|chat| {
@@ -5816,14 +5840,20 @@ impl Shell {
             subline,
             Some(status),
             fold,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if let Some(chat_id) = latest.clone() {
-                this.open_chat(chat_id, cx);
-            } else if let Some(space_id) = new_in.clone() {
-                this.open_new_session(Some(space_id), cx);
-            }
-        }));
+        );
+        let header = if deleting_worktree {
+            // Inert while its folder goes.
+            header.opacity(0.45)
+        } else {
+            header.on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(chat_id) = latest.clone() {
+                    this.open_chat(chat_id, cx);
+                } else if let Some(space_id) = new_in.clone() {
+                    this.open_new_session(Some(space_id), cx);
+                }
+            }))
+        };
+        let menu = if deleting_worktree { None } else { menu };
         let header = header.when_some(menu, |row, menu| {
             row.on_mouse_down(
                 MouseButton::Right,
@@ -5990,34 +6020,61 @@ impl Shell {
         };
         let row_height = project_tree_row_height(compact);
         let cleanup = self.closed_worktree_target(&space_id, &path, &branch, cx);
+        // Its deletion under way: dimmer still, a spinner where the merged
+        // Delete chip sat, and no clicks, until the host answers.
+        let deleting = cleanup.as_ref().is_some_and(|target| {
+            self.is_deleting_worktree(&target.device_id, &target.worktree_path)
+        });
+        let deleting_spinner = deleting.then(|| {
+            div()
+                .flex_none()
+                .size(px(13.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(loaders::mini_mono_spinner(
+                    format!("sidebar-closed-worktree-deleting-{path}"),
+                    2.0,
+                    theme.text_muted,
+                    self.sidebar_pane.entity_id(),
+                    cx,
+                ))
+                .into_any_element()
+        });
         // A merged pull request says the worktree has served its purpose:
         // offer the cleanup on the row itself (the dialog still checks).
-        let merged_delete = cleanup
-            .clone()
-            .filter(|target| self.worktree_merged(target, cx))
-            .map(|target| {
-                div()
-                    .id(SharedString::from(format!("sidebar-closed-worktree-delete-{path}")))
-                    .flex_none()
-                    .px(px(6.0))
-                    .h(px(20.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .text_size(crate::typography::ui_rems(11.0))
-                    .text_color(theme.text_muted)
-                    .bg(crate::theme::wash(0.08))
-                    .hover(|el| el.bg(crate::theme::wash(0.16)))
-                    .tooltip(crate::settings::widgets::text_tooltip(
-                        "Its pull request is merged",
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.begin_worktree_cleanup(target.clone(), cx);
-                    }))
-                    .child("Delete")
-                    .into_any_element()
-            });
+        let merged_delete = (!deleting)
+            .then(|| {
+                cleanup
+                    .clone()
+                    .filter(|target| self.worktree_merged(target, cx))
+                    .map(|target| {
+                        div()
+                            .id(SharedString::from(format!(
+                                "sidebar-closed-worktree-delete-{path}"
+                            )))
+                            .flex_none()
+                            .px(px(6.0))
+                            .h(px(20.0))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.0))
+                            .text_size(crate::typography::ui_rems(11.0))
+                            .text_color(theme.text_muted)
+                            .bg(crate::theme::wash(0.08))
+                            .hover(|el| el.bg(crate::theme::wash(0.16)))
+                            .tooltip(crate::settings::widgets::text_tooltip(
+                                "Its pull request is merged",
+                            ))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.begin_worktree_cleanup(target.clone(), cx);
+                            }))
+                            .child("Delete")
+                            .into_any_element()
+                    })
+            })
+            .flatten();
         let header = project_tree_row(
             theme,
             SharedString::from(format!("sidebar-closed-worktree-{path}")),
@@ -6028,10 +6085,10 @@ impl Shell {
             label,
             subline,
             None,
-            merged_delete,
+            deleting_spinner.or(merged_delete),
         )
-        .opacity(0.6)
-        .when_some(cleanup, |row, target| {
+        .opacity(if deleting { 0.35 } else { 0.6 })
+        .when_some(cleanup.filter(|_| !deleting), |row, target| {
             let menu = super::worktree_cleanup::RowMenu {
                 space_id: space_id.clone(),
                 device_id: target.device_id.clone(),
@@ -6045,14 +6102,26 @@ impl Shell {
                     cx.notify();
                 }),
             )
-        })
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.open_new_session(Some(space_id.clone()), cx);
-            let pickers = this.composer.read(cx).pickers().clone();
-            pickers.update(cx, |pickers, cx| {
-                pickers.use_worktree(space_id.clone(), branch.clone(), cx)
-            });
-        }));
+        });
+        let header = if deleting {
+            header
+        } else {
+            let worktree_path = path.clone();
+            header.on_click(cx.listener(move |this, _, _, cx| {
+                this.open_new_session(Some(space_id.clone()), cx);
+                let pickers = this.composer.read(cx).pickers().clone();
+                // The worktree's own path rides with the pick: the session
+                // runs there even while the space's refs load.
+                pickers.update(cx, |pickers, cx| {
+                    pickers.use_worktree(
+                        space_id.clone(),
+                        branch.clone(),
+                        worktree_path.clone(),
+                        cx,
+                    )
+                });
+            }))
+        };
         let element = div().w_full().child(header).into_any_element();
         (format!("w:{path}"), row_height, element)
     }

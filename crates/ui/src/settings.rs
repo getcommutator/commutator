@@ -1195,6 +1195,9 @@ pub struct UiSettings {
     /// qualify, including compatible Nerd Fonts.
     pub terminal_font_family: crate::typography::UiFontFamily,
     pub terminal_font_size: f32,
+    /// Terminal row height as a multiple of the font size, Shepherd's
+    /// configurable line height (was a fixed 18/13 ratio).
+    pub terminal_line_height: f32,
     /// Trail animation used when the terminal cursor moves.
     pub terminal_cursor_effect: TerminalCursorEffect,
     /// Family and absolute pixel size for code, diffs, and file editors.
@@ -1323,6 +1326,7 @@ impl Default for UiSettings {
             ui_font_size: crate::typography::UiFontSize::default(),
             terminal_font_family: crate::typography::UiFontFamily::IoskeleyMono,
             terminal_font_size: crate::typography::TERMINAL_FONT_SIZE_DEFAULT,
+            terminal_line_height: crate::typography::TERMINAL_LINE_HEIGHT_DEFAULT,
             terminal_cursor_effect: TerminalCursorEffect::default(),
             code_font_family: crate::typography::UiFontFamily::IoskeleyMono,
             code_font_size: crate::typography::CODE_FONT_SIZE_DEFAULT,
@@ -1966,6 +1970,7 @@ impl UiSettings {
             ui_font_size,
             terminal_font_family,
             terminal_font_size,
+            terminal_line_height,
             terminal_cursor_effect,
             code_font_family,
             code_font_size,
@@ -2039,6 +2044,12 @@ impl UiSettings {
             crate::typography::FONT_SIZE_MIN,
             crate::typography::FONT_SIZE_MAX,
             crate::typography::TERMINAL_FONT_SIZE_DEFAULT,
+        );
+        self.terminal_line_height = clamp_or(
+            self.terminal_line_height,
+            crate::typography::TERMINAL_LINE_HEIGHT_MIN,
+            crate::typography::TERMINAL_LINE_HEIGHT_MAX,
+            crate::typography::TERMINAL_LINE_HEIGHT_DEFAULT,
         );
         self.code_font_size = clamp_or(
             self.code_font_size,
@@ -3077,6 +3088,7 @@ mod tests {
             files_word_wrap: true,
             terminal_font_family: crate::typography::UiFontFamily::Installed("Menlo".into()),
             terminal_font_size: 15.0,
+            terminal_line_height: 1.4,
             terminal_cursor_effect: TerminalCursorEffect::Comet,
             code_font_family: crate::typography::UiFontFamily::Geist,
             code_font_size: 11.0,

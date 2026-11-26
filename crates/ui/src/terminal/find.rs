@@ -1,0 +1,185 @@
+//! Links in terminal rows: Cmd/Ctrl+click opens the URL or file under the
+//! pointer. Pure: rows in as chars, char ranges out. Ported from Shepherd's
+//! terminal (src/terminal/find.rs); its `find_all` lives on in the search,
+//! which Ghostty's own engine now does.
+
+use std::ops::Range;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Link {
+    Url(String),
+    File {
+        path: String,
+        line: Option<u32>,
+        col: Option<u32>,
+    },
+}
+
+/// What an OSC 8 hyperlink opens: web and mail links as they are; `file://host/path` as `file:///path`, since
+/// `ls --hyperlink` names the host. Other schemes open nothing: the link's text hides where they lead.
+pub fn hyperlink(uri: &str) -> Option<Link> {
+    if let Some(rest) = uri.strip_prefix("file://") {
+        return Some(Link::Url(format!(
+            "file://{}",
+            &rest[rest.find('/')?..]
+        )));
+    }
+    ["https://", "http://", "mailto:"]
+        .iter()
+        .any(|s| uri.starts_with(s))
+        .then(|| Link::Url(uri.into()))
+}
+
+/// The URL or path (`src/a.rs:12:5`) under char `at`, with its char range in `line`: a line as the program wrote
+/// it, the rows a soft wrap cut it into joined.
+pub fn link_at(line: &[char], at: usize) -> Option<(Range<usize>, Link)> {
+    let stop = |c: char| c.is_whitespace() || "\"'`<>()[]{}|│".contains(c);
+    if at >= line.len() || stop(line[at]) {
+        return None;
+    }
+    let mut start = at;
+    while start > 0 && !stop(line[start - 1]) {
+        start -= 1;
+    }
+    let mut end = at + 1;
+    while end < line.len() && !stop(line[end]) {
+        end += 1;
+    }
+    let token: String = line[start..end].iter().collect();
+    // `url=https://…`: the link starts at its scheme.
+    if let Some(i) = ["https://", "http://", "file://"]
+        .iter()
+        .filter_map(|s| token.find(s))
+        .min()
+    {
+        let url = token[i..].trim_end_matches(['.', ',', ';', ':', '!', '?']);
+        let from = start + token[..i].chars().count();
+        let range = from..from + url.chars().count();
+        return range
+            .contains(&at)
+            .then(|| (range, Link::Url(url.to_string())));
+    }
+    let trimmed = token.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+    let mut path = trimmed;
+    let mut nums = Vec::new();
+    while let Some((rest, n)) = path
+        .rsplit_once(':')
+        .and_then(|(rest, n)| n.parse::<u32>().ok().map(|n| (rest, n)))
+    {
+        if nums.len() == 2 {
+            break;
+        }
+        nums.insert(0, n);
+        path = rest;
+    }
+    // A path has a slash, or is a file name with a line (`main.rs:3`); "and/or" passes too, the click checks it.
+    let file_name = path.contains('.') && !nums.is_empty();
+    if path.is_empty() || !(path.contains('/') || file_name) || path.contains("://") {
+        return None;
+    }
+    let range = start..start + trimmed.chars().count();
+    range.contains(&at).then(|| {
+        (
+            range,
+            Link::File {
+                path: path.to_string(),
+                line: nums.first().copied(),
+                col: nums.get(1).copied(),
+            },
+        )
+    })
+}
+
+/// Decode `%xx` escapes in a `file://` path, as `ls --hyperlink` writes them.
+pub fn percent_decode(encoded: &str) -> Option<String> {
+    let raw = encoded.as_bytes();
+    let mut bytes = Vec::with_capacity(raw.len());
+    let mut at = 0;
+    while at < raw.len() {
+        if raw[at] == b'%' {
+            let hex = std::str::from_utf8(raw.get(at + 1..at + 3)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            at += 3;
+        } else {
+            bytes.push(raw[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chars(s: &str) -> Vec<char> {
+        s.chars().collect()
+    }
+
+    #[test]
+    fn finds_urls_and_paths_under_the_pointer() {
+        let line = chars("see https://herdr.dev/docs. and (src/main.rs:12:5) then ~/x/y.txt, ok");
+        let url = link_at(&line, 10).unwrap();
+        assert_eq!(url.1, Link::Url("https://herdr.dev/docs".into()));
+        assert_eq!(url.0, 4..26);
+        let file = Link::File {
+            path: "src/main.rs".into(),
+            line: Some(12),
+            col: Some(5),
+        };
+        assert_eq!(link_at(&line, 35), Some((33..49, file)));
+        assert_eq!(
+            link_at(&line, 58).map(|l| l.1),
+            Some(Link::File {
+                path: "~/x/y.txt".into(),
+                line: None,
+                col: None
+            })
+        );
+        assert_eq!(link_at(&line, 0), None); // "see"
+        assert_eq!(link_at(&line, 3), None); // a space
+    }
+
+    #[test]
+    fn a_bare_file_name_needs_a_line() {
+        assert_eq!(
+            link_at(&chars("lib.rs:7:"), 0).map(|l| l.1),
+            Some(Link::File {
+                path: "lib.rs".into(),
+                line: Some(7),
+                col: None
+            })
+        );
+        assert_eq!(link_at(&chars("lib.rs"), 0), None);
+        assert_eq!(link_at(&chars("12:30"), 0), None);
+    }
+
+    #[test]
+    fn hyperlinks_open_web_mail_and_local_files_only() {
+        let url = |s: &str| Some(Link::Url(s.into()));
+        assert_eq!(hyperlink("https://a.b/c"), url("https://a.b/c"));
+        assert_eq!(hyperlink("mailto:x@a.b"), url("mailto:x@a.b"));
+        assert_eq!(
+            hyperlink("file://mac.local/Users/x/a%20b"),
+            url("file:///Users/x/a%20b")
+        );
+        assert_eq!(hyperlink("file:///tmp"), url("file:///tmp"));
+        assert_eq!(hyperlink("ssh://host"), None);
+    }
+
+    #[test]
+    fn a_url_after_a_prefix_starts_at_its_scheme() {
+        let line = chars("url=http://a.b/c");
+        assert_eq!(link_at(&line, 1), None);
+        assert_eq!(
+            link_at(&line, 8),
+            Some((4..16, Link::Url("http://a.b/c".into())))
+        );
+    }
+
+    #[test]
+    fn percent_escapes_decode() {
+        assert_eq!(percent_decode("a%20b"), Some("a b".into()));
+        assert_eq!(percent_decode("%2"), None);
+    }
+}

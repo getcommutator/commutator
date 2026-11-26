@@ -2041,6 +2041,11 @@ pub struct Shell {
     /// Per chat, the files opened in editor tabs, most recent first.
     recent_files: std::collections::HashMap<String, std::collections::VecDeque<String>>,
     pending_workspace_command: Option<crate::composer::WorkspaceCommand>,
+    /// A Cmd/Ctrl+click on a terminal link, opened on the next render (the
+    /// panels' subscriptions have no window to open surfaces with).
+    pending_terminal_link: Option<crate::terminal::panel::TerminalLinkEvent>,
+    /// The terminal panels' link subscriptions (drawer + embedded host).
+    terminal_link_subs: Vec<Subscription>,
     /// The sidebar's space-filter dropdown.
     spaces_menu: popover::Popup<spaces::SpacesMenu>,
     /// Hover/drag + scroll-linger state of the dropdown's floating rail.
@@ -2053,6 +2058,9 @@ pub struct Shell {
     /// The spaces `sidebar_worktrees` was asked for, and when: asked again
     /// when they change, and on a render 15 s later (Shepherd's cadence).
     sidebar_worktrees_for: Option<(Vec<String>, std::time::Instant)>,
+    /// Worktrees being deleted on their host right now: their sidebar rows
+    /// dim with a spinner until the RPC answers.
+    deleting_worktrees: Vec<worktree_cleanup::WorktreeTarget>,
     /// Natural-tab-order focus target for the icon-only view-options button.
     sidebar_view_trigger_focus: gpui::FocusHandle,
     /// Current pinned-row metrics shared by hit testing and displacement animations.
@@ -2528,11 +2536,14 @@ impl Shell {
             search_warm: None,
             recent_files: std::collections::HashMap::new(),
             pending_workspace_command: None,
+            pending_terminal_link: None,
+            terminal_link_subs: Vec::new(),
             spaces_menu: popover::Popup::default(),
             spaces_menu_bar: popover::MenuScrollbarState::default(),
             sidebar_view_menu: popover::Popup::default(),
             sidebar_worktrees: Default::default(),
             sidebar_worktrees_for: None,
+            deleting_worktrees: Vec::new(),
             sidebar_view_trigger_focus: cx.focus_handle().tab_stop(true),
             sidebar_pinned_heights: Vec::new(),
             project_icons: Default::default(),
@@ -3296,6 +3307,7 @@ impl Shell {
             return terminal.clone();
         }
         let terminal = cx.new(|cx| TerminalPanel::new_embedded(self.state.clone(), cx));
+        self.subscribe_terminal_links(&terminal, cx);
         self.right_terminal = Some(terminal.clone());
         terminal
     }
@@ -4087,6 +4099,52 @@ impl Shell {
         true
     }
 
+    /// A Cmd/Ctrl+click on a terminal link: URLs go to the browser, files to
+    /// the chat's Files side panel — workspace-rooted first, then the shell's
+    /// own directory when it reported one. Markdown and every other file
+    /// open in the editor, like a transcript file link.
+    fn open_terminal_link(
+        &mut self,
+        link: crate::terminal::panel::TerminalLinkEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::terminal::panel::TerminalLinkEvent;
+        match link {
+            TerminalLinkEvent::OpenUrl { url } => cx.open_url(&url),
+            TerminalLinkEvent::OpenFile {
+                chat,
+                path,
+                absolute,
+                line,
+                col,
+            } => {
+                // The new-session canvas has no file context of its own; its
+                // terminals ride the active chat's.
+                let chat = if chat.starts_with(crate::state::CANVAS_PANEL_PREFIX) {
+                    self.active_chat.clone()
+                } else {
+                    chat
+                };
+                if chat.is_empty() {
+                    return;
+                }
+                // `open_workspace_file_link` parses `path:line:col` targets,
+                // the same format a transcript link writes.
+                let with_location = |path: &str| match (line, col) {
+                    (Some(line), Some(col)) => format!("{path}:{line}:{col}"),
+                    (Some(line), None) => format!("{path}:{line}"),
+                    _ => path.to_string(),
+                };
+                if !self.open_workspace_file_link(&chat, &with_location(&path), window, cx)
+                    && let Some(absolute) = absolute.as_deref()
+                {
+                    self.open_workspace_file_link(&chat, &with_location(absolute), window, cx);
+                }
+            }
+        }
+    }
+
     fn rename_file_surface(
         &mut self,
         id: u64,
@@ -4683,8 +4741,23 @@ impl Shell {
             return terminal.clone();
         }
         let terminal = cx.new(|cx| TerminalPanel::new(self.state.clone(), cx));
+        self.subscribe_terminal_links(&terminal, cx);
         self.terminal = Some(terminal.clone());
         terminal
+    }
+
+    /// A terminal's Cmd/Ctrl+click: held for the next render, which has the
+    /// window the Files surface opens with.
+    fn subscribe_terminal_links(
+        &mut self,
+        terminal: &Entity<TerminalPanel>,
+        cx: &mut Context<Self>,
+    ) {
+        let sub = cx.subscribe(terminal, |this: &mut Self, _, event, cx| {
+            this.pending_terminal_link = Some(event.clone());
+            cx.notify();
+        });
+        self.terminal_link_subs.push(sub);
     }
 
     fn terminal_target(&self, cx: &App) -> f32 {
@@ -12433,6 +12506,9 @@ impl Render for Shell {
                 }
                 _ => {}
             }
+        }
+        if let Some(link) = self.pending_terminal_link.take() {
+            self.open_terminal_link(link, window, cx);
         }
         self.focus_rename_chat(window, cx);
 

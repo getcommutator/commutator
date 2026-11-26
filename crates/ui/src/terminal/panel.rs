@@ -20,13 +20,15 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use gpui::{
-    App, Context, Entity, FocusHandle, IntoElement, KeyBinding, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Render, ScrollDelta, SharedString,
-    Subscription, Task, Window, actions, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Render,
+    ScrollDelta, SharedString, Subscription, Task, Window, actions, div, prelude::*, px,
 };
 
 use commutator_proto::{TerminalEvent, TerminalSession};
 use commutator_rpc::methods;
+
+use crate::composer::{ComposerInput, ComposerInputEvent};
 
 use crate::motion::{self, AnimationExt as _, TAB_SLIDE};
 use crate::popover::{MenuScrollbarMetrics, MenuScrollbarState, ScrollRailHost};
@@ -38,12 +40,13 @@ use super::emulator::{
     CellSnapshot, CursorShape, CursorSnapshot, Emulator, GridPoint, MouseTracking, SelectionType,
     Side,
 };
+use super::find::{self, Link};
 use super::predict::Predictor;
 use super::view::{
     InputQueue, KeyRoute, MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_MOTION, MOUSE_NONE, MOUSE_RIGHT,
     MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP, RESIZE_DEBOUNCE_MS, SELECTION_DRAG_THRESHOLD,
-    TerminalElement, cell_at, focus_report, mouse_report, paste_bytes, route_key,
-    terminal_panel_bg, wheel_arrows,
+    TerminalElement, app_shortcut, cell_at, dropped_paths, focus_report, kitty_enter, link_modifier,
+    mouse_report, paste_bytes, route_key, search_back, terminal_panel_bg, wheel_arrows,
 };
 
 /// Fixed tab width — drag-reorder math stays analytic.
@@ -59,8 +62,30 @@ const BLINK_IDLE: Duration = Duration::from_secs(15);
 const COPY_FLASH: Duration = Duration::from_millis(320);
 /// Option/Alt multiplies the wheel's rows, as Shepherd's fast wheel does.
 const FAST_WHEEL: f32 = 5.0;
+/// Held output past this feeds immediately, off the render path: a chatty
+/// program in a hidden drawer must not grow the buffer without a viewer.
+const PENDING_OUTPUT_CAP: usize = 256 * 1024;
 
 actions!(terminal, [ToggleTerminal]);
+
+/// A Cmd/Ctrl+click on a terminal link, for the shell to open: URLs go to the
+/// browser, files to the chat's Files side panel.
+#[derive(Debug, Clone)]
+pub enum TerminalLinkEvent {
+    OpenUrl {
+        url: String,
+    },
+    OpenFile {
+        chat: String,
+        /// The link's path, as written (relative or absolute).
+        path: String,
+        /// `path` joined onto the shell's last-reported directory, when it
+        /// was relative and the shell said where it runs.
+        absolute: Option<String>,
+        line: Option<u32>,
+        col: Option<u32>,
+    },
+}
 
 /// Bind the terminal keymap (global): Cmd+J on macOS, Ctrl+J elsewhere.
 pub fn init(cx: &mut App) {
@@ -199,6 +224,10 @@ pub struct GridSnapshot {
     pub marked_text: Option<String>,
     /// 1 at the moment of a copy, easing to 0.
     pub copy_flash: f32,
+    /// The open search's matches on screen: `(row, cells, current)` per span.
+    pub search_marks: Vec<(usize, std::ops::Range<usize>, bool)>,
+    /// Kitty graphics placements visible in the viewport.
+    pub images: Vec<super::emulator::ImagePlacement>,
 }
 
 /// Where the grid landed this frame, in window coordinates.
@@ -304,6 +333,10 @@ struct TerminalTab {
     /// The host answers terminal queries itself; this emulator's answers
     /// would arrive second (and late, across a network) and read as input.
     host_replies: bool,
+    /// Output bytes arrived but are not fed yet: applied as ONE feed right
+    /// before the frame paints, so a burst's intermediate cursor states —
+    /// a vim redraw walks the cursor through the whole screen — never show.
+    pending: Vec<u8>,
     resize_task: Option<Task<()>>,
     /// Open + subscribe/reconnect lifecycle; dropping it cancels the stream.
     _run: Option<Task<()>>,
@@ -332,6 +365,14 @@ struct TabDragPayload {
 
 struct TabGhost {
     title: SharedString,
+}
+
+/// The Cmd+F search bar over the terminal body. The input is a real composer
+/// field (IME, paste, arrows); its events drive the emulator's scrollback
+/// search.
+struct SearchBar {
+    input: Entity<ComposerInput>,
+    _events: Subscription,
 }
 
 impl Render for TabGhost {
@@ -409,8 +450,16 @@ pub struct TerminalPanel {
     /// reported, while mouse reporting owns the pointer.
     report_button: Option<u8>,
     report_cell: Option<(usize, usize)>,
+    /// The pointer, and the link cells under it while the link modifier is
+    /// held: one `(row, cells)` span per row, top first.
+    pointer: Option<gpui::Point<Pixels>>,
+    hover: Option<Vec<(usize, std::ops::Range<usize>)>>,
+    /// The Cmd+F search bar, when it is open.
+    search: Option<SearchBar>,
     _observe: Subscription,
 }
+
+impl EventEmitter<TerminalLinkEvent> for TerminalPanel {}
 
 impl TerminalPanel {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
@@ -440,6 +489,9 @@ impl TerminalPanel {
             copied_at: None,
             report_button: None,
             report_cell: None,
+            pointer: None,
+            hover: None,
+            search: None,
             _observe: observe,
         }
     }
@@ -560,6 +612,7 @@ impl TerminalPanel {
             sync_task: None,
             marked_text: None,
             host_replies: false,
+            pending: Vec::new(),
             resize_task: None,
             _run: None,
         });
@@ -930,41 +983,81 @@ impl TerminalPanel {
         event: TerminalEvent,
         cx: &mut Context<Self>,
     ) -> StreamDisposition {
-        let Some(tab) = self.tab_mut(chat, key) else {
-            return StreamDisposition::Stop;
-        };
-        match event {
-            TerminalEvent::Data { seq, data } => {
-                tab.last_seq = seq;
-                let responses = tab.emulator.feed(&decode_base64(&data));
-                if tab.emulator.alt_screen() {
+        let mut flush_now = false;
+        let disposition = {
+            let Some(tab) = self.tab_mut(chat, key) else {
+                return StreamDisposition::Stop;
+            };
+            match event {
+                TerminalEvent::Data { seq, data } => {
+                    tab.last_seq = seq;
+                    // Held for the next render's single feed (see
+                    // [`TerminalTab::pending`]), except past the cap — a
+                    // program no one is watching must not grow the buffer.
+                    tab.pending.extend_from_slice(&decode_base64(&data));
+                    flush_now = tab.pending.len() >= PENDING_OUTPUT_CAP;
+                    cx.notify();
+                    StreamDisposition::Continue
+                }
+                TerminalEvent::Exit { seq, exit_code, .. } => {
+                    tab.last_seq = seq;
+                    tab.exited = Some(exit_code);
                     tab.predictor.reset();
+                    tab.marked_text = None;
+                    tab.emulator.feed(&exit_message(exit_code));
+                    cx.notify();
+                    StreamDisposition::Stop
                 }
-                tab.predictor.output(&tab.emulator, Instant::now());
-                let sync_deadline = tab.emulator.sync_deadline();
-                if !responses.is_empty() && !tab.host_replies {
-                    // Query responses (DSR etc.) share the key queue, so they
-                    // reach the PTY in order with what was typed. Hosts that
-                    // answer queries themselves get none from here.
-                    tab.input.push(&responses);
-                    self.pump_input(chat, key, cx);
-                }
-                if let Some(deadline) = sync_deadline {
-                    self.schedule_sync_flush(chat, key, deadline, cx);
-                }
-                cx.notify();
-                StreamDisposition::Continue
             }
-            TerminalEvent::Exit { seq, exit_code, .. } => {
-                tab.last_seq = seq;
-                tab.exited = Some(exit_code);
-                tab.predictor.reset();
-                tab.marked_text = None;
-                tab.emulator.feed(&exit_message(exit_code));
-                cx.notify();
-                StreamDisposition::Stop
-            }
+        };
+        if flush_now {
+            self.flush_output(chat, key, cx);
         }
+        disposition
+    }
+
+    /// Feed one tab's held output into the emulator, as a single advance:
+    /// responses queue, prediction settles, and a synchronized update's
+    /// deadline is (re)armed.
+    fn flush_output(&mut self, chat: &str, key: u64, cx: &mut Context<Self>) {
+        let (responses, deadline, host_replies) = {
+            let Some(tab) = self.tab_mut(chat, key) else {
+                return;
+            };
+            if tab.pending.is_empty() {
+                return;
+            }
+            let bytes = std::mem::take(&mut tab.pending);
+            let responses = tab.emulator.feed(&bytes);
+            if tab.emulator.alt_screen() {
+                tab.predictor.reset();
+            }
+            tab.predictor.output(&tab.emulator, Instant::now());
+            (responses, tab.emulator.sync_deadline(), tab.host_replies)
+        };
+        if let Some(deadline) = deadline {
+            self.schedule_sync_flush(chat, key, deadline, cx);
+        }
+        if !responses.is_empty() && !host_replies {
+            // Query responses (DSR etc.) share the key queue, so they reach
+            // the PTY in order with what was typed. Hosts that answer
+            // queries themselves get none from here.
+            if let Some(tab) = self.tab_mut(chat, key) {
+                tab.input.push(&responses);
+            }
+            self.pump_input(chat, key, cx);
+        }
+    }
+
+    /// The selected tab's held output, applied just before the frame reads
+    /// the grid: every paint then sees the state AFTER all bytes that
+    /// arrived before it, never a redraw's in-between cursor positions.
+    pub fn flush_active_output(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = self.active_tab(cx).map(|tab| tab.key) else {
+            return;
+        };
+        let chat = self.selected_chat(cx);
+        self.flush_output(&chat, key, cx);
     }
 
     // ---- input ----
@@ -1064,9 +1157,24 @@ impl TerminalPanel {
         self.queue_input(&bytes, cx);
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &event.keystroke;
         let mods = &ks.modifiers;
+        // Typing in the search bar is the bar's: everything else here would
+        // double-deliver to the PTY (the events bubble past the input).
+        if self
+            .search
+            .as_ref()
+            .is_some_and(|bar| bar.input.read(cx).focus_handle(cx).is_focused(window))
+        {
+            return;
+        }
+        // Find: Cmd+F (macOS) / Ctrl+Shift+F.
+        if ks.key == "f" && app_shortcut(mods) {
+            self.open_search(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         // Paste: Cmd+V (macOS) / Ctrl+Shift+V.
         if ks.key == "v" && (mods.platform || (mods.control && mods.shift)) {
             self.paste_clipboard(cx);
@@ -1087,6 +1195,19 @@ impl TerminalPanel {
             .active_tab(cx)
             .map(|tab| tab.emulator.app_cursor_mode())
             .unwrap_or(false);
+        // Enter under the kitty keyboard protocol the program asked for:
+        // Shift+Enter and friends have no legacy encoding (Claude Code's
+        // Shift+Enter newline).
+        let kitty = self
+            .active_tab(cx)
+            .map(|tab| tab.emulator.keyboard_flags())
+            .unwrap_or(0);
+        if let Some(bytes) = kitty_enter(&ks.key, mods, kitty) {
+            self.with_active_tab(cx, |tab| tab.predictor.interrupt());
+            self.queue_input(&bytes, cx);
+            cx.stop_propagation();
+            return;
+        }
         match route_key(&ks.key, ks.key_char.as_deref(), mods, app_cursor) {
             // A plain space is typing, not an interruption: the predictor
             // keeps the run (and its trust) going across words.
@@ -1349,6 +1470,20 @@ impl TerminalPanel {
     pub fn active_grid_snapshot(&self, cx: &App) -> Option<GridSnapshot> {
         let tab = self.active_tab(cx)?;
         let mut lines = tab.emulator.lines();
+        // The link under the pointer while the modifier is held: its cells
+        // underline like any underlined text — Shepherd's affordance, thin
+        // and part of the glyph run, not a bar over the row.
+        for (row, cells) in self.hover.iter().flatten() {
+            for cell in lines
+                .get_mut(*row)
+                .and_then(|line| line.get_mut(cells.clone()))
+                .into_iter()
+                .flatten()
+            {
+                cell.underline = true;
+                cell.underline_style = super::emulator::UnderlineStyle::Single;
+            }
+        }
         let mut cursor = tab.emulator.cursor();
         if tab.emulator.display_offset() == 0 {
             let (predicted, predicted_cursor) = tab.predictor.overlay();
@@ -1374,6 +1509,8 @@ impl TerminalPanel {
             cursor_on: self.blink_on || !self.blink_wanted,
             marked_text: tab.marked_text.clone(),
             copy_flash,
+            search_marks: tab.emulator.search_marks(),
+            images: tab.emulator.image_placements(),
         })
     }
 
@@ -1416,6 +1553,300 @@ impl TerminalPanel {
         Some((point, hit.side))
     }
 
+    // ---- links ----
+
+    /// The link under a window position: its cells, a range per row and top
+    /// first, and its target. A link a soft wrap cut across rows is found
+    /// whole. An OSC 8 hyperlink wins over the text under it.
+    fn link_under(
+        &self,
+        position: gpui::Point<Pixels>,
+        cx: &App,
+    ) -> Option<(Vec<(usize, std::ops::Range<usize>)>, Link)> {
+        let geometry = self.geometry?;
+        if !geometry.bounds.contains(&position) {
+            return None;
+        }
+        let hit = cell_at(
+            f32::from(position.x - geometry.origin.x),
+            f32::from(position.y - geometry.origin.y),
+            geometry.cell_w,
+            geometry.line_h,
+            geometry.cols as usize,
+            geometry.rows as usize,
+        );
+        let tab = self.active_tab(cx)?;
+        let (row, col) = (hit.row, hit.col);
+        if let Some((cells, uri)) = tab.emulator.hyperlink_at(row, col)
+            && let Some(link) = find::hyperlink(&uri)
+        {
+            return Some((cells, link));
+        }
+        let lines = tab.emulator.lines();
+        let wraps = |r: usize| tab.emulator.wraps(r);
+        let reach = super::emulator::MAX_WRAPPED_ROWS / 2;
+        let mut top = row;
+        while top > 0 && row - top < reach && wraps(top - 1) {
+            top -= 1;
+        }
+        let mut end = row + 1;
+        while end < lines.len() && end - row < reach && wraps(end - 1) {
+            end += 1;
+        }
+        // The joined line's chars, and each one's row and cell.
+        let (mut chars, mut at_of) = (Vec::new(), Vec::new());
+        for r in top..end {
+            for (c, cell) in lines.get(r)?.iter().enumerate() {
+                if cell.wide_spacer {
+                    continue;
+                }
+                chars.push(cell.ch);
+                at_of.push((r, c));
+            }
+        }
+        let at = at_of.iter().rposition(|&p| p <= (row, col))?;
+        let (chars_range, link) = find::link_at(&chars, at)?;
+        let mut cells: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
+        for &(r, c) in &at_of[chars_range] {
+            let to = c + 1 + usize::from(lines[r][c].wide);
+            match cells.last_mut() {
+                Some((last, range)) if *last == r => range.end = to,
+                _ => cells.push((r, c..to)),
+            }
+        }
+        Some((cells, link))
+    }
+
+    /// The hover affordance while the link modifier is held: the cells of the
+    /// link under the pointer, cleared when it moves off or the modifier lifts.
+    fn update_hover(&mut self, link_held: bool, cx: &mut Context<Self>) {
+        let pointer = self.pointer;
+        let hover = pointer
+            .filter(|_| link_held)
+            .and_then(|p| self.link_under(p, cx))
+            .map(|(cells, _)| cells);
+        if hover != self.hover {
+            self.hover = hover;
+            cx.notify();
+        }
+    }
+
+    /// URLs go to the browser; paths open in the chat's Files side panel (via
+    /// the shell), resolved against the shell's last-reported directory when
+    /// they are relative.
+    fn open_link(&mut self, link: Link, cx: &mut Context<Self>) {
+        let chat = self.selected_chat(cx);
+        match link {
+            Link::Url(url) => match url.strip_prefix("file://").and_then(find::percent_decode) {
+                // `ls --hyperlink` percent-encodes the path (a space is `%20`).
+                Some(path) => {
+                    cx.emit(TerminalLinkEvent::OpenFile {
+                        chat,
+                        path,
+                        absolute: None,
+                        line: None,
+                        col: None,
+                    });
+                }
+                None => cx.emit(TerminalLinkEvent::OpenUrl { url }),
+            },
+            Link::File { path, line, col } => {
+                let absolute = if path.starts_with('/') {
+                    None
+                } else {
+                    self.active_tab(cx)
+                        .and_then(|tab| tab.emulator.pwd())
+                        .map(|pwd| format!("{}/{}", pwd.trim_end_matches('/'), path))
+                };
+                cx.emit(TerminalLinkEvent::OpenFile {
+                    chat,
+                    path,
+                    absolute,
+                    line,
+                    col,
+                });
+            }
+        }
+    }
+
+    // ---- search ----
+
+    /// Cmd+F: open (or refocus) the search bar over the terminal body.
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.is_none() {
+            let input = cx.new(|cx| ComposerInput::new("Find", cx).with_single_line());
+            let events = cx.subscribe(&input, |this, _, event, cx| match event {
+                ComposerInputEvent::Edited => this.refresh_search(cx),
+                // Enter steps deeper into history; Shift+Enter back toward
+                // the live end, as Shepherd's bar does.
+                ComposerInputEvent::Submitted => this.step_search(true, cx),
+                ComposerInputEvent::ModifiedSubmitted => this.step_search(false, cx),
+                _ => {}
+            });
+            self.search = Some(SearchBar { input, _events: events });
+        }
+        let handle = self
+            .search
+            .as_ref()
+            .map(|search| search.input.read(cx).focus_handle(cx));
+        if let Some(handle) = handle {
+            window.focus(&handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Escape closes the bar, returning focus (and the keys) to the grid.
+    fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.take().is_some() {
+            self.with_active_emulator(cx, |emu| emu.search_set(None));
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
+        }
+    }
+
+    /// The typed query reached the emulator: run it afresh.
+    fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        let Some(bar) = self.search.as_ref() else {
+            return;
+        };
+        let needle = bar.input.read(cx).text().to_string();
+        self.with_active_emulator(cx, |emu| emu.search_set(Some(&needle)));
+        cx.notify();
+    }
+
+    /// The next match up into history (`older`) or back down.
+    fn step_search(&mut self, older: bool, cx: &mut Context<Self>) {
+        if self
+            .with_active_emulator(cx, |emu| emu.search_step(older))
+            .unwrap_or(false)
+        {
+            cx.notify();
+        }
+    }
+
+    /// The floating Cmd+F bar over the grid: the query input and the tally.
+    fn search_bar(
+        input: Entity<ComposerInput>,
+        count: Option<(usize, Option<usize>)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let query_empty = input.read(cx).text().is_empty();
+        let tally = match count {
+            Some((total, Some(ix))) => format!("{}/{}", ix + 1, total),
+            Some((_, None)) if !query_empty => "No results".into(),
+            _ => String::new(),
+        };
+        div()
+            .id("terminal-search")
+            .absolute()
+            .top(px(8.0))
+            .right(px(20.0))
+            .w(px(340.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .pl(px(8.0))
+            .pr(px(12.0))
+            .py(px(4.0))
+            .rounded(px(Theme::CONTROL_RADIUS))
+            .bg(theme.surface_raised)
+            .border_1()
+            .border_color(theme.border)
+            .text_size(px(12.0))
+            .text_color(theme.text)
+            .occlude()
+            // The bar is not the grid: clicks place the caret, not a cursor
+            // cell selection under the bar.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|_, _, cx| cx.stop_propagation())
+            // Captured before the input: Escape closes, Cmd+G steps.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let ks = &event.keystroke;
+                match ks.key.as_str() {
+                    "escape" => this.close_search(window, cx),
+                    "g" if app_shortcut(&ks.modifiers) => {
+                        this.step_search(!search_back(&ks.modifiers), cx)
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(div().flex_1().min_w_0().overflow_hidden().child(input))
+            .child(div().flex_none().text_color(theme.text_muted).child(tally))
+            // Step buttons: the chevrons mirror the view's motion — next
+            // (Enter) walks up through history, previous (Shift+Enter) comes
+            // back down.
+            .child(
+                div()
+                    .id("terminal-search-next")
+                    .size(px(18.0))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::theme::ink(0.09)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.step_search(true, cx);
+                    }))
+                    .tooltip(crate::settings::widgets::text_tooltip("Next match (Enter)"))
+                    .child(
+                        crate::icons::icon(crate::icons::ALT_ARROW_UP)
+                            .size(px(14.0))
+                            .text_color(theme.text_muted),
+                    ),
+            )
+            .child(
+                div()
+                    .id("terminal-search-prev")
+                    .size(px(18.0))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::theme::ink(0.09)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.step_search(false, cx);
+                    }))
+                    .tooltip(crate::settings::widgets::text_tooltip(
+                        "Previous match (Shift+Enter)",
+                    ))
+                    .child(
+                        crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
+                            .size(px(14.0))
+                            .text_color(theme.text_muted),
+                    ),
+            )
+            .child(
+                div()
+                    .id("terminal-search-close")
+                    .size(px(18.0))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::theme::ink(0.09)))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.close_search(window, cx);
+                    }))
+                    .tooltip(crate::settings::widgets::text_tooltip("Close (Esc)"))
+                    .child(
+                        crate::icons::icon(crate::icons::CLOSE)
+                            .size(px(12.0))
+                            .text_color(theme.text_muted.opacity(0.8)),
+                    ),
+            )
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -1423,6 +1854,14 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
+        // A modifier-click opens the link under the pointer rather than
+        // selecting, even in a program that captures the mouse.
+        if link_modifier(&event.modifiers)
+            && let Some((_, link)) = self.link_under(event.position, cx)
+        {
+            self.open_link(link, cx);
+            return;
+        }
         if self.report_mouse(MOUSE_LEFT, event.position, false, &event.modifiers, cx) {
             self.report_button = Some(MOUSE_LEFT);
             return;
@@ -1491,6 +1930,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let tracking = self.reporting(&event.modifiers, cx);
+        self.pointer = Some(event.position);
         let report = match tracking {
             Some(MouseTracking::Motion) => true,
             Some(MouseTracking::Drag) => self.report_button.is_some(),
@@ -1505,6 +1945,8 @@ impl TerminalPanel {
             return; // a reported press owns this drag
         }
         if !event.dragging() {
+            // The link modifier may have been pressed since the last move.
+            self.update_hover(link_modifier(&event.modifiers), cx);
             return;
         }
         let Some(mut drag) = self.selection_drag else {
@@ -2341,6 +2783,10 @@ enum StreamDisposition {
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        // Output that arrived since the last frame feeds HERE, once per
+        // frame, so the tab titles and the rail read the same state the
+        // grid paints (the element's prepaint re-checks and finds it empty).
+        self.flush_active_output(cx);
         // Heal drag state if the pointer was released outside the bar.
         if self.drag.is_some() && !cx.has_active_drag() {
             self.drag = None;
@@ -2349,6 +2795,10 @@ impl Render for TerminalPanel {
         // fill here stacked another shade on the pane (user report); the
         // drawer keeps its own tone.
         let panel_bg: Option<gpui::Hsla> = (!self.embedded).then(|| terminal_panel_bg(&theme));
+        let search_bar = self.search.as_ref().map(|bar| {
+            let count = self.active_tab(cx).and_then(|tab| tab.emulator.search_count());
+            Self::search_bar(bar.input.clone(), count, cx)
+        });
         // Docked at the window's bottom edge, the panel's own fill carries
         // the CSD window's bottom corners when it sits at them (the shell
         // decides per frame; embedded panels never do).
@@ -2396,6 +2846,15 @@ impl Render for TerminalPanel {
                     // the user let go of.
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                    .on_modifiers_changed(cx.listener(
+                        |this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                            // Cmd/Ctrl held or lifted: the hover follows the
+                            // pointer without a move, as a click there would
+                            // land on the link it shows.
+                            this.update_hover(link_modifier(&event.modifiers), cx);
+                        },
+                    ))
+                    .when(self.hover.is_some(), |el| el.cursor_pointer())
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_other_mouse_down))
                     .on_mouse_down(MouseButton::Right, cx.listener(Self::on_other_mouse_down))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
@@ -2428,8 +2887,22 @@ impl Render for TerminalPanel {
                         this.wheel(lines * speed, event.position, &event.modifiers, cx);
                         cx.stop_propagation();
                     }))
+                    // Files dropped from the OS land as bracketed-pasted,
+                    // shell-escaped paths — a shell or an agent TUI reads
+                    // them whole, as Ghostty does.
+                    .on_drop::<gpui::ExternalPaths>(cx.listener(
+                        |this, paths: &gpui::ExternalPaths, window, cx| {
+                            window.focus(&this.focus_handle, cx);
+                            let bytes =
+                                paste_bytes(&dropped_paths(paths.paths()), true);
+                            this.with_active_tab(cx, |tab| tab.predictor.interrupt());
+                            this.queue_input(&bytes, cx);
+                            cx.stop_propagation();
+                        },
+                    ))
                     .child(TerminalElement::new(cx.entity(), focused))
-                    .children(scrollbar),
+                    .children(scrollbar)
+                    .when_some(search_bar, |el, bar| el.child(bar)),
             )
             .into_any_element()
     }
@@ -2534,6 +3007,45 @@ mod tests {
             window.draw(cx).clear();
         });
         assert!(sent(&panel, cx).ends_with(b"\x1b[O\x1b[I"));
+    }
+
+    #[gpui::test]
+    fn stream_output_feeds_once_per_frame_not_per_event(cx: &mut gpui::TestAppContext) {
+        let (panel, cx) = focused_panel(cx);
+        // A program's redraw in two Data events: the first walks the cursor
+        // mid-screen, the second finishes and parks it. Held, not fed —
+        // no paint ever sees the in-between position.
+        panel.update(cx, |panel, cx| {
+            panel.apply_stream_event(
+                "chat",
+                1,
+                TerminalEvent::Data { seq: 1, data: encode_base64(b"\x1b[H\x1b[2Jhalf") },
+                cx,
+            );
+            panel.apply_stream_event(
+                "chat",
+                1,
+                TerminalEvent::Data { seq: 2, data: encode_base64(b"\r\nfin\x1b[3;1H") },
+                cx,
+            );
+            let tab = panel.active_tab(cx).unwrap();
+            assert_eq!(tab.emulator.row_text(0), "$", "nothing fed yet");
+        });
+        // The frame's single advance: both events landed, once.
+        panel.update(cx, |panel, cx| {
+            panel.flush_active_output(cx);
+            let tab = panel.active_tab(cx).unwrap();
+            assert_eq!(tab.emulator.row_text(0), "half");
+            assert_eq!(tab.emulator.row_text(1), "fin");
+            assert_eq!(tab.emulator.cursor_cell(), Some((2, 0)));
+            assert!(tab.pending.is_empty());
+        });
+        // A second frame with no output advances nothing.
+        panel.update(cx, |panel, cx| {
+            panel.flush_active_output(cx);
+            let tab = panel.active_tab(cx).unwrap();
+            assert_eq!(tab.emulator.cursor_cell(), Some((2, 0)));
+        });
     }
 
     #[gpui::test]

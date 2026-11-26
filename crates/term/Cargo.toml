@@ -12,4 +12,9 @@ publish.workspace = true
 alacritty_terminal.workspace = true
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
-ghostty-vt = { version = "=0.7.0", default-features = false }
+# kitty-graphics: the protocol's image storage; png: the Rust PNG decoder
+# the storage needs for PNG-transmitted images.
+ghostty-vt = { version = "=0.7.0", default-features = false, features = [
+    "kitty-graphics",
+    "png",
+] }

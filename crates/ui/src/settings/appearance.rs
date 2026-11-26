@@ -312,6 +312,7 @@ pub struct AppearancePage {
     code_font_list: widgets::PageScroll,
     size_select: widgets::SelectState,
     terminal_size_select: widgets::SelectState,
+    terminal_line_height_select: widgets::SelectState,
     code_size_select: widgets::SelectState,
     math_font_select: widgets::SelectState,
     math_size_select: widgets::SelectState,
@@ -698,6 +699,7 @@ impl AppearancePage {
             code_font_list: widgets::PageScroll::default(),
             size_select: widgets::SelectState::default(),
             terminal_size_select: widgets::SelectState::default(),
+            terminal_line_height_select: widgets::SelectState::default(),
             code_size_select: widgets::SelectState::default(),
             math_font_select: widgets::SelectState::default(),
             math_size_select: widgets::SelectState::default(),
@@ -3936,6 +3938,50 @@ impl Render for AppearancePage {
                     ),
             );
         }
+        // Shepherd parity: the terminal's row height is a multiple of its
+        // font size, not a fixed ratio.
+        let heights = crate::typography::TERMINAL_LINE_HEIGHTS;
+        let current = crate::settings::current(cx).terminal_line_height;
+        let line_height_control = widgets::select(
+            "terminal-line-height-dropdown",
+            "Line height",
+            &theme,
+            |page: &mut Self| &mut page.terminal_line_height_select,
+        )
+        .options(
+            heights
+                .into_iter()
+                .map(|h| widgets::SelectOption::new(format!("{h:.1}×"))),
+            heights
+                .into_iter()
+                .position(|h| (h - current).abs() < 0.05)
+                .unwrap_or(0),
+        )
+        .width(128.0)
+        .on_select(move |_, ix, _, cx| {
+            crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |settings| {
+                settings.terminal_line_height = heights[ix];
+            });
+            cx.notify();
+        })
+        .render(&self.terminal_line_height_select, cx);
+        font_rows = font_rows.child(
+            widgets::card_row(&theme, false)
+                .justify_between()
+                .child(
+                    div()
+                        .min_w(px(160.0))
+                        .flex_1()
+                        .child(widgets::row_title(&theme, "Terminal line height"))
+                        .child(widgets::meta_line(
+                            &theme,
+                            vec![div()
+                                .child("Row height as a multiple of the font size")
+                                .into_any_element()],
+                        )),
+                )
+                .child(line_height_control),
+        );
         font_rows = font_rows
             .child(self.render_transcript_width(&theme, window, cx))
             .children(self.render_math_rows(&theme, cx));

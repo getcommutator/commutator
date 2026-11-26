@@ -23,16 +23,15 @@ use std::time::Instant;
 
 use crate::theme::{Appearance, Theme, rgb_to_hsl};
 
-use super::emulator::{CellColor, CellSnapshot, CursorShape, Side};
+use super::emulator::{CellColor, CellSnapshot, CursorShape, ImagePlacement, Side};
 use super::panel::TerminalPanel;
 use super::sprite;
 
-/// Default terminal font metrics; the rendered values come from the theme.
+/// Default terminal font metrics; the rendered values come from the theme
+/// (size) and the settings (row height).
 pub const TERM_FONT_SIZE: f32 = 13.0;
+/// Fallback row height in px, before settings load.
 pub const TERM_LINE_HEIGHT: f32 = 18.0;
-/// Line height as a multiple of the font size, so a user-chosen size keeps the
-/// default's row rhythm.
-const TERM_LINE_HEIGHT_RATIO: f32 = TERM_LINE_HEIGHT / TERM_FONT_SIZE;
 /// Inner padding of the grid area.
 pub const TERM_PADDING: f32 = 2.0;
 
@@ -216,12 +215,26 @@ pub fn keystroke_bytes(
     mods: &Modifiers,
     app_cursor: bool,
 ) -> Option<Vec<u8>> {
-    // Platform-primary combos (Cmd on macOS, the super key elsewhere) belong to
-    // the app keymap, never the PTY.
+    // Platform-primary combos (Cmd on macOS, the super key elsewhere) belong
+    // to the app keymap, never the PTY — except Cmd+Backspace: delete to the
+    // line's start (Ctrl+U), and Cmd+Left/Right: to the line's start or end
+    // (Ctrl+A, Ctrl+E), as Terminal, iTerm2 and Ghostty do.
     if mods.platform {
-        return None;
+        return match key {
+            "backspace" => Some(vec![0x15]),
+            "left" => Some(vec![0x01]),
+            "right" => Some(vec![0x05]),
+            _ => None,
+        };
     }
     if mods.alt {
+        // Option+Left/Right: a word back or forward (ESC b, ESC f), which
+        // shells and readline know, as Ghostty sends.
+        match key {
+            "left" if !mods.shift && !mods.control => return Some(b"\x1bb".to_vec()),
+            "right" if !mods.shift && !mods.control => return Some(b"\x1bf".to_vec()),
+            _ => {}
+        }
         // ESC-prefix the same keystroke without alt.
         let inner = keystroke_bytes(
             key,
@@ -320,7 +333,11 @@ pub fn route_key(
     app_cursor: bool,
 ) -> KeyRoute {
     if mods.platform {
-        return KeyRoute::NotOurs;
+        // Cmd+Backspace and Cmd+Left/Right are the PTY's (see
+        // keystroke_bytes); every other platform-primary combo belongs to
+        // the app keymap.
+        return keystroke_bytes(key, key_char, mods, app_cursor)
+            .map_or(KeyRoute::NotOurs, KeyRoute::Bytes);
     }
     let printable = key_char.filter(|c| !c.is_empty() && !c.chars().any(char::is_control));
     if mods.alt && !mods.control {
@@ -394,6 +411,51 @@ fn control_bytes(key: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// Enter under the kitty keyboard protocol the program asked for (`flags`,
+/// from the emulator): with Shift, Ctrl or Option it is `CSI 13;<mods> u`,
+/// which the legacy `\r` has no room for (Claude Code's Shift+Enter newline);
+/// plain Enter too once the app asks for every key as an escape code. `None`:
+/// the legacy encoding.
+pub fn kitty_enter(key: &str, mods: &Modifiers, flags: u16) -> Option<Vec<u8>> {
+    const DISAMBIGUATE: u16 = 1;
+    const ALL_AS_ESCAPES: u16 = 8;
+    if key != "enter" || mods.platform || flags & DISAMBIGUATE == 0 {
+        return None;
+    }
+    let m = 1 + u8::from(mods.shift) + 2 * u8::from(mods.alt) + 4 * u8::from(mods.control);
+    match m {
+        1 if flags & ALL_AS_ESCAPES != 0 => Some(b"\x1b[13u".to_vec()),
+        1 => None,
+        m => Some(format!("\x1b[13;{m}u").into_bytes()),
+    }
+}
+
+/// What turns a click into opening a link: Cmd on macOS, Ctrl elsewhere.
+pub fn link_modifier(mods: &Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        mods.platform
+    } else {
+        mods.control
+    }
+}
+
+/// The terminal's own shortcuts (copy, paste, find): Cmd on macOS. Elsewhere
+/// Ctrl+Shift, as GNOME Terminal, kitty and Ghostty have it, since a
+/// terminal's Ctrl+letter belongs to the shell.
+pub fn app_shortcut(mods: &Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        mods.platform
+    } else {
+        mods.control && mods.shift && !mods.alt && !mods.platform
+    }
+}
+
+/// Cmd+Shift+G steps the search back on macOS; elsewhere Shift is part of
+/// the shortcut, so it only goes forward.
+pub fn search_back(mods: &Modifiers) -> bool {
+    cfg!(target_os = "macos") && mods.shift
+}
+
 /// Wrap pasted text for the PTY (bracketed-paste aware; strips the one control
 /// sequence a paste could inject).
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
@@ -406,6 +468,25 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
     } else {
         sanitized.into_bytes()
     }
+}
+
+/// Files dropped on a terminal, as text: each path shell-escaped with
+/// backslashes and space-separated, as Ghostty does, so a shell or an agent
+/// TUI (Claude Code picks up image paths) reads them whole.
+pub fn dropped_paths<P: AsRef<std::path::Path>>(paths: &[P]) -> String {
+    let escape = |p: &P| {
+        p.as_ref()
+            .to_string_lossy()
+            .chars()
+            .fold(String::new(), |mut out, c| {
+                if c.is_whitespace() || "\\'\"`$&|;<>()[]{}*?!#~".contains(c) {
+                    out.push('\\');
+                }
+                out.push(c);
+                out
+            })
+    };
+    paths.iter().map(escape).collect::<Vec<_>>().join(" ")
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +684,13 @@ pub struct TerminalPrepaint {
     /// Connected, rounded selection shapes, painted over backgrounds and
     /// under glyphs.
     selection: Vec<(gpui::Path<Pixels>, Hsla)>,
+    /// The open search's matches: every hit a soft wash, the stepped-to one
+    /// stronger.
+    marks: Vec<PaintQuad>,
+    /// Kitty graphics: images under the glyphs (negative layers) and over
+    /// them, painted around the text runs.
+    images_below: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
+    images_above: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
     /// Per row, its top edge and the shaped segments with the grid COLUMN
     /// each one starts at. Not one line per row: see [`shape_row`].
     lines: Vec<(Pixels, Vec<(usize, ShapedLine)>)>,
@@ -992,6 +1080,83 @@ struct CustomGlyphCache(HashMap<(char, u32, u32, u32, [u8; 4]), (Arc<RenderImage
 
 impl gpui::Global for CustomGlyphCache {}
 
+/// Uploaded Kitty graphics sprites, keyed by `(image id, pixels identity)`:
+/// a retransmitted image gets new pixels (a new identity), so it uploads
+/// once per generation.
+#[derive(Default)]
+struct ImageSpriteCache(HashMap<(u32, usize), Arc<RenderImage>>);
+
+impl gpui::Global for ImageSpriteCache {}
+
+/// The placements as paintable sprites, split by layer: negative z under the
+/// glyphs, the rest over them. A placement's rect is the cells its corner
+/// sits at stretched over the cells it occupies (the protocol's default
+/// scaling); the grid's content mask clips what runs past the edges.
+fn image_sprites(
+    placements: &[ImagePlacement],
+    origin: gpui::Point<Pixels>,
+    cell_w: Pixels,
+    line_h: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Vec<(Bounds<Pixels>, Arc<RenderImage>)>, Vec<(Bounds<Pixels>, Arc<RenderImage>)>) {
+    let mut below = Vec::new();
+    let mut above = Vec::new();
+    if placements.is_empty() {
+        return (below, above);
+    }
+    let cache = cx.default_global::<ImageSpriteCache>();
+    for placement in placements {
+        let key = (
+            placement.image_id,
+            Arc::as_ptr(&placement.pixels) as usize,
+        );
+        let image = match cache.0.get(&key) {
+            Some(image) => image.clone(),
+            None => {
+                // gpui's `RenderImage` takes BGRA; the storage holds RGBA.
+                let bgra: Vec<u8> = placement
+                    .pixels
+                    .rgba
+                    .chunks_exact(4)
+                    .flat_map(|px| [px[2], px[1], px[0], px[3]])
+                    .collect();
+                let Some(buffer) = image::RgbaImage::from_raw(
+                    placement.pixels.width,
+                    placement.pixels.height,
+                    bgra,
+                ) else {
+                    continue;
+                };
+                let image = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
+                if cache.0.len() >= 64 {
+                    for (_, old) in cache.0.drain() {
+                        let _ = window.drop_image(old);
+                    }
+                }
+                cache.0.insert(key, image.clone());
+                image
+            }
+        };
+        let rect = Bounds::new(
+            point(
+                origin.x + cell_w * placement.col as f32,
+                origin.y + line_h * placement.row as f32,
+            ),
+            size(
+                cell_w * placement.cols as f32,
+                line_h * placement.rows as f32,
+            ),
+        );
+        if placement.z < 0 {
+            below.push((rect, image));
+        } else {
+            above.push((rect, image));
+        }
+    }
+    (below, above)
+}
+
 impl gpui::IntoElement for TerminalElement {
     type Element = Self;
     fn into_element(self) -> Self {
@@ -1045,14 +1210,17 @@ impl gpui::Element for TerminalElement {
                 .collect(),
         ));
         // Font probe: measure the actual advance of the resolved mono font so
-        // cols/rows track real glyph metrics, not a guessed aspect ratio.
+        // cols/rows track real glyph metrics, not a guessed aspect ratio. The
+        // row height is the user's line-height multiple (Shepherd parity),
+        // falling back to the historic 18/13 rhythm before settings load.
+        let settings = crate::settings::current(cx);
+        let line_h = px(theme.terminal_font_size * settings.terminal_line_height);
         let font_size = px(theme.terminal_font_size);
         let font_id = window.text_system().resolve_font(&mono);
         let cell_w = window
             .text_system()
             .em_advance(font_id, font_size)
             .unwrap_or(px(theme.terminal_font_size * 0.6));
-        let line_h = px(theme.terminal_font_size * TERM_LINE_HEIGHT_RATIO);
 
         let inner_w = f32::from(bounds.size.width) - 2.0 * TERM_PADDING;
         let inner_h = f32::from(bounds.size.height) - 2.0 * TERM_PADDING;
@@ -1060,7 +1228,11 @@ impl gpui::Element for TerminalElement {
         let rows = ((inner_h / f32::from(line_h)).floor() as i64).clamp(1, 500) as u16;
 
         // Report the measured grid, then snapshot for painting. Safe: the
-        // panel entity is not borrowed during element prepaint.
+        // panel entity is not borrowed during element prepaint. The held
+        // output feeds HERE, as one advance, so this frame paints the state
+        // after every byte that arrived before it — a program's in-between
+        // cursor positions (vim's redraws walk the cursor all over the
+        // screen) never show.
         let origin = point(
             bounds.left() + px(TERM_PADDING),
             bounds.top() + px(TERM_PADDING),
@@ -1077,12 +1249,16 @@ impl gpui::Element for TerminalElement {
                 },
                 cx,
             );
+            panel.flush_active_output(cx);
             panel.active_grid_snapshot(cx)
         });
         let Some(snapshot) = snapshot else {
             return TerminalPrepaint {
                 bg_quads: Vec::new(),
                 selection: Vec::new(),
+                marks: Vec::new(),
+                images_below: Vec::new(),
+                images_above: Vec::new(),
                 lines: Vec::new(),
                 glyphs: Vec::new(),
                 decor: Vec::new(),
@@ -1199,6 +1375,31 @@ impl gpui::Element for TerminalElement {
             })
             .collect();
 
+        // The open search's matches, every hit washed and the current one
+        // stronger, under glyphs like the selection.
+        let marks = snapshot
+            .search_marks
+            .iter()
+            .filter(|&&(row, _, _)| row < row_count)
+            .map(|&(row, ref cells, current)| {
+                fill(
+                    Bounds::new(
+                        point(
+                            origin.x + cell_w * cells.start as f32,
+                            origin.y + line_h * row as f32,
+                        ),
+                        size(cell_w * (cells.end - cells.start) as f32, line_h),
+                    ),
+                    theme.warning.opacity(if current { 0.5 } else { 0.25 }),
+                )
+                .corner_radii(px(2.0))
+            })
+            .collect();
+
+        // Kitty graphics placements, split by layer around the glyphs.
+        let (images_below, images_above) =
+            image_sprites(&snapshot.images, origin, cell_w, line_h, window, cx);
+
         let cursor_cell = snapshot.cursor.filter(|_| snapshot.cursor_on).map(|c| {
             let cell = Bounds::new(
                 point(
@@ -1216,7 +1417,6 @@ impl gpui::Element for TerminalElement {
                 _ => cell,
             }
         });
-        let settings = crate::settings::current(cx);
         let mut trail = Vec::new();
         if self.focused
             && !cx.reduce_motion()
@@ -1301,6 +1501,9 @@ impl gpui::Element for TerminalElement {
         TerminalPrepaint {
             bg_quads,
             selection: selection_paths,
+            marks,
+            images_below,
+            images_above,
             lines,
             glyphs,
             decor,
@@ -1333,8 +1536,14 @@ impl gpui::Element for TerminalElement {
             for quad in prepaint.bg_quads.drain(..) {
                 window.paint_quad(quad);
             }
+            for (rect, image) in prepaint.images_below.drain(..) {
+                let _ = window.paint_image(rect, Default::default(), image, 0, false);
+            }
             for (path, color) in prepaint.selection.drain(..) {
                 window.paint_path(path, color);
+            }
+            for quad in prepaint.marks.drain(..) {
+                window.paint_quad(quad);
             }
             for (path, color) in prepaint.trail.drain(..) {
                 window.paint_path(path, color);
@@ -1371,6 +1580,9 @@ impl gpui::Element for TerminalElement {
                 for quad in decor_quads(decor, cell) {
                     window.paint_quad(fill(quad, decor.color));
                 }
+            }
+            for (rect, image) in prepaint.images_above.drain(..) {
+                let _ = window.paint_image(rect, Default::default(), image, 0, false);
             }
             if let Some(cursor) = prepaint.cursor.take() {
                 window.paint_quad(cursor);
@@ -1676,6 +1888,37 @@ mod tests {
     }
 
     #[test]
+    fn dropped_paths_are_escaped_and_joined() {
+        assert_eq!(
+            dropped_paths(&["/tmp/a.png", "/Users/me/My Shot (1).png"]),
+            r"/tmp/a.png /Users/me/My\ Shot\ \(1\).png"
+        );
+    }
+
+    #[test]
+    fn enter_with_modifiers_under_kitty_keyboard() {
+        let shift = Modifiers {
+            shift: true,
+            ..mods()
+        };
+        let ctrl = Modifiers {
+            control: true,
+            ..mods()
+        };
+        let opt = Modifiers {
+            alt: true,
+            ..mods()
+        };
+        assert_eq!(kitty_enter("enter", &shift, 1), Some(b"\x1b[13;2u".to_vec()));
+        assert_eq!(kitty_enter("enter", &ctrl, 1), Some(b"\x1b[13;5u".to_vec()));
+        assert_eq!(kitty_enter("enter", &mods(), 1), None);
+        assert_eq!(kitty_enter("enter", &mods(), 1 | 8), Some(b"\x1b[13u".to_vec()));
+        assert_eq!(kitty_enter("enter", &opt, 1), Some(b"\x1b[13;3u".to_vec()));
+        assert_eq!(kitty_enter("enter", &shift, 0), None, "no kitty protocol: legacy \\r");
+        assert_eq!(kitty_enter("a", &shift, 1), None);
+    }
+
+    #[test]
     fn printables_prefer_key_char() {
         assert_eq!(
             keystroke_bytes("a", Some("a"), &mods(), false),
@@ -1821,6 +2064,25 @@ mod tests {
         };
         assert_eq!(keystroke_bytes("j", Some("j"), &cmd, false), None);
         assert_eq!(keystroke_bytes("enter", None, &cmd, false), None);
+        // Cmd+Backspace deletes to the line's start; Cmd+Left/Right jump to
+        // its ends — the platform-primary exceptions, as Shepherd sends.
+        assert_eq!(
+            keystroke_bytes("backspace", None, &cmd, false),
+            Some(vec![0x15])
+        );
+        assert_eq!(keystroke_bytes("left", None, &cmd, false), Some(vec![0x01]));
+        assert_eq!(
+            keystroke_bytes("right", None, &cmd, false),
+            Some(vec![0x05])
+        );
+        assert_eq!(
+            route_key("backspace", None, &cmd, false),
+            KeyRoute::Bytes(vec![0x15])
+        );
+        assert_eq!(
+            route_key("left", None, &cmd, false),
+            KeyRoute::Bytes(vec![0x01])
+        );
     }
 
     #[test]
@@ -1882,10 +2144,19 @@ mod tests {
         );
         // German layout: Option-L types `@`, which is what the user meant.
         assert_eq!(route_key("l", Some("@"), &alt, false), KeyRoute::Text);
-        // Named keys keep their Meta prefix.
+        // Option+arrows move by words (ESC b/ESC f), as Ghostty sends.
         assert_eq!(
             route_key("left", None, &alt, false),
-            KeyRoute::Bytes(b"\x1b\x1b[D".to_vec())
+            KeyRoute::Bytes(b"\x1bb".to_vec())
+        );
+        assert_eq!(
+            route_key("right", None, &alt, false),
+            KeyRoute::Bytes(b"\x1bf".to_vec())
+        );
+        // Other named keys keep their Meta prefix.
+        assert_eq!(
+            route_key("up", None, &alt, false),
+            KeyRoute::Bytes(b"\x1b\x1b[A".to_vec())
         );
     }
 

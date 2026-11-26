@@ -21,8 +21,12 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use ghostty_vt::kitty::graphics::{
+    ImageFormat, PlacementIterator, RustPngDecoder, set_png_decoder,
+};
 use ghostty_vt::render::{CellIterator, CursorVisualStyle, Dirty, RowIterator};
 use ghostty_vt::screen::{CellContentTag, CellWide, GridRef, Screen};
+use ghostty_vt::search::Search;
 use ghostty_vt::selection::{
     FormatOptions, SelectLineOptions, SelectWordBetweenOptions, Selection,
 };
@@ -182,10 +186,44 @@ pub struct Emulator {
     bell: bool,
     /// Fed a program's own bytes rather than herdr's frames ([`Self::raw`]).
     raw: bool,
+    /// The open scrollback search, when Cmd+F is looking for something.
+    search: RefCell<Option<Search>>,
+    /// Decoded Kitty image pixels, cached by `(image id, generation)`: the
+    /// storage's borrow ends at the next `vt_write`, so pixels are copied
+    /// once per generation, not once per frame.
+    images: RefCell<std::collections::HashMap<(u32, u64), std::sync::Arc<ImagePixels>>>,
 }
 
 /// Ghostty's default scrollback cap (bytes, an estimate): far more than the lines either backend hands over.
 const SCROLLBACK: usize = 10_000_000;
+
+/// Kitty graphics storage cap: generous, but bounded.
+const KITTY_STORAGE: u64 = 256 * 1024 * 1024;
+/// How many decoded images stay cached past their last placement.
+const IMAGE_CACHE_MAX: usize = 16;
+
+/// Decoded Kitty image pixels, normalized to RGBA8.
+pub struct ImagePixels {
+    pub width: u32,
+    pub height: u32,
+    /// RGBA8, row-major.
+    pub rgba: Vec<u8>,
+}
+
+/// One Kitty graphics placement in the viewport, ready to paint: the cells
+/// its top-left corner sits at and occupies, and its pixels.
+pub struct ImagePlacement {
+    pub image_id: u32,
+    /// Negative layers paint under the glyphs, the rest over them.
+    pub z: i32,
+    /// Viewport cell of the placement's top-left corner; negative rows are
+    /// scrolled past the top edge.
+    pub col: i32,
+    pub row: i32,
+    pub cols: u32,
+    pub rows: u32,
+    pub pixels: std::sync::Arc<ImagePixels>,
+}
 
 impl Emulator {
     pub fn new(cols: u16, rows: u16) -> Self {
@@ -230,6 +268,19 @@ impl Emulator {
         // (Ghostty's own built-in default is a steady block).
         term.set_default_cursor_blink(Some(true))
             .expect("libghostty-vt default cursor blink");
+        // Kitty graphics: enable the storage (a zero limit would keep the
+        // protocol off), its file-loading mediums, and the PNG decoder the
+        // storage needs for PNG-transmitted images.
+        term.set_kitty_image_storage_limit(KITTY_STORAGE)
+            .expect("libghostty-vt kitty storage limit");
+        // The file-loading mediums are an optimization (`kitty icat
+        // --transfer-mode=file`); this build may not support them, and the
+        // base64 and PNG paths work either way.
+        let _ = term.set_kitty_image_from_file_allowed(true);
+        let _ = term.set_kitty_image_from_temp_file_allowed(true);
+        let _ = term.set_kitty_image_from_shared_mem_allowed(true);
+        set_png_decoder(Some(Box::new(RustPngDecoder::new())))
+            .expect("libghostty-vt png decoder");
         let render = Render {
             state: RenderState::new().expect("libghostty-vt render state"),
             rows: RowIterator::new().expect("libghostty-vt row iterator"),
@@ -242,6 +293,8 @@ impl Emulator {
             anchor: None,
             bell: false,
             raw: false,
+            search: RefCell::new(None),
+            images: RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -798,6 +851,235 @@ impl Emulator {
             .is_some_and(|r| r.is_wrapped().unwrap_or(false))
     }
 
+    /// The shell's working directory as it last reported (OSC 7), for
+    /// resolving a link's relative paths. `None` until the shell says.
+    pub fn pwd(&self) -> Option<String> {
+        self.term
+            .pwd()
+            .ok()
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+    }
+
+    // ---- scrollback search ----
+
+    /// Start (or restart) the scrollback search for `needle`; `None` or an
+    /// empty one clears it. A needle change runs the whole search — the grid
+    /// is local — and steps to the newest match, so the first Enter moves
+    /// from somewhere sensible.
+    pub fn search_set(&self, needle: Option<&str>) {
+        let mut slot = self.search.borrow_mut();
+        match needle.filter(|n| !n.is_empty()) {
+            None => *slot = None,
+            Some(needle) => {
+                let search = slot
+                    .get_or_insert_with(|| Search::new(&self.term).expect("libghostty-vt search"));
+                let _ = search.set_needle(&self.term, Some(needle));
+                let _ = search.run(&self.term);
+                // From nothing, a step lands on the wrap-around match;
+                // select_next wraps to the NEWEST, which is where a fresh
+                // query should start.
+                let _ = search.select_next(&self.term);
+            }
+        }
+    }
+
+    /// Step to the next match — older content for `older`, newer otherwise —
+    /// scrolling it into view when it is off screen. False when there is
+    /// nothing to step to.
+    pub fn search_step(&self, older: bool) -> bool {
+        let mut slot = self.search.borrow_mut();
+        let Some(search) = slot.as_mut() else {
+            return false;
+        };
+        let _ = search.feed(&self.term);
+        if older {
+            search.select_next(&self.term).unwrap_or(false)
+        } else {
+            search.select_prev(&self.term).unwrap_or(false)
+        }
+    }
+
+    /// The search's tally for its counter: `(total, current-from-newest)`.
+    /// `None` when no search is open; a current of `None` before the first
+    /// step.
+    pub fn search_count(&self) -> Option<(usize, Option<usize>)> {
+        let slot = self.search.borrow();
+        let search = slot.as_ref()?;
+        Some((
+            search.total_matches().ok()?,
+            search.selected_index().ok().flatten(),
+        ))
+    }
+
+    /// The search's matches on the viewport's pages, as `(row, cells,
+    /// current)` spans for painting: a match a soft wrap cut across rows is
+    /// one span per row; the stepped-to match is `current`.
+    pub fn search_marks(&self) -> Vec<(usize, std::ops::Range<usize>, bool)> {
+        let mut slot = self.search.borrow_mut();
+        let Some(search) = slot.as_mut() else {
+            return Vec::new();
+        };
+        let _ = search.feed(&self.term);
+        let matches = search.viewport_matches(&self.term).unwrap_or_default();
+        // The current match, matched by its screen coordinates: viewport
+        // coordinates do not exist for a match that just scrolled off.
+        let current = search
+            .selected_match(&self.term)
+            .ok()
+            .flatten()
+            .and_then(|selected| self.selection_key(&selected));
+        let cols = self.cols() as u32;
+        let mut marks = Vec::new();
+        for hit in &matches {
+            let now = self.selection_key(hit).is_some_and(|key| Some(key) == current);
+            let (Some(start), Some(end)) = (
+                self.term
+                    .point_from_grid_ref(&hit.start(), PointSpace::Viewport)
+                    .ok()
+                    .flatten(),
+                self.term
+                    .point_from_grid_ref(&hit.end(), PointSpace::Viewport)
+                    .ok()
+                    .flatten(),
+            ) else {
+                continue;
+            };
+            // A match runs top-left to bottom-right; order defensively anyway.
+            let ((top, left), (bottom, right)) = if (start.y, start.x) <= (end.y, end.x) {
+                ((start.y, start.x as u32), (end.y, end.x as u32))
+            } else {
+                ((end.y, end.x as u32), (start.y, start.x as u32))
+            };
+            for row in top..=bottom {
+                let range = if row == top && row == bottom {
+                    left..right + 1
+                } else if row == top {
+                    left..cols
+                } else if row == bottom {
+                    0..right + 1
+                } else {
+                    0..cols
+                };
+                let range = range.start.min(cols)..range.end.min(cols);
+                if range.start < range.end {
+                    marks.push((row as usize, range.start as usize..range.end as usize, now));
+                }
+            }
+        }
+        marks
+    }
+
+    /// A selection's ends in screen coordinates, to compare two selections by.
+    fn selection_key(&self, selection: &Selection<'_>) -> Option<(u32, u16, u32, u16)> {
+        let start = self
+            .term
+            .point_from_grid_ref(&selection.start(), PointSpace::Screen)
+            .ok()??;
+        let end = self
+            .term
+            .point_from_grid_ref(&selection.end(), PointSpace::Screen)
+            .ok()??;
+        Some((start.y, start.x, end.y, end.x))
+    }
+
+    // ---- kitty graphics ----
+
+    /// The Kitty graphics placements currently in the viewport, for
+    /// painting: every visible one, its viewport cell, and its decoded
+    /// pixels. Pixels are cached by `(image id, generation)`, so a frame
+    /// after the first copies nothing.
+    pub fn image_placements(&self) -> Vec<ImagePlacement> {
+        let mut out: Vec<ImagePlacement> = Vec::new();
+        let Ok(graphics) = self.term.kitty_graphics() else {
+            return out;
+        };
+        let mut iterator = match PlacementIterator::new() {
+            Ok(iterator) => iterator,
+            Err(_) => return out,
+        };
+        let mut iter = match iterator.update(&graphics) {
+            Ok(iter) => iter,
+            Err(_) => return out,
+        };
+        while let Some(placement) = iter.next() {
+            let (Ok(image_id), Ok(z), Ok(is_virtual)) =
+                (placement.image_id(), placement.z(), placement.is_virtual())
+            else {
+                continue;
+            };
+            if is_virtual {
+                continue;
+            }
+            let Some(image) = graphics.image(image_id) else {
+                continue;
+            };
+            let (Ok(generation), Ok(width), Ok(height), Ok(format)) = (
+                image.generation(),
+                image.width(),
+                image.height(),
+                image.format(),
+            ) else {
+                continue;
+            };
+            let Ok(info) = placement.placement_render_info(&image, &self.term) else {
+                continue;
+            };
+            if !info.viewport_visible {
+                continue;
+            }
+            let pixels = {
+                let mut cache = self.images.borrow_mut();
+                if let Some(cached) = cache.get(&(image_id, generation)) {
+                    cached.clone()
+                } else {
+                    let Ok(data) = image.data() else { continue };
+                    let rgba = match format {
+                        ImageFormat::Rgba => data.to_vec(),
+                        ImageFormat::Rgb => data
+                            .chunks_exact(3)
+                            .flat_map(|px| [px[0], px[1], px[2], 255])
+                            .collect(),
+                        ImageFormat::Gray => {
+                            data.iter().flat_map(|&g| [g, g, g, 255]).collect()
+                        }
+                        ImageFormat::GrayAlpha => data
+                            .chunks_exact(2)
+                            .flat_map(|px| [px[0], px[0], px[0], px[1]])
+                            .collect(),
+                        // The storage decodes PNG before storing; anything
+                        // else is not a format we can paint.
+                        _ => continue,
+                    };
+                    let pixels = std::sync::Arc::new(ImagePixels { width, height, rgba });
+                    cache.insert((image_id, generation), pixels.clone());
+                    pixels
+                }
+            };
+            out.push(ImagePlacement {
+                image_id,
+                z,
+                col: info.viewport_col,
+                row: info.viewport_row,
+                cols: info.grid_cols,
+                rows: info.grid_rows,
+                pixels,
+            });
+        }
+        // Keep the cache from outliving the images it holds: drop entries
+        // no live placement references once it grows past its cap.
+        {
+            let mut cache = self.images.borrow_mut();
+            if cache.len() > IMAGE_CACHE_MAX {
+                cache.retain(|_, cached| {
+                    out.iter()
+                        .any(|p| std::sync::Arc::ptr_eq(&p.pixels, cached))
+                });
+            }
+        }
+        out
+    }
+
     /// The OSC 8 hyperlink at a viewport cell: the cells around it with the same URI, a range per row and top first,
     /// on into the rows a soft wrap joins it to; and the URI.
     pub fn hyperlink_at(
@@ -995,6 +1277,58 @@ mod tests {
         // DECSCUSR 0 resets to the default Commutator configured: a blinking block.
         e.feed(b"\x1b[0 q");
         assert_eq!(e.cursor_style(), (CursorShape::Block, true));
+    }
+
+    #[test]
+    fn kitty_graphics_place_and_render() {
+        let mut e = emu(10, 4);
+        // A 2×1 RGBA image (a red then a green pixel), transmitted and
+        // displayed at the cursor (`a=T`, the default action): two cells
+        // wide, one row tall. Base64 of FF 00 00 FF 00 FF 00 FF.
+        e.feed(b"\x1b_Gf=32,s=2,v=1,a=T,c=2,r=1;/wAA/wD/AP8=\x1b\\");
+        let placements = e.image_placements();
+        assert_eq!(placements.len(), 1);
+        let p = &placements[0];
+        assert_eq!((p.col, p.row, p.cols, p.rows), (0, 0, 2, 1));
+        assert_eq!(p.pixels.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+        assert_eq!((p.pixels.width, p.pixels.height), (2, 1));
+        // The second read is served from the pixel cache (same Arc).
+        let again = e.image_placements();
+        assert!(std::sync::Arc::ptr_eq(&again[0].pixels, &p.pixels));
+        // Scrolling the image off the screen removes it from the viewport.
+        e.feed(b"\r\n\r\n\r\n\r\n");
+        assert!(e.image_placements().is_empty());
+    }
+
+    #[test]
+    fn search_steps_marks_and_counts() {
+        // Two rows of history above a two-row screen; "alpha" three times.
+        let mut e = emu(20, 2);
+        e.feed(b"alpha beta\r\nalpha gamma\r\nalpha again\r\n");
+        assert_eq!(e.history_lines(), 2);
+        e.search_set(Some("alpha"));
+        // Setting the needle selects the newest match, on screen at row 0
+        // (the empty last line pushed "alpha gamma" into history).
+        assert_eq!(e.search_count(), Some((3, Some(0))));
+        let marks = e.search_marks();
+        assert_eq!(marks, vec![(0, 0..5, true)]);
+        // Stepping older walks into history; the match scrolls into view.
+        assert!(e.search_step(true));
+        assert_eq!(e.search_count(), Some((3, Some(1))));
+        assert!(e.display_offset() > 0);
+        assert!(e.search_step(true));
+        assert_eq!(e.search_count(), Some((3, Some(2))));
+        // Wraps back to the newest.
+        assert!(e.search_step(true));
+        assert_eq!(e.search_count(), Some((3, Some(0))));
+        // Stepping newer wraps the other way.
+        assert!(e.search_step(false));
+        assert_eq!(e.search_count(), Some((3, Some(2))));
+        // Clearing drops the search.
+        e.search_set(None);
+        assert_eq!(e.search_count(), None);
+        assert!(e.search_marks().is_empty());
+        assert!(!e.search_step(true));
     }
 
     #[test]

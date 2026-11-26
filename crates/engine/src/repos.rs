@@ -77,6 +77,22 @@ const NOUNS: &[&str] = &[
     "onyx", "quartz", "raven", "summit", "willow", "aspen",
 ];
 
+/// A fresh adjective-noun name, as `create_named_worktree` rolls when asked
+/// for none: the Create worktree dialog's pre-filled, selected suggestion.
+/// The host still re-checks it on submit, and generates its own once the
+/// field is emptied.
+pub fn suggested_worktree_name() -> String {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    format!(
+        "{}-{}",
+        ADJECTIVES[(seed % ADJECTIVES.len() as u64) as usize],
+        NOUNS[((seed / 31) % NOUNS.len() as u64) as usize]
+    )
+}
+
 /// Canonical identity shared by every chat operating in this exact worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutIdentity {
@@ -2711,6 +2727,13 @@ fn windows_git_worktree_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_suggested_name_is_a_valid_worktree_name() {
+        let name = super::suggested_worktree_name();
+        assert!(super::valid_worktree_name(&name), "{name}");
+        assert_eq!(name.split('-').count(), 2, "{name}");
+    }
+
     #[test]
     fn git_worktree_paths_strip_only_drive_and_unc_verbatim_prefixes() {
         for (native, expected) in [

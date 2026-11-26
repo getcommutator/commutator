@@ -868,15 +868,16 @@ async fn pump_output(
         true
     };
 
-    // Output that follows a quiet spell (a keystroke's echo) goes out the
-    // moment it is read; only a continuous stream waits out the pacing
-    // interval. Idle terminals need no timer.
+    // The first byte of a burst waits out a quiet gap before it leaves: a
+    // program's redraw is many small writes (vim's filetree emits dozens per
+    // keystroke), and one event carries the whole update — the viewer paints
+    // the redraw's END state, never a fragment's mid-cursor. Continuous
+    // streams pace at the same interval, so throughput is unchanged.
     let flush = tokio::time::sleep(batch);
     tokio::pin!(flush);
     let mut buffer = Vec::new();
     let mut raw_open = true;
     let mut exit_code = None;
-    let mut last_emit = tokio::time::Instant::now() - batch;
 
     while raw_open || exit_code.is_none() {
         tokio::select! {
@@ -888,14 +889,10 @@ async fn pump_output(
                     while let Ok(more) = raw_rx.try_recv() {
                         buffer.extend_from_slice(&more);
                     }
-                    let now = tokio::time::Instant::now();
-                    if now >= last_emit + batch {
-                        last_emit = now;
-                        if !emit(std::mem::take(&mut buffer)) {
-                            return;
-                        }
-                    } else if was_empty {
-                        flush.as_mut().reset(last_emit + batch);
+                    if was_empty {
+                        flush
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + batch);
                     }
                 },
                 None => raw_open = false,
@@ -936,10 +933,14 @@ async fn pump_output(
                 }
             }
             _ = &mut flush, if !buffer.is_empty() => {
-                last_emit = tokio::time::Instant::now();
                 if !emit(std::mem::take(&mut buffer)) {
                     return;
                 }
+                // Keep the pace even mid-stream: the next event is at least
+                // one interval out.
+                flush
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + batch);
             }
         }
     }

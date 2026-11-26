@@ -129,6 +129,14 @@ pub const fn ui_rems(pixels_at_default: f32) -> Rems {
 
 pub const CODE_FONT_SIZE_DEFAULT: f32 = 12.5;
 pub const TERMINAL_FONT_SIZE_DEFAULT: f32 = 13.0;
+/// Terminal row height as a multiple of the font size — the historic 18 px at
+/// 13 px, now a setting (Shepherd exposes the same knob, default 1.2).
+pub const TERMINAL_LINE_HEIGHT_DEFAULT: f32 = 18.0 / 13.0;
+/// The setting's bounds, in multiples of the font size.
+pub const TERMINAL_LINE_HEIGHT_MIN: f32 = 1.0;
+pub const TERMINAL_LINE_HEIGHT_MAX: f32 = 2.0;
+/// The ladder the picker offers, in 0.1 steps.
+pub const TERMINAL_LINE_HEIGHTS: [f32; 11] = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
 pub const FONT_SIZE_MIN: f32 = 8.0;
 pub const FONT_SIZE_MAX: f32 = 32.0;
 

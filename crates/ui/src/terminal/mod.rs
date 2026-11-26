@@ -10,13 +10,16 @@
 //! - [`predict`] — local echo prediction for terminals on other devices
 //!   (`commutator-term` too);
 //! - [`panel`] — session-scoped tabs, subscriptions with reconnect backoff,
-//!   drag-reorder, and the Cmd/Ctrl+J toggle action.
+//!   drag-reorder, and the Cmd/Ctrl+J toggle action;
+//! - [`find`] — links in terminal rows (URLs, `path:line:col`) and search
+//!   hits, pure char-range logic.
 //!
 //! Method names come from `commutator_rpc::methods` and wire types from
 //! `commutator_proto` (`TerminalSession`, `TerminalEvent`) — the same contract the
 //! engine serves (feature-inventory §2.1).
 
 pub(crate) mod dock;
+pub(crate) mod find;
 pub mod panel;
 pub mod sprite;
 pub mod view;

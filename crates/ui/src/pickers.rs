@@ -103,6 +103,12 @@ pub struct DraftConfig {
     pub branch: Option<String>,
     /// Where the new session runs (the t3code env-mode).
     pub checkout: CheckoutKind,
+    /// The picked worktree's own folder, when the session reuses it
+    /// ("Current worktree"). Carried with the pick (the sidebar's and the
+    /// host's rows know it), so the plan holds even while this space's refs
+    /// load — without it the send degraded to the space's folder and the
+    /// chat ran in the main checkout.
+    pub reuse_path: Option<String>,
 }
 
 /// Where a new session runs (t3code's env-mode: `local | worktree`). "Current
@@ -769,10 +775,10 @@ pub struct Pickers {
     draft_owner: Option<String>,
     /// Space the branch draft/cache belong to (see the state observer).
     space_owner: Option<String>,
-    /// (space, branch) of an existing worktree the next new chat in that
-    /// space runs in — set from the Projects sidebar, applied once the space
-    /// switch has dropped the old branch draft.
-    pending_worktree: Option<(String, String)>,
+    /// (space, branch, path) of an existing worktree the next new chat in
+    /// that space runs in — set from the Projects sidebar, applied once the
+    /// space switch has dropped the old branch draft.
+    pending_worktree: Option<(String, String, String)>,
     device_owner: Option<String>,
     /// The device whose harness/model catalogs are loaded (see
     /// [`Self::catalog_device`]).
@@ -986,13 +992,14 @@ impl Pickers {
                 this.refs_task = None;
                 this.config.branch = None;
                 this.config.checkout = CheckoutKind::default();
+                this.config.reuse_path = None;
                 this.refs = Loadable::Idle;
                 this.refs_space = None;
             }
-            if this.pending_worktree.as_ref().map(|(space, _)| space) == this.space_owner.as_ref() {
-                if let Some((_, branch)) = this.pending_worktree.take() {
-                    this.use_worktree_branch(branch);
-                }
+            if let Some((_, branch, path)) = this.pending_worktree.take_if(|(space, _, _)| {
+                this.space_owner.as_deref() == Some(space.as_str())
+            }) {
+                this.use_worktree_branch(branch, Some(path));
             }
             // Catalogs are per-DEVICE (fetched from the host that runs the
             // agents), so a project switch on the same device keeps them. A
@@ -1969,19 +1976,28 @@ impl Pickers {
     // ---- selections ----
 
     /// Runs the next new chat in `space` in the existing worktree that has
-    /// `branch` checked out ("Current worktree"), as picking that ref would.
-    pub fn use_worktree(&mut self, space: String, branch: String, cx: &mut Context<Self>) {
+    /// `branch` checked out at `path` ("Current worktree"), as picking that
+    /// ref would. The path rides along: the plan must hold even while the
+    /// space's refs load.
+    pub fn use_worktree(
+        &mut self,
+        space: String,
+        branch: String,
+        path: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.space_owner.as_deref() == Some(space.as_str()) {
-            self.use_worktree_branch(branch);
+            self.use_worktree_branch(branch, Some(path));
             cx.notify();
         } else {
-            self.pending_worktree = Some((space, branch));
+            self.pending_worktree = Some((space, branch, path));
         }
     }
 
-    fn use_worktree_branch(&mut self, branch: String) {
+    fn use_worktree_branch(&mut self, branch: String, path: Option<String>) {
         self.config.branch = Some(branch);
         self.config.checkout = CheckoutKind::Local;
+        self.config.reuse_path = path;
     }
 
     fn pick_ref(&mut self, row: RepoRef, cx: &mut Context<Self>) {
@@ -1994,10 +2010,11 @@ impl Pickers {
         if row.worktree_path.is_some() {
             // Reuse the ref's existing worktree ("Current worktree") — the
             // t3code `reuseExistingWorktree` path.
-            self.use_worktree_branch(row.name.clone());
+            self.use_worktree_branch(row.name.clone(), row.worktree_path.clone());
         } else if self.config.checkout == CheckoutKind::NewWorktree || row.current {
             // Base pick for a new worktree, or the already-current ref.
             self.config.branch = Some(row.name.clone());
+            self.config.reuse_path = None;
         } else {
             // Local mode + a plain non-current ref: CHECK OUT the space
             // folder (full t3code `switchRef` — picking `main` means "put my
@@ -2051,6 +2068,7 @@ impl Pickers {
                 match result {
                     Ok(_) => {
                         pickers.config.branch = Some(ref_name);
+                        pickers.config.reuse_path = None;
                         pickers.animate_close(cx);
                         pickers.ensure_refs(true, cx);
                     }
@@ -2064,6 +2082,11 @@ impl Pickers {
     }
 
     fn pick_checkout(&mut self, kind: CheckoutKind, cx: &mut Context<Self>) {
+        // A picked worktree fixes the checkout — the session runs in its own
+        // folder, and that is not a mode choice until another ref is picked.
+        if self.config.reuse_path.is_some() {
+            return;
+        }
         if kind == CheckoutKind::Local
             && self.config.checkout == CheckoutKind::NewWorktree
             && self.selected_ref_worktree().is_none()
@@ -2596,7 +2619,7 @@ impl Pickers {
 
     /// The checkout menu's rows: this folder or a new worktree.
     fn checkout_options(&self, _cx: &App) -> Vec<(CheckoutKind, &'static str, &'static str)> {
-        let (local_label, local_icon) = if self.selected_ref_worktree().is_some() {
+        let (local_label, local_icon) = if self.worktree_picked() {
             ("Current worktree", crate::icons::WORKTREE)
         } else {
             ("Current checkout", crate::icons::FOLDER)
@@ -2623,15 +2646,26 @@ impl Pickers {
             CheckoutKind::NewWorktree => CheckoutPlan::NewWorktree {
                 base: self.effective_ref_name(),
             },
-            CheckoutKind::Local => match self.selected_ref_worktree() {
-                Some(path) => CheckoutPlan::ReuseWorktree {
-                    path,
-                    branch: self.effective_ref_name().unwrap_or_default(),
-                },
-                None => CheckoutPlan::CurrentCheckout {
-                    branch: self.effective_ref_name(),
-                },
-            },
+            CheckoutKind::Local => {
+                // The picked worktree's own path — carried with the pick —
+                // holds even while refs load; the row lookup alone degraded
+                // the plan to the space's folder and the chat ran in the
+                // main checkout.
+                match self
+                    .config
+                    .reuse_path
+                    .clone()
+                    .or_else(|| self.selected_ref_worktree())
+                {
+                    Some(path) => CheckoutPlan::ReuseWorktree {
+                        path,
+                        branch: self.effective_ref_name().unwrap_or_default(),
+                    },
+                    None => CheckoutPlan::CurrentCheckout {
+                        branch: self.effective_ref_name(),
+                    },
+                }
+            }
         }
     }
 
@@ -2641,13 +2675,22 @@ impl Pickers {
         match self.config.checkout {
             CheckoutKind::NewWorktree => "New worktree",
             CheckoutKind::Local => {
-                if self.display_ref_is_worktree() {
+                if self.worktree_picked() {
                     "Current worktree"
                 } else {
                     "Current checkout"
                 }
             }
         }
+    }
+
+    /// A worktree is in effect: its path was picked with the branch (the
+    /// sidebar's or the host's row), or the picked ref is one the loaded refs
+    /// materialize.
+    fn worktree_picked(&self) -> bool {
+        self.config.reuse_path.is_some()
+            || self.display_ref_is_worktree()
+            || self.selected_ref_worktree().is_some()
     }
 
     /// Label of the ref trigger: `From <ref>` only when a NEW worktree will be
@@ -3831,15 +3874,31 @@ impl Pickers {
             (CheckoutKind::Local, false) => crate::icons::FOLDER,
             _ => crate::icons::WORKTREE,
         };
-        let checkout_chip = Some({
-            self.footer_chip(
-                PickerKind::Checkout,
-                "picker-checkout",
+        let checkout_chip: Option<AnyElement> = Some(if self.worktree_picked() {
+            // A picked worktree fixes the checkout — the chip states it,
+            // no menu (the ref pick decides, and another ref re-enables it).
+            Self::footer_label(
                 kind_icon,
                 SharedString::from(self.checkout_label()),
                 &theme,
-                cx,
             )
+            .into_any_element()
+        } else {
+            attach_overlay_below(
+                self.footer_chip(
+                    PickerKind::Checkout,
+                    "picker-checkout",
+                    kind_icon,
+                    SharedString::from(self.checkout_label()),
+                    &theme,
+                    cx,
+                ),
+                &mut overlay,
+                PickerKind::Checkout,
+                "checkout-popover",
+                closing,
+            )
+            .into_any_element()
         });
         let branch_chip = self.footer_chip(
             PickerKind::Branch,
@@ -3858,15 +3917,7 @@ impl Pickers {
                     "branch-popover",
                     closing,
                 ))
-                .children(checkout_chip.map(|chip| {
-                    attach_overlay_below(
-                        chip,
-                        &mut overlay,
-                        PickerKind::Checkout,
-                        "checkout-popover",
-                        closing,
-                    )
-                }))
+                .children(checkout_chip)
                 .into_any_element(),
         )
     }
@@ -4001,14 +4052,32 @@ impl Pickers {
             (CheckoutKind::Local, false) => crate::icons::FOLDER,
             _ => crate::icons::WORKTREE,
         };
-        let kind_chip = self.footer_chip(
-            PickerKind::Checkout,
-            "picker-checkout",
-            kind_icon,
-            SharedString::from(self.checkout_label()),
-            &theme,
-            cx,
-        );
+        // A picked worktree fixes the checkout — the chip states it, no menu
+        // (the ref pick decides, and another ref re-enables it).
+        let kind_chip: AnyElement = if self.worktree_picked() {
+            Self::footer_label(
+                kind_icon,
+                SharedString::from(self.checkout_label()),
+                &theme,
+            )
+            .into_any_element()
+        } else {
+            attach_overlay(
+                self.footer_chip(
+                    PickerKind::Checkout,
+                    "picker-checkout",
+                    kind_icon,
+                    SharedString::from(self.checkout_label()),
+                    &theme,
+                    cx,
+                ),
+                &mut overlay,
+                PickerKind::Checkout,
+                "checkout-popover",
+                closing,
+            )
+            .into_any_element()
+        };
         // Match the floating draft's adjacent checkout/ref pair, including
         // while the newly created session is waiting for its workspace row.
         let left = div()
@@ -4016,13 +4085,7 @@ impl Pickers {
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay(
-                kind_chip,
-                &mut overlay,
-                PickerKind::Checkout,
-                "checkout-popover",
-                closing,
-            ));
+            .child(kind_chip);
         let right = div()
             .flex()
             .flex_row()
@@ -7853,6 +7916,60 @@ mod tests {
             pickers.held_ref = None; // as the refs load does on landing
             assert_eq!(pickers.ref_label(), SharedString::from("trunk"));
             assert_eq!(pickers.checkout_label(), "Current checkout");
+        });
+    }
+
+    #[gpui::test]
+    fn a_sidebar_worktree_pick_runs_there_even_before_refs_land(cx: &mut gpui::TestAppContext) {
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.local_device_id = Some("local".into());
+            state.apply_spaces(vec![git_space("a", "local")]);
+            state
+        });
+        let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
+        // The sidebar's pick happens before the space's canvas opens: it is
+        // parked, then applied by the space switch — with the worktree's own
+        // path, while its refs have not loaded at all (the old plan degraded
+        // to the space's folder here and the chat ran in the main checkout).
+        pickers.update(cx, |pickers, cx| {
+            pickers.use_worktree(
+                "a".into(),
+                "commutator/swift-otter".into(),
+                "/wt/swift-otter".into(),
+                cx,
+            );
+        });
+        state.update(cx, |state, cx| state.select_space(Some("a".into()), cx));
+        cx.run_until_parked();
+        pickers.update(cx, |pickers, cx| {
+            assert_eq!(pickers.config.reuse_path.as_deref(), Some("/wt/swift-otter"));
+            assert_eq!(pickers.checkout_label(), "Current worktree");
+            assert_eq!(
+                pickers.checkout_plan(),
+                CheckoutPlan::ReuseWorktree {
+                    path: "/wt/swift-otter".into(),
+                    branch: "commutator/swift-otter".into(),
+                }
+            );
+            // The checkout is not a choice while a worktree is picked.
+            pickers.pick_checkout(CheckoutKind::NewWorktree, cx);
+            assert_eq!(
+                pickers.checkout_plan(),
+                CheckoutPlan::ReuseWorktree {
+                    path: "/wt/swift-otter".into(),
+                    branch: "commutator/swift-otter".into(),
+                }
+            );
+            // Picking a plain ref re-enables it and clears the reuse.
+            pickers.pick_ref(repo_ref("main", true, None), cx);
+            assert_eq!(pickers.config.reuse_path, None);
+            assert_eq!(
+                pickers.checkout_plan(),
+                CheckoutPlan::CurrentCheckout {
+                    branch: Some("main".into())
+                }
+            );
         });
     }
 

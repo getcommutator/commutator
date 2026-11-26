@@ -34,6 +34,9 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
     private var token: AnyObject?
     /// Repositories folded shut, kept on this phone.
     private var folded = Set(UserDefaults.standard.stringArray(forKey: "projectsFolded") ?? [])
+    /// Checkouts being deleted on their host: their rows dim, a spinner
+    /// where the status glyph sat, until the host answers.
+    private var deleting = Set<String>()
 
     init(app: AppModel) {
         self.app = app
@@ -154,7 +157,12 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
             c.image = UIImage(systemName: "arrow.triangle.branch")
             c.imageProperties.tintColor = Palette.secondary
             c.imageProperties.maximumSize = CGSize(width: 18, height: 18)
-            if w.count == 0 {
+            if deleting.contains(id) {
+                // Being deleted on its host: dimmed with a spinner.
+                c.textProperties.color = Palette.text.withAlphaComponent(0.45)
+                c.imageProperties.tintColor = Palette.secondary.withAlphaComponent(0.45)
+                accessories.append(spinner())
+            } else if w.count == 0 {
                 // No chats yet: dimmed, as the desktop draws it.
                 c.textProperties.color = Palette.text.withAlphaComponent(0.45)
                 c.imageProperties.tintColor = Palette.secondary.withAlphaComponent(0.45)
@@ -192,6 +200,23 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
         return .customView(configuration: .init(customView: view, placement: .trailing(), reservedLayoutWidth: .custom(16)))
     }
 
+    /// A trailing spinner, sized where the status glyph sits: a host call
+    /// under way on that row.
+    private func spinner() -> UICellAccessory {
+        let view = UIActivityIndicatorView(style: .medium)
+        view.color = Palette.tertiary
+        view.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
+        view.startAnimating()
+        return .customView(configuration: .init(customView: view, placement: .trailing(), reservedLayoutWidth: .custom(16)))
+    }
+
+    /// Redraw one row.
+    private func reconfigure(_ item: Item) {
+        var snapshot = dataSource.snapshot()
+        snapshot.reconfigureItems([item])
+        dataSource.apply(snapshot, animatingDifferences: false)
+    }
+
     /// Its chats, or, with none yet, a new one there.
     private func open(_ project: AppModel.ProjectTreeVM, _ checkout: FolderRowVM) {
         guard app.sessions(inFolder: checkout.id).isEmpty else { return openCheckout(project, checkout) }
@@ -223,13 +248,13 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
                 ])
             })
         case let .checkout(id):
-            guard let w = checkouts[id], let p = projects.values.first(where: { $0.worktrees.contains(w) }) else { return nil }
+            guard let w = checkouts[id], !deleting.contains(id), let p = projects.values.first(where: { $0.worktrees.contains(w) }) else { return nil }
             return UIContextMenuConfiguration(actionProvider: { [weak self] _ in
                 var actions = [UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { _ in self?.rename(w) }]
                 if w.path != nil {
                     actions.append(UIAction(title: "Delete Worktree", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
                         self?.confirm("Delete \(w.name)?", message: "Its folder is removed from disk (git worktree remove).", action: "Delete") {
-                            self?.run("Couldn't delete the worktree") { try await self?.app.deleteWorktree(p, w) }
+                            self?.beginDeletingWorktree(p, w)
                         }
                     })
                 }
@@ -257,19 +282,38 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
         present(alert, animated: true)
     }
 
+    /// The deletion runs with the alert closed: its row dims with a spinner
+    /// until the host answers and the refreshed list drops it, or, on
+    /// failure, the row comes back with a toast.
+    private func beginDeletingWorktree(_ project: AppModel.ProjectTreeVM, _ checkout: FolderRowVM) {
+        deleting.insert(checkout.id)
+        reconfigure(.checkout(checkout.id))
+        run("Couldn't delete the worktree", after: { [weak self] in
+            self?.deleting.remove(checkout.id)
+            self?.reconfigure(.checkout(checkout.id))
+        }) { [weak self] in
+            try await self?.app.deleteWorktree(project, checkout)
+        }
+    }
+
     private func confirm(_ title: String, message: String, action: String, _ go: @escaping () -> Void) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: action, style: .destructive) { _ in go() })
+        alert.addAction(UIAlertAction(title: action, style: .destructive) { [weak alert] _ in
+            // Closed at once: the work shows on the row, not in the alert.
+            alert?.dismiss(animated: true)
+            go()
+        })
         present(alert, animated: true)
     }
 
-    /// A host call; a failure shows as a toast.
-    private func run(_ failure: String, _ work: @escaping () async throws -> Void) {
+    /// A host call; a failure shows as a toast. `after` runs when it ends.
+    private func run(_ failure: String, after: @escaping () -> Void = {}, _ work: @escaping () async throws -> Void) {
         Task { @MainActor [weak self] in
             do { try await work() } catch {
                 Toast.show("\(failure): \(error.localizedDescription)", in: self?.view.window)
             }
+            after()
         }
     }
 
@@ -281,7 +325,7 @@ final class ProjectsViewController: UIViewController, UICollectionViewDelegate {
             guard let p = projects[id] else { return }
             open(p, p.main)
         case let .checkout(id):
-            guard let w = checkouts[id], let p = projects.values.first(where: { $0.worktrees.contains(w) }) else { return }
+            guard let w = checkouts[id], !deleting.contains(id), let p = projects.values.first(where: { $0.worktrees.contains(w) }) else { return }
             open(p, w)
         case .newProject:
             present(UINavigationController(rootViewController: NewProjectViewController(app: app)), animated: true)

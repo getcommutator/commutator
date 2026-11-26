@@ -1002,7 +1002,7 @@ impl Shell {
     /// The tab strip's `+`: a new chat in the open chat's project, and in
     /// its worktree when it runs in one the sidebar knows.
     fn new_chat_beside_tabs(&mut self, cx: &mut Context<Self>) {
-        let (space_id, branch, from) = {
+        let (space_id, worktree, from) = {
             let state = self.state.read(cx);
             // From the new-chat tab itself: keep the strip's chat.
             let from = state
@@ -1018,20 +1018,23 @@ impl Shell {
             };
             let space_id = state.space_for_chat(chat).map(|space| space.id.clone());
             let trim = |path: &str| path.trim().trim_end_matches(['/', '\\']).to_string();
-            let branch = space_id.as_ref().and_then(|id| {
+            let worktree = space_id.as_ref().and_then(|id| {
                 let cwd = trim(chat.cwd.as_deref()?);
-                self.sidebar_worktrees.get(id)?.iter().find_map(|r| {
+                let branch = self.sidebar_worktrees.get(id)?.iter().find_map(|r| {
                     (r.worktree_path.as_deref().map(trim) == Some(cwd.clone()))
                         .then(|| r.name.clone())
-                })
+                })?;
+                Some((branch, cwd))
             });
-            (space_id, branch, from)
+            (space_id, worktree, from)
         };
         self.open_new_session(space_id.clone(), cx);
         self.new_chat_tabs_from = from;
-        if let (Some(space_id), Some(branch)) = (space_id, branch) {
+        if let (Some(space_id), Some((branch, path))) = (space_id, worktree) {
             let pickers = self.composer.read(cx).pickers().clone();
-            pickers.update(cx, |pickers, cx| pickers.use_worktree(space_id, branch, cx));
+            pickers.update(cx, |pickers, cx| {
+                pickers.use_worktree(space_id, branch, path, cx)
+            });
         }
     }
 }
