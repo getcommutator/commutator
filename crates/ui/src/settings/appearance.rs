@@ -1495,7 +1495,7 @@ fn last_available(
 /// proportional, so the terminal cannot land there.
 fn fallback_selection(kind: FontKind) -> UiFontFamily {
     match kind {
-        FontKind::Terminal => UiFontFamily::GeistMono,
+        FontKind::Terminal => UiFontFamily::IoskeleyMono,
         _ => UiFontFamily::System,
     }
 }
@@ -4440,7 +4440,7 @@ mod tests {
         // highlight on the bundled mono face rather than on System UI.
         assert_eq!(
             first_available(&[], FontKind::Terminal, &all),
-            UiFontFamily::GeistMono
+            UiFontFamily::IoskeleyMono
         );
     }
 

@@ -174,7 +174,7 @@ pub(crate) fn svg_options() -> usvg::Options<'static> {
                 db.load_font_data(face.to_vec());
             }
             db.set_sans_serif_family("Geist");
-            db.set_monospace_family("Geist Mono");
+            db.set_monospace_family("Ioskeley Mono");
             // usvg appends generic serif when a requested family is unavailable
             // (including GPUI's virtual .SystemUIFont). Its default may refer to
             // an uninstalled font, silently deleting text during outlining.
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn svg_text_survives_bundled_mono_font_selection() {
-        assert_svg_text_is_visible("Geist Mono");
+        assert_svg_text_is_visible("Ioskeley Mono");
     }
 
     #[test]
