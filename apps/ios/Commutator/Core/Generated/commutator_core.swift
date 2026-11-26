@@ -1161,7 +1161,7 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * Pull requests across every project repository. `refresh` asks GitHub;
      * otherwise each computer's stored copy answers at once when it has one.
      */
-    func listPullRequests(filter: PullRequestFilter, refresh: Bool) async  -> PullRequestList
+    func listPullRequests(filter: PullRequestFilter, state: PullRequestStateFilter, refresh: Bool) async  -> PullRequestList
     
     /**
      * Follow a terminal opened earlier (its output replays from the host's
@@ -2127,12 +2127,12 @@ open func setHarnessEnabled(deviceId: String, harness: String, enabled: Bool)asy
      * Pull requests across every project repository. `refresh` asks GitHub;
      * otherwise each computer's stored copy answers at once when it has one.
      */
-open func listPullRequests(filter: PullRequestFilter, refresh: Bool)async  -> PullRequestList  {
+open func listPullRequests(filter: PullRequestFilter, state: PullRequestStateFilter, refresh: Bool)async  -> PullRequestList  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_commutator_mobile_fn_method_coreclient_list_pull_requests(
-                        self.uniffiCloneHandle(),FfiConverterTypePullRequestFilter_lower(filter),FfiConverterBool.lower(refresh)
+                        self.uniffiCloneHandle(),FfiConverterTypePullRequestFilter_lower(filter),FfiConverterTypePullRequestStateFilter_lower(state),FfiConverterBool.lower(refresh)
                 )
             },
             pollFunc: ffi_commutator_mobile_rust_future_poll_rust_buffer,
@@ -9350,6 +9350,19 @@ public struct PullRequestItem: Equatable, Hashable {
      */
     public var reviewRequested: Bool
     public var review: PullRequestReview
+    /**
+     * Open, merged or closed (a draft is `is_draft` on an open one).
+     */
+    public var state: PullRequestState
+    public var labels: [PullRequestLabel]
+    /**
+     * The author's picture; GitHub's by login when the host gave none.
+     */
+    public var authorAvatarUrl: String?
+    /**
+     * The source branch; empty from older engines.
+     */
+    public var branch: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9368,7 +9381,16 @@ public struct PullRequestItem: Equatable, Hashable {
          */authored: Bool, 
         /**
          * Your review is asked for (the Reviewing group).
-         */reviewRequested: Bool, review: PullRequestReview) {
+         */reviewRequested: Bool, review: PullRequestReview, 
+        /**
+         * Open, merged or closed (a draft is `is_draft` on an open one).
+         */state: PullRequestState, labels: [PullRequestLabel], 
+        /**
+         * The author's picture; GitHub's by login when the host gave none.
+         */authorAvatarUrl: String?, 
+        /**
+         * The source branch; empty from older engines.
+         */branch: String) {
         self.url = url
         self.repository = repository
         self.provider = provider
@@ -9387,6 +9409,10 @@ public struct PullRequestItem: Equatable, Hashable {
         self.authored = authored
         self.reviewRequested = reviewRequested
         self.review = review
+        self.state = state
+        self.labels = labels
+        self.authorAvatarUrl = authorAvatarUrl
+        self.branch = branch
     }
 
     
@@ -9422,7 +9448,11 @@ public struct FfiConverterTypePullRequestItem: FfiConverterRustBuffer {
                 createdAtMs: FfiConverterInt64.read(from: &buf), 
                 authored: FfiConverterBool.read(from: &buf), 
                 reviewRequested: FfiConverterBool.read(from: &buf), 
-                review: FfiConverterTypePullRequestReview.read(from: &buf)
+                review: FfiConverterTypePullRequestReview.read(from: &buf), 
+                state: FfiConverterTypePullRequestState.read(from: &buf), 
+                labels: FfiConverterSequenceTypePullRequestLabel.read(from: &buf), 
+                authorAvatarUrl: FfiConverterOptionString.read(from: &buf), 
+                branch: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -9445,6 +9475,10 @@ public struct FfiConverterTypePullRequestItem: FfiConverterRustBuffer {
         FfiConverterBool.write(value.authored, into: &buf)
         FfiConverterBool.write(value.reviewRequested, into: &buf)
         FfiConverterTypePullRequestReview.write(value.review, into: &buf)
+        FfiConverterTypePullRequestState.write(value.state, into: &buf)
+        FfiConverterSequenceTypePullRequestLabel.write(value.labels, into: &buf)
+        FfiConverterOptionString.write(value.authorAvatarUrl, into: &buf)
+        FfiConverterString.write(value.branch, into: &buf)
     }
 }
 
@@ -9461,6 +9495,66 @@ public func FfiConverterTypePullRequestItem_lift(_ buf: RustBuffer) throws -> Pu
 #endif
 public func FfiConverterTypePullRequestItem_lower(_ value: PullRequestItem) -> RustBuffer {
     return FfiConverterTypePullRequestItem.lower(value)
+}
+
+
+public struct PullRequestLabel: Equatable, Hashable {
+    public var name: String
+    /**
+     * Hex without `#`; empty when the host gave none.
+     */
+    public var color: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, 
+        /**
+         * Hex without `#`; empty when the host gave none.
+         */color: String) {
+        self.name = name
+        self.color = color
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PullRequestLabel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePullRequestLabel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PullRequestLabel {
+        return
+            try PullRequestLabel(
+                name: FfiConverterString.read(from: &buf), 
+                color: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PullRequestLabel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.color, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestLabel_lift(_ buf: RustBuffer) throws -> PullRequestLabel {
+    return try FfiConverterTypePullRequestLabel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestLabel_lower(_ value: PullRequestLabel) -> RustBuffer {
+    return FfiConverterTypePullRequestLabel.lower(value)
 }
 
 
@@ -15090,6 +15184,89 @@ public func FfiConverterTypePullRequestState_lower(_ value: PullRequestState) ->
 
 
 /**
+ * Which pull requests to list.
+ */
+
+public enum PullRequestStateFilter: Equatable, Hashable {
+    
+    case `open`
+    case merged
+    case closed
+    case all
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PullRequestStateFilter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePullRequestStateFilter: FfiConverterRustBuffer {
+    typealias SwiftType = PullRequestStateFilter
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PullRequestStateFilter {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .`open`
+        
+        case 2: return .merged
+        
+        case 3: return .closed
+        
+        case 4: return .all
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PullRequestStateFilter, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .`open`:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .merged:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .closed:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .all:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestStateFilter_lift(_ buf: RustBuffer) throws -> PullRequestStateFilter {
+    return try FfiConverterTypePullRequestStateFilter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePullRequestStateFilter_lower(_ value: PullRequestStateFilter) -> RustBuffer {
+    return FfiConverterTypePullRequestStateFilter.lower(value)
+}
+
+
+
+/**
  * The glyph's color: open (success), draft (muted), conflict (danger),
  * changes requested (warning).
  */
@@ -18588,6 +18765,31 @@ fileprivate struct FfiConverterSequenceTypePullRequestItem: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePullRequestLabel: FfiConverterRustBuffer {
+    typealias SwiftType = [PullRequestLabel]
+
+    public static func write(_ value: [PullRequestLabel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePullRequestLabel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PullRequestLabel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PullRequestLabel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePullRequestLabel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeQueueItem: FfiConverterRustBuffer {
     typealias SwiftType = [QueueItem]
 
@@ -19933,7 +20135,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_set_harness_enabled() != 23903) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_list_pull_requests() != 42723) {
+    if (uniffi_commutator_mobile_checksum_method_coreclient_list_pull_requests() != 55201) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_attach_terminal() != 3892) {

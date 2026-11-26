@@ -58,6 +58,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
       - uses: dtolnay/rust-toolchain@stable
       # no NDK here: build-core.sh makes only the Kotlin bindings, from a host build of the core
       - uses: Swatinem/rust-cache@v2
