@@ -8374,11 +8374,12 @@ impl Shell {
                                     .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
                                     .flex_none()
                                     .text_color(
-                                        tint.unwrap_or(theme.text_muted).opacity(if archived_muted {
-                                            0.4
+                                        tint.unwrap_or(if selected {
+                                            theme.text
                                         } else {
-                                            1.0
-                                        }),
+                                            theme.text_muted
+                                        })
+                                        .opacity(if archived_muted { 0.4 } else { 1.0 }),
                                     ),
                             )
                         },
