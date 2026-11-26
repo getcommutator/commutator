@@ -59,7 +59,7 @@ final class NotificationsViewController: SettingsListController {
         let live = LiveActivities.shared
         let activity = Row(
             id: "liveActivity", title: "Live Activity",
-            subtitle: live.allowed ? "Your agents on the Lock Screen and in the Dynamic Island, after you send work from here" : "Turned off in iOS Settings",
+            subtitle: live.allowed ? "Agents on the Lock Screen" : "Turned off in iOS Settings",
             symbol: "platter.filled.top.iphone", accessory: .toggle(live.enabled && live.allowed)
         )
         return [("Sessions", rows), ("Live Activity", [activity])]

@@ -57,6 +57,8 @@ const BLINK_MS: u64 = 500;
 const BLINK_IDLE: Duration = Duration::from_secs(15);
 /// The copy flash's fade.
 const COPY_FLASH: Duration = Duration::from_millis(320);
+/// Option/Alt multiplies the wheel's rows, as Shepherd's fast wheel does.
+const FAST_WHEEL: f32 = 5.0;
 
 actions!(terminal, [ToggleTerminal]);
 
@@ -2422,7 +2424,8 @@ impl Render for TerminalPanel {
                         if event.touch_phase == gpui::TouchPhase::Started {
                             this.with_active_tab(cx, |tab| tab.wheel_remainder = 0.0);
                         }
-                        this.wheel(lines, event.position, &event.modifiers, cx);
+                        let speed = if event.modifiers.alt { FAST_WHEEL } else { 1.0 };
+                        this.wheel(lines * speed, event.position, &event.modifiers, cx);
                         cx.stop_propagation();
                     }))
                     .child(TerminalElement::new(cx.entity(), focused))

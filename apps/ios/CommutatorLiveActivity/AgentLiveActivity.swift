@@ -14,46 +14,72 @@ struct CommutatorLiveActivityBundle: WidgetBundle {
 struct AgentLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AgentActivityAttributes.self) { context in
-            LockScreenCard(state: context.state, stale: context.isStale)
-                .widgetURL(AgentActivityLink.url(context.state.focus?.chatId))
-                .activityBackgroundTint(nil)
+            ThemedCard(context: context)
         } dynamicIsland: { context in
             let state = context.state
+            let accent = Color(hex32: context.attributes.accent)
+            let tint = AgentPhase.tint(state.chipPhase, accent: accent)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(state.chip, systemImage: AgentPhase.symbol(state.chipPhase))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AgentPhase.color(state.chipPhase))
-                        .padding(.leading, 4)
+                    HStack(spacing: 6) {
+                        PhaseMark(phase: state.chipPhase, accent: accent)
+                        Text(state.chip)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(tint)
+                    }
+                    .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text("Commutator")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    WorkingGlyph(accent: tint)
+                        .frame(width: 16, height: 16)
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(state.rows.prefix(3)) { row in
-                            AgentRowView(row: row, compact: true)
+                            AgentRowView(row: row, compact: true, accent: Color(hex32: context.attributes.accent))
                         }
+                        let more = max(0, state.rows.count - 3) + state.hidden
+                        if more > 0 { MoreNote(count: more) }
                         if context.isStale { StaleNote() }
                     }
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                Image(systemName: "terminal.fill")
-                    .foregroundStyle(.secondary)
+                WorkingGlyph(accent: tint)
+                    .frame(width: 16, height: 16)
             } compactTrailing: {
-                Text(state.chip)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AgentPhase.color(state.chipPhase))
+                // Only working agents: the loader and how many; else the mark of what's up.
+                HStack(spacing: 4) {
+                    PhaseMark(phase: state.chipPhase, accent: accent)
+                    if state.chipPhase == "working" {
+                        Text("\(state.active)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(tint)
+                    }
+                }
             } minimal: {
-                Image(systemName: AgentPhase.symbol(state.chipPhase))
-                    .foregroundStyle(AgentPhase.color(state.chipPhase))
+                PhaseMark(phase: state.chipPhase, accent: accent)
             }
             .widgetURL(AgentActivityLink.url(state.focus?.chatId))
         }
     }
 }
 
+
+/// The Lock Screen card in the theme's colours for the system's appearance
+/// (the widget's colour scheme, not the app's).
+struct ThemedCard: View {
+    let context: ActivityViewContext<AgentActivityAttributes>
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let a = context.attributes
+        let dark = scheme == .dark
+        let accent = Color(hex32: dark ? a.accent : (a.accentLight ?? a.accent))
+        let background = (dark ? a.background : a.backgroundLight).map { Color(hex32: $0) }
+        LockScreenCard(state: context.state, stale: context.isStale, accent: accent)
+            .widgetURL(AgentActivityLink.url(context.state.focus?.chatId))
+            .activityBackgroundTint(background)
+    }
+}

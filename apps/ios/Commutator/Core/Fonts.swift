@@ -13,10 +13,10 @@ enum Fonts {
         (.sansMediumItalic, "Geist-MediumItalic"),
         (.sansSemiboldItalic, "Geist-SemiBoldItalic"),
         (.sansBoldItalic, "Geist-BoldItalic"),
-        (.mono, "GeistMono"),
-        (.monoMedium, "GeistMono-Medium"),
-        (.monoSemibold, "GeistMono-SemiBold"),
-        (.monoItalic, "GeistMono-Italic"),
+        (.mono, "IoskeleyMono-Regular"),
+        (.monoMedium, "IoskeleyMono-Medium"),
+        (.monoSemibold, "IoskeleyMono-SemiBold"),
+        (.monoItalic, "IoskeleyMono-Italic"),
     ]
 
     private static let registry: (faces: [FaceData], graphics: [FaceRole: CGFont]) = {

@@ -1321,10 +1321,10 @@ impl Default for UiSettings {
             git_history_author_display: GitHistoryAuthorDisplay::default(),
             ui_font_family: crate::typography::UiFontFamily::default(),
             ui_font_size: crate::typography::UiFontSize::default(),
-            terminal_font_family: crate::typography::UiFontFamily::GeistMono,
+            terminal_font_family: crate::typography::UiFontFamily::IoskeleyMono,
             terminal_font_size: crate::typography::TERMINAL_FONT_SIZE_DEFAULT,
             terminal_cursor_effect: TerminalCursorEffect::default(),
-            code_font_family: crate::typography::UiFontFamily::GeistMono,
+            code_font_family: crate::typography::UiFontFamily::IoskeleyMono,
             code_font_size: crate::typography::CODE_FONT_SIZE_DEFAULT,
             theme_selection: commutator_theme::ThemeSelection::default(),
             diff_split: false,
@@ -2588,7 +2588,7 @@ mod tests {
         assert_eq!(loaded.sidebar_width, 300.0);
         assert_eq!(
             loaded.terminal_font_family,
-            crate::typography::UiFontFamily::GeistMono
+            crate::typography::UiFontFamily::IoskeleyMono
         );
         assert_eq!(
             loaded.terminal_font_size,
@@ -2596,7 +2596,7 @@ mod tests {
         );
         assert_eq!(
             loaded.code_font_family,
-            crate::typography::UiFontFamily::GeistMono
+            crate::typography::UiFontFamily::IoskeleyMono
         );
         assert_eq!(
             loaded.code_font_size,

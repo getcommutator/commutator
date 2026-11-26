@@ -10627,26 +10627,29 @@ impl Render for Composer {
         let bottom_slot = if has_new_thread_git_selectors || self.dock_frame.is_some() {
             1.0
         } else {
-            session_chrome
+            session_chrome.max(new_thread_chrome)
         };
         let container = if bottom_slot > 0.0 {
             let footer = (session_chrome_opacity > 0.0 && !self.side_chat).then(|| {
                 self.pickers
                     .update(cx, |pickers, cx| pickers.render_footer(cx))
             });
-            if session_chrome_opacity > 0.0 {
-                let harness = (!self.side_chat)
-                    .then(|| self.pickers.read(cx).resolved(cx).harness)
-                    .flatten();
+            if (session_chrome_opacity > 0.0 || new_thread_chrome_opacity > 0.0)
+                && !self.side_chat
+            {
+                let harness = self.pickers.read(cx).resolved(cx).harness;
                 let target = {
                     let state = self.state.read(cx);
-                    state
-                        .selected_chat_row()
-                        .map(|chat| chat.device_id.clone())
-                        .filter(|device| state.local_device_id.as_ref() != Some(device))
+                    let device = if new_thread_chrome_opacity > 0.0 {
+                        state.effective_device_id()
+                    } else {
+                        state.selected_chat_row().map(|chat| chat.device_id.clone())
+                    };
+                    device.filter(|device| state.local_device_id.as_ref() != Some(device))
                 };
-                self.account_usage
-                    .update(cx, |usage, cx| usage.track(harness, target, cx));
+                self.account_usage.update(cx, |usage, cx| {
+                    usage.track(harness, target, session_chrome_opacity > 0.0, cx)
+                });
             }
             container.child(
                 div()
@@ -10664,7 +10667,14 @@ impl Render for Composer {
                                 .flex()
                                 .items_center()
                                 .opacity(new_thread_chrome_opacity)
-                                .children(new_thread_git_selectors),
+                                .children(new_thread_git_selectors)
+                                .child(div().flex_1())
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .pr(px(10.0))
+                                        .child(self.account_usage.clone()),
+                                ),
                         )
                     })
                     .when(session_chrome_opacity > 0.0, |slot| {

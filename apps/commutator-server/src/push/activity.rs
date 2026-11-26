@@ -46,6 +46,7 @@ const ROWS: usize = 5;
 struct Row {
     title: String,
     project: Option<String>,
+    harness: Option<String>,
     phase: String,
     updated: i64,
 }
@@ -63,6 +64,8 @@ pub struct State {
     pub active: usize,
     /// Chats waiting on you.
     pub attention: usize,
+    /// Every chat on the card, `rows` or not: "+N more".
+    pub total: usize,
     pub rows: Vec<StateRow>,
 }
 
@@ -72,15 +75,19 @@ pub struct StateRow {
     pub chat_id: String,
     pub title: String,
     pub project: Option<String>,
+    /// The harness's id (`claude-code`, `codex`…), for its mark.
+    pub harness: Option<String>,
     pub phase: String,
 }
 
+/// The order of the card's rows, as the app's project Agents list sorts
+/// them (`needsYouFirst`): what waits on you or failed, then the finished,
+/// then work under way. Within a tier, the most recent first.
 fn rank(phase: &str) -> u8 {
     match phase {
-        "input" => 0,
-        "failed" => 1,
-        "working" => 2,
-        _ => 3,
+        "input" | "failed" => 0,
+        "done" => 1,
+        _ => 2,  // working
     }
 }
 
@@ -114,6 +121,7 @@ impl Board {
         State {
             active: rows.values().filter(|r| matches!(r.phase.as_str(), "working" | "input")).count(),
             attention: rows.values().filter(|r| r.phase == "input").count(),
+            total: rows.len(),
             rows: all
                 .into_iter()
                 .take(ROWS)
@@ -121,6 +129,7 @@ impl Board {
                     chat_id: chat.clone(),
                     title: clip(&row.title, 60),
                     project: row.project.as_deref().map(|p| clip(p, 40)),
+                    harness: row.harness.clone(),
                     phase: row.phase.clone(),
                 })
                 .collect(),
@@ -146,6 +155,7 @@ impl Board {
         let next = Row {
             title: row.title.clone(),
             project: row.project.clone(),
+            harness: row.harness.clone(),
             phase: row.phase.clone(),
             updated: now(),
         };
@@ -175,6 +185,8 @@ pub(crate) struct Phase {
     chat_id: String,
     title: String,
     project: Option<String>,
+    #[serde(default)]
+    harness: Option<String>,
     phase: String,
 }
 
@@ -211,7 +223,7 @@ impl App {
 
     /// Bring `targets` up to date with `state`, or end their cards (`None`).
     /// In the background; best effort.
-    fn deliver(self: &Arc<Self>, targets: Vec<ActivityTarget>, state: Option<State>) {
+    fn deliver(self: &Arc<Self>, targets: Vec<ActivityTarget>, state: Option<State>, alert: Option<(String, String)>) {
         if targets.is_empty() {
             return;
         }
@@ -225,11 +237,13 @@ impl App {
                     "content-state": state,
                     // Past this, a card that heard nothing more says so.
                     "stale-date": at + WORKING_FOR,
+                    // A status change lights the card up (the banner over the Home Screen).
+                    "alert": alert.as_ref().map(|(title, body)| serde_json::json!({ "title": title, "body": body })),
                 }}),
                 None => serde_json::json!({ "aps": {
                     "timestamp": at,
                     "event": "end",
-                    "content-state": State { active: 0, attention: 0, rows: Vec::new() },
+                    "content-state": State { active: 0, attention: 0, total: 0, rows: Vec::new() },
                     "dismissal-date": at,
                 }}),
             };
@@ -265,7 +279,7 @@ impl App {
                 tick.tick().await;
                 for (user, state) in self.activities.sweep(now()) {
                     if let Ok(targets) = self.activity_targets_of(&user) {
-                        self.deliver(targets, state);
+                        self.deliver(targets, state, None);
                     }
                 }
             }
@@ -291,8 +305,15 @@ pub(crate) async fn post_activity(
     }
     if app.activities.set(&device.user, &device.id, &phase) {
         let state = app.activities.state_of(&device.user);
+        let alert = match phase.phase.as_str() {
+            "done" => Some("Done"),
+            "input" => Some("Needs you"),
+            "failed" => Some("Failed"),
+            _ => None,
+        }
+        .map(|title| (title.to_owned(), clip(&phase.title, 60)));
         match app.activity_targets_of(&device.user) {
-            Ok(targets) => app.deliver(targets, state),
+            Ok(targets) => app.deliver(targets, state, alert),
             Err(err) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
         }
     }
@@ -338,7 +359,7 @@ pub(crate) async fn put_target(
     }
     // What the other chats are doing, at once: the phone only knew its own.
     if let Some(state) = app.activities.state_of(&device.user) {
-        app.deliver(vec![(device.id, target.platform, target.token, target.environment)], Some(state));
+        app.deliver(vec![(device.id, target.platform, target.token, target.environment)], Some(state), None);
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -362,7 +383,7 @@ mod tests {
     use super::*;
 
     fn phase(chat: &str, phase: &str) -> Phase {
-        Phase { chat_id: chat.into(), title: format!("Chat {chat}"), project: None, phase: phase.into() }
+        Phase { chat_id: chat.into(), title: format!("Chat {chat}"), project: None, harness: Some("codex".into()), phase: phase.into() }
     }
 
     #[test]
@@ -375,7 +396,10 @@ mod tests {
         let state = board.state_of("me").unwrap();
         assert_eq!((state.active, state.attention), (2, 1));
         let order: Vec<&str> = state.rows.iter().map(|r| r.chat_id.as_str()).collect();
-        assert_eq!(order, ["b", "a", "c"]);
+        assert_eq!(order, ["b", "c", "a"]);
+        assert_eq!(state.total, 3);
+        assert_eq!(rank("failed"), rank("input"), "a failure needs you like an input");
+        assert!(rank("done") < rank("working"));
 
         // Interrupted: off the card.
         assert!(board.set("me", "mac", &phase("a", "idle")));

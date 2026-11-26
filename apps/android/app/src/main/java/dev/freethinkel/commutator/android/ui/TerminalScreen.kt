@@ -79,7 +79,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import dev.freethinkel.commutator.android.core.AppModel
 import dev.freethinkel.commutator.android.core.TerminalTab
-import dev.freethinkel.commutator.android.design.GeistMono
+import dev.freethinkel.commutator.android.design.IoskeleyMono
 import dev.freethinkel.commutator.android.design.LocalPhonePalette
 import dev.freethinkel.commutator.android.design.LocalDarkTheme
 import dev.freethinkel.commutator.android.design.ZIcon
@@ -486,7 +486,7 @@ private fun Key(
         },
     ) {
         Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-            if (text != null) Text(text, fontFamily = GeistMono, style = MaterialTheme.typography.labelLarge)
+            if (text != null) Text(text, fontFamily = IoskeleyMono, style = MaterialTheme.typography.labelLarge)
             if (icon != null) ZIcon(icon, null, Modifier.size(20.dp))
         }
     }

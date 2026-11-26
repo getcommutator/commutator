@@ -81,9 +81,8 @@ enum BrandMark {
     /// The mark's own color, or nil when it takes the caller's tint.
     static func brandTint(for harness: String) -> UIColor? {
         switch harness {
-        case "claude-code", "mock": return UIColor(hex: 0xD97757)
-        case "muse": return UIColor(hex: 0x0081FB)
-        case "opencode": return .black
+        case "claude-code", "mock": return UIColor(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255, alpha: 1)
+        case "muse": return UIColor(red: 0x00 / 255, green: 0x81 / 255, blue: 0xFB / 255, alpha: 1)
         default: return nil
         }
     }

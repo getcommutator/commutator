@@ -4814,8 +4814,8 @@ impl Shell {
 
         let trigger = div()
             .id("spaces-filter")
-            .flex_1()
             .min_w_0()
+            .max_w(px(self.sidebar_content_width() - 2.0 * Theme::SPACE_SM))
             .h(px(29.0))
             .flex()
             .flex_row()
@@ -4855,7 +4855,8 @@ impl Shell {
                 }
             }))
             .child(popover::picker_icon_slot(art))
-            // flex_1 gives long space names a bound to fade against.
+            // The label takes the remaining room and fades at its edge when
+            // the selected project's name is too long.
             .child(
                 div()
                     .flex_1()
@@ -4864,10 +4865,19 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
-                    .child(super::sidebar_faded_label(
-                        "spaces-filter-label".into(),
-                        false,
-                        label,
+                    .child(motion::fade_quick(
+                        SharedString::from(format!(
+                            "spaces-filter-text-{}",
+                            filter.as_deref().unwrap_or("all")
+                        )),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(super::sidebar_faded_label(
+                                "spaces-filter-label".into(),
+                                false,
+                                label,
+                            )),
                     ))
                     // Disconnected glyph, not the word (user request).
                     .when(offline, |el| {
@@ -4879,6 +4889,11 @@ impl Shell {
                         )
                     }),
             );
+        let chevron = icon(icons::ALT_ARROW_DOWN)
+            .size(px(14.0))
+            .flex_none()
+            .text_color(if open { theme.text } else { theme.text_muted });
+        let trigger = trigger.child(chevron);
         let trigger = if self.spaces_menu.get().is_some() {
             let closing = self.spaces_menu.closing_since();
             let menu = self.render_spaces_menu(theme, cx);
@@ -4898,7 +4913,7 @@ impl Shell {
             .items_center()
             .px(px(Theme::SPACE_SM))
             .pt(px(8.0))
-            .pb(px(4.0))
+            .pb(px(0.0))
             .child(trigger)
             .into_any_element()
     }

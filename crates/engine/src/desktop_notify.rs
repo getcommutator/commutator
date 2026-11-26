@@ -351,6 +351,8 @@ pub(crate) struct ActivityRow {
     pub project: Option<String>,
     /// `working`, `input`, `failed`, `done`, or `idle` (off the card).
     pub phase: &'static str,
+    /// The harness's id (`claude-code`, `codex`…): the card's mark.
+    pub harness: Option<&'static str>,
 }
 
 fn ping_body(ping: Ping) -> &'static str {
@@ -473,6 +475,9 @@ impl Notifier {
             }
             _ => last,
         };
+        // A finish you've already looked at is gone from the app, so it goes
+        // off the card too.
+        let next = if next == "done" && !chat.unseen() { "idle" } else { next };
         if next == last {
             return;
         }
@@ -491,6 +496,7 @@ impl Notifier {
                 .and_then(|cwd| Path::new(cwd).file_name())
                 .map(|name| name.to_string_lossy().into_owned()),
             phase: next,
+            harness: chat.config.as_ref().map(|config| config.harness.as_str()),
         });
     }
 
@@ -713,10 +719,11 @@ fn activity_push(auth: crate::Auth) -> Activity {
                 &row.title,
                 row.project.as_deref(),
                 row.phase,
+                row.harness,
             )
             .await
             {
-                tracing::debug!(error = %err, "activity not sent");
+                tracing::warn!(error = %err, "live activity phase not sent");
             }
         }
     });

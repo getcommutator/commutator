@@ -44,7 +44,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import dev.freethinkel.commutator.android.core.AppModel
-import dev.freethinkel.commutator.android.design.GeistMono
+import dev.freethinkel.commutator.android.design.IoskeleyMono
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
 import uniffi.commutator_core.DeviceView
@@ -179,7 +179,7 @@ fun NewProjectScreen(model: AppModel, onDismiss: () -> Unit, onCreated: (String)
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
-                            fontFamily = if (it == current?.path) GeistMono else null,
+                            fontFamily = if (it == current?.path) IoskeleyMono else null,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,

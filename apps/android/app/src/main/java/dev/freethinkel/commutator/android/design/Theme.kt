@@ -87,11 +87,11 @@ val Geist: FontFamily by lazy {
     )
 }
 
-val GeistMono: FontFamily by lazy {
+val IoskeleyMono: FontFamily by lazy {
     FontFamily(
-    Font("GeistMono.ttf", LocalAssets.manager, FontWeight.Normal),
-    Font("GeistMono-Medium.ttf", LocalAssets.manager, FontWeight.Medium),
-    Font("GeistMono-SemiBold.ttf", LocalAssets.manager, FontWeight.SemiBold),
+    Font("IoskeleyMono-Regular.ttf", LocalAssets.manager, FontWeight.Normal),
+    Font("IoskeleyMono-Medium.ttf", LocalAssets.manager, FontWeight.Medium),
+    Font("IoskeleyMono-SemiBold.ttf", LocalAssets.manager, FontWeight.SemiBold),
     )
 }
 

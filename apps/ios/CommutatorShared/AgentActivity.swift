@@ -6,7 +6,16 @@ import SwiftUI
 /// this phone; commutator-server keeps it current with `liveactivity` pushes
 /// whose `content-state` is [`ContentState`] (`push/activity.rs`, `State`).
 /// Shared by the app and the widget extension, which draws it.
-struct AgentActivityAttributes: ActivityAttributes {
+struct AgentActivityAttributes: ActivityAttributes, Equatable {
+    /// The app's theme accent (ARGB), read when the card starts: the widget
+    /// can't read the theme itself, and the card keeps it for its life.
+    var accent: UInt32 = 0xFF3B82F6
+    /// The theme's background for the card (dark appearance), and its light
+    /// pair: the widget picks by the system's appearance, not the app's.
+    var background: UInt32? = nil
+    var accentLight: UInt32? = nil
+    var backgroundLight: UInt32? = nil
+
     struct ContentState: Codable, Hashable {
         /// Chats working or waiting on you.
         var active: Int
@@ -14,12 +23,16 @@ struct AgentActivityAttributes: ActivityAttributes {
         var attention: Int
         /// The first few, those that need you first.
         var rows: [Row]
+        /// Every chat on the card (nil from an older server: the rows are all).
+        var total: Int? = nil
     }
 
     struct Row: Codable, Hashable, Identifiable {
         var chatId: String
         var title: String
         var project: String?
+        /// The harness's id (`claude-code`, `codex`…); nil from an older server.
+        var harness: String? = nil
         /// `working`, `input`, `failed` or `done`.
         var phase: String
 
@@ -34,6 +47,9 @@ extension AgentActivityAttributes.ContentState {
         let working = "\(active) agent\(active == 1 ? "" : "s") active"
         return attention > 0 ? "\(working) · \(attention) need\(attention == 1 ? "s" : "") you" : working
     }
+
+    /// Chats on the card that `rows` leaves out.
+    var hidden: Int { max(0, (total ?? rows.count) - rows.count) }
 
     /// The chat a tap opens: the first that needs you, else the first.
     var focus: AgentActivityAttributes.Row? { rows.first }
@@ -68,7 +84,7 @@ enum AgentPhase {
         case "working": "circle.dotted.circle"
         case "input": "questionmark.bubble.fill"
         case "failed": "exclamationmark.triangle.fill"
-        default: "checkmark.circle.fill"
+        default: "checkmark"
         }
     }
 

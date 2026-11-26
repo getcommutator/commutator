@@ -148,6 +148,7 @@ fn mocked(base: &str) -> ProbeEndpoints {
         openai_auth: base.to_string(),
         openai_port: 0,
         nous_portal: base.to_string(),
+        opencode_go_usage: format!("{base}/inference/go/v1/usage"),
         google_token: format!("{base}/google/token"),
         google_userinfo: format!("{base}/google/userinfo"),
         antigravity_api: base.to_string(),
@@ -1691,6 +1692,110 @@ async fn keyed_logins_probe_the_vendor_behind_them() {
     let usage = accounts.keyed_usage(HarnessId::Pi, &copilot).await.unwrap();
     assert_eq!(usage.plan_label.as_deref(), Some("Copilot Business"));
     assert!((usage.windows[0].used_fraction - 0.1).abs() < 1e-6);
+}
+
+#[test]
+fn opencode_go_meters_read_all_three_limits() {
+    let body = serde_json::json!({
+        "usage": {
+            "rolling": { "status": "ok", "percent": 30, "resetsAt": "2026-11-21T15:00:00.000Z" },
+            "weekly": { "status": "rate-limited", "percent": 100, "resetsAt": "2026-11-23T00:00:00.000Z" },
+            "monthly": { "status": "ok", "percent": 50, "resetsAt": "2026-12-01T00:00:00.000Z" }
+        }
+    });
+    let snapshot = opencode_go_usage_snapshot(&body).unwrap();
+    let labels: Vec<_> = snapshot.windows.iter().map(|w| w.label.as_str()).collect();
+    assert_eq!(labels, ["5-hour", "Week", "Month"]);
+    assert!((snapshot.windows[0].used_fraction - 0.3).abs() < 1e-6);
+    assert!((snapshot.windows[1].used_fraction - 1.0).abs() < 1e-6);
+    assert!((snapshot.windows[2].used_fraction - 0.5).abs() < 1e-6);
+    assert!(snapshot.windows[1].resets_at.is_some());
+    // A reply without a meter is a schema change, not an empty plan.
+    assert!(opencode_go_usage_snapshot(&serde_json::json!({ "usage": {} })).is_none());
+}
+
+#[tokio::test]
+async fn opencode_go_key_probes_its_meters_and_other_keys_stay_planless() {
+    let server = MockServer::start(|method, path, _| match (method, path) {
+        ("GET", "/inference/go/v1/usage") => (
+            200,
+            r#"{"usage":{"rolling":{"status":"ok","percent":1,"resetsAt":"2026-11-26T16:29:14.000Z"},"weekly":{"status":"ok","percent":0,"resetsAt":"2026-11-30T00:00:00.000Z"},"monthly":{"status":"ok","percent":0,"resetsAt":"2026-12-26T11:16:44.000Z"}}}"#.into(),
+        ),
+        _ => (404, String::new()),
+    })
+    .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (accounts, _config) = accounts_with(tmp.path(), mocked(&server.base));
+    let go_key = |store_key: &str, key: &str| Slot {
+        id: "0123456789abcdef".into(),
+        harness: HarnessId::Opencode,
+        account_key: format!("{store_key}:key:1"),
+        profile: SlotProfile {
+            email: "API key".into(),
+            display_name: None,
+            organization: None,
+            plan: None,
+            auth_kind: AgentAuthKind::ApiKey,
+        },
+        credentials: serde_json::json!({ "type": "api", "key": key }),
+        claude_config: None,
+        saved_at: 1,
+        created_at: None,
+        store_key: Some(store_key.into()),
+    };
+    let usage = accounts
+        .keyed_usage(HarnessId::Opencode, &go_key("opencode-go", "sk-go-test-UtyF"))
+        .await
+        .unwrap();
+    assert_eq!(usage.windows.len(), 3);
+    assert!((usage.windows[0].used_fraction - 0.01).abs() < 1e-6);
+    // Another provider's API key is still never sent to a usage endpoint.
+    let stepfun = accounts
+        .keyed_usage(HarnessId::Opencode, &go_key("stepfun", "sk-stepfun"))
+        .await;
+    assert!(matches!(
+        stepfun,
+        Err(ProbeError::NoCredentials { why: NoCredentials::ApiKey })
+    ));
+}
+
+#[tokio::test]
+async fn opencode_go_key_403_has_no_meters_and_401_is_an_expired_key() {
+    let status = Arc::new(AtomicUsize::new(403));
+    let answer = status.clone();
+    let server = MockServer::start(move |_, _, _| match answer.load(Ordering::SeqCst) {
+        401 => (401, String::new()),
+        _ => (403, String::new()),
+    })
+    .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (accounts, _config) = accounts_with(tmp.path(), mocked(&server.base));
+    let slot = Slot {
+        id: "0123456789abcdef".into(),
+        harness: HarnessId::Opencode,
+        account_key: "opencode-go:key:1".into(),
+        profile: SlotProfile {
+            email: "API key".into(),
+            display_name: None,
+            organization: None,
+            plan: None,
+            auth_kind: AgentAuthKind::ApiKey,
+        },
+        credentials: serde_json::json!({ "type": "api", "key": "sk-go-test" }),
+        claude_config: None,
+        saved_at: 1,
+        created_at: None,
+        store_key: Some("opencode-go".into()),
+    };
+    assert!(matches!(
+        accounts.keyed_usage(HarnessId::Opencode, &slot).await,
+        Err(ProbeError::NoCredentials { why: NoCredentials::Unsupported })
+    ));
+    status.store(401, Ordering::SeqCst);
+    assert!(matches!(
+        accounts.keyed_usage(HarnessId::Opencode, &slot).await,
+        Err(ProbeError::NoCredentials { why: NoCredentials::KeyExpired })
+    ));
 }
 
 // ── Hermes ──────────────────────────────────────────────────────────────────

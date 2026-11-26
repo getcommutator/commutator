@@ -23,10 +23,10 @@ object Fonts {
         FaceRole.SANS_MEDIUM_ITALIC to "Geist-MediumItalic.ttf",
         FaceRole.SANS_SEMIBOLD_ITALIC to "Geist-SemiBoldItalic.ttf",
         FaceRole.SANS_BOLD_ITALIC to "Geist-BoldItalic.ttf",
-        FaceRole.MONO to "GeistMono.ttf",
-        FaceRole.MONO_MEDIUM to "GeistMono-Medium.ttf",
-        FaceRole.MONO_SEMIBOLD to "GeistMono-SemiBold.ttf",
-        FaceRole.MONO_ITALIC to "GeistMono-Italic.ttf",
+        FaceRole.MONO to "IoskeleyMono-Regular.ttf",
+        FaceRole.MONO_MEDIUM to "IoskeleyMono-Medium.ttf",
+        FaceRole.MONO_SEMIBOLD to "IoskeleyMono-SemiBold.ttf",
+        FaceRole.MONO_ITALIC to "IoskeleyMono-Italic.ttf",
     )
 
     private lateinit var faces: List<FaceData>

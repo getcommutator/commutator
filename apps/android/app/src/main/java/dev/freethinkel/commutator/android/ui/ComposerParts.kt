@@ -70,7 +70,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import dev.freethinkel.commutator.android.design.GeistMono
+import dev.freethinkel.commutator.android.design.IoskeleyMono
 import dev.freethinkel.commutator.android.design.ZIcon
 import dev.freethinkel.commutator.android.design.ZIcons
 import uniffi.commutator_core.FileMatch
@@ -285,7 +285,7 @@ fun MentionSuggestions(model: ComposerModel, search: suspend (String) -> List<Fi
                         Column {
                             Text(name, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (dir.isNotEmpty()) {
-                                Text(dir, style = MaterialTheme.typography.bodySmall, fontFamily = GeistMono, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(dir, style = MaterialTheme.typography.bodySmall, fontFamily = IoskeleyMono, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }

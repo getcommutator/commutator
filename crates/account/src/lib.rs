@@ -353,8 +353,9 @@ pub async fn activity(
     title: &str,
     project: Option<&str>,
     phase: &str,
+    harness: Option<&str>,
 ) -> Result<(), Error> {
-    let row = serde_json::json!({ "chatId": chat_id, "title": title, "project": project, "phase": phase });
+    let row = serde_json::json!({ "chatId": chat_id, "title": title, "project": project, "phase": phase, "harness": harness });
     send(reqwest::Client::new().post(push_url(server_url, "/activity")).json(&row), token).await
 }
 

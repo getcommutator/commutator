@@ -33,6 +33,8 @@ use super::*;
 
 pub(super) const GROK_USAGE_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 pub(super) const NOUS_PORTAL: &str = "https://portal.nousresearch.com";
+/// OpenCode Go's usage meters, read with a Go API key.
+pub(super) const OPENCODE_GO_USAGE_URL: &str = "https://opencode.ai/inference/go/v1/usage";
 const DEVIN_STATUS_RPC: &str = "exa.seat_management_pb.SeatManagementService/GetUserStatus";
 const DEVIN_DEFAULT_API_SERVER: &str = "https://server.codeium.com";
 /// The CLI version the status call identifies as (the server wants one).
@@ -358,8 +360,15 @@ impl AgentAccounts {
                 }),
             };
         }
-        // An API key has no plan to report (and is never sent to a usage
-        // endpoint).
+        // OpenCode Go's key is the one API key with a plan: its meters.
+        if harness == HarnessId::Opencode
+            && key == "opencode-go"
+            && let Some(secret) = api_keys::key_entry_secret(harness, creds)
+        {
+            return self.opencode_go_usage(&secret).await;
+        }
+        // Any other API key has no plan to report (and is never sent to a
+        // usage endpoint).
         if api_keys::key_entry_secret(harness, creds).is_some() {
             return Err(ProbeError::NoCredentials {
                 why: NoCredentials::ApiKey,
@@ -391,6 +400,31 @@ impl AgentAccounts {
                 why: NoCredentials::Unsupported,
             }),
         }
+    }
+
+    /// OpenCode Go's 5-hour, weekly and monthly meters for a Go key. A 403
+    /// is a key Go doesn't cover (no active subscription): nothing to show.
+    async fn opencode_go_usage(&self, key: &str) -> Result<UsageSnapshot, ProbeError> {
+        let body = probe_json(
+            "opencode-go",
+            "usage",
+            self.inner
+                .http
+                .get(&self.inner.endpoints.opencode_go_usage)
+                .bearer_auth(key)
+                .header("Accept", "application/json"),
+        )
+        .await
+        .map_err(|error| match error {
+            ProbeError::Unauthorized { status: 403 } => ProbeError::NoCredentials {
+                why: NoCredentials::Unsupported,
+            },
+            ProbeError::Unauthorized { .. } => ProbeError::NoCredentials {
+                why: NoCredentials::KeyExpired,
+            },
+            other => other,
+        })?;
+        opencode_go_usage_snapshot(&body).ok_or_else(|| schema_error("opencode-go", &body))
     }
 
     async fn openai_usage(
@@ -486,6 +520,31 @@ pub(super) fn grok_usage_snapshot(body: &serde_json::Value) -> Option<UsageSnaps
                     .or_else(|| config.get("billingPeriodEnd")),
             ),
         }],
+        plan_label: None,
+        codex_reset_credits: None,
+    })
+}
+
+/// The OpenCode Go endpoint's `usage`: one meter each for the 5-hour
+/// (`rolling`), `weekly` and `monthly` limits, `percent` used.
+pub(super) fn opencode_go_usage_snapshot(body: &serde_json::Value) -> Option<UsageSnapshot> {
+    let usage = body.get("usage")?;
+    let mut windows = Vec::new();
+    for (meter, label) in [
+        ("rolling", "5-hour"),
+        ("weekly", "Week"),
+        ("monthly", "Month"),
+    ] {
+        let meter = usage.get(meter)?;
+        let percent = json_f64(meter.get("percent")?)?;
+        windows.push(AgentUsageWindow {
+            label: label.to_string(),
+            used_fraction: (percent / 100.0).clamp(0.0, 1.0) as f32,
+            resets_at: parse_when(meter.get("resetsAt")),
+        });
+    }
+    Some(UsageSnapshot {
+        windows,
         plan_label: None,
         codex_reset_credits: None,
     })

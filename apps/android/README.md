@@ -30,7 +30,7 @@ The `buildCore` task runs `scripts/android/build-core.sh`, which builds
 `target/android-core/`. `-PcommutatorSkipCore` reuses the last build while
 iterating on Kotlin; `COMMUTATOR_ANDROID_ABIS=arm64-v8a` builds one ABI.
 `scripts/android/gen-icons.sh` rasterizes the shared tool/file SVG icons
-(needs `rsvg-convert`). The Geist fonts are read straight from the iOS app's
+(needs `rsvg-convert`). The Geist and Ioskeley Mono fonts are read straight from the iOS app's
 `Fonts/` folder, so both platforms measure and draw the same bytes.
 
 ## Releases

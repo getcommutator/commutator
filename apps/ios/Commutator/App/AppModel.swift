@@ -899,7 +899,10 @@ final class AppModel {
         attempt("pin") { try client?.pinSessionAt(chatId: id, after: after, before: before) }
     }
     func rename(_ id: String, _ title: String) { attempt("rename") { try client?.renameSession(chatId: id, title: title) } }
-    func markSeen(_ id: String) { attempt("seen") { try client?.markSeen(chatId: id) } }
+    func markSeen(_ id: String) {
+        Task { @MainActor in LiveActivities.shared.dropFinished(chatId: id) }
+        attempt("seen") { try client?.markSeen(chatId: id) }
+    }
 
     // MARK: Sessions
 

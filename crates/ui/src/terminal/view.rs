@@ -1106,8 +1106,7 @@ impl gpui::Element for TerminalElement {
         selection.a = (selection.a + COPY_FLASH_ALPHA * snapshot.copy_flash).min(0.9);
         let focused_cursor = self.focused && snapshot.cursor_on;
         let cursor_under_text = focused_cursor && snapshot.cursor_shape == CursorShape::Block;
-        let cursor_text = (cursor_under_text && theme.cursor.a >= 0.95)
-            .then(|| theme.terminal.background.opacity(1.0));
+        let cursor_text = cursor_under_text.then_some(theme.on_accent);
         for (row_ix, row) in snapshot.lines.iter().enumerate() {
             let y = origin.y + line_h * row_ix as f32;
             if let (Some(start), Some(end)) = (
@@ -1229,7 +1228,7 @@ impl gpui::Element for TerminalElement {
                     window.with_element_state(id, |previous: Option<CursorTrailState>, window| {
                         let mut state = previous.unwrap_or_default();
                         let shapes = state.track(rect, Instant::now()).and_then(|(from, to, t)| {
-                            trail_shapes(effect, from, to, t, theme.cursor, &theme.terminal.ansi)
+                            trail_shapes(effect, from, to, t, theme.accent, &theme.terminal.ansi)
                         });
                         if shapes.is_some() {
                             window.request_animation_frame();
@@ -1248,16 +1247,16 @@ impl gpui::Element for TerminalElement {
             let bar = px(CURSOR_BAR);
             match (self.focused, snapshot.cursor_shape) {
                 (false, _) | (true, CursorShape::HollowBlock) => {
-                    outline(cell, theme.cursor, gpui::BorderStyle::Solid)
+                    outline(cell, theme.accent, gpui::BorderStyle::Solid)
                 }
-                (true, CursorShape::Block) => fill(cell, theme.cursor),
+                (true, CursorShape::Block) => fill(cell, theme.accent),
                 (true, CursorShape::Beam) => fill(
                     Bounds::new(cell.origin, size(bar, line_h)),
-                    theme.cursor.opacity(1.0),
+                    theme.accent.opacity(1.0),
                 ),
                 (true, CursorShape::Underline) => fill(
                     Bounds::new(point(cell.left(), cell.bottom() - bar), size(cell_w, bar)),
-                    theme.cursor.opacity(1.0),
+                    theme.accent.opacity(1.0),
                 ),
             }
             .corner_radii(px(1.0))

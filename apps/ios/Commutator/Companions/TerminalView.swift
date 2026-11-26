@@ -491,7 +491,7 @@ final class TerminalView: UIScrollView, UIKeyInput, UITextInputTraits, UIScrollV
     }
 }
 
-/// Cell geometry for one font size (Geist Mono's advance, a roomy line).
+/// Cell geometry for one font size (Ioskeley Mono's advance, a roomy line).
 struct TerminalMetrics {
     let size: CGFloat
     let regular: CTFont

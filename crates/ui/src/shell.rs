@@ -1027,7 +1027,7 @@ const SIDEBAR_SESSION_SLOT: f32 = 61.0 + SIDEBAR_LIST_GAP;
 const SIDEBAR_DRAG_SCROLL_BAND: f32 = 48.0;
 const SIDEBAR_DRAG_SCROLL_MAX: f32 = 12.0;
 const SIDEBAR_DRAG_SCROLL_FRAME_MS: u64 = 16;
-const SIDEBAR_LIST_PAD_TOP: f32 = 4.0;
+const SIDEBAR_LIST_PAD_TOP: f32 = 2.0;
 
 /// Active and archived sessions share harness/title geometry.
 const SIDEBAR_ACTIVE_HARNESS_ICON_SIZE: f32 = 13.0;

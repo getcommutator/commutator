@@ -12,6 +12,8 @@ final class LiveActivities {
 
     private weak var app: AppModel?
     private var watching = Set<String>()
+    /// Cards being swapped for a new theme: their end isn't the card going away.
+    private var replacing = Set<String>()
     private static let enabledKey = "liveActivity.enabled"
 
     /// The Settings switch (on unless turned off there; the system has its own).
@@ -30,7 +32,44 @@ final class LiveActivities {
     func install(app: AppModel) {
         self.app = app
         Activity<AgentActivityAttributes>.activities.forEach(watch)
+        NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.restyle() }
+        }
     }
+
+    /// The theme changed: the accent lives in the card's attributes, which
+    /// can't change, so a card with another accent is replaced by one with the
+    /// new (same content; the server's next push carries on from there).
+    private func restyle() {
+        guard enabled, allowed else { return }
+        let look = Self.attributes()
+        for old in Activity<AgentActivityAttributes>.activities where old.activityState == .active && old.attributes != look {
+            do {
+                let new = try Activity.request(
+                    attributes: look,
+                    content: old.content,
+                    pushType: .token
+                )
+                watch(new)
+                replacing.insert(old.id)
+                Task { await old.end(nil, dismissalPolicy: .immediate) }
+            } catch {
+                NSLog("live activity restyle failed: \(error)")
+            }
+        }
+    }
+
+    /// The card's look from the selected themes: both appearances, because the
+    /// widget follows the system's appearance (the app's can differ).
+    private static func attributes() -> AgentActivityAttributes {
+        func opaque(_ argb: UInt32) -> UInt32 { argb | 0xFF00_0000 }  // the palette may carry no alpha
+        let dark = ThemeStore.palette(dark: true).app, light = ThemeStore.palette(dark: false).app
+        return AgentActivityAttributes(
+            accent: opaque(dark.accent), background: opaque(dark.background),
+            accentLight: opaque(light.accent), backgroundLight: opaque(light.background)
+        )
+    }
+    private static var accent: UInt32 { attributes().accent }
 
     /// The person just sent work: bring the card up if it isn't.
     func armForLocalWork() {
@@ -42,7 +81,7 @@ final class LiveActivities {
         let state = AgentActivityAttributes.ContentState(active: 1, attention: 0, rows: [])
         do {
             let activity = try Activity.request(
-                attributes: AgentActivityAttributes(),
+                attributes: Self.attributes(),
                 content: .init(state: state, staleDate: Date().addingTimeInterval(2 * 60 * 60)),
                 pushType: .token
             )
@@ -62,7 +101,7 @@ final class LiveActivities {
         }
         Task { [weak self] in
             for await state in activity.activityStateUpdates where state == .ended || state == .dismissed {
-                await self?.unregister()
+                if await self?.replacing.remove(activity.id) == nil { await self?.unregister() }
                 break
             }
         }
@@ -95,8 +134,8 @@ final class LiveActivities {
     /// `-live-activity-preview`: the Lock Screen card over a dark backdrop, in the app.
     static func preview() -> UIViewController {
         let card = VStack(spacing: 24) {
-            LockScreenCard(state: sample, stale: false)
-            LockScreenCard(state: .init(active: 0, attention: 0, rows: [sample.rows[2]]), stale: true)
+            LockScreenCard(state: sample, stale: false, accent: Color(hex32: accent))
+            LockScreenCard(state: .init(active: 0, attention: 0, rows: [sample.rows[2]]), stale: true, accent: Color(hex32: accent))
         }
         .background(RoundedRectangle(cornerRadius: 24).fill(.ultraThinMaterial))
         .padding(16)
@@ -114,13 +153,31 @@ final class LiveActivities {
             .init(chatId: "c", title: "Bump the Android NDK", project: "commutator", phase: "done"),
         ])
         do {
-            let activity = try Activity.request(attributes: AgentActivityAttributes(), content: .init(state: state, staleDate: nil))
+            let activity = try Activity.request(attributes: Self.attributes(), content: .init(state: state, staleDate: nil))
             NSLog("live activity demo: \(activity.id) \(activity.activityState)")
         } catch {
             NSLog("live activity demo failed: \(error) enabled=\(allowed)")
         }
     }
     #endif
+
+    /// A finished chat was just opened: off the card at once, without waiting
+    /// for the engine and the server (their next push says the same).
+    func dropFinished(chatId: String) {
+        for activity in Activity<AgentActivityAttributes>.activities {
+            var state = activity.content.state
+            guard let row = state.rows.first(where: { $0.chatId == chatId }), row.phase == "done" else { continue }
+            state.rows.removeAll { $0.chatId == chatId }
+            if let total = state.total { state.total = max(0, total - 1) }
+            Task {
+                if state.rows.isEmpty && state.active == 0 {
+                    await activity.end(nil, dismissalPolicy: .immediate)
+                } else {
+                    await activity.update(.init(state: state, staleDate: activity.content.staleDate))
+                }
+            }
+        }
+    }
 
     /// Turned off, or signing out: every card goes now.
     func endAll() {

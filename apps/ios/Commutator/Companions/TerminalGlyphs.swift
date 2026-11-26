@@ -1,9 +1,9 @@
 import UIKit
 
 /// Box drawing (U+2500–257F), block elements (U+2580–259F) and the `⏺`
-/// bullet, drawn instead of shaped. Geist Mono has none of them, and a
-/// fallback font's glyphs neither fill the roomy line height nor share the
-/// cell width: borders broke between rows and Claude Code's block-art mascot
+/// bullet, drawn instead of shaped so they meet exactly across the cell grid
+/// whatever the mono face provides. Fallback-font glyphs neither fill the
+/// roomy line height nor share the cell width: borders broke between rows and Claude Code's block-art mascot
 /// fell apart. Painted from the cell's own rect, snapped to device pixels,
 /// neighbors meet exactly; `⏺` would otherwise fall back to the color emoji.
 enum TerminalGlyphs {

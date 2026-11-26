@@ -790,6 +790,9 @@ struct ProbeEndpoints {
     openai_port: u16,
     /// The Nous portal (`/api/oauth/account`).
     nous_portal: String,
+    /// OpenCode Go's usage meters (`/inference/go/v1/usage`), read with a
+    /// Go API key.
+    opencode_go_usage: String,
     /// Google's token endpoint and `userinfo`: an Antigravity capture names
     /// its account with them.
     google_token: String,
@@ -822,6 +825,7 @@ impl Default for ProbeEndpoints {
             openai_auth: oauth::OPENAI_AUTH.into(),
             openai_port: oauth::OPENAI_LOOPBACK_PORT,
             nous_portal: usage::NOUS_PORTAL.into(),
+            opencode_go_usage: usage::OPENCODE_GO_USAGE_URL.into(),
             google_token: "https://oauth2.googleapis.com/token".into(),
             google_userinfo: "https://openidconnect.googleapis.com/v1/userinfo".into(),
             antigravity_api: usage::ANTIGRAVITY_API.into(),

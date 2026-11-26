@@ -369,7 +369,7 @@ private fun ProjectRow(
             Text(
                 supporting,
                 style = MaterialTheme.typography.bodySmall,
-                fontFamily = if (mono) dev.freethinkel.commutator.android.design.GeistMono else null,
+                fontFamily = if (mono) dev.freethinkel.commutator.android.design.IoskeleyMono else null,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )

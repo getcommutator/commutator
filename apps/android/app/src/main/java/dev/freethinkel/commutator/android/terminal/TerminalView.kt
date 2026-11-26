@@ -38,7 +38,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Cell geometry for one font size (Geist Mono's advance, a roomy line), in pixels. */
+/** Cell geometry for one font size (Ioskeley Mono's advance, a roomy line), in pixels. */
 class TerminalMetrics(val sizeDp: Float, density: Float) {
     val regular = Fonts.paint(FaceRole.MONO, sizeDp * density, ligatures = false)
     val bold = Fonts.paint(FaceRole.MONO_SEMIBOLD, sizeDp * density, ligatures = false)

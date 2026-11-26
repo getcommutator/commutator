@@ -83,7 +83,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import dev.freethinkel.commutator.android.core.AppModel
 import dev.freethinkel.commutator.android.design.Geist
-import dev.freethinkel.commutator.android.design.GeistMono
+import dev.freethinkel.commutator.android.design.IoskeleyMono
 import dev.freethinkel.commutator.android.transcript.Transcript
 import dev.freethinkel.commutator.android.transcript.TranscriptActions
 import dev.freethinkel.commutator.android.transcript.TranscriptState
@@ -428,7 +428,7 @@ fun SessionScreen(
             SelectionContainer {
                 Text(
                     s.text,
-                    fontFamily = if (s.mono) GeistMono else Geist,
+                    fontFamily = if (s.mono) IoskeleyMono else Geist,
                     style = if (s.mono) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge,
                     modifier = Modifier
                         .fillMaxWidth()

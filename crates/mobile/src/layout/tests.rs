@@ -31,7 +31,7 @@ pub(crate) fn text_system() -> Arc<TextSystem> {
         (FaceRole::SansBold, "Geist-Bold"),
         (FaceRole::SansItalic, "Geist-Italic"),
         (FaceRole::SansSemiboldItalic, "Geist-SemiBoldItalic"),
-        (FaceRole::Mono, "GeistMono"),
+        (FaceRole::Mono, "IoskeleyMono-Regular"),
     ]
     .into_iter()
     .map(|(role, name)| FaceData { role, bytes: font(name) })
