@@ -128,11 +128,7 @@ impl CellSnapshot {
 }
 
 /// Cursor position in viewport coordinates (row 0 = top of the visible grid).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CursorSnapshot {
-    pub row: usize,
-    pub col: usize,
-}
+pub use crate::emulator::CursorSnapshot;
 
 /// How the cursor paints, as the program set it (DECSCUSR).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,9 +189,9 @@ const SCROLLBACK: usize = 10_000_000;
 
 impl Emulator {
     pub fn new(cols: u16, rows: u16) -> Self {
-        // Commutator receives a byte stream rather than a remote viewport, so
-        // Ghostty keeps local scrollback just as the previous emulator did.
-        Self::sized(cols, rows, SCROLLBACK)
+        // Commutator receives a raw PTY byte stream, so Ghostty keeps local
+        // scrollback and reflows wrapped lines on resize.
+        Self::raw(cols, rows)
     }
 
     /// For a program's own output, as herdr-core streams it: this terminal is the real one, with its history and
@@ -224,12 +220,16 @@ impl Emulator {
 
     /// `max_scrollback`: bytes of history the terminal keeps (0: none).
     fn sized(cols: u16, rows: u16, max_scrollback: usize) -> Self {
-        let term = Terminal::new(TerminalOptions {
+        let mut term = Terminal::new(TerminalOptions {
             cols: cols.max(2),
             rows: rows.max(1),
             max_scrollback,
         })
         .expect("libghostty-vt terminal");
+        // Commutator's cursor blinks by default, and DECSCUSR 0 resets to that
+        // (Ghostty's own built-in default is a steady block).
+        term.set_default_cursor_blink(Some(true))
+            .expect("libghostty-vt default cursor blink");
         let render = Render {
             state: RenderState::new().expect("libghostty-vt render state"),
             rows: RowIterator::new().expect("libghostty-vt row iterator"),
@@ -763,12 +763,6 @@ impl Emulator {
         Some(CursorSnapshot { row, col })
     }
 
-    pub fn line_above(&self) -> Option<Vec<CellSnapshot>> {
-        // The panel uses this only for sub-row scroll interpolation. Ghostty
-        // exposes a viewport snapshot; whole-row scrollback remains available.
-        None
-    }
-
     /// The cursor's (row, col) in viewport coordinates, shown or hidden: an IME composes there (agent TUIs hide the
     /// cursor and park it at their input). `None` while the viewport is scrolled back off the cursor's line: the
     /// terminal's own cursor_x/y are on the active screen and would pin it to a row of old history.
@@ -925,5 +919,234 @@ impl std::fmt::Debug for Emulator {
             .field("cols", &self.cols())
             .field("rows", &self.rows())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn emu(cols: u16, rows: u16) -> Emulator {
+        Emulator::new(cols, rows)
+    }
+
+    #[test]
+    fn alt_screen_restores_primary_content() {
+        let mut e = emu(20, 4);
+        e.feed(b"primary");
+        e.feed(b"\x1b[?1049h\x1b[H");
+        assert!(e.alt_screen());
+        e.feed(b"alt-content");
+        assert_eq!(e.row_text(0), "alt-content");
+        e.feed(b"\x1b[?1049l");
+        assert!(!e.alt_screen());
+        assert_eq!(e.row_text(0), "primary");
+    }
+
+    #[test]
+    fn dsr_cursor_report_produces_pty_response() {
+        let mut e = emu(20, 4);
+        e.feed(b"\x1b[2;3H");
+        let responses = e.feed(b"\x1b[6n");
+        assert_eq!(String::from_utf8_lossy(&responses), "\x1b[2;3R");
+    }
+
+    #[test]
+    fn osc_title_and_bell() {
+        let mut e = emu(20, 2);
+        assert_eq!(e.title(), None);
+        e.feed(b"\x1b]0;my title\x07");
+        assert_eq!(e.title(), Some("my title"));
+        assert!(!e.take_bell());
+        e.feed(b"\x07");
+        assert!(e.take_bell());
+        assert!(!e.take_bell(), "bell reads clear it");
+    }
+
+    #[test]
+    fn app_cursor_and_bracketed_paste_modes_toggle() {
+        let mut e = emu(10, 2);
+        assert!(!e.app_cursor_mode());
+        e.feed(b"\x1b[?1h");
+        assert!(e.app_cursor_mode());
+        e.feed(b"\x1b[?1l");
+        assert!(!e.app_cursor_mode());
+        e.feed(b"\x1b[?2004h");
+        assert!(e.bracketed_paste_mode());
+    }
+
+    #[test]
+    fn hidden_cursor_mode() {
+        let mut e = emu(10, 2);
+        e.feed(b"\x1b[?25l");
+        assert_eq!(e.cursor(), None);
+        e.feed(b"\x1b[?25h");
+        assert!(e.cursor().is_some());
+    }
+
+    #[test]
+    fn cursor_style_follows_decscusr() {
+        let mut e = emu(10, 2);
+        assert_eq!(e.cursor_style(), (CursorShape::Block, true));
+        e.feed(b"\x1b[6 q");
+        assert_eq!(e.cursor_style(), (CursorShape::Beam, false));
+        e.feed(b"\x1b[3 q");
+        assert_eq!(e.cursor_style(), (CursorShape::Underline, true));
+        // DECSCUSR 0 resets to the default Commutator configured: a blinking block.
+        e.feed(b"\x1b[0 q");
+        assert_eq!(e.cursor_style(), (CursorShape::Block, true));
+    }
+
+    #[test]
+    fn resize_preserves_content_and_reflows() {
+        let mut e = emu(20, 5);
+        e.feed(b"abcdef\r\nsecond");
+        e.resize(4, 5);
+        assert_eq!(e.cols(), 4);
+        assert_eq!(e.rows(), 5);
+        assert_eq!(e.row_text(0), "abcd");
+        assert_eq!(e.row_text(1), "ef");
+        assert_eq!(e.row_text(2), "seco");
+        assert_eq!(e.row_text(3), "nd");
+        e.resize(20, 5);
+        assert_eq!(e.row_text(0), "abcdef");
+        assert_eq!(e.row_text(1), "second");
+    }
+
+    #[test]
+    fn wide_chars_occupy_two_cells_with_spacer() {
+        let mut e = emu(10, 2);
+        e.feed("宽w".as_bytes());
+        let line = e.line(0);
+        assert!(line[0].wide);
+        assert_eq!(line[0].ch, '宽');
+        assert!(line[1].wide_spacer);
+        assert_eq!(line[2].ch, 'w');
+        assert_eq!(e.row_text(0), "宽w");
+        assert_eq!(e.cursor(), Some(CursorSnapshot { row: 0, col: 3 }));
+    }
+
+    #[test]
+    fn simple_selection_yields_its_text_and_marks_its_cells() {
+        let mut e = emu(20, 3);
+        e.feed(b"hello world");
+        assert!(!e.has_selection());
+        assert_eq!(e.selection_text(), None);
+
+        e.start_selection(SelectionType::Simple, e.grid_point(0, 0), Side::Left);
+        e.update_selection(e.grid_point(0, 4), Side::Right);
+        assert!(e.has_selection());
+        assert_eq!(e.selection_text().as_deref(), Some("hello"));
+
+        let line = e.line(0);
+        assert!(line[..5].iter().all(|c| c.selected));
+        assert!(!line[5].selected, "the space past the drag is not selected");
+
+        e.clear_selection();
+        assert!(!e.has_selection());
+        assert!(e.line(0).iter().all(|c| !c.selected));
+    }
+
+    #[test]
+    fn semantic_selection_expands_to_the_word() {
+        let mut e = emu(30, 2);
+        e.feed(b"alpha beta gamma");
+        e.start_selection(SelectionType::Semantic, e.grid_point(0, 7), Side::Left);
+        assert_eq!(e.selection_text().as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn line_selection_takes_the_whole_row() {
+        let mut e = emu(30, 3);
+        e.feed(b"first row\r\nsecond row");
+        e.start_selection(SelectionType::Lines, e.grid_point(1, 3), Side::Left);
+        assert_eq!(e.selection_text().as_deref(), Some("second row\n"));
+    }
+
+    #[test]
+    fn selection_spans_rows_with_a_newline() {
+        let mut e = emu(10, 3);
+        e.feed(b"ab\r\ncd");
+        e.start_selection(SelectionType::Simple, e.grid_point(0, 0), Side::Left);
+        e.update_selection(e.grid_point(1, 1), Side::Right);
+        assert_eq!(e.selection_text().as_deref(), Some("ab\ncd"));
+    }
+
+    #[test]
+    fn a_click_without_a_drag_selects_nothing() {
+        let mut e = emu(20, 2);
+        e.feed(b"hello");
+        e.start_selection(SelectionType::Simple, e.grid_point(0, 2), Side::Left);
+        assert_eq!(e.selection_text(), None);
+        assert!(!e.has_selection());
+    }
+
+    #[test]
+    fn utf8_split_across_feeds_reassembles() {
+        let mut e = emu(10, 2);
+        let bytes = "é".as_bytes();
+        e.feed(&bytes[..1]);
+        e.feed(&bytes[1..]);
+        assert_eq!(e.row_text(0), "é");
+    }
+
+    #[test]
+    fn underline_styles_map_from_sgr_4() {
+        let mut e = emu(20, 2);
+        e.feed(b"\x1b[4:1ma\x1b[4:2mb\x1b[4:3mc\x1b[4:4md\x1b[4:5me\x1b[0m");
+        let line = e.line(0);
+        assert_eq!(line[0].underline_style, UnderlineStyle::Single);
+        assert_eq!(line[1].underline_style, UnderlineStyle::Double);
+        assert_eq!(line[2].underline_style, UnderlineStyle::Curly);
+        assert_eq!(line[3].underline_style, UnderlineStyle::Dotted);
+        assert_eq!(line[4].underline_style, UnderlineStyle::Dashed);
+    }
+
+    #[test]
+    fn scrollback_tracks_display_offset_line_by_line() {
+        let mut e = emu(20, 4);
+        for i in 1..=10 {
+            if i > 1 {
+                e.feed(b"\r\n");
+            }
+            e.feed(format!("l{i}").as_bytes());
+        }
+        assert_eq!(e.history_lines(), 6);
+        assert_eq!(e.display_offset(), 0);
+        assert_eq!(e.row_text(0), "l7");
+        e.scroll(2);
+        assert_eq!(e.display_offset(), 2);
+        assert_eq!(e.row_text(0), "l5");
+        e.scroll(-1);
+        assert_eq!(e.display_offset(), 1);
+        assert_eq!(e.row_text(0), "l6");
+        e.scroll_to_bottom();
+        assert_eq!(e.display_offset(), 0);
+        assert_eq!(e.row_text(0), "l7");
+    }
+
+    #[test]
+    fn an_osc8_hyperlink_spans_its_cells() {
+        let mut e = emu(30, 2);
+        e.feed(b"see \x1b]8;;https://a.b\x1b\\li\x1b[1mnk\x1b]8;;\x1b\\ ok");
+        assert_eq!(
+            e.hyperlink_at(0, 6),
+            Some((vec![(0, 4..8)], "https://a.b".into()))
+        );
+        assert_eq!(e.hyperlink_at(0, 4).map(|h| h.0), Some(vec![(0, 4..8)]));
+        assert_eq!(e.hyperlink_at(0, 2), None);
+        assert_eq!(e.hyperlink_at(0, 9), None);
+    }
+
+    #[test]
+    fn an_osc8_hyperlink_follows_a_soft_wrap() {
+        let mut e = emu(10, 3);
+        e.feed(
+            b"see \x1b]8;;https://a.b\x1b\\0123456789\x1b]8;;\x1b\\ ok\r\n\x1b]8;;https://c.d\x1b\\x\x1b]8;;\x1b\\",
+        );
+        let link = Some((vec![(0, 4..10), (1, 0..4)], "https://a.b".into()));
+        assert_eq!(e.hyperlink_at(1, 2), link);
+        assert_eq!(e.hyperlink_at(0, 5), link);
+        assert_eq!(e.hyperlink_at(2, 0).map(|h| h.0), Some(vec![(2, 0..1)]));
     }
 }

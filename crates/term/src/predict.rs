@@ -28,6 +28,34 @@ use std::time::{Duration, Instant};
 
 use crate::emulator::{CursorSnapshot, Emulator};
 
+/// Terminal state needed by [`Predictor`] to measure echo latency and confirm
+/// or refute local predictions.
+pub trait EchoTerminal {
+    fn live_cursor(&self) -> CursorSnapshot;
+    fn live_char(&self, row: usize, col: usize) -> Option<char>;
+}
+
+impl EchoTerminal for Emulator {
+    fn live_cursor(&self) -> CursorSnapshot {
+        self.live_cursor()
+    }
+
+    fn live_char(&self, row: usize, col: usize) -> Option<char> {
+        self.live_char(row, col)
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+impl EchoTerminal for crate::ghostty::Emulator {
+    fn live_cursor(&self) -> CursorSnapshot {
+        self.live_cursor()
+    }
+
+    fn live_char(&self, row: usize, col: usize) -> Option<char> {
+        self.live_char(row, col)
+    }
+}
+
 /// Echo time above which predictions start showing…
 const SHOW_ABOVE: Duration = Duration::from_millis(30);
 /// …and below which they stop.
@@ -123,7 +151,7 @@ impl Predictor {
     }
 
     /// Host output landed in `emulator`: measure, then confirm or refute.
-    pub fn output(&mut self, emulator: &Emulator, now: Instant) {
+    pub fn output(&mut self, emulator: &impl EchoTerminal, now: Instant) {
         if let Some(sent) = self.awaiting_since.take() {
             let sample = now.saturating_duration_since(sent);
             let srtt = match self.srtt {

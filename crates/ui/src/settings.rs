@@ -133,10 +133,6 @@ pub enum NewThreadBackgroundEffect {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TerminalCursorEffect {
-    None,
-    #[default]
-    #[serde(other)]
-    Warp,
     Sweep,
     Comet,
     Blaze,
@@ -147,6 +143,10 @@ pub enum TerminalCursorEffect {
     Rainbow,
     Gradient,
     Frozen,
+    None,
+    #[default]
+    #[serde(other)]
+    Warp,
 }
 
 impl TerminalCursorEffect {
@@ -1966,6 +1966,7 @@ impl UiSettings {
             ui_font_size,
             terminal_font_family,
             terminal_font_size,
+            terminal_cursor_effect,
             code_font_family,
             code_font_size,
             theme_selection,
@@ -3076,6 +3077,7 @@ mod tests {
             files_word_wrap: true,
             terminal_font_family: crate::typography::UiFontFamily::Installed("Menlo".into()),
             terminal_font_size: 15.0,
+            terminal_cursor_effect: TerminalCursorEffect::Comet,
             code_font_family: crate::typography::UiFontFamily::Geist,
             code_font_size: 11.0,
             files_show_all: true,

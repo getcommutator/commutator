@@ -609,6 +609,8 @@ pub struct TerminalPrepaint {
     /// Ghostty-style vector sprites for box drawing, Powerline, Braille,
     /// blocks, and legacy computing glyphs.
     glyphs: Vec<(Pixels, CustomGlyph)>,
+    /// Underlines text runs cannot draw: double, dotted, and dashed.
+    decor: Vec<(Pixels, Decor)>,
     sprite_stroke: f32,
     trail: Vec<(gpui::Path<Pixels>, gpui::Background)>,
     /// Grid cell advance, so paint can place segments by column.
@@ -617,9 +619,52 @@ pub struct TerminalPrepaint {
     /// measured the grid with.
     line_h: Pixels,
     cursor: Option<PaintQuad>,
+    cursor_under_text: bool,
     /// In-progress input-method composition at the cursor: its backdrop and
     /// shaped text.
     marked: Option<(PaintQuad, gpui::Point<Pixels>, ShapedLine)>,
+}
+
+/// An underline painted as quads under a cell, not by its text run.
+struct Decor {
+    col: usize,
+    cells: usize,
+    color: Hsla,
+    style: super::emulator::UnderlineStyle,
+}
+
+/// The quads of a [`Decor`] in `cell` (the cell's whole height): 1 px lines near
+/// its bottom, as gpui's own underline sits; dots and dashes restart at each
+/// cell, so a run of them looks even at any width.
+fn decor_quads(decor: &Decor, cell: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
+    use super::emulator::UnderlineStyle as U;
+    let (thick, bottom) = (px(1.0), cell.bottom() - px(2.0));
+    let line = |y: Pixels, from: Pixels, len: Pixels| Bounds::new(point(from, y), size(len, thick));
+    let step = |on: f32, period: f32| {
+        let mut x = f32::from(cell.left());
+        let mut out = Vec::new();
+        while x < f32::from(cell.right()) {
+            out.push(line(
+                bottom,
+                px(x),
+                px(on.min(f32::from(cell.right()) - x)),
+            ));
+            x += period;
+        }
+        out
+    };
+    match decor.style {
+        U::Double => vec![
+            line(bottom, cell.left(), cell.size.width),
+            line(bottom - px(2.0), cell.left(), cell.size.width),
+        ],
+        U::Dotted => step(1.0, 2.0),
+        U::Dashed => step(
+            (f32::from(cell.size.width) / decor.cells as f32 * 0.6).max(2.0),
+            f32::from(cell.size.width) / decor.cells as f32,
+        ),
+        U::Single | U::Curly => vec![line(bottom, cell.left(), cell.size.width)],
+    }
 }
 
 /// Beam and underline cursor thickness.
@@ -1032,10 +1077,7 @@ impl gpui::Element for TerminalElement {
                 },
                 cx,
             );
-            let snapshot = panel.active_grid_snapshot(cx);
-            // Pointer mapping follows the rows where they are drawn.
-            panel.shift_grid_origin(line_h * snapshot.as_ref().map_or(0.0, |s| s.scroll_frac));
-            snapshot
+            panel.active_grid_snapshot(cx)
         });
         let Some(snapshot) = snapshot else {
             return TerminalPrepaint {
@@ -1043,33 +1085,31 @@ impl gpui::Element for TerminalElement {
                 selection: Vec::new(),
                 lines: Vec::new(),
                 glyphs: Vec::new(),
+                decor: Vec::new(),
                 sprite_stroke: 1.0,
                 trail: Vec::new(),
                 cell_w,
                 line_h,
                 cursor: None,
+                cursor_under_text: false,
                 marked: None,
             };
         };
 
         let mut bg_quads = Vec::new();
         let mut selection_spans = Vec::new();
-        let mut lines = Vec::with_capacity(snapshot.lines.len() + 1);
+        let mut lines = Vec::with_capacity(snapshot.lines.len());
         let mut glyphs = Vec::new();
-        // A partial scroll shifts every row down by the fraction and reveals
-        // the history row above; the content mask clips both edges.
-        let shift = line_h * snapshot.scroll_frac;
-        let first_row: i32 = if snapshot.line_above.is_some() { -1 } else { 0 };
-        let rows: Vec<&Vec<CellSnapshot>> = snapshot
-            .line_above
-            .iter()
-            .chain(snapshot.lines.iter())
-            .collect();
-        let row_count = rows.len();
-        let mut selection = theme.terminal.selection;
+        let mut decor = Vec::new();
+        let row_count = snapshot.lines.len();
+        let mut selection = theme.selection;
         selection.a = (selection.a + COPY_FLASH_ALPHA * snapshot.copy_flash).min(0.9);
-        for (row_ix, row) in rows.iter().copied().enumerate() {
-            let y = origin.y + shift + line_h * (first_row + row_ix as i32) as f32;
+        let focused_cursor = self.focused && snapshot.cursor_on;
+        let cursor_under_text = focused_cursor && snapshot.cursor_shape == CursorShape::Block;
+        let cursor_text = (cursor_under_text && theme.cursor.a >= 0.95)
+            .then(|| theme.terminal.background.opacity(1.0));
+        for (row_ix, row) in snapshot.lines.iter().enumerate() {
+            let y = origin.y + line_h * row_ix as f32;
             if let (Some(start), Some(end)) = (
                 row.iter().position(|cell| cell.selected),
                 row.iter().rposition(|cell| cell.selected),
@@ -1119,11 +1159,14 @@ impl gpui::Element for TerminalElement {
                     _ => {}
                 }
             }
-            let display_row = first_row + row_ix as i32;
-            let cursor_col = snapshot
-                .cursor
-                .filter(|cursor| cursor.row as i32 == display_row)
-                .map(|cursor| cursor.col);
+            let cursor_col = focused_cursor
+                .then(|| {
+                    snapshot
+                        .cursor
+                        .filter(|cursor| cursor.row == row_ix)
+                        .map(|cursor| cursor.col)
+                })
+                .flatten();
             let shaped = shape_row(
                 row,
                 y,
@@ -1131,9 +1174,10 @@ impl gpui::Element for TerminalElement {
                 &mono,
                 font_size,
                 cell_w,
-                cursor_col,
+                cursor_col.map(|col| (col, cursor_text)),
                 window,
                 &mut glyphs,
+                &mut decor,
             );
             lines.push((y, shaped));
         }
@@ -1145,7 +1189,7 @@ impl gpui::Element for TerminalElement {
                 let at = |c: &gpui::Point<usize>| {
                     point(
                         origin.x + cell_w * c.x as f32,
-                        origin.y + shift + line_h * (first_row + c.y as i32) as f32,
+                        origin.y + line_h * c.y as f32,
                     )
                 };
                 rounded_selection_path(
@@ -1160,7 +1204,7 @@ impl gpui::Element for TerminalElement {
             let cell = Bounds::new(
                 point(
                     origin.x + cell_w * c.col as f32,
-                    origin.y + shift + line_h * c.row as f32,
+                    origin.y + line_h * c.row as f32,
                 ),
                 size(cell_w, line_h),
             );
@@ -1181,11 +1225,11 @@ impl gpui::Element for TerminalElement {
         {
             if let (Some(id), Some(rect)) = (id, cursor_cell) {
                 let effect = settings.terminal_cursor_effect;
-                let (shapes, _) =
+                let shapes =
                     window.with_element_state(id, |previous: Option<CursorTrailState>, window| {
                         let mut state = previous.unwrap_or_default();
                         let shapes = state.track(rect, Instant::now()).and_then(|(from, to, t)| {
-                            trail_shapes(from, to, t, effect, theme.cursor, &theme.terminal.ansi)
+                            trail_shapes(effect, from, to, t, theme.cursor, &theme.terminal.ansi)
                         });
                         if shapes.is_some() {
                             window.request_animation_frame();
@@ -1206,7 +1250,6 @@ impl gpui::Element for TerminalElement {
                 (false, _) | (true, CursorShape::HollowBlock) => {
                     outline(cell, theme.cursor, gpui::BorderStyle::Solid)
                 }
-                // Translucent block: the glyph underneath stays legible.
                 (true, CursorShape::Block) => fill(cell, theme.cursor),
                 (true, CursorShape::Beam) => fill(
                     Bounds::new(cell.origin, size(bar, line_h)),
@@ -1230,7 +1273,7 @@ impl gpui::Element for TerminalElement {
             .map(|(text, c)| {
                 let at = point(
                     origin.x + cell_w * c.col as f32,
-                    origin.y + shift + line_h * c.row as f32,
+                    origin.y + line_h * c.row as f32,
                 );
                 let shaped = window.text_system().shape_line(
                     SharedString::from(text.to_string()),
@@ -1261,11 +1304,13 @@ impl gpui::Element for TerminalElement {
             selection: selection_paths,
             lines,
             glyphs,
+            decor,
             sprite_stroke: theme.terminal_font_size * 0.05,
             trail,
             cell_w,
             line_h,
             cursor,
+            cursor_under_text,
             marked,
         }
     }
@@ -1295,6 +1340,11 @@ impl gpui::Element for TerminalElement {
             for (path, color) in prepaint.trail.drain(..) {
                 window.paint_path(path, color);
             }
+            if prepaint.cursor_under_text
+                && let Some(cursor) = prepaint.cursor.take()
+            {
+                window.paint_quad(cursor);
+            }
             let cell_w = prepaint.cell_w;
             for (y, segments) in &prepaint.lines {
                 let y = *y;
@@ -1314,6 +1364,14 @@ impl gpui::Element for TerminalElement {
                 let bounds =
                     Bounds::new(point(left, *y), size(cell_w * glyph.cells as f32, line_h));
                 paint_custom_glyph(glyph, bounds, prepaint.sprite_stroke, window, cx);
+            }
+            for (y, decor) in &prepaint.decor {
+                let left = origin.x + cell_w * decor.col as f32;
+                let cell =
+                    Bounds::new(point(left, *y), size(cell_w * decor.cells as f32, line_h));
+                for quad in decor_quads(decor, cell) {
+                    window.paint_quad(fill(quad, decor.color));
+                }
             }
             if let Some(cursor) = prepaint.cursor.take() {
                 window.paint_quad(cursor);
@@ -1405,6 +1463,7 @@ fn paint_custom_glyph(
 /// Shape a row with ligatures enabled, then snap shaped glyph clusters back to
 /// their source grid columns. This keeps fallback glyph advances and ligature
 /// substitutions from moving later terminal cells.
+#[allow(clippy::too_many_arguments)]
 fn shape_row(
     row: &[CellSnapshot],
     row_y: Pixels,
@@ -1412,9 +1471,10 @@ fn shape_row(
     mono: &gpui::Font,
     font_size: Pixels,
     cell_w: Pixels,
-    cursor_col: Option<usize>,
+    cursor: Option<(usize, Option<Hsla>)>,
     window: &Window,
     glyphs: &mut Vec<(Pixels, CustomGlyph)>,
+    decor: &mut Vec<(Pixels, Decor)>,
 ) -> Vec<(usize, ShapedLine)> {
     let mut segments = Vec::new();
     let mut segment = ShapedSegment::default();
@@ -1424,21 +1484,6 @@ fn shape_row(
             continue;
         }
         let ch = if cell.hidden { ' ' } else { cell.ch };
-        // Anything that can leave the mono font gets its own pinned segment.
-        let pinned = !ch.is_ascii() || cell.wide;
-        if pinned {
-            flush(
-                &mut segments,
-                &mut text,
-                &mut runs,
-                seg_col,
-                font_size,
-                window,
-            );
-        }
-        if text.is_empty() {
-            seg_col = col;
-        }
         let (fg, bg) = cell.display_colors();
         let mut color = resolve_color(fg, theme);
         // The theme's own default pair is already tuned; anything the
@@ -1449,9 +1494,12 @@ fn shape_row(
         if cell.dim {
             color.a *= 0.6;
         }
-        let at_cursor = cursor_col == Some(col);
-        let rtl_fit = rtl_run.then(|| cell_w * (col - segment.col) as f32);
+        let at_cursor = cursor.is_some_and(|(c, _)| c == col);
+        if let Some((_, Some(cursor_text))) = cursor.filter(|_| at_cursor) {
+            color = cursor_text;
+        }
         if !ch.is_ascii() && sprite::has_char(ch) {
+            let rtl_fit = rtl_run.then(|| cell_w * (col - segment.col) as f32);
             segment.flush(rtl_fit, &mut segments, font_size, cell_w, window);
             rtl_run = false;
             glyphs.push((
@@ -1468,6 +1516,7 @@ fn shape_row(
         let rtl = is_rtl(ch) && !cell.wide;
         let joins_rtl = rtl_run && (rtl || ch == ' ');
         if !joins_rtl && (at_cursor || rtl || rtl_run) {
+            let rtl_fit = rtl_run.then(|| cell_w * (col - segment.col) as f32);
             segment.flush(rtl_fit, &mut segments, font_size, cell_w, window);
         }
         if segment.text.is_empty() {
@@ -1483,6 +1532,21 @@ fn shape_row(
         } else {
             gpui::FontStyle::Normal
         };
+        // gpui's text runs draw a straight or a wavy line only: double, dotted,
+        // and dashed underlines are painted over the row as quads.
+        use crate::terminal::emulator::UnderlineStyle as U;
+        let drawn = matches!(cell.underline_style, U::Single | U::Curly);
+        if cell.underline && !cell.predicted && !drawn {
+            decor.push((
+                row_y,
+                Decor {
+                    col,
+                    cells: if cell.wide { 2 } else { 1 },
+                    color,
+                    style: cell.underline_style,
+                },
+            ));
+        }
         // A predicted (not yet echoed) character carries a faint underline:
         // it reads as typed, while still owning that it is provisional.
         let underline = if cell.predicted {
@@ -1492,10 +1556,10 @@ fn shape_row(
                 wavy: false,
             })
         } else {
-            cell.underline.then_some(gpui::UnderlineStyle {
+            (cell.underline && drawn).then_some(gpui::UnderlineStyle {
                 color: Some(color),
                 thickness: px(1.0),
-                wavy: cell.underline_style == crate::terminal::emulator::UnderlineStyle::Curly,
+                wavy: cell.underline_style == U::Curly,
             })
         };
         let strikethrough = cell.strikethrough.then_some(gpui::StrikethroughStyle {
@@ -1503,11 +1567,7 @@ fn shape_row(
             thickness: px(1.0),
         });
         let mut encoded = [0; 4];
-        let text = cell
-            .cluster
-            .as_deref()
-            .filter(|_| !cell.hidden)
-            .unwrap_or_else(|| ch.encode_utf8(&mut encoded));
+        let text = cell.cluster.as_deref().filter(|_| !cell.hidden).unwrap_or_else(|| ch.encode_utf8(&mut encoded));
         let len = text.len();
         segment.text.push_str(text);
         segment.cols.extend(std::iter::repeat_n(col, len));

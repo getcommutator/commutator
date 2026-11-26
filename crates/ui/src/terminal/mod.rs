@@ -20,4 +20,4 @@ pub(crate) mod dock;
 pub mod panel;
 pub mod sprite;
 pub mod view;
-pub use commutator_term::{emulator, predict};
+pub use commutator_term::{ghostty as emulator, predict};

@@ -189,10 +189,6 @@ fn encode_base64(bytes: &[u8]) -> String {
 /// A grid snapshot handed to the paint element.
 pub struct GridSnapshot {
     pub lines: Vec<Vec<CellSnapshot>>,
-    /// The history row a partial scroll reveals above `lines`.
-    pub line_above: Option<Vec<CellSnapshot>>,
-    /// Rows the grid is shifted down by (0..1) for pixel-smooth scrolling.
-    pub scroll_frac: f32,
     pub cursor: Option<CursorSnapshot>,
     pub cursor_shape: CursorShape,
     /// False during a blinking cursor's off phase.
@@ -287,8 +283,8 @@ struct TerminalTab {
     terminal_id: Option<String>,
     target_device_id: Option<String>,
     emulator: Emulator,
-    /// How far past `display_offset` the view sits, in rows (0..1): history
-    /// scrolls by the pixel, so a trackpad glides instead of stepping.
+    /// Fractional scrollback rows accumulated across wheel/trackpad ticks
+    /// until they step a whole line.
     scroll_remainder: f32,
     /// Fractional wheel rows owed to a program (reports / arrow keys).
     wheel_remainder: f32,
@@ -1347,14 +1343,6 @@ impl TerminalPanel {
         // current frame, which already paints the resized grid.
     }
 
-    /// Rows are drawn `dy` lower than the measured grid (a partial scroll);
-    /// pointer mapping follows them.
-    pub fn shift_grid_origin(&mut self, dy: Pixels) {
-        if let Some(geometry) = self.geometry.as_mut() {
-            geometry.origin.y += dy;
-        }
-    }
-
     /// Snapshot for the paint element.
     pub fn active_grid_snapshot(&self, cx: &App) -> Option<GridSnapshot> {
         let tab = self.active_tab(cx)?;
@@ -1377,19 +1365,8 @@ impl TerminalPanel {
             let left = (1.0 - t).clamp(0.0, 1.0);
             left * left
         });
-        let scroll_frac = if tab.emulator.alt_screen()
-            || tab.emulator.display_offset() >= tab.emulator.history_lines()
-        {
-            0.0
-        } else {
-            tab.scroll_remainder.clamp(0.0, 1.0)
-        };
         Some(GridSnapshot {
             lines,
-            line_above: (scroll_frac > 0.0)
-                .then(|| tab.emulator.line_above())
-                .flatten(),
-            scroll_frac,
             cursor,
             cursor_shape: tab.emulator.cursor_style().0,
             cursor_on: self.blink_on || !self.blink_wanted,
@@ -1655,8 +1632,9 @@ impl TerminalPanel {
 
     /// Wheel movement in rows (positive = up): to the program as wheel
     /// reports when it tracks the mouse, as arrow keys to a full-screen
-    /// program that doesn't (less, man), else through the scrollback — by
-    /// the pixel, clamped flush to the live bottom and the history top.
+    /// program that doesn't (less, man), else through the scrollback —
+    /// whole lines at a time, accumulating sub-row deltas across ticks and
+    /// clamping flush at the live bottom and history top.
     fn wheel(
         &mut self,
         rows: f32,
@@ -1665,30 +1643,46 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let reporting = self.reporting(mods, cx).is_some();
-        let Some(tab) = self.with_active_tab(cx, |tab| {
+        let Some(result) = self.with_active_tab(cx, |tab| {
             let arrows = tab.exited.is_none()
                 && tab.emulator.alt_screen()
                 && tab.emulator.alternate_scroll()
                 && !mods.shift;
             if !(reporting || arrows) {
-                let history = tab.emulator.history_lines() as f32;
-                let target = (tab.emulator.display_offset() as f32 + tab.scroll_remainder + rows)
-                    .clamp(0.0, history);
-                let whole = target.floor();
-                tab.emulator.scroll_to_offset(whole as usize);
-                tab.scroll_remainder = target - whole;
-                return None;
+                if tab.emulator.alt_screen() {
+                    tab.scroll_remainder = 0.0;
+                    return Err(false);
+                }
+                tab.scroll_remainder += rows;
+                let step = tab.scroll_remainder.trunc() as i32;
+                tab.scroll_remainder -= step as f32;
+                if step != 0 {
+                    tab.emulator.scroll(step);
+                }
+                let offset = tab.emulator.display_offset();
+                let history = tab.emulator.history_lines();
+                if (offset == 0 && tab.scroll_remainder < 0.0)
+                    || (offset >= history && tab.scroll_remainder > 0.0)
+                {
+                    tab.scroll_remainder = 0.0;
+                }
+                return Err(step != 0);
             }
             tab.wheel_remainder += rows;
             let step = tab.wheel_remainder.trunc() as i32;
             tab.wheel_remainder -= step as f32;
-            Some((step, arrows, tab.emulator.app_cursor_mode()))
+            Ok((step, arrows, tab.emulator.app_cursor_mode()))
         }) else {
             return;
         };
-        let Some((step, arrows, app_cursor)) = tab else {
-            cx.notify();
-            return;
+        let (step, arrows, app_cursor) = match result {
+            Err(moved) => {
+                if moved {
+                    cx.notify();
+                }
+                return;
+            }
+            Ok(report) => report,
         };
         if step == 0 {
             return;

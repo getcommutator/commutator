@@ -3958,7 +3958,7 @@ impl Render for AppearancePage {
                 .unwrap_or(0),
         )
         .width(160.0)
-        .on_select(|_, ix, _, cx| {
+        .on_select(move |_, ix, _, cx| {
             crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |settings| {
                 settings.terminal_cursor_effect = effects[ix]
             });
