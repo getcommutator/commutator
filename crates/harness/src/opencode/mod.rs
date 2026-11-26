@@ -191,6 +191,49 @@ fn startup_timeout() -> Duration {
         .unwrap_or(DEFAULT_STARTUP_TIMEOUT)
 }
 
+/// A busy turn this quiet (no events, no running tool) is checked against
+/// opencode's log for a provider failure it never published.
+const QUIET_CHECK: Duration = Duration::from_secs(15);
+
+fn opencode_log_path() -> Option<PathBuf> {
+    crate::executable::home_dir()
+        .map(|h| h.join(".local/share/opencode/log/opencode.log"))
+}
+
+fn opencode_log_len() -> u64 {
+    opencode_log_path()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map_or(0, |m| m.len())
+}
+
+/// opencode 1.19 swallows some provider failures (a spent Go plan limit):
+/// no `session.error`, no error on the assistant message, the session just
+/// stays busy. Its log still has the text, so read the main-agent
+/// `stream error` for `session_id` written after `offset`.
+// ponytail: log scraping, drop once opencode publishes these as session.error.
+fn provider_error_from_log(session_id: &str, offset: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(opencode_log_path()?).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = if len < offset { 0 } else { offset }.max(len.saturating_sub(1 << 20));
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut text = String::new();
+    file.take(1 << 20).read_to_string(&mut text).ok()?;
+    let needle = format!("session.id={session_id} ");
+    text.lines().rev().find_map(|line| {
+        if !(line.contains("message=\"stream error\"")
+            && line.contains(&needle)
+            && line.contains("small=false"))
+        {
+            return None;
+        }
+        let rest = line.split("error.error=\"").nth(1)?;
+        let rest = rest.trim_end().trim_end_matches('"');
+        let rest = rest.strip_prefix("AI_APICallError: ").unwrap_or(rest);
+        Some(rest.to_owned())
+    })
+}
+
 fn stall_bound() -> Option<Duration> {
     match std::env::var(STALL_ENV) {
         Ok(v) => match v.parse::<u64>() {
@@ -1977,6 +2020,11 @@ struct TurnState {
     /// Aborted to deliver a steer immediately: its idle/interrupted frame is
     /// a steer boundary, not the end of the run.
     preempted: bool,
+    /// Last bus event about our session (quiet-turn check below).
+    last_activity: tokio::time::Instant,
+    /// Size of opencode's log when the turn began: only what it appends
+    /// afterwards can belong to this turn.
+    log_offset: u64,
 }
 
 /// What a detached turn request reports back. `generation` binds it to the
@@ -2045,12 +2093,15 @@ impl TurnState {
             stall_deadline: stall.map(|d| tokio::time::Instant::now() + d),
             open_tools: Default::default(),
             preempted: false,
+            last_activity: tokio::time::Instant::now(),
+            log_offset: opencode_log_len(),
         }
     }
 
     fn note_activity(&mut self) {
         self.saw_activity = true;
         self.stall_deadline = None;
+        self.last_activity = tokio::time::Instant::now();
     }
 }
 
@@ -2718,6 +2769,29 @@ async fn run_session(session: Session) {
                     }).await;
                     done_sent = true;
                     break 'main;
+                }
+            }
+
+            // Busy but silent: opencode may have hit a provider failure it
+            // never published (see `provider_error_from_log`).
+            _ = tokio::time::sleep_until(turn.last_activity + QUIET_CHECK),
+                if turn.active
+                    && turn.saw_activity
+                    && turn.open_tools.is_empty()
+                    && turn.error.is_none()
+                    && !interrupt_requested
+                    && !stopping => {
+                turn.last_activity = tokio::time::Instant::now();
+                if let Some(found) = provider_error_from_log(&session_id, turn.log_offset) {
+                    turn.error = Some(found.clone());
+                    if !send(&event_tx, AgentEvent::Error { message: found }).await {
+                        break 'main;
+                    }
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        server.abort_session(&session_id, dir),
+                    )
+                    .await;
                 }
             }
 
