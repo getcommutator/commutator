@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "commutator"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "clap",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-account"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "base64 0.22.1",
  "commutator-rpc",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-cli"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "clap",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-client"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1772,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-doc"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "chrono",
  "commutator-proto",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-engine"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-harness"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-launch"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "libc",
  "tempfile",
@@ -1888,14 +1888,14 @@ dependencies = [
 
 [[package]]
 name = "commutator-markdown"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "pulldown-cmark",
 ]
 
 [[package]]
 name = "commutator-mcp"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-mobile"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "async-trait",
  "commutator-account",
@@ -1947,14 +1947,14 @@ dependencies = [
 
 [[package]]
 name = "commutator-mobile-bindgen"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "uniffi",
 ]
 
 [[package]]
 name = "commutator-notify"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "objc",
  "sha2 0.10.9",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-preview"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1993,11 +1993,11 @@ dependencies = [
 
 [[package]]
 name = "commutator-preview-label"
-version = "0.3.17"
+version = "0.3.18"
 
 [[package]]
 name = "commutator-proto"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "chrono",
  "pulldown-cmark",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-rpc"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-server"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-sync"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-syntax"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "thiserror 2.0.20",
  "tree-sitter",
@@ -2116,7 +2116,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-term"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "alacritty_terminal",
  "ghostty-vt",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-term-link"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-text"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.24.0",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-theme"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "clap",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-ui"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-update"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "anyhow",
  "futures",
@@ -2268,11 +2268,11 @@ dependencies = [
 
 [[package]]
 name = "commutator-veil"
-version = "0.3.17"
+version = "0.3.18"
 
 [[package]]
 name = "commutator-visual"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "base64 0.22.1",
  "gltf",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "commutator-visual-gpu"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "commutator-visual",
  "image",
@@ -13532,7 +13532,7 @@ dependencies = [
 
 [[package]]
 name = "zatex"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "tiny-skia",
  "ttf-parser",
