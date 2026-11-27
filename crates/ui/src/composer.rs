@@ -9682,9 +9682,14 @@ impl Composer {
                     .child(
                         div()
                             .mt(px(6.0))
-                            .text_size(crate::typography::ui_rems(14.0))
-                            .line_height(px(20.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
+                            // The chat's own prose voice: long questions read
+                            // like the message above them, not a bold wall.
+                            .text_size(crate::typography::ui_rems(
+                                crate::markdown::render::MD_TEXT_SIZE,
+                            ))
+                            .line_height(crate::typography::ui_rems(
+                                crate::markdown::render::MD_LINE_HEIGHT,
+                            ))
                             .text_color(theme.text)
                             .child(SharedString::from(question.question.clone())),
                     )

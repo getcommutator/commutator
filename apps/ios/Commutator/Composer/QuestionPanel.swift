@@ -28,7 +28,8 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
         addSubview(card)
         header.font = Fonts.ui(.sansMedium, 12.5)
         header.textColor = Palette.secondary
-        question.font = Fonts.ui(.sansSemibold, 17)
+        // The transcript's body voice: long questions read like the message above.
+        question.font = Fonts.ui(.sans, UIFontMetrics(forTextStyle: .body).scaledValue(for: 16.5))
         question.textColor = Palette.text
         question.numberOfLines = 0
         options.axis = .vertical
