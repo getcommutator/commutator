@@ -83,6 +83,8 @@ struct EditorOverlayRow {
 
 struct EditorOverlayLayout {
     gutter_width: f32,
+    /// The text is scrolled sideways, under the line numbers.
+    scrolled_x: bool,
     line_height: f32,
     viewport_width: f32,
     viewport_height: f32,
@@ -462,6 +464,7 @@ fn editor_overlay_layout(editor: &super::editor::FileEditorState) -> Option<Edit
     }
     Some(EditorOverlayLayout {
         gutter_width: gutter_width.unwrap_or(36.0),
+        scrolled_x: editor.scroll_offset().x < gpui::px(0.0),
         line_height,
         viewport_width: f32::from(input_bounds.size.width),
         viewport_height: f32::from(input_bounds.size.height),
@@ -2875,7 +2878,26 @@ impl FilesSurface {
             .map(|comment| (comment.line, comment.clone()))
             .collect::<HashMap<_, _>>();
         let (card_left, card_width) = editor_comment_overlay_horizontal(&layout);
-        let mut overlays = Vec::with_capacity(layout.rows.len() + 1);
+        let mut overlays = Vec::with_capacity(layout.rows.len() + 2);
+        // Text scrolled sideways slides under the line numbers: a soft edge
+        // says there is more to the left.
+        if layout.scrolled_x {
+            let shade = gpui::black().opacity(if theme.appearance.is_dark() { 0.32 } else { 0.08 });
+            overlays.push(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(layout.gutter_width))
+                    .w(px(8.0))
+                    .bg(gpui::linear_gradient(
+                        90.0,
+                        gpui::linear_color_stop(shade, 0.0),
+                        gpui::linear_color_stop(shade.opacity(0.0), 1.0),
+                    ))
+                    .into_any_element(),
+            );
+        }
         for row in &layout.rows {
             let group: SharedString = format!("file-comment-gutter-{}-{}", path, row.line).into();
             let cell = div()
@@ -3950,6 +3972,7 @@ mod tests {
     fn comment_overlay_stays_inside_the_editor_viewport() {
         let layout = EditorOverlayLayout {
             gutter_width: 32.0,
+            scrolled_x: false,
             line_height: 20.0,
             viewport_width: 420.0,
             viewport_height: 100.0,
@@ -3963,6 +3986,7 @@ mod tests {
     fn comment_overlay_is_compact_when_space_allows_and_inset_when_narrow() {
         let mut layout = EditorOverlayLayout {
             gutter_width: 40.0,
+            scrolled_x: false,
             line_height: 20.0,
             viewport_width: 480.0,
             viewport_height: 300.0,
