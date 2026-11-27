@@ -629,8 +629,8 @@ impl BrowserSurface {
                     let result = task.await;
                     let _ = cx.update(|cx| match result {
                         Ok(path) => {
-                            let name = extensions::info_name(&path);
-                            extensions::add_extension(cx, path);
+                            let name = extensions::info(&path).map(|i| i.name).unwrap_or_default();
+                            crate::settings::browser::add_extension(cx, path);
                             crate::toast::show(
                                 cx,
                                 crate::toast::ToastKind::Success,

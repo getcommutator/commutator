@@ -43,6 +43,7 @@ use crate::rail;
 use crate::settings::accounts::AccountsPage;
 use crate::settings::appearance::{AppearancePage, AppearanceSettingsEvent};
 use crate::settings::archived::ArchivedPage;
+use crate::settings::browser::BrowserSettingsPage;
 use crate::settings::devices::DevicesPage;
 use crate::settings::files::{FilesSettingsEvent, FilesSettingsPage};
 use crate::settings::harnesses::HarnessesPage;
@@ -564,6 +565,8 @@ pub enum SettingsSection {
     Agents,
     Appearance,
     Files,
+    /// Chrome extensions in the browser tabs.
+    Browser,
     Notifications,
     Shortcuts,
     /// Composer and conversation behavior plus thread naming.
@@ -575,7 +578,7 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
-    pub const ALL: [SettingsSection; 9] = [
+    pub const ALL: [SettingsSection; 10] = [
         SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::Notifications,
@@ -583,6 +586,7 @@ impl SettingsSection {
         SettingsSection::Harnesses,
         SettingsSection::Devices,
         SettingsSection::Files,
+        SettingsSection::Browser,
         SettingsSection::Appshots,
         SettingsSection::Archived,
     ];
@@ -621,6 +625,7 @@ impl SettingsSection {
             SettingsSection::Agents => "agents",
             SettingsSection::Appearance => "appearance",
             SettingsSection::Files => "files",
+            SettingsSection::Browser => "browser",
             SettingsSection::Notifications => "notifications",
             SettingsSection::Shortcuts => "shortcuts",
             SettingsSection::General => "general",
@@ -637,6 +642,7 @@ impl SettingsSection {
             "agents" => SettingsSection::Agents,
             "appearance" => SettingsSection::Appearance,
             "files" => SettingsSection::Files,
+            "browser" => SettingsSection::Browser,
             "notifications" => SettingsSection::Notifications,
             "shortcuts" => SettingsSection::Shortcuts,
             "general" | "conversations" => SettingsSection::General,
@@ -661,6 +667,7 @@ impl SettingsSection {
             SettingsSection::Agents => "Accounts",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Files => "Files",
+            SettingsSection::Browser => "Browser",
             SettingsSection::Notifications => "Notifications",
             SettingsSection::Shortcuts => "Shortcuts",
             SettingsSection::General => "General",
@@ -1991,6 +1998,7 @@ pub struct Shell {
     /// Rebuilt per visit and dropped on leaving, which stops its GitHub
     /// polling and status re-checks.
     archived_page: Option<Entity<ArchivedPage>>,
+    browser_settings_page: Option<Entity<BrowserSettingsPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
     files_settings_page: Option<Entity<FilesSettingsPage>>,
     notifications_page: Option<Entity<NotificationsPage>>,
@@ -2504,6 +2512,7 @@ impl Shell {
             pull_request_cache: Default::default(),
             devices_page: None,
             archived_page: None,
+            browser_settings_page: None,
             appearance_page: None,
             files_settings_page: None,
             notifications_page: None,
@@ -3851,6 +3860,14 @@ impl Shell {
         });
         self.browsers.insert(id, browser.clone());
         self.browser_subs.insert(id, sub);
+        // Tabs extensions ask for (`tabs.create`) open beside the chat shown.
+        let (shell, handle) = (cx.entity().downgrade(), window.window_handle());
+        crate::browser::extensions::on_new_tab(move |url, cx| {
+            let shell = shell.clone();
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = shell.update(cx, |shell, cx| shell.add_browser_surface(Some(url), window, cx));
+            });
+        });
         self.right_tabs
             .entry(key)
             .or_default()
@@ -5519,6 +5536,10 @@ impl Shell {
                 .archived_page
                 .as_ref()
                 .is_some_and(|page| page.update(cx, |page, cx| page.dismiss_on_escape(cx))),
+            SettingsSection::Browser => self
+                .browser_settings_page
+                .as_ref()
+                .is_some_and(|page| page.update(cx, |page, cx| page.dismiss_on_escape(cx))),
             _ => false,
         }
     }
@@ -5839,6 +5860,12 @@ impl Shell {
                     }
                     None => Empty.into_any_element(),
                 }
+            }
+            SettingsSection::Browser => {
+                let page = self
+                    .browser_settings_page
+                    .get_or_insert_with(|| cx.new(BrowserSettingsPage::new));
+                page.clone().into_any_element()
             }
             SettingsSection::Archived => {
                 if self.archived_page.is_none() {
@@ -7748,6 +7775,7 @@ impl Shell {
             SettingsSection::Agents => icons::KEY_MINIMALISTIC,
             SettingsSection::Appearance => icons::TUNING,
             SettingsSection::Files => icons::FOLDER,
+            SettingsSection::Browser => icons::GLOBAL,
             SettingsSection::Notifications => icons::BELL,
             SettingsSection::Shortcuts => icons::KEYBOARD,
             SettingsSection::General => icons::SETTINGS,
@@ -17678,6 +17706,7 @@ mod settings_modal_regressions {
             ("settings/general", SettingsSection::General),
             ("settings/conversations", SettingsSection::General),
             ("settings/files", SettingsSection::Files),
+            ("settings/browser", SettingsSection::Browser),
             ("settings/appshots", SettingsSection::Appshots),
             ("settings/archived", SettingsSection::Archived),
         ] {
