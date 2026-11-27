@@ -147,3 +147,12 @@ open(f"{D}/G3.svg", "w").write(gray("url(#g)", "#000", stroke=18, defs=LG))  # g
 open(f"{D}/glyph.svg", "w").write(
     f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{C-412} {C-412} 824 824">'
     + bars(6, 225, 410, 64, rot0=30, fill="#000") + circle(120, "#000") + '</svg>')  # wider gap: stays open at 16-22px
+
+
+# Ask-style source: one light across the whole drawing (black top-left -> near white bottom-right),
+# no outline, solid shaft; S1.svg is its silhouette, which export.sh fills with a faint tone.
+L1 = ('<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="200" y1="160" x2="840" y2="880">'
+      '<stop offset="0" stop-color="#000"/><stop offset="0.3" stop-color="#1a1a1a"/>'
+      '<stop offset="1" stop-color="#f4f4f4"/></linearGradient></defs>')
+open(f"{D}/G4.svg", "w").write(gray("url(#g)", "#000", defs=L1))
+open(f"{D}/S1.svg", "w").write(gray("#000", "#000"))
