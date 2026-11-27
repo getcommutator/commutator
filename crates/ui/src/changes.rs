@@ -4431,6 +4431,7 @@ fn code_text_viewport(
     }
     match scroll {
         Some(scroll) => {
+            let scrolled = scroll.handle.offset().x < px(0.0);
             let mut viewport = viewport
                 .id(scroll.id)
                 .overflow_x_scroll()
@@ -4438,7 +4439,16 @@ fn code_text_viewport(
             // Without this GPUI maps a vertical-only wheel delta onto x for
             // an x-only scroller, starving the virtualized list underneath.
             viewport.style().restrict_scroll_to_axis = Some(true);
-            viewport.into_any_element()
+            // The shade sits outside the scroller so it stays at the gutter
+            // edge; row after row, the shades join into one.
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .child(viewport)
+                .when(scrolled, |el| el.child(crate::theme::gutter_scroll_shade(theme).left_0()))
+                .into_any_element()
         }
         None => viewport.into_any_element(),
     }

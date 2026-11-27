@@ -2882,19 +2882,9 @@ impl FilesSurface {
         // Text scrolled sideways slides under the line numbers: a soft edge
         // says there is more to the left.
         if layout.scrolled_x {
-            let shade = gpui::black().opacity(if theme.appearance.is_dark() { 0.32 } else { 0.08 });
             overlays.push(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
+                crate::theme::gutter_scroll_shade(theme)
                     .left(px(layout.gutter_width))
-                    .w(px(8.0))
-                    .bg(gpui::linear_gradient(
-                        90.0,
-                        gpui::linear_color_stop(shade, 0.0),
-                        gpui::linear_color_stop(shade.opacity(0.0), 1.0),
-                    ))
                     .into_any_element(),
             );
         }

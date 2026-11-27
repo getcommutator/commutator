@@ -1547,6 +1547,18 @@ pub fn ink(alpha: f32) -> Hsla {
     ink_for(current_appearance(), alpha)
 }
 
+/// The soft edge where code scrolled sideways slides under a fixed gutter
+/// (line numbers, diff markers): place it absolutely at the gutter's right.
+pub fn gutter_scroll_shade(theme: &Theme) -> gpui::Div {
+    use gpui::{Styled as _, px};
+    let shade = gpui::black().opacity(if theme.appearance.is_dark() { 0.32 } else { 0.08 });
+    gpui::div().absolute().top_0().bottom_0().w(px(8.0)).bg(gpui::linear_gradient(
+        90.0,
+        gpui::linear_color_stop(shade, 0.0),
+        gpui::linear_color_stop(shade.opacity(0.0), 1.0),
+    ))
+}
+
 fn ink_for(appearance: Appearance, alpha: f32) -> Hsla {
     match appearance {
         // Soft-white, not pure white: alphas are high enough to stay visible at
