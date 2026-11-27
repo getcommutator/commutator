@@ -1538,7 +1538,7 @@ fn flush_paragraph(out: &mut Vec<Block>, acc: &mut Vec<InlineRun>, after_math: b
     }
     if !acc.is_empty() {
         out.push(Block::Paragraph {
-            runs: merge_runs(std::mem::take(acc)),
+            runs: autolink_runs(merge_runs(std::mem::take(acc))),
         });
     }
 }
@@ -2673,6 +2673,18 @@ mod tests {
         assert_eq!(
             only_link("(docs: https://x.dev/Foo_(bar))\n").map(|l| l.1),
             Some("https://x.dev/Foo_(bar)".into())
+        );
+        // A tight list item's text autolinks too.
+        let tree = parse_full("- **Form:** https://local.voiso.test/teams/19/edit\n");
+        let Block::List { items, .. } = &tree.blocks[0].block else {
+            panic!()
+        };
+        let Block::Paragraph { runs } = &items[0][0] else {
+            panic!()
+        };
+        assert!(
+            runs.iter()
+                .any(|r| r.style.link.as_deref() == Some("https://local.voiso.test/teams/19/edit"))
         );
         // Bold text still autolinks, and the run keeps the emphasis.
         let tree = parse_full("**see https://x.dev now**\n");
@@ -4302,3 +4314,4 @@ mod image_model_tests {
         assert_eq!(runs.first().unwrap().text, "Before ");
     }
 }
+
