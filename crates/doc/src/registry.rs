@@ -1656,6 +1656,31 @@ impl RegistryDoc {
         Ok(true)
     }
 
+    /// Make a chat's sleep `sleep`, as another copy of the registry holds it
+    /// (a phone's replica taking its engine's). [`Self::upsert_chat`] leaves
+    /// sleep alone, so a whole-row write can't undo one; only fields that
+    /// differ are written. `false` when no such row.
+    pub fn mirror_chat_sleep(
+        &mut self,
+        chat_id: &str,
+        sleep: Option<&commutator_proto::ChatSleep>,
+    ) -> Result<bool, DocError> {
+        if !self.row_exists(KIND_CHATS, chat_id) {
+            return Ok(false);
+        }
+        self.update_changed(
+            KIND_CHATS,
+            chat_id,
+            fields([
+                ("sleepUntil", opt_ms(sleep.map(|s| s.until))),
+                ("sleptAt", opt_ms(sleep.map(|s| s.at))),
+                ("sleepWokeAt", opt_ms(sleep.and_then(|s| s.woke_at))),
+            ]),
+            same_value,
+        );
+        Ok(true)
+    }
+
     /// A sleeping chat woken early by its host (it asked for the person, or
     /// failed): stamped once, so the first wake is the one shown. `false`
     /// when it isn't asleep (no row, no sleep, its time passed, or woken
