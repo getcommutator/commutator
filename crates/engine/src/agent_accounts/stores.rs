@@ -152,6 +152,7 @@ pub(super) fn cli_name(harness: HarnessId) -> &'static str {
         HarnessId::Fx => "fx",
         HarnessId::Antigravity => "Antigravity",
         HarnessId::Muse => "muse",
+        HarnessId::Zcode => "zcode",
         HarnessId::Mock => "mock",
         HarnessId::Registry(agent) => agent.registry_id(),
     }
@@ -174,6 +175,8 @@ pub(super) fn upstream_vendor(store_key: &str) -> &'static str {
 /// (Its Claude flow wants a pasted code; Qwen imports Qwen CLI's login;
 /// OpenRouter mints an API key; MiniMax wasn't verified.)
 pub(super) const HERMES_LOGINS: &[&str] = &["openai-codex", "nous", "xai-oauth"];
+/// `zcode login`'s providers: Z.ai (international) and BigModel (China).
+pub(super) const ZCODE_LOGINS: &[&str] = &["zai", "bigmodel"];
 
 pub(super) fn unsupported_login(harness: HarnessId, provider: &str) -> EngineError {
     let reason = match (harness, provider) {
@@ -1354,6 +1357,43 @@ impl AgentAccounts {
         .await
     }
 
+    /// ZCode: `zcode login <zai|bigmodel> --no-browser`. It prints the
+    /// authorize url, polls until the browser approves, saves the login in
+    /// ZCode's own store (`~/.zcode`, shared with the desktop app) and exits
+    /// 0. One login per device: ZCode keeps no account pool to switch.
+    pub(super) async fn start_zcode_login(
+        &self,
+        provider: Option<&str>,
+    ) -> Result<AgentLoginStart, EngineError> {
+        let provider = provider.unwrap_or("zai");
+        if !ZCODE_LOGINS.contains(&provider) {
+            return Err(unsupported_login(HarnessId::Zcode, provider));
+        }
+        self.reap_spawned_flows(HarnessId::Zcode);
+        let exe = commutator_harness::ZcodeHarness::new()
+            .resolve_executable()
+            .map_err(|err| {
+                EngineError::Other(format!(
+                    "The `zcode` CLI was not found on this device — install ZCode first. ({err})"
+                ))
+            })?;
+        let mut command = commutator_harness::process::Command::new(&exe);
+        commutator_harness::compose_child_path(&mut command, &exe);
+        command.args(["login", provider, "--no-browser"]);
+        let login_id = new_id();
+        let home = self.login_home(&login_id)?;
+        self.spawn_login_child(
+            login_id,
+            HarnessId::Zcode,
+            command,
+            home,
+            SpawnedCompletion::ExitSuccess,
+            scan_zcode_url,
+            None,
+        )
+        .await
+    }
+
     /// Devin: its ACP server's `devin-browser` sign-in with a throwaway
     /// `XDG_DATA_HOME`, so the new key lands there and never replaces the
     /// live one. Devin opens the browser itself: a recording `$BROWSER`
@@ -1599,6 +1639,11 @@ fn hermes_profile(provider: &str, entry: &serde_json::Value, ix: usize) -> SlotP
 
 pub(super) fn scan_grok_url(output: &str) -> Option<String> {
     scan_https_url(output, &["x.ai", "grok.com"])
+}
+
+/// `Open this URL to sign in:` and the authorize page on Z.ai or BigModel.
+pub(super) fn scan_zcode_url(output: &str) -> Option<String> {
+    scan_https_url(output, &["z.ai", "bigmodel.cn"])
 }
 
 pub(super) fn scan_hermes_url(output: &str) -> Option<String> {

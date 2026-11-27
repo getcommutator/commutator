@@ -74,6 +74,9 @@ pub(crate) struct RpcClient {
     /// Only Windows' teardown needs it.
     #[cfg_attr(not(any(windows, test)), allow(dead_code))]
     close_stdin: Arc<tokio::sync::Notify>,
+    /// Writes frames without `"jsonrpc": "2.0"`, for servers whose strict
+    /// schema rejects the field (ZCode's app-server). Reading tolerates both.
+    bare: bool,
 }
 
 impl RpcClient {
@@ -81,6 +84,24 @@ impl RpcClient {
     /// client and the incoming (notification/request) channel.
     pub fn new(stdin: ChildStdin, stdout: ChildStdout) -> (Self, mpsc::Receiver<Incoming>) {
         Self::with_stdout_observer(stdin, stdout, None)
+    }
+
+    /// [`Self::new`] for a server that refuses the `jsonrpc` field.
+    pub(crate) fn without_version_field(
+        stdin: ChildStdin,
+        stdout: ChildStdout,
+    ) -> (Self, mpsc::Receiver<Incoming>) {
+        let (mut client, incoming) = Self::new(stdin, stdout);
+        client.bare = true;
+        (client, incoming)
+    }
+
+    /// `frame` as written: with `"jsonrpc": "2.0"` unless [`Self::bare`].
+    fn line(&self, mut frame: Value) -> String {
+        if !self.bare {
+            frame["jsonrpc"] = json!("2.0");
+        }
+        frame.to_string()
     }
 
     pub(crate) fn with_stdout_observer(
@@ -114,11 +135,11 @@ impl RpcClient {
                 writer: writer_tx,
                 closed,
                 close_stdin,
+                bare: false,
             },
             incoming_rx,
         )
     }
-
 
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
@@ -166,8 +187,8 @@ impl RpcClient {
             }
             pending.insert(id, tx);
         }
-        let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        if self.writer.send(line.to_string()).is_err() {
+        let line = self.line(json!({ "id": id, "method": method, "params": params }));
+        if self.writer.send(line).is_err() {
             self.pending.lock().expect("pending lock").remove(&id);
             return Box::pin(async move {
                 Err(HarnessError::Protocol(format!("{method}: {STDIN_CLOSED}")))
@@ -186,26 +207,23 @@ impl RpcClient {
     /// Fire a notification (no id, no response).
     pub fn notify(&self, method: &str, params: Option<Value>) {
         let line = match params {
-            Some(params) => json!({ "jsonrpc": "2.0", "method": method, "params": params }),
-            None => json!({ "jsonrpc": "2.0", "method": method }),
+            Some(params) => self.line(json!({ "method": method, "params": params })),
+            None => self.line(json!({ "method": method })),
         };
-        let _ = self.writer.send(line.to_string());
+        let _ = self.writer.send(line);
     }
 
     /// Answer a server→client request.
     pub fn respond(&self, id: &Value, result: Value) {
-        let line = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-        let _ = self.writer.send(line.to_string());
+        let _ = self
+            .writer
+            .send(self.line(json!({ "id": id, "result": result })));
     }
 
     /// Reject a server→client request (e.g. unknown method).
     pub fn respond_error(&self, id: &Value, code: i64, message: &str) {
-        let line = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": { "code": code, "message": message },
-        });
-        let _ = self.writer.send(line.to_string());
+        let line = self.line(json!({ "id": id, "error": { "code": code, "message": message } }));
+        let _ = self.writer.send(line);
     }
 }
 
@@ -399,6 +417,7 @@ mod tests {
             writer,
             closed: Arc::new(AtomicBool::new(false)),
             close_stdin: Arc::default(),
+            bare: false,
         };
         client.notify("session/cancel", Some(json!({"sessionId": "parent"})));
         let frame: Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
@@ -410,6 +429,35 @@ mod tests {
         assert!(client.pending.lock().unwrap().is_empty());
     }
 
+    #[test]
+    fn bare_client_writes_no_version_field() {
+        let (writer, mut receiver) = mpsc::unbounded_channel();
+        let client = RpcClient {
+            next_id: Arc::new(AtomicI64::new(0)),
+            pending: Arc::default(),
+            writer,
+            closed: Arc::new(AtomicBool::new(false)),
+            close_stdin: Arc::default(),
+            bare: true,
+        };
+        drop(client.request_now("session/create", json!({})));
+        client.notify("n", None);
+        client.respond(&json!(7), json!({}));
+        client.respond_error(&json!(8), -32601, "no");
+        let frames: Vec<Value> = std::iter::from_fn(|| receiver.try_recv().ok())
+            .map(|line| serde_json::from_str(&line).unwrap())
+            .collect();
+        assert_eq!(frames.len(), 4);
+        assert!(
+            frames.iter().all(|frame| frame.get("jsonrpc").is_none()),
+            "{frames:?}"
+        );
+        assert_eq!(
+            frames[0],
+            json!({"id": 1, "method": "session/create", "params": {}})
+        );
+    }
+
     #[tokio::test]
     async fn requests_after_eof_fail_without_entering_pending_map() {
         let (writer, mut receiver) = mpsc::unbounded_channel();
@@ -419,6 +467,7 @@ mod tests {
             writer,
             closed: Arc::new(AtomicBool::new(true)),
             close_stdin: Arc::default(),
+            bare: false,
         };
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(100),

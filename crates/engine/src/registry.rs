@@ -1136,6 +1136,29 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| commutator_harness::MuseHarness::new().installed()),
         Box::new(|| Ok(Arc::new(commutator_harness::MuseHarness::new()) as Arc<dyn Harness>)),
     );
+    // ZCode over its own app-server (`zcode app-server --stdio`), same lazy
+    // pattern: the static descriptor mirrors ZcodeHarness exactly.
+    registry.register_lazy(
+        HarnessDescriptor {
+            icon: None,
+            id: HarnessId::Zcode,
+            name: "ZCode".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::TurnBoundary,
+            reasoning_levels: Vec::new(),
+            installed: true,
+            can_install: false,
+            enabled: None,
+            access_modes: vec![
+                AccessMode::Supervised,
+                AccessMode::AutoAcceptEdits,
+                AccessMode::FullAccess,
+            ],
+            supports_plan: true,
+        },
+        Box::new(|| commutator_harness::ZcodeHarness::new().installed()),
+        Box::new(|| Ok(Arc::new(commutator_harness::ZcodeHarness::new()) as Arc<dyn Harness>)),
+    );
     registry
 }
 
@@ -1243,7 +1266,8 @@ mod tests {
                 HarnessId::Pi,
                 HarnessId::Opencode,
                 HarnessId::Antigravity,
-                HarnessId::Muse
+                HarnessId::Muse,
+                HarnessId::Zcode
             ]
         );
         assert!(registry.resolve(HarnessId::Mock).is_ok());

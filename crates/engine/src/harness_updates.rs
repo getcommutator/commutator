@@ -532,6 +532,15 @@ fn provider(id: HarnessId) -> ProviderSpec {
             update_args: None,
             manual_command: "curl -fsSL https://dev.meta.ai/install.sh | bash",
         },
+        // `version` is the CLI's own; the standalone distribution answers
+        // `--version` with its package version. The desktop app updates
+        // itself (and with it the CLI it bundles).
+        HarnessId::Zcode => ProviderSpec {
+            version_args: &["version"],
+            latest: LatestSource::Manual,
+            update_args: None,
+            manual_command: "Update the ZCode desktop app, or reinstall the ZCode CLI",
+        },
         // An agent from the ACP registry: its version is its record's, its
         // latest the registry's, and an update installs the registry's
         // build (`UpdatePlan::Registry`), never a vendor updater.

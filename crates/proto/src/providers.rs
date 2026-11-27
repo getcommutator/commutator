@@ -8,7 +8,7 @@ use crate::HarnessId;
 /// command — named in the empty-state copy, commutator settings.agents.tsx
 /// `PROVIDERS`). Every agent with a login of its own is here; what each one
 /// supports is documented engine-side (`agent_accounts` module docs).
-pub const PROVIDERS: [(HarnessId, &str, &str); 10] = [
+pub const PROVIDERS: [(HarnessId, &str, &str); 11] = [
     (HarnessId::ClaudeCode, "Claude Code", "claude"),
     (HarnessId::Codex, "Codex", "codex"),
     (HarnessId::Cursor, "Cursor", "cursor-agent"),
@@ -19,6 +19,7 @@ pub const PROVIDERS: [(HarnessId, &str, &str); 10] = [
     (HarnessId::Pi, "Pi", "pi"),
     (HarnessId::Hermes, "Hermes", "hermes auth add"),
     (HarnessId::Muse, "Muse Code", "muse login"),
+    (HarnessId::Zcode, "ZCode", "zcode login"),
 ];
 
 /// Whether `harness` has an Accounts section (and sign-in flow). Pure.

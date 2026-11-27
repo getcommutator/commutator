@@ -1838,6 +1838,7 @@ impl AgentAccounts {
             // naming one of the methods it offers.
             HarnessId::Registry(agent) => self.start_registry_login(agent, provider, requester)?,
             HarnessId::Muse => self.start_muse_login().await?,
+            HarnessId::Zcode => self.start_zcode_login(provider).await?,
             HarnessId::Opencode => match provider.unwrap_or("openai") {
                 "openai" => {
                     self.start_openai_login(HarnessId::Opencode, "openai")
@@ -4287,6 +4288,7 @@ fn harness_slug(harness: HarnessId) -> &'static str {
         HarnessId::Opencode => "opencode",
         HarnessId::Antigravity => "antigravity",
         HarnessId::Muse => "muse",
+        HarnessId::Zcode => "zcode",
         HarnessId::Mock => "mock",
         HarnessId::Registry(agent) => agent.slug(),
     }
