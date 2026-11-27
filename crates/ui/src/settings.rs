@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 pub mod accounts;
 pub mod appearance;
 pub mod archived;
+pub mod browser;
 pub mod composer;
 pub mod devices;
 pub mod files;
@@ -534,6 +535,8 @@ impl SettingsStore {
 
 pub fn init(settings: UiSettings, data_dir: impl Into<PathBuf>, cx: &mut App) {
     let data_dir = data_dir.into();
+    crate::browser::extensions::set_data_dir(&data_dir);
+    crate::browser::extensions::sync(&settings.browser_extensions);
     cx.set_global(SettingsStore {
         current: settings,
         data_dir: data_dir.into(),
@@ -831,8 +834,13 @@ pub fn update(policy: SavePolicy, cx: &mut App, mutate: impl FnOnce(&mut UiSetti
     if !cx.has_global::<SettingsStore>() {
         return false;
     }
+    let extensions = cx.global::<SettingsStore>().current.browser_extensions.clone();
     if !cx.global_mut::<SettingsStore>().update_current(mutate) {
         return false;
+    }
+    let current = &cx.global::<SettingsStore>().current.browser_extensions;
+    if *current != extensions {
+        crate::browser::extensions::sync(current);
     }
     schedule(policy, cx);
     true
@@ -1267,6 +1275,19 @@ pub struct UiSettings {
     pub reduce_motion: crate::motion::ReduceMotion,
     /// Also snap animations while the main window is not focused.
     pub pause_animations_in_background: bool,
+    /// Chrome extensions in the browser tabs (`crate::browser::extensions`):
+    /// each one's folder and whether it loads. Device-local.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browser_extensions: Vec<BrowserExtension>,
+}
+
+/// A Chrome extension added to the browser: its unpacked folder (one
+/// Commutator unpacked from the Web Store, or one the user picked) and whether
+/// it loads into the tabs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BrowserExtension {
+    pub path: PathBuf,
+    pub on: bool,
 }
 
 impl Default for UiSettings {
@@ -1362,6 +1383,7 @@ impl Default for UiSettings {
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
+            browser_extensions: Vec::new(),
         }
     }
 }
@@ -2005,6 +2027,7 @@ impl UiSettings {
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
+            browser_extensions,
             pull_request_destination,
             pull_request_picks,
         );
@@ -3119,6 +3142,10 @@ mod tests {
             new_thread_background_effect: NewThreadBackgroundEffect::Ascii,
             reduce_motion: crate::motion::ReduceMotion::On,
             pause_animations_in_background: true,
+            browser_extensions: vec![BrowserExtension {
+                path: "/tmp/extensions/dark-reader".into(),
+                on: true,
+            }],
             onboarding_completed: false,
         };
         settings.save(dir.path()).unwrap();

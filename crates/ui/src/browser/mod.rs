@@ -11,6 +11,7 @@ use macos as native;
 mod windows_webview;
 #[cfg(windows)]
 use windows_webview as native;
+pub(crate) mod extensions;
 pub mod model;
 pub(crate) mod profile;
 mod view;
