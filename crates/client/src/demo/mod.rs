@@ -9,6 +9,7 @@
 //! id), streaming replies through `SegmentWriter`, flipping session status
 //! rows, draining the queue, and answering relay RPCs.
 
+mod desktop;
 mod fixtures;
 mod png;
 mod terminal;
@@ -36,6 +37,7 @@ use crate::rpc::ProgressFn;
 use crate::session::SessionCore;
 use crate::{lock, now_ms};
 
+pub use desktop::write_desktop_demo;
 use transcripts::Step;
 
 /// Pretend network latency before the host adopts a command.

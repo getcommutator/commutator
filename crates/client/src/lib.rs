@@ -33,6 +33,7 @@ mod client;
 pub mod config;
 pub mod connectivity;
 mod demo;
+pub use demo::write_desktop_demo;
 pub mod direct;
 pub mod error;
 pub mod events;
