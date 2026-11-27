@@ -76,13 +76,14 @@ pub const NOTICE_HEIGHT: f32 = 24.0;
 pub const BODY_BOTTOM_PAD: f32 = 8.0;
 /// Gutter width per line-number column.
 pub const GUTTER_WIDTH: f32 = 36.0;
-/// The +/−/· marker column between the gutters and the code.
-pub const MARKER_WIDTH: f32 = 28.0;
+/// The (glyph-less for now) marker column between the gutters and the code:
+/// a spacer that keeps the code off the line numbers.
+pub const MARKER_WIDTH: f32 = 12.0;
 /// Width of the coloured accent bar on the left edge of +/− rows.
 pub const ACCENT_BAR_WIDTH: f32 = 3.0;
 /// The marker column in split mode: each half pays for its own, so it is
 /// narrower than [`MARKER_WIDTH`] to leave the code the room.
-pub const SPLIT_MARKER_WIDTH: f32 = 18.0;
+pub const SPLIT_MARKER_WIDTH: f32 = 8.0;
 /// Hairline between the two split columns.
 pub const SPLIT_DIVIDER_WIDTH: f32 = 1.0;
 const DIFF_TEXT_SIZE: f32 = 12.0;
@@ -4564,28 +4565,20 @@ fn diff_line_row(
     let mut del_bg = del_color(theme);
     del_bg.a = 0.055;
 
-    let (marker, marker_color, row_bg, accent, number_color) = match line.kind {
+    // ponytail: no +/− glyphs for now (the row colour says it); the marker
+    // column stays as a narrow spacer until the marker is redesigned.
+    let (row_bg, accent, number_color) = match line.kind {
         LineKind::Add => (
-            "+",
-            add_color(theme),
             Some(add_bg),
             Some(add_color(theme).opacity(0.55)),
             add_color(theme).opacity(0.9),
         ),
         LineKind::Del => (
-            "−",
-            del_color(theme),
             Some(del_bg),
             Some(del_color(theme).opacity(0.55)),
             del_color(theme).opacity(0.9),
         ),
-        _ => (
-            "·",
-            theme.text_faint.opacity(0.5),
-            None,
-            None,
-            theme.text_faint.opacity(0.8),
-        ),
+        _ => (None, None, theme.text_faint.opacity(0.8)),
     };
     let gutter = |no: Option<u32>, color: gpui::Hsla| {
         div()
@@ -4655,18 +4648,7 @@ fn diff_line_row(
                 theme.text_faint.opacity(0.8)
             },
         ))
-        .child(
-            div()
-                .w(px(MARKER_WIDTH))
-                .flex_none()
-                .flex()
-                .justify_center()
-                .text_size(px(diff_text_size(theme)))
-                .line_height(px(diff_line_height(theme)))
-                .text_color(marker_color)
-                .font_family(theme.font_mono.clone())
-                .child(SharedString::from(marker)),
-        )
+        .child(div().w(px(MARKER_WIDTH)).flex_none())
         .child(code_text_viewport(
             line.text.clone(),
             runs,
@@ -4734,28 +4716,18 @@ fn split_line_cell(
     add_bg.a = 0.055;
     let mut del_bg = del_color(theme);
     del_bg.a = 0.055;
-    let (marker, marker_color, row_bg, accent, number_color) = match line.kind {
+    let (row_bg, accent, number_color) = match line.kind {
         LineKind::Add => (
-            "+",
-            add_color(theme),
             Some(add_bg),
             Some(add_color(theme).opacity(0.55)),
             add_color(theme).opacity(0.9),
         ),
         LineKind::Del => (
-            "−",
-            del_color(theme),
             Some(del_bg),
             Some(del_color(theme).opacity(0.55)),
             del_color(theme).opacity(0.9),
         ),
-        _ => (
-            "·",
-            theme.text_faint.opacity(0.5),
-            None,
-            None,
-            theme.text_faint.opacity(0.8),
-        ),
+        _ => (None, None, theme.text_faint.opacity(0.8)),
     };
     let content_width = match code_width {
         DiffCodeWidth::Clipped => None,
@@ -4794,18 +4766,7 @@ fn split_line_cell(
                     number.map(|n| n.to_string()).unwrap_or_default(),
                 )),
         )
-        .child(
-            div()
-                .w(px(SPLIT_MARKER_WIDTH))
-                .flex_none()
-                .flex()
-                .justify_center()
-                .text_size(px(diff_text_size(theme)))
-                .line_height(px(diff_line_height(theme)))
-                .text_color(marker_color)
-                .font_family(theme.font_mono.clone())
-                .child(SharedString::from(marker)),
-        )
+        .child(div().w(px(SPLIT_MARKER_WIDTH)).flex_none())
         .child(code_text_viewport(
             line.text.clone(),
             runs,
