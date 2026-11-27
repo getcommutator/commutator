@@ -11,6 +11,8 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
     private let card = Glass.surface(radius: 26)
     private let header = UILabel()
     private let question = UILabel()
+    /// Long questions scroll inside this instead of pushing the card off screen.
+    private let questionScroll = UIScrollView()
     private let options = UIStackView()
     private let other = UITextField()
     private let editor = UITextView()
@@ -83,7 +85,7 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
         let buttons = UIStackView(arrangedSubviews: [back, UIView(), nextButton])
         buttons.axis = .horizontal
         // The header and question wrap clear of the corner close (8pt in, 36pt wide).
-        func clearOfClose(_ label: UILabel) -> UIView {
+        func clearOfClose(_ label: UIView) -> UIView {
             let row = UIView()
             label.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(label)
@@ -95,7 +97,23 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
             ])
             return row
         }
-        let questionRow = clearOfClose(question)
+        question.translatesAutoresizingMaskIntoConstraints = false
+        questionScroll.addSubview(question)
+        // As tall as the text, up to a cap; past it the text scrolls and the
+        // header, options and buttons stay on screen.
+        let fit = questionScroll.heightAnchor.constraint(equalTo: question.heightAnchor)
+        fit.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            question.topAnchor.constraint(equalTo: questionScroll.contentLayoutGuide.topAnchor),
+            question.leadingAnchor.constraint(equalTo: questionScroll.contentLayoutGuide.leadingAnchor),
+            question.trailingAnchor.constraint(equalTo: questionScroll.contentLayoutGuide.trailingAnchor),
+            question.bottomAnchor.constraint(equalTo: questionScroll.contentLayoutGuide.bottomAnchor),
+            question.widthAnchor.constraint(equalTo: questionScroll.frameLayoutGuide.widthAnchor),
+            // ponytail: fixed cap; tie it to the window height if small phones need less.
+            questionScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 240),
+            fit,
+        ])
+        let questionRow = clearOfClose(questionScroll)
         let stack = UIStackView(arrangedSubviews: [clearOfClose(header), questionRow, options, other, editor, buttons])
         stack.axis = .vertical
         stack.spacing = 10
@@ -146,6 +164,8 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
         guard let q = current else { return }
         header.text = items.count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(page + 1) of \(items.count)" : (q.header.isEmpty ? "Question" : q.header)
         question.text = q.text
+        questionScroll.contentOffset = .zero
+        DispatchQueue.main.async { [weak self] in self?.questionScroll.flashScrollIndicators() }
         options.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let chosen = picks[q.id] ?? []
         for (i, option) in q.options.enumerated() {

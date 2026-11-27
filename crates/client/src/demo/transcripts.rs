@@ -577,9 +577,9 @@ fn picker(host: &str, now: i64) -> Vec<SessionMessageEntry> {
                             note: None,
                             id: "q1".into(),
                             header: "Catalog source".into(),
-                            question:
-                                "Which device should serve harness/model catalogs for the picker?"
-                                    .into(),
+                            // Long on purpose: the question card must stay
+                            // readable when an agent packs its context in.
+                            question: "The picker currently asks whichever device the window is attached to for its harness and model catalogs. That was fine while every chat ran locally, but since aa128a6 the desktop can open chats that live on another machine, and the catalog it shows is then the local one: models installed only on the Linux box never appear, and models missing there can be picked and fail on the first turn. Phones have the same problem in reverse, because they have no harnesses of their own and always proxy through whichever engine answered first. There are three ways out. The space's device is the source of truth for what can actually run, but it may be asleep or offline, in which case the picker would show nothing until it wakes. The local device is always available and fast, but it is the reason for the stale lists in the first place. A union of both keeps the picker full, at the cost of offering models that might not exist where the chat runs, which we would then have to flag per row. Which device should serve harness/model catalogs for the picker?".into(),
                             options: vec![
                                 "Space's device (Recommended)".into(),
                                 "Local device".into(),
