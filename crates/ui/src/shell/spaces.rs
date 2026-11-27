@@ -1061,7 +1061,8 @@ mod pinned_session_tests {
                     sidebar_worktree_group(state, chat("tree-old")),
                     (
                         "local:/src/wt/lucky-river".into(),
-                        "app / lucky-river".into(),
+                        // Named after its first chat, the oldest one.
+                        "app / tree-old".into(),
                         Some("app".into())
                     )
                 );
@@ -1069,6 +1070,18 @@ mod pinned_session_tests {
                     sidebar_worktree_group(state, chat("main-mid")),
                     ("app".into(), "app".into(), None)
                 );
+            })
+            .unwrap();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.state.update(cx, |state, _| {
+                    let first = state.chats.iter_mut().find(|c| c.id == "tree-old").unwrap();
+                    first.title = None;
+                });
+                let state = shell.state.read(cx);
+                let chat = state.chats.iter().find(|c| c.id == "tree-new").unwrap();
+                // Until the first chat is named, the folder's name.
+                assert_eq!(sidebar_worktree_group(state, chat).1, "app / lucky-river");
             })
             .unwrap();
         cx.run_until_parked();
@@ -2449,7 +2462,21 @@ fn sidebar_worktree_group(
         // Project-less chats stay one "No project" group, whatever folder
         // (often a dated scratch one) each runs in.
         Some(folder) if space_path.is_some() && Some(&folder) != space_path.as_ref() => {
-            let name = folder.rsplit(['/', '\\']).next().unwrap_or(&folder);
+            // Named after its first chat once that chat has a title (the
+            // auto-titler's, or the user's); the folder's name until then.
+            // ponytail: scans all chats per call, index by folder if the sidebar slows.
+            let name = state
+                .chats
+                .iter()
+                .filter(|other| {
+                    other.device_id == chat.device_id
+                        && other.cwd.as_deref().map(trim).as_ref() == Some(&folder)
+                })
+                .min_by_key(|other| other.created_at)
+                .and_then(|first| first.title.as_deref())
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| folder.rsplit(['/', '\\']).next().unwrap_or(&folder));
             (
                 format!("{}:{folder}", chat.device_id),
                 format!("{project} / {name}"),
