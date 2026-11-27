@@ -19,11 +19,13 @@ concurrency:
 
 jobs:
   upload:
-    # IPHONEOS_DEPLOYMENT_TARGET is 26.0: Xcode 26's SDK
-    runs-on: macos-26
+    # App Store Connect wants the iOS 27 SDK from April 2027; the xcode-27 image has it
+    # (IPHONEOS_DEPLOYMENT_TARGET stays 26.0). Xcode 27.2 is what local device builds use.
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
