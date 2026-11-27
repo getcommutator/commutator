@@ -17,6 +17,8 @@ pub(super) struct RowMenu {
     /// A worktree row: the branch its New chat runs on (when known) and what
     /// Delete removes.
     pub worktree: Option<(Option<String>, WorktreeTarget)>,
+    /// A worktree row's sidebar name, what its Rename… starts from.
+    pub label: String,
 }
 
 /// The Create worktree dialog, off a project row's menu.
@@ -38,6 +40,7 @@ pub(super) fn space_row_menu(space: &commutator_proto::Space) -> RowMenu {
         device_id: space.device_id.clone(),
         folder: space.path.clone(),
         worktree: None,
+        label: String::new(),
     }
 }
 
@@ -541,6 +544,17 @@ impl Shell {
                     this.worktree_menu = None;
                     cx.reveal_path(std::path::Path::new(&folder));
                     cx.notify();
+                }),
+            ));
+        }
+        if let Some((_, target)) = &menu.worktree {
+            let key = format!("{}:{}", target.device_id, trim_path(&target.worktree_path));
+            let label = menu.label.clone();
+            card = card.child(item("row-menu-rename", icons::PEN, "Rename…").on_click(
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.worktree_menu = None;
+                    this.open_rename_worktree(key.clone(), label.clone(), cx);
                 }),
             ));
         }

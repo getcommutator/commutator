@@ -1124,6 +1124,10 @@ pub struct UiSettings {
     /// (Once spaces' sidebar order; stale ids there just match nothing.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub space_order: Vec<String>,
+    /// Sidebar names the user gave worktrees (Rename…), by `device:path`.
+    /// Device-local; an unnamed worktree shows its first chat's title.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub worktree_names: HashMap<String, String>,
     /// Master switch for session notification chimes. `COMMUTATOR_DISABLE_SOUND`
     /// overrides every per-event preference below.
     pub sound_enabled: bool,
@@ -1291,6 +1295,7 @@ impl Default for UiSettings {
             sidebar_pinned_session_ids_by_profile: HashMap::new(),
             tab_order: std::collections::HashMap::new(),
             space_order: Vec::new(),
+            worktree_names: HashMap::new(),
             sound_enabled: true,
             sound_completion_enabled: true,
             sound_input_enabled: true,
@@ -1940,6 +1945,7 @@ impl UiSettings {
             sidebar_pinned_session_ids_by_profile,
             tab_order,
             space_order,
+            worktree_names,
             sound_enabled,
             sound_completion_enabled,
             sound_input_enabled,
@@ -3010,6 +3016,7 @@ mod tests {
                 vec!["b".to_string(), "a".to_string()],
             )]),
             space_order: vec!["space-2".to_string(), "space-1".to_string()],
+            worktree_names: HashMap::from([("local:/wt/a".to_string(), "Login".to_string())]),
             sound_enabled: false,
             sound_completion_enabled: false,
             sound_input_enabled: true,

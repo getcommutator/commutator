@@ -1080,7 +1080,7 @@ mod pinned_session_tests {
                 let state = shell.state.read(cx);
                 let chat = |id: &str| state.chats.iter().find(|c| c.id == id).unwrap();
                 assert_eq!(
-                    sidebar_worktree_group(state, chat("tree-old")),
+                    sidebar_worktree_group(state, &shell.settings.worktree_names, chat("tree-old")),
                     (
                         "local:/src/wt/lucky-river".into(),
                         // Named after its first chat, the oldest one.
@@ -1089,7 +1089,7 @@ mod pinned_session_tests {
                     )
                 );
                 assert_eq!(
-                    sidebar_worktree_group(state, chat("main-mid")),
+                    sidebar_worktree_group(state, &shell.settings.worktree_names, chat("main-mid")),
                     ("app".into(), "app".into(), None)
                 );
             })
@@ -1103,7 +1103,10 @@ mod pinned_session_tests {
                 let state = shell.state.read(cx);
                 let chat = state.chats.iter().find(|c| c.id == "tree-new").unwrap();
                 // Until the first chat is named, the folder's name.
-                assert_eq!(sidebar_worktree_group(state, chat).1, "app / lucky-river");
+                assert_eq!(sidebar_worktree_group(state, &shell.settings.worktree_names, chat).1, "app / lucky-river");
+                // A name the user gave it (Rename…) wins.
+                let names = HashMap::from([("local:/src/wt/lucky-river".into(), "Login".into())]);
+                assert_eq!(sidebar_worktree_group(state, &names, chat).1, "app / Login");
             })
             .unwrap();
         cx.run_until_parked();
@@ -2479,6 +2482,7 @@ fn sidebar_project_group(state: &AppState, chat: &commutator_proto::Chat) -> (St
 /// with the project group as parent so it nests under it (Shepherd's tree).
 fn sidebar_worktree_group(
     state: &AppState,
+    names: &HashMap<String, String>,
     chat: &commutator_proto::Chat,
 ) -> (String, String, Option<String>) {
     let (project_key, project) = sidebar_project_group(state, chat);
@@ -2489,23 +2493,31 @@ fn sidebar_worktree_group(
         // Project-less chats stay one "No project" group, whatever folder
         // (often a dated scratch one) each runs in.
         Some(folder) if space_path.is_some() && Some(&folder) != space_path.as_ref() => {
-            // Named after its first chat once that chat has a title (the
-            // auto-titler's, or the user's); the folder's name until then.
+            let key = format!("{}:{folder}", chat.device_id);
+            // The name the user gave it (Rename…), else its first chat's
+            // title once it has one (the auto-titler's, or the user's); the
+            // folder's name until then.
             // ponytail: scans all chats per call, index by folder if the sidebar slows.
-            let name = state
-                .chats
-                .iter()
-                .filter(|other| {
-                    other.device_id == chat.device_id
-                        && other.cwd.as_deref().map(trim).as_ref() == Some(&folder)
-                })
-                .min_by_key(|other| other.created_at)
-                .and_then(|first| first.title.as_deref())
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
+            let first_title = || {
+                state
+                    .chats
+                    .iter()
+                    .filter(|other| {
+                        other.device_id == chat.device_id
+                            && other.cwd.as_deref().map(trim).as_ref() == Some(&folder)
+                    })
+                    .min_by_key(|other| other.created_at)
+                    .and_then(|first| first.title.as_deref())
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+            };
+            let name = names
+                .get(&key)
+                .map(String::as_str)
+                .or_else(first_title)
                 .unwrap_or_else(|| folder.rsplit(['/', '\\']).next().unwrap_or(&folder));
             (
-                format!("{}:{folder}", chat.device_id),
+                key.clone(),
                 format!("{project} / {name}"),
                 Some(project_key),
             )
@@ -3255,6 +3267,8 @@ fn path_under(path: &str, base: &str) -> bool {
 /// The space-row Rename dialog (same shape as [`RenameChatDialog`]).
 pub(super) struct RenameSpaceDialog {
     pub space_id: String,
+    /// Renaming a worktree's sidebar name instead: its `device:path` key.
+    pub worktree: Option<String>,
     pub input: Entity<ComposerInput>,
     pub focus_pending: bool,
     pub _events: Subscription,
@@ -5419,7 +5433,7 @@ impl Shell {
         match self.sidebar_organization() {
             SidebarOrganization::ByDevice => Some(chat.device_id.clone()),
             SidebarOrganization::ByProject => Some(sidebar_project_group(state, chat).0),
-            SidebarOrganization::ByWorktree => Some(sidebar_worktree_group(state, chat).0),
+            SidebarOrganization::ByWorktree => Some(sidebar_worktree_group(state, &self.settings.worktree_names, chat).0),
             SidebarOrganization::InOneList => sidebar_working(state.display_status_for(chat, Utc::now()))
                 .then(|| SIDEBAR_WORKING_GROUP.to_owned()),
         }
@@ -5445,7 +5459,7 @@ impl Shell {
         }
         chats
             .iter()
-            .filter_map(|chat| match sidebar_worktree_group(state, chat) {
+            .filter_map(|chat| match sidebar_worktree_group(state, &self.settings.worktree_names, chat) {
                 (key, _, Some(parent)) => Some((key, parent)),
                 _ => None,
             })
@@ -5546,7 +5560,7 @@ impl Shell {
                 .sidebar_chats(now, self.settings.space_filter.as_deref())
                 .into_iter()
                 .map(|(status, chat)| {
-                    let place = sidebar_worktree_group(state, chat).1;
+                    let place = sidebar_worktree_group(state, &self.settings.worktree_names, chat).1;
                     (status, chat.clone(), place)
                 })
                 .collect();
@@ -5895,6 +5909,8 @@ impl Shell {
                 let worktree_path = chat.cwd.clone()?;
                 // The project's folder is the repository the worktree hangs off.
                 let repo_path = std::mem::replace(&mut menu.folder, worktree_path.clone());
+                // The row reads `project / name`; Rename… edits the name.
+                menu.label = label.split_once(" / ").map_or(label, |(_, name)| name).to_string();
                 menu.worktree = Some((
                     rows.iter().find_map(|row| row.branch.clone()),
                     super::worktree_cleanup::WorktreeTarget {
@@ -6080,13 +6096,28 @@ impl Shell {
                 .text_color(sidebar_header_glyph(theme))
                 .into_any_element(),
         );
-        let name = path
-            .trim_end_matches(['/', '\\'])
-            .rsplit(['/', '\\'])
-            .next()
-            .filter(|name| !name.is_empty())
-            .unwrap_or(&branch)
-            .to_string();
+        let named = self
+            .state
+            .read(cx)
+            .spaces
+            .iter()
+            .find(|space| space.id == space_id)
+            .and_then(|space| {
+                let folder = path.trim().trim_end_matches(['/', '\\']);
+                self.settings
+                    .worktree_names
+                    .get(&format!("{}:{folder}", space.device_id))
+            })
+            .cloned();
+        let name = named.unwrap_or_else(|| {
+            path.trim_end_matches(['/', '\\'])
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&branch)
+                .to_string()
+        });
+        let menu_label = name.clone();
         let (label, subline) = if compact {
             let label = div()
                 .flex()
@@ -6183,6 +6214,7 @@ impl Shell {
                 device_id: target.device_id.clone(),
                 folder: target.worktree_path.clone(),
                 worktree: Some((Some(branch.clone()), target)),
+                label: menu_label.clone(),
             };
             row.on_mouse_down(
                 MouseButton::Right,
@@ -6372,7 +6404,7 @@ impl Shell {
             SidebarOrganization::ByDevice => Some((chat.device_id.clone(), device)),
             SidebarOrganization::ByProject => Some(sidebar_project_group(state, &chat)),
             SidebarOrganization::ByWorktree => {
-                let (key, label, _) = sidebar_worktree_group(state, &chat);
+                let (key, label, _) = sidebar_worktree_group(state, &self.settings.worktree_names, &chat);
                 Some((key, label))
             }
             SidebarOrganization::InOneList => sidebar_working(status)
@@ -9168,6 +9200,34 @@ impl Shell {
         });
         self.rename_space_dialog = Some(RenameSpaceDialog {
             space_id,
+            worktree: None,
+            input,
+            focus_pending: true,
+            _events: events,
+        });
+        cx.notify();
+    }
+
+    /// A worktree row's Rename…: its sidebar name, `current` filled in.
+    pub(super) fn open_rename_worktree(
+        &mut self,
+        key: String,
+        current: String,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| ComposerInput::new("Worktree name", cx));
+        input.update(cx, |input, cx| {
+            input.set_text(current, cx);
+            input.select_all_text(cx);
+        });
+        let events = cx.subscribe(&input, |this: &mut Shell, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Submitted) {
+                this.submit_rename_space(cx);
+            }
+        });
+        self.rename_space_dialog = Some(RenameSpaceDialog {
+            space_id: String::new(),
+            worktree: Some(key),
             input,
             focus_pending: true,
             _events: events,
@@ -9180,7 +9240,15 @@ impl Shell {
             return;
         };
         let name = dialog.input.read(cx).text().trim().to_string();
-        if !name.is_empty() {
+        if let Some(key) = dialog.worktree {
+            // Emptied: back to the automatic name.
+            if name.is_empty() {
+                self.settings.worktree_names.remove(&key);
+            } else {
+                self.settings.worktree_names.insert(key, name);
+            }
+            self.schedule_save(cx);
+        } else if !name.is_empty() {
             self.mutate(
                 serde_json::json!({ "op": "renameSpace", "spaceId": dialog.space_id, "name": name }),
                 cx,
@@ -9260,6 +9328,11 @@ impl Shell {
                 window.focus(&dialog.input.focus_handle(cx), cx);
             }
             let input = dialog.input.clone();
+            let title = if dialog.worktree.is_some() {
+                "Rename worktree"
+            } else {
+                "Rename project"
+            };
             let card = popover::dialog_card(&theme)
                 .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
                     if ev.keystroke.key == "escape" {
@@ -9268,7 +9341,7 @@ impl Shell {
                         cx.stop_propagation();
                     }
                 }))
-                .child(popover::dialog_title(&theme, "Rename project"))
+                .child(popover::dialog_title(&theme, title))
                 .child(
                     div()
                         .mt(px(12.0))
