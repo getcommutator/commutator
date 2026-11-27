@@ -946,7 +946,11 @@ impl Client {
             return Err(ClientError::Unsupported("pins are not synced yet".into()));
         }
         self.inner
-            .registry_write(|doc| doc.change_sidebar_pin(&change))
+            .registry_write(|doc| doc.change_sidebar_pin(&change))?;
+        // Local mode: the engine owns its own registry; without this the
+        // next snapshot rolls the pin back.
+        self.local_mutate(serde_json::json!({"op": "changeSidebarPin", "change": change}));
+        Ok(())
     }
 
     pub fn pin_session(&self, chat_id: &str) -> Result<()> {
