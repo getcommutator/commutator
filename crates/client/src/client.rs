@@ -68,6 +68,8 @@ pub(crate) struct ClientInner {
     pub(crate) config: ClientConfig,
     pub(crate) credentials: Credentials,
     pub(crate) events: Arc<EventPump>,
+    /// Where the registry replica is kept between launches; none in demo.
+    registry_cache: Option<std::path::PathBuf>,
     pub(crate) workspace: WorkspaceStore,
     pub(crate) attachment_cache: AttachmentCache,
     backend: OnceLock<Backend>,
@@ -120,6 +122,33 @@ impl ClientInner {
     /// Local mode: the engine listed its chats (the workspace is current).
     pub(crate) fn set_synced(&self) {
         self.synced.store(true, Ordering::Release);
+    }
+
+    /// Keep the replica for the next launch. Only once it has synced: a
+    /// launch that never reached the engine has nothing newer than the file.
+    /// ponytail: written only on backgrounding; a crash in the foreground
+    /// keeps the previous file. Save after sync too if that proves stale.
+    pub(crate) fn save_registry_cache(&self) {
+        let Some(path) = &self.registry_cache else { return };
+        if !self.synced.load(Ordering::Acquire) {
+            return;
+        }
+        let bytes = match self.workspace.mutate(|doc| doc.to_bytes()) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::warn!(error = %err, "registry cache not encoded");
+                return;
+            }
+        };
+        let tmp = path.with_extension("tmp");
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&tmp, bytes))
+            .and_then(|()| std::fs::rename(&tmp, path));
+        if let Err(err) = written {
+            tracing::warn!(error = %err, "registry cache not written");
+        }
     }
 
     pub(crate) fn session_core(&self, chat_id: &str) -> Option<Arc<SessionCore>> {
@@ -427,6 +456,23 @@ impl std::fmt::Debug for Client {
     }
 }
 
+/// One file per engine: a phone that drives several machines must not show
+/// one machine's chats while connecting to another.
+fn registry_cache_path(
+    config: &ClientConfig,
+    credentials: &Credentials,
+) -> Option<std::path::PathBuf> {
+    let engine = match credentials {
+        Credentials::Demo(_) => return None,
+        Credentials::Local { port, .. } => format!("local-{port}"),
+        Credentials::Remote { host_device_id, .. } => host_device_id
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+            .collect(),
+    };
+    Some(config.data_dir.join(format!("registry-{engine}.json")))
+}
+
 impl Client {
     /// Build and start. Never blocks on the network: an engine connects in
     /// the background; Demo seeds its dataset.
@@ -441,9 +487,17 @@ impl Client {
         let events = EventPump::new(listener);
         // Nothing acks a write to this replica (the engine keeps its own),
         // so it folds writes straight into its rows.
-        let mut registry = RegistryDoc::new(config.device_id.clone());
+        // The last registry this device saw for this engine, so a relaunch
+        // shows the chats it remembers while the live one is on its way.
+        let registry_cache = registry_cache_path(&config, &credentials);
+        let mut registry = registry_cache
+            .as_deref()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| RegistryDoc::from_bytes(&bytes, &config.device_id).ok())
+            .unwrap_or_else(|| RegistryDoc::new(config.device_id.clone()));
         registry.set_local_only(true);
         let inner = Arc::new(ClientInner {
+            registry_cache,
             workspace: WorkspaceStore::new(registry),
             events: events.clone(),
             attachment_cache: AttachmentCache::new(ATTACHMENT_CACHE_BYTES),
@@ -1423,6 +1477,7 @@ impl Client {
     /// App is backgrounding: pause time-driven work.
     pub fn on_background(&self) {
         self.inner.foreground.store(false, Ordering::Release);
+        self.inner.save_registry_cache();
     }
 
     /// Still in the background on a platform that doesn't suspend the
@@ -1467,6 +1522,26 @@ pub(crate) fn ms(at: i64) -> chrono::DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_cache_is_per_engine_and_never_for_demo() {
+        let config = ClientConfig::new("/data");
+        assert_eq!(registry_cache_path(&config, &Credentials::Demo(Default::default())), None);
+        let local = Credentials::Local { port: 27754, engine_data_dir: "/e".into() };
+        assert_eq!(
+            registry_cache_path(&config, &local).unwrap(),
+            std::path::Path::new("/data/registry-local-27754.json")
+        );
+        let remote = Credentials::Remote {
+            server_url: "https://x".into(),
+            token: "t".into(),
+            host_device_id: "../mac 1".into(),
+        };
+        assert_eq!(
+            registry_cache_path(&config, &remote).unwrap(),
+            std::path::Path::new("/data/registry-___mac_1.json")
+        );
+    }
 
     #[test]
     fn demo_replica_is_local_only_and_never_queues() {

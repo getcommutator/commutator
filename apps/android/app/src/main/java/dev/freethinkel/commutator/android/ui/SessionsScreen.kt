@@ -336,8 +336,8 @@ fun SessionsScreen(
                     }
                 }
                 // Before the registry first arrives an empty list means
-                // "not loaded yet", not "no chats".
-                if (ws == null || !ws.synced) {
+                // "not loaded yet", not "no chats". Remembered chats show as is.
+                if (ws == null || (!ws.synced && frontRows(ws).isEmpty())) {
                     item("loading") {
                         Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { LoadingIndicator() }
                     }

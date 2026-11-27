@@ -145,7 +145,11 @@ impl LocalHost {
             outbox_rx: Mutex::new(Some(outbox_rx)),
             forwarded: Mutex::new(HashSet::new()),
             engine_queue: Mutex::new(HashMap::new()),
-            engine_chats: Mutex::new(HashSet::new()),
+            // Chats a cached replica brought along count as the engine's:
+            // its first listing then drops the ones it no longer has.
+            engine_chats: Mutex::new(
+                client.workspace.state().0.chats.iter().map(|c| c.id.clone()).collect(),
+            ),
             cancel: client.cancel.child_token(),
         })
     }
