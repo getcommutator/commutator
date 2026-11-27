@@ -138,6 +138,9 @@ final class AppModel {
     @MainActor lazy var terminals = TerminalStore(app: self)
     private(set) var client: CoreClient?
     private(set) var frontPage = FrontPage()
+    /// The registry has reached this phone since launch; until then an
+    /// empty front page means "not loaded yet", not "no chats".
+    private(set) var synced = false
     private(set) var archived: [SessionRowVM] = []
     private(set) var connectivity: Connectivity?
     /// Front-page sessions that are working / waiting on the user.
@@ -407,6 +410,7 @@ final class AppModel {
     /// Nothing of the account (or machine) stays in memory.
     private func resetState() {
         frontPage = FrontPage()
+        synced = false
         archived = []
         rows = [:]
         rawProjects = []
@@ -576,7 +580,8 @@ final class AppModel {
         rows = all
         // Devices coming and going (Settings, host pickers) count as changes.
         let hosts = hostOptions
-        let changed = rowsChanged || page != frontPage || archivedVMs != archived || counts != live || hosts != lastHosts
+        let changed = rowsChanged || page != frontPage || archivedVMs != archived || counts != live || hosts != lastHosts || ws.synced != synced
+        synced = ws.synced
         lastHosts = hosts
         live = counts
         if !freshSideChats.isEmpty { sweepFreshSideChats() }

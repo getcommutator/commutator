@@ -551,6 +551,9 @@ class SessionsViewController: SessionListController {
     /// The chat wallpaper behind the top of the front page. Fixed behind the
     /// list, fading out as the list scrolls up over it.
     private let wallpaper = WallpaperView()
+    /// Until the registry first arrives the list is empty because nothing
+    /// has loaded, not because there are no chats.
+    private let loading = UIActivityIndicatorView(style: .medium)
 
     override func viewDidLoad() {
         collapsible = true
@@ -558,6 +561,13 @@ class SessionsViewController: SessionListController {
         super.viewDidLoad()
         let backdrop = UIView()
         backdrop.addSubview(wallpaper)
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        loading.hidesWhenStopped = true
+        backdrop.addSubview(loading)
+        NSLayoutConstraint.activate([
+            loading.centerXAnchor.constraint(equalTo: backdrop.centerXAnchor),
+            loading.centerYAnchor.constraint(equalTo: backdrop.centerYAnchor),
+        ])
         collectionView.backgroundView = backdrop
         title = "Sessions"
         navigationItem.largeTitleDisplayMode = .always
@@ -604,6 +614,7 @@ class SessionsViewController: SessionListController {
 
     override func reload(animated: Bool) {
         super.reload(animated: animated)
+        if app.synced { loading.stopAnimating() } else { loading.startAnimating() }
         let wanted = app.sessionsView == .projects && query.trimmingCharacters(in: .whitespaces).isEmpty
         if wanted, projectsPage == nil {
             let page = ProjectsViewController(app: app)
