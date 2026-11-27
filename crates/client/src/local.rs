@@ -503,7 +503,9 @@ impl LocalHost {
                 pins.latest = Some(state);
             }
             match &pins.latest {
-                Some(latest) if pins.in_flight == 0 && latest.initialized => {
+                // Not `initialized`: an engine without a sync room never
+                // flags it, yet its list is the only one there is.
+                Some(latest) if pins.in_flight == 0 => {
                     Some(latest.pinned_session_ids.clone())
                 }
                 _ => None,
