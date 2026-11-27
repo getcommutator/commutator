@@ -14,7 +14,12 @@
 //!   (the app-server has no handshake that names it).
 //! - MODELS come from a throwaway session: `session/create` with deferred
 //!   persistence in an empty temporary directory, its `settings.model`, then
-//!   `session/close` — nothing is left in ZCode's history.
+//!   `session/close` — nothing is left in ZCode's history. They are the
+//!   personal providers' (an API key added in ZCode): the app-server never
+//!   loads account plans itself, it expects its host to push them
+//!   (`provider/updateAccountConfig`) and sign each request
+//!   (`interaction/requestProviderRuntimeHeaders`), as the desktop app does
+//!   from its own account service — Commutator doesn't.
 //! - ACCESS. Supervised runs in ZCode's `build` mode (it asks before risky
 //!   or side-effecting tools), auto-accept edits in `edit`, full access in
 //!   `yolo`, plan in `plan`. What it asks reaches the person as a yes/no;
@@ -145,7 +150,10 @@ impl ZcodeHarness {
         let models = catalog(&result?);
         if models.is_empty() {
             return Err(HarnessError::Protocol(
-                "ZCode offers no models: sign in with `zcode login` or configure a provider".into(),
+                "ZCode offers no models to Commutator. A Z.ai or BigModel plan signed in with \
+                 `zcode login` is not available through ZCode's app-server (only its own app \
+                 and CLI reach it); add a provider with your own API key in ZCode instead."
+                    .into(),
             ));
         }
         Ok(models)

@@ -3,8 +3,13 @@
 //!
 //! - A turn starts with `session/send`; it ends on the session's own
 //!   `turn.completed` / `turn.failed` event, so the end is deterministic.
-//! - A prompt sent while a turn runs is queued by ZCode (`turn.steerQueued`)
-//!   and runs as the next turn: steering is at the turn boundary.
+//! - ZCode refuses a `session/send` while a turn runs ("A prompt is already
+//!   running", -32010): a prompt that arrives mid-turn waits here and is sent
+//!   when the turn ends, as the next turn of the same run (turn boundary).
+//! - A model is selected after the session exists (`session/setModel`), with
+//!   a reasoning level always: the chosen one, else the model's own default
+//!   from the snapshot — ZCode fails the turn ("Reasoning level is required")
+//!   for a selection without one.
 //! - A stop is `session/stop`; the turn then ends `cancelled` and the
 //!   process (and its session) stays up.
 //! - The server's own requests are answered here: runtime preferences at
@@ -36,8 +41,8 @@ pub(super) struct Runner {
     assistant: String,
     /// A turn is running (or its `session/send` is in flight).
     active: bool,
-    /// Prompts ZCode queued behind the running turn, oldest first.
-    queued: usize,
+    /// Prompts that arrived while a turn ran, oldest first.
+    queued: std::collections::VecDeque<SteerMessage>,
     stopping: bool,
     pub error: Option<String>,
     lost_context: Option<String>,
@@ -64,7 +69,7 @@ impl Runner {
             session: String::new(),
             assistant: uuid::Uuid::new_v4().to_string(),
             active: false,
-            queued: 0,
+            queued: Default::default(),
             stopping: false,
             error: None,
             lost_context: None,
@@ -91,12 +96,36 @@ impl Runner {
         protocol::mode(access, self.request.plan)
     }
 
-    fn model(&self) -> Option<Value> {
+    fn model_id(&self) -> Option<&str> {
         let id = self.request.model.as_deref()?.trim();
-        if id.is_empty() || id == "default" {
-            return None;
-        }
-        protocol::model_selection(id, super::thought_level(self.request.reasoning).as_deref())
+        (!id.is_empty() && id != "default").then_some(id)
+    }
+
+    /// The requested model with a reasoning level: the requested one, else
+    /// the default `snapshot` lists for it.
+    fn model(&self, snapshot: &Value) -> Option<Value> {
+        let id = self.model_id()?;
+        let level = super::thought_level(self.request.reasoning).or_else(|| {
+            protocol::offered_models(snapshot)
+                .into_iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.default_level)
+        });
+        protocol::model_selection(id, level.as_deref())
+    }
+
+    /// Select the requested model on the open session; refused selections
+    /// (a model the provider doesn't serve) surface as ZCode words them.
+    async fn select_model(&mut self, snapshot: &Value) -> Result<(), HarnessError> {
+        let Some(model) = self.model(snapshot) else {
+            return Ok(());
+        };
+        self.call(
+            protocol::SET_MODEL,
+            protocol::set_model_params(&self.session, model),
+        )
+        .await
+        .map(drop)
     }
 
     fn mcp(&self) -> Vec<Value> {
@@ -144,13 +173,7 @@ impl Runner {
                         protocol::set_mode_params(&self.session, self.mode()),
                     )
                     .await?;
-                    if let Some(model) = self.model() {
-                        self.call(
-                            protocol::SET_MODEL,
-                            protocol::set_model_params(&self.session, model),
-                        )
-                        .await?;
-                    }
+                    self.select_model(&snapshot).await?;
                     return Ok(snapshot);
                 }
                 Err(error) if gone(&error) => {
@@ -171,7 +194,7 @@ impl Runner {
                     cwd: &cwd,
                     mcp,
                     mode: self.mode(),
-                    model: self.model(),
+                    model: None,
                     thought_level: thought.as_deref(),
                     deferred: false,
                 }),
@@ -180,6 +203,7 @@ impl Runner {
         self.session = protocol::snapshot_session(&snapshot)
             .ok_or_else(|| HarnessError::Protocol("ZCode created a session without an id".into()))?
             .to_owned();
+        self.select_model(&snapshot).await?;
         Ok(snapshot)
     }
 
@@ -270,6 +294,16 @@ impl Runner {
     }
 
     async fn steer(&mut self, steer: SteerMessage) -> Result<(), HarnessError> {
+        if self.active {
+            self.queued.push_back(steer);
+            return Ok(());
+        }
+        self.begin();
+        self.deliver(steer).await
+    }
+
+    /// Send a prompt between turns, with the configuration it came with.
+    async fn deliver(&mut self, steer: SteerMessage) -> Result<(), HarnessError> {
         if let Some(next) = steer.config {
             let model_changed =
                 next.model != self.request.model || next.reasoning != self.request.reasoning;
@@ -278,12 +312,11 @@ impl Runner {
             self.request.reasoning = next.reasoning;
             self.request.access = next.access;
             self.request.plan = next.plan;
-            if model_changed && let Some(model) = self.model() {
-                self.call(
-                    protocol::SET_MODEL,
-                    protocol::set_model_params(&self.session, model),
-                )
-                .await?;
+            if model_changed {
+                let snapshot = self
+                    .call(protocol::READ, protocol::session_params(&self.session))
+                    .await?;
+                self.select_model(&snapshot).await?;
             }
             if mode_changed {
                 let mode = self.mode();
@@ -295,11 +328,6 @@ impl Runner {
             }
         }
         let prompt = super::with_attachments(&steer.prompt, &steer.attachments);
-        if self.active {
-            self.queued += 1;
-        } else {
-            self.begin();
-        }
         self.send(&prompt).await
     }
 
@@ -387,16 +415,6 @@ impl Runner {
                     // A turn nobody here submitted (a background wake).
                     self.turn.note_wake();
                     self.begin();
-                } else if self.queued > 0 {
-                    // A queued prompt started: the previous turn's reply is done.
-                    self.queued -= 1;
-                    let old =
-                        std::mem::replace(&mut self.assistant, uuid::Uuid::new_v4().to_string());
-                    self.emit(AgentEvent::Steered {
-                        assistant_message_id: Some(old),
-                        next_assistant_message_id: Some(self.assistant.clone()),
-                    })
-                    .await?;
                 }
             }
             Event::Text(text) if self.active => self.emit(AgentEvent::TextDelta { text }).await?,
@@ -414,6 +432,7 @@ impl Runner {
                 id,
                 is_error,
                 output,
+                exit_code,
             } if self.active => {
                 self.emit(AgentEvent::ToolResult {
                     id,
@@ -422,16 +441,26 @@ impl Runner {
                     diff: None,
                     preview_paths: vec![],
                     image_payloads: vec![],
-                    exit_code: None,
+                    exit_code,
                 })
                 .await?
             }
             Event::TurnEnded { ended, .. } => {
-                // Queued prompts run as their own turns: this one isn't the last.
-                if self.queued > 0 && ended != Ended::Cancelled {
-                    return Ok(());
+                // A prompt that waited for this turn runs next, in the same run.
+                if ended == Ended::Completed
+                    && let Some(steer) = self.queued.pop_front()
+                {
+                    let old =
+                        std::mem::replace(&mut self.assistant, uuid::Uuid::new_v4().to_string());
+                    self.emit(AgentEvent::Steered {
+                        assistant_message_id: Some(old),
+                        next_assistant_message_id: Some(self.assistant.clone()),
+                    })
+                    .await?;
+                    return self.deliver(steer).await;
                 }
-                self.queued = 0;
+                // A stop or a failure ends the run's turn; what waited is dropped.
+                self.queued.clear();
                 let (status, error) = match ended {
                     Ended::Completed => (DoneStatus::Completed, None),
                     Ended::Cancelled => (DoneStatus::Interrupted, None),

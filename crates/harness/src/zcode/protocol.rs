@@ -23,6 +23,7 @@ pub const RESUME: &str = "session/resume";
 pub const SUBSCRIBE: &str = "session/subscribe";
 pub const SEND: &str = "session/send";
 pub const STOP: &str = "session/stop";
+pub const READ: &str = "session/read";
 pub const CLOSE: &str = "session/close";
 pub const SET_MODEL: &str = "session/setModel";
 pub const SET_MODE: &str = "session/setMode";
@@ -163,6 +164,8 @@ pub struct OfferedModel {
     pub id: String,
     pub label: String,
     pub levels: Vec<String>,
+    /// The level ZCode runs it at when none is chosen.
+    pub default_level: Option<String>,
 }
 
 /// `settings.model.available`. Entries name their selection as `ref` (the
@@ -202,7 +205,15 @@ pub fn offered_models(snapshot: &Value) -> Vec<OfferedModel> {
                         .collect()
                 })
                 .unwrap_or_else(|| current_levels.clone());
-            Some(OfferedModel { id, label, levels })
+            let default_level = entry["reasoning"]["defaultLevel"]
+                .as_str()
+                .map(str::to_owned);
+            Some(OfferedModel {
+                id,
+                label,
+                levels,
+                default_level,
+            })
         })
         .collect()
 }
@@ -233,6 +244,7 @@ pub enum Event {
         id: String,
         is_error: bool,
         output: Option<String>,
+        exit_code: Option<i32>,
     },
     TurnEnded {
         turn: Option<String>,
@@ -262,11 +274,24 @@ fn decode_session_event(event: &Value) -> Option<Event> {
             turn,
             input: payload["input"].as_str().unwrap_or_default().to_owned(),
         }),
-        "part.delta" => {
-            let delta = payload["delta"].as_str()?.to_owned();
-            match payload["field"].as_str().unwrap_or("text") {
-                "text" => Some(Event::Text(delta)),
-                "reasoning" => Some(Event::Reasoning(delta)),
+        // The reply streams here (live 0.16.9 / 0.18.0 send no `part.delta`):
+        // text and reasoning deltas, and each tool call with its full input —
+        // `tool.updated` `scheduled` carries `input: null`.
+        "model.streaming" => {
+            let delta = || {
+                payload["delta"]
+                    .as_str()
+                    .filter(|d| !d.is_empty())
+                    .map(str::to_owned)
+            };
+            match payload["kind"].as_str()? {
+                "text_delta" => delta().map(Event::Text),
+                "reasoning_delta" => delta().map(Event::Reasoning),
+                "tool_call" => Some(Event::ToolCall {
+                    id: payload["toolCallId"].as_str()?.to_owned(),
+                    name: payload["toolName"].as_str().unwrap_or("tool").to_owned(),
+                    input: payload["input"].clone(),
+                }),
                 _ => None,
             }
         }
@@ -306,26 +331,28 @@ fn decode_tool(payload: &Value) -> Option<Event> {
     }
     let id = payload["toolCallId"].as_str()?.to_owned();
     match payload["kind"].as_str()? {
-        "scheduled" => Some(Event::ToolCall {
-            id,
-            name: payload["toolName"].as_str().unwrap_or("tool").to_owned(),
-            input: payload["input"].clone(),
-        }),
+        // `{success, content, perf: {detail: {command: {exitCode}}}}`.
         "result" => {
             let result = &payload["result"];
-            let is_error = result["isError"].as_bool().unwrap_or(false)
+            let is_error = result["success"] == false
+                || result["isError"] == true
                 || result["status"] == "error"
                 || result["status"] == "failed";
             Some(Event::ToolResult {
                 id,
                 is_error,
                 output: tool_output(result),
+                exit_code: result["perf"]["detail"]["command"]["exitCode"]
+                    .as_i64()
+                    .map(|code| code as i32),
             })
         }
+        // A cancelled or failed call (a stop ends a running command so).
         "error" => Some(Event::ToolResult {
             id,
             is_error: true,
             output: payload["error"]["message"].as_str().map(str::to_owned),
+            exit_code: None,
         }),
         _ => None,
     }

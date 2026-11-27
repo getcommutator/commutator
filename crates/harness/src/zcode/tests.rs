@@ -233,19 +233,27 @@ fn turn_and_tool_events_decode_from_their_schema_shapes() {
             "s",
         )
     };
+    // What live 0.16.9 / 0.18.0 stream; `part.delta` never came.
     assert_eq!(
         event(
-            "part.delta",
-            json!({"messageId": "m", "partId": "p", "field": "text", "delta": "hi"})
+            "model.streaming",
+            json!({"kind": "text_delta", "delta": "hi"})
         ),
         Some(Event::Text("hi".into()))
     );
     assert_eq!(
         event(
-            "part.delta",
-            json!({"messageId": "m", "partId": "p", "field": "reasoning", "delta": "hm"})
+            "model.streaming",
+            json!({"kind": "reasoning_delta", "delta": "hm"})
         ),
         Some(Event::Reasoning("hm".into()))
+    );
+    assert_eq!(
+        event(
+            "model.streaming",
+            json!({"kind": "text_delta", "delta": ""})
+        ),
+        None
     );
     assert_eq!(
         event(
@@ -259,14 +267,22 @@ fn turn_and_tool_events_decode_from_their_schema_shapes() {
         })
     );
     assert!(matches!(
-        event("tool.updated", json!({"kind": "scheduled", "toolCallId": "c", "toolName": "Bash", "input": {"command": "ls"}})),
+        event("model.streaming", json!({"kind": "tool_call", "toolCallId": "c", "toolName": "Bash", "input": {"command": "ls"}})),
         Some(Event::ToolCall { name, .. }) if name == "Bash"
     ));
-    // A subagent's mirrored call stays out of the parent feed.
+    // `scheduled` carries no input: the call comes from the stream.
     assert_eq!(
         event(
             "tool.updated",
-            json!({"kind": "scheduled", "toolCallId": "c", "toolName": "Bash", "parentToolCallId": "p"})
+            json!({"kind": "scheduled", "toolCallId": "c", "toolName": "Bash", "input": null})
+        ),
+        None
+    );
+    // A subagent's mirrored result stays out of the parent feed.
+    assert_eq!(
+        event(
+            "tool.updated",
+            json!({"kind": "result", "toolCallId": "c", "result": {"success": true}, "parentToolCallId": "p"})
         ),
         None
     );
@@ -351,6 +367,145 @@ fn the_desktop_launcher_quotes_paths_and_follows_the_app() {
             "1|{}|{} app-server --stdio",
             config.display(),
             bundle.display()
+        )
+    );
+}
+
+const TURN_0_18_0: &str = include_str!("fixtures/vllm_turn_stop_0.18.0.jsonl");
+const TURN_0_16_9: &str = include_str!("fixtures/vllm_turn_stop_0.16.9.jsonl");
+const RESUME_0_18_0: &str = include_str!("fixtures/vllm_resume_0.18.0.jsonl");
+const STOP_MID_TOOL_0_18_0: &str = include_str!("fixtures/vllm_stop_mid_tool_0.18.0.jsonl");
+
+/// Recorded against a personal vLLM provider: a Bash call asked for and
+/// allowed, its result, the reply, then a second turn stopped.
+#[test]
+fn a_recorded_tool_turn_and_its_stop_replay_on_both_versions() {
+    for recording in [TURN_0_18_0, TURN_0_16_9] {
+        let (_, events) = events(recording);
+        let call = events
+            .iter()
+            .find_map(|e| match e {
+                Event::ToolCall { id, name, input } => {
+                    Some((id.clone(), name.clone(), input.clone()))
+                }
+                _ => None,
+            })
+            .expect("a tool call");
+        assert_eq!(call.1, "Bash");
+        assert_eq!(
+            tool_call(&call.1, &call.2),
+            ToolCall::Exec {
+                command: "echo banana > hello.txt".into()
+            }
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::ToolResult { id, is_error: false, exit_code: Some(0), .. } if *id == call.0
+        )));
+        let text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text.trim(), "DONE");
+        let ends: Vec<&Ended> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::TurnEnded { ended, .. } => Some(ended),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, vec![&Ended::Completed, &Ended::Cancelled]);
+        // The permission the call raised, answered with ZCode's own option.
+        let (_, ask) = frames(recording)
+            .into_iter()
+            .find(|(dir, f)| dir == "<" && f["method"] == "interaction/requestPermission")
+            .expect("a permission request");
+        let Ask::Permission(permission) =
+            protocol::decode_request("interaction/requestPermission", &ask["params"])
+        else {
+            panic!("not a permission")
+        };
+        assert_eq!(
+            permission_question(&permission).question,
+            "ZCode wants to run `echo banana > hello.txt`. Allow it?"
+        );
+        assert_eq!(
+            protocol::permission_answer(&permission, true),
+            json!({"decision": "allow", "reason": "Approved once"})
+        );
+    }
+}
+
+#[test]
+fn a_stop_mid_command_ends_the_call_as_an_error_and_the_turn_cancelled() {
+    let (_, events) = events(STOP_MID_TOOL_0_18_0);
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::ToolResult { is_error: true, output: Some(o), .. } if o.contains("cancelled")
+    )));
+    assert!(matches!(
+        events.last(),
+        Some(Event::TurnEnded {
+            ended: Ended::Cancelled,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_resumed_session_remembers_its_earlier_turn() {
+    let (session, events) = events(RESUME_0_18_0);
+    assert_eq!(session, "sess_735cb478-ee3f-469a-9528-fc83f56e307d");
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text.trim(), "banana");
+    assert!(matches!(
+        events.last(),
+        Some(Event::TurnEnded {
+            ended: Ended::Completed,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_personal_providers_models_and_default_levels_come_from_the_snapshot() {
+    let (_, snapshot) = frames(TURN_0_18_0)
+        .into_iter()
+        .find(|(dir, f)| dir == "<" && f["result"]["settings"].is_object())
+        .unwrap();
+    let models = catalog(&snapshot["result"]);
+    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![
+            "vllm-lan/nvidia/Qwen3.8-Flash-Next-NVFP4",
+            "vllm-lan/deepseek-ai/DeepSeek-V4-Flash-DSpark"
+        ]
+    );
+    assert_eq!(
+        models[0].reasoning_levels,
+        vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::XHigh
+        ]
+    );
+    let offered = protocol::offered_models(&snapshot["result"]);
+    assert_eq!(offered[0].default_level.as_deref(), Some("xhigh"));
+    // The id splits at its first `/`: the provider, then a model id with slashes.
+    assert_eq!(
+        protocol::model_selection(&models[0].id, Some("low")),
+        Some(
+            json!({"providerId": "vllm-lan", "modelId": "nvidia/Qwen3.8-Flash-Next-NVFP4", "options": {"reasoningLevel": "low"}})
         )
     );
 }
