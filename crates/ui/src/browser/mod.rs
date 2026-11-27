@@ -11,6 +11,7 @@ use macos as native;
 mod windows_webview;
 pub(crate) mod extensions;
 mod annotate;
+pub(crate) mod agent;
 #[cfg(windows)]
 use windows_webview as native;
 pub mod model;

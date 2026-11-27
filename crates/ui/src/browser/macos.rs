@@ -373,6 +373,8 @@ impl NativePage {
         let builder = wry::WebViewBuilder::new()
             .with_webview_configuration(configuration)
             .with_devtools(true)
+            // Each page's requests and console lines, for agents' tools.
+            .with_initialization_script(super::agent::INSTRUMENT)
             // A two-finger swipe goes back and forward, as in Safari.
             .with_back_forward_navigation_gestures(true);
         // The Web Store's own button installs into Commutator.
@@ -847,6 +849,43 @@ impl Host {
         self.observer.ivars().error.borrow_mut().take();
         let _: Option<Retained<AnyObject>> = unsafe { msg_send![&*self.view, reloadFromOrigin] };
         self.observer.changed();
+    }
+    /// The page as its viewport shows it, at one pixel a point (small enough
+    /// for an agent), as a PNG.
+    pub fn snapshot(&self, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return done(Err("not on the main thread".into()));
+        };
+        let done = std::cell::Cell::new(Some(done));
+        let finish = block2::RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+            let Some(done) = done.take() else { return };
+            let png = unsafe { image.as_ref() }
+                .and_then(|image| {
+                    let tiff = image.TIFFRepresentation()?;
+                    let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+                    let png = unsafe {
+                        rep.representationUsingType_properties(
+                            NSBitmapImageFileType::PNG,
+                            &objc2_foundation::NSDictionary::new(),
+                        )
+                    }?;
+                    Some(png.to_vec())
+                })
+                .ok_or_else(|| {
+                    unsafe { error.as_ref() }
+                        .map_or("WebKit took no picture".into(), |e| e.localizedDescription().to_string())
+                });
+            done(png);
+        });
+        unsafe {
+            let config = objc2_web_kit::WKSnapshotConfiguration::new(mtm);
+            let width = self.view.bounds().size.width;
+            let number = objc2_foundation::NSNumber::new_f64(width);
+            config.setSnapshotWidth(Some(&number));
+            self.view
+                .takeSnapshotWithConfiguration_completionHandler(Some(&config), &finish);
+        }
     }
     /// Runs `script` in the page; `done` gets its result as JSON.
     pub fn eval_with_callback(&self, script: &str, done: impl Fn(String) + Send + 'static) {

@@ -25,6 +25,7 @@ use crate::commutator::{
     HarnessInfo, TranscriptFollow, TurnOutcome, Commutator, resolve_space_in, session_for, short,
 };
 
+mod browser;
 mod commands;
 
 /// Default and ceiling for the blocking waits.
@@ -337,6 +338,7 @@ fn catalog() -> Vec<ToolDef> {
         }),
     });
     tools.extend(commands::catalog());
+    tools.extend(browser::catalog());
     tools
 }
 
@@ -933,6 +935,7 @@ impl Tools {
             .into_iter()
             .filter(|tool| match tool.name {
                 SHOW_VISUAL | SHOW_IMAGE => in_chat,
+                name if browser::NAMES.contains(&name) => in_chat && cfg!(target_os = "macos"),
                 WAIT_ON_BACKGROUND => waits,
                 _ => true,
             })
@@ -970,6 +973,7 @@ impl Tools {
             SHOW_VISUAL => self.show_visual(parse(args)?).await,
             SHOW_IMAGE => self.show_image(parse(args)?).await,
             WAIT_ON_BACKGROUND => self.wait_on_background(parse(args)?).await,
+            tool if browser::NAMES.contains(&tool) => return self.browser(tool, args).await,
             command if commands::NAMES.contains(&command) => {
                 return self.commands(command, args).await;
             }

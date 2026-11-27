@@ -257,6 +257,21 @@ pub async fn handle_request(tools: &Tools, id: Value, method: &str, params: Valu
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             match tools.call(name, arguments).await {
+                // An image the tool returns (`{"$image": {data, mimeType}, …}`)
+                // reaches the model as an image; the rest as text.
+                Ok(mut value) if value.get("$image").is_some() => {
+                    let image = value.as_object_mut().and_then(|v| v.remove("$image")).unwrap_or_default();
+                    ok_response(
+                        id,
+                        json!({
+                            "content": [
+                                { "type": "image", "data": image["data"], "mimeType": image["mimeType"] },
+                                { "type": "text", "text": pretty(&value) },
+                            ],
+                            "isError": false,
+                        }),
+                    )
+                }
                 Ok(value) => ok_response(
                     id,
                     json!({
