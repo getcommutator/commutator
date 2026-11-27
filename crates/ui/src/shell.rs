@@ -2122,7 +2122,6 @@ pub struct Shell {
     onboarding: Option<Entity<crate::onboarding::Onboarding>>,
     onboarding_pending: Option<crate::onboarding::Step>,
     _onboarding_subscriptions: Vec<Subscription>,
-    mutate_task: Option<Task<()>>,
     auth_task: Option<Task<()>>,
     runtime_change_task: Option<Task<()>>,
     runtime_change_error: Option<SharedString>,
@@ -2577,7 +2576,6 @@ impl Shell {
             onboarding: None,
             onboarding_pending,
             _onboarding_subscriptions: Vec::new(),
-            mutate_task: None,
             auth_task: None,
             runtime_change_task: None,
             runtime_change_error: None,
@@ -5851,7 +5849,9 @@ impl Shell {
             cx.notify();
             return;
         };
-        self.mutate_task = Some(cx.spawn(async move |this, cx| {
+        // Detached, not kept in one slot: a second mutation (archiving the row
+        // that slid under the pointer) used to drop, and so cancel, the first.
+        cx.spawn(async move |this, cx| {
             if let Err(err) = engine.client().call(methods::MUTATE, params).await {
                 this.update(cx, |shell, cx| {
                     shell.show_notice(crate::toast::ToastKind::Error, format!("{err}"), cx);
@@ -5859,7 +5859,8 @@ impl Shell {
                 })
                 .ok();
             }
-        }));
+        })
+        .detach();
     }
 
     /// Start editing `chat_id`'s title in place on its row: the sidebar's
@@ -8044,7 +8045,6 @@ impl Shell {
                 .h(px(18.0))
                 .when(!compact, |el| {
                     el.px(px(4.0))
-                        .mr(px(-4.0))
                         .rounded(px(5.0))
                         .bg(crate::theme::wash(0.10))
                         .hover(|s| s.bg(crate::theme::wash(0.18)))
@@ -8185,7 +8185,13 @@ impl Shell {
                 // pill mounts, steals the pointer, row un-hovers, pill
                 // unmounts, repeat (user-reported flicker). The pill's
                 // stop_propagation click is separation enough.
-                .h(px(14.0))
+                // The hitbox is the pill's full 18 px (the -2 px margins keep
+                // the 14 px layout): clicks on the pill's edges used to miss
+                // the corner and open the chat instead of archiving it.
+                .h(px(18.0))
+                .my(px(-2.0))
+                // The pill hangs 4 px into the row's padding; so does its hitbox.
+                .when(corner_hovered && !compact, |el| el.mr(px(-4.0)))
                 .flex()
                 .items_center()
                 .when(!preview, |el| el.cursor_pointer())
@@ -8587,8 +8593,11 @@ impl Shell {
                                 // A running-subagents pill can be wider than the plain time.
                                 .when(!text_hint, |el| el.min_w(px(30.0)))
                                 // Fixed height so swapping the time text for the
-                                // archive glyph never resizes the slot.
-                                .h(px(14.0))
+                                // archive glyph never resizes the slot. 20 px of
+                                // hitbox in 14 px of layout: a click just off the
+                                // glyph used to land on the row and open the chat.
+                                .h(px(20.0))
+                                .my(px(-3.0))
                                 .flex_none()
                                 .flex()
                                 .items_center()

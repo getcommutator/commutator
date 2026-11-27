@@ -504,6 +504,34 @@ mod pinned_session_tests {
     }
 
     #[gpui::test]
+    fn back_to_back_archives_both_reach_the_engine(cx: &mut gpui::TestAppContext) {
+        // Archiving row after row (the next row slides under the pointer)
+        // must not cancel the archive still in flight.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let (engine, mut requests, _replies) = pin_test_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let window = pin_test_shell(cx, dir.path());
+        window
+            .update(cx, |shell, _, cx| {
+                shell.state.update(cx, |state, _| state.set_test_engine(engine));
+                shell.set_chat_archived("a".into(), true, cx);
+                shell.set_chat_archived("b".into(), true, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let mut archived = Vec::new();
+        while let Ok(request) = requests.try_recv() {
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            archived.push(request["params"]["chatId"].as_str().unwrap().to_string());
+        }
+        assert_eq!(archived, ids(&["a", "b"]));
+    }
+
+    #[gpui::test]
     fn sidebar_optimistic_writes_preserve_newer_edits_and_watch_state_on_failure(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -534,10 +562,6 @@ mod pinned_session_tests {
                 assert_eq!(
                     shell.state.read(cx).sidebar_preferences.pinned_session_ids,
                     ids(&["original"])
-                );
-                assert!(
-                    shell.mutate_task.is_none(),
-                    "pin writes cannot be cancelled by generic sidebar mutations"
                 );
                 shell.sidebar_pin_write.as_ref().unwrap().id
             })
@@ -751,7 +775,6 @@ mod pinned_session_tests {
                     shell.sidebar_session_return.is_some(),
                     "rejected drop returns to its origin"
                 );
-                assert!(shell.mutate_task.is_none());
             })
             .unwrap();
     }
@@ -868,7 +891,6 @@ mod pinned_session_tests {
                 });
                 shell.on_state_changed(&shell.state.clone(), cx);
                 assert_eq!(shell.active_sidebar_pins(cx), ids(&["live-remote"]));
-                assert!(shell.mutate_task.is_none());
             })
             .unwrap();
     }
@@ -1969,6 +1991,11 @@ mod pinned_session_tests {
         let row = cx.debug_bounds("chat-a").unwrap();
         cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
         let pointer = cx.debug_bounds("chat-time-a").unwrap().center();
+        // Just above the glyph still archives rather than opening the row.
+        let edge = gpui::point(pointer.x, pointer.y - px(8.0));
+        cx.simulate_mouse_move(edge, None, gpui::Modifiers::default());
+        cx.simulate_click(edge, gpui::Modifiers::default());
+        shell.read_with(cx, |shell, _| assert!(shell.chat_hover_resync));
         cx.simulate_mouse_move(pointer, None, gpui::Modifiers::default());
         for (archived, next) in [
             ("a", Some(("b", "chat-time-b"))),
