@@ -68,7 +68,6 @@ pub(crate) fn diff(split: bool, view: EntityId, theme: &Theme, cx: &mut App) -> 
             .overflow_hidden()
             .child(div().w(px(crate::changes::ACCENT_BAR_WIDTH)).flex_none())
             .child(gutter(cx))
-            .when(!split, |el| el.child(gutter(cx)))
             .child(
                 div()
                     .w(px(if split {

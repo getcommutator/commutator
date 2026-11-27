@@ -359,7 +359,7 @@ impl DiffHorizontalMetrics {
         self.max_text_width
             + UNIFIED_CODE_PADDING_LEFT
             + CODE_PADDING_RIGHT
-            + 2.0 * (self.max_gutter_width - gutter_width)
+            + (self.max_gutter_width - gutter_width)
     }
 
     /// Split has one gutter per half. Both halves use this same extent so old
@@ -3298,7 +3298,7 @@ impl Changes {
                     .child(row)
                     .when(hovered, |el| {
                         el.child(positioned_adder(
-                            comment_adder_left(side, gutter_px),
+                            comment_adder_left(gutter_px),
                             render_comment_adder(&path, side, line_no, &theme, cx),
                         ))
                     })
@@ -4555,7 +4555,7 @@ fn diff_line_row(
         return meta_line_row(
             &line.text,
             theme,
-            ACCENT_BAR_WIDTH + 2.0 * gutter_px + MARKER_WIDTH + 12.0,
+            ACCENT_BAR_WIDTH + gutter_px + MARKER_WIDTH + 12.0,
         );
     }
 
@@ -4632,16 +4632,10 @@ fn diff_line_row(
                 .flex_none()
                 .when_some(accent, |el, color| el.bg(color)),
         )
+        // One number column (Zed's): the new file's line; a deleted line has
+        // none there, its colour says what it is.
         .child(gutter(
-            line.old_no,
-            if line.kind == LineKind::Del {
-                number_color
-            } else {
-                theme.text_faint.opacity(0.8)
-            },
-        ))
-        .child(gutter(
-            line.new_no,
+            if line.kind == LineKind::Del { None } else { line.new_no },
             if line.kind == LineKind::Add {
                 number_color
             } else {
@@ -4825,14 +4819,9 @@ pub fn split_adder_left(gutter_px: f32) -> f32 {
     ACCENT_BAR_WIDTH + (gutter_px - COMMENT_ADDER_SIZE) / 2.0
 }
 
-/// A unified row carries both gutters side by side, and a deletion numbers in
-/// the first.
-pub fn comment_adder_left(side: CommentSide, gutter_px: f32) -> f32 {
-    let column = match side {
-        CommentSide::Old => 0.0,
-        CommentSide::New => gutter_px,
-    };
-    ACCENT_BAR_WIDTH + column + (gutter_px - COMMENT_ADDER_SIZE) / 2.0
+/// A unified row has one number column; either side's adder centres in it.
+pub fn comment_adder_left(gutter_px: f32) -> f32 {
+    ACCENT_BAR_WIDTH + (gutter_px - COMMENT_ADDER_SIZE) / 2.0
 }
 
 fn positioned_adder(left: f32, adder: AnyElement) -> gpui::Div {
@@ -5879,7 +5868,7 @@ rename to new_name.rs
         let wide = 52.0;
 
         let unified_total = |gutter| {
-            ACCENT_BAR_WIDTH + 2.0 * gutter + MARKER_WIDTH + metrics.unified_content_width(gutter)
+            ACCENT_BAR_WIDTH + gutter + MARKER_WIDTH + metrics.unified_content_width(gutter)
         };
         assert_eq!(unified_total(narrow), unified_total(wide));
 
