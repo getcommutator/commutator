@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Commutator: your coding agents, from anywhere</title>
-<meta name="description" content="Commutator runs Claude Code, Codex, Cursor and other coding agents on your own machines and lets you drive them from the desktop, an iPhone or an Android phone.">
+<title>Commutator: your agents, from anywhere</title>
+<meta name="description" content="Commutator runs the Claude Code, Codex or Cursor you already pay for on your own machines, and lets you drive them from the desktop or your phone. No VPN, no terminal scraping, no extra tokens.">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Commutator: your coding agents, from anywhere">
 <meta property="og:description" content="Agents run on your machines. You drive them from the desk or the phone.">
@@ -25,7 +25,7 @@
     <a class="logo" href="/" aria-label="Commutator home"><img class="logo-mark" src="assets/icon.png" width="128" height="128" alt="">Commutator</a>
     <div class="nav-mid">
       <a href="#features">Features</a>
-      <a href="#machines">Machines</a>
+      <a href="#tools">Tools</a>
       <a href="#phone">Phone</a>
       <a href="#downloads">Downloads</a>
     </div>
@@ -40,9 +40,9 @@
 
 <header class="hero">
   <div class="wrap head">
-    <h1><span>Agents run on your machines.</span> You drive them from anywhere.</h1>
+    <h1><span>Your agents, your subscriptions.</span> Drive them from anywhere.</h1>
     <div class="head-side">
-      <p>Commutator starts the agent CLIs you already have, Claude Code, Codex, Cursor and more, keeps their sessions running in the background and lets you open any of them from the desktop or a phone.</p>
+      <p>Commutator runs the Claude Code, Codex or Cursor you already have on your own machines, and lets you open any of their chats from the desktop or your phone. No VPN, no terminal, no extra tokens.</p>
       <div class="cta-row">
         <a class="btn" id="hero-download" href="#downloads">Download</a>
         <a class="btn ghost" href="#phone">iPhone &amp; Android</a>
@@ -64,9 +64,9 @@
 <section class="sect" id="features">
   <div class="wrap">
     <div class="head">
-      <h2><span>Not another agent.</span> A switchboard for yours.</h2>
+      <h2><span>Not another agent.</span> A better way to run yours.</h2>
       <div class="head-side">
-        <p>The engine on each machine runs the agents you installed, with your logins and your config. Commutator is the window onto all of them, drawn with GPUI on the desktop and native on the phone.</p>
+        <p>The agent stays the one you chose, with your plan, your logins and your config. Commutator changes how you reach it: structured, native, from any device.</p>
       </div>
     </div>
     <div class="bento">
@@ -74,111 +74,152 @@
         <div class="vig" aria-hidden="true">
           <canvas class="dither"></canvas>
           <div class="mock agents">
-            <div class="m-row"><i class="dot blocked"></i><b>claude</b><span>Which device serves the catalog?</span><em class="warn">needs you · 2m</em></div>
-            <div class="m-row"><i class="dot working"></i><b>codex</b><span>Keyboard avoidance for composer</span><em class="run">working · 6m</em></div>
-            <div class="m-row"><i class="dot working"></i><b>cursor</b><span>Durable Object hibernation</span><em class="run">working · 1m</em></div>
-            <div class="m-row"><i class="dot done"></i><b>claude</b><span>Streaming veil on transcript rows</span><em>done</em></div>
-            <div class="m-row"><i class="dot"></i><b>opencode</b><span>Tool group header colors</span><em>idle</em></div>
+            <div class="m-row"><i class="dot"></i><b>thinking</b><span>Two sources for the catalog…</span><em>4s</em></div>
+            <div class="m-row"><i class="dot done"></i><b>read</b><span>crates/client/src/catalog.rs</span><em>1 file</em></div>
+            <div class="m-row"><i class="dot done"></i><b>edit</b><span>crates/ui/src/markdown/veil.rs</span><em><u>+31</u> <s>−4</s></em></div>
+            <div class="m-row"><i class="dot working"></i><b>run</b><span>cargo test -p commutator-ui veil</span><em class="run">running</em></div>
+            <div class="m-row"><i class="dot blocked"></i><b>ask</b><span>Which device serves the catalog?</span><em class="warn">3 options</em></div>
           </div>
         </div>
-        <h3>Every agent you use</h3>
-        <p>Claude Code, Codex, Cursor, OpenCode, Pi, Grok, Hermes, Devin, Muse Code, fx and Antigravity. Commutator finds them on PATH, and Settings › Providers installs a missing one with the vendor’s own installer.</p>
-      </div>
-      <div class="card feature w5">
-        <div class="vig" aria-hidden="true">
-          <canvas class="dither"></canvas>
-          <div class="mock note">
-            <div class="note-head"><img src="assets/icon.png" width="128" height="128" alt=""><b>Claude Code is waiting</b><em>now</em></div>
-            <p>Which device should serve the model catalog?</p>
-            <div class="m-acts"><span class="m-btn">Later</span><span class="m-btn hi">Open</span></div>
-          </div>
-        </div>
-        <h3>A push when it needs you</h3>
-        <p>When a run finishes, fails or stops on a question, the machine tells your phones. Tap the notification and the chat opens on the question.</p>
+        <h3>Real protocols, not a scraped terminal</h3>
+        <p>Commutator talks to agents over ACP and Claude Code’s and Codex’s own protocols, so every turn arrives as structure: reasoning, tool calls, diffs, questions with buttons. No ANSI noise, no TUI squeezed onto a phone screen.</p>
       </div>
       <div class="card feature w5">
         <div class="vig" aria-hidden="true">
           <canvas class="dither"></canvas>
           <div class="mock tree">
-            <div class="m-row"><b>commutator</b><em>main</em></div>
-            <div class="m-row sub"><span>veil-fade</span><em><u>+212</u> <s>−38</s> · PR #90</em></div>
-            <div class="m-row sub"><span>catalog-sync</span><em><u>+96</u> <s>−140</s> · merged</em></div>
-            <div class="m-row sub"><span>fix/tool-colors</span><em><u>+8</u> <s>−2</s> · draft</em></div>
-            <div class="m-row"><b>edge</b><em>main</em></div>
+            <div class="m-row"><b>iPhone</b><em>LTE, any network</em></div>
+            <div class="m-row sub"><span>↓ relay</span><em>outbound only</em></div>
+            <div class="m-row"><b>mac-studio</b><em>home Wi-Fi</em></div>
+            <div class="m-row sub"><span>open ports</span><em><u>none</u></em></div>
+            <div class="m-row sub"><span>VPN, Tailscale</span><em><u>not needed</u></em></div>
           </div>
         </div>
-        <h3>Projects and worktrees</h3>
-        <p>The sidebar folds a project’s worktrees under it with their chats, branch and pull request. A new chat can start in a fresh worktree, named after what you asked.</p>
+        <h3>No Tailscale, no VPN, no open ports</h3>
+        <p>Each machine and each phone connects out to the relay and finds the others through your Google account. It works from any network, with nothing to forward and no SSH keys to carry around.</p>
+      </div>
+      <div class="card feature w5">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock tree">
+            <div class="m-row"><b>Claude Code</b><em>the same CLI</em></div>
+            <div class="m-row sub"><span>plan</span><em>Claude Max</em></div>
+            <div class="m-row sub"><span>API key</span><em><u>not needed</u></em></div>
+            <div class="m-row sub"><span>model, context, limits</span><em>as in the TUI</em></div>
+            <div class="m-row"><b>Codex</b><em>ChatGPT Plus</em></div>
+          </div>
+        </div>
+        <h3>Same agent, same tokens</h3>
+        <p>It runs the very Claude Code or Codex you’d run in a terminal, on the plan you already pay for. No wrapper model and no extra requests: a turn costs what it costs in the TUI.</p>
       </div>
       <div class="card feature w7">
         <div class="vig" aria-hidden="true">
           <canvas class="dither"></canvas>
           <div class="mock agents">
-            <div class="m-row"><i class="dot done"></i><b>MacBook Pro</b><span>this Mac · 4 chats</span><em>online</em></div>
-            <div class="m-row"><i class="dot working"></i><b>mac-studio</b><span>2 running · Claude, Codex</span><em class="run">working</em></div>
-            <div class="m-row"><i class="dot done"></i><b>build-box</b><span>Linux · systemd service</span><em>online</em></div>
-            <div class="m-row"><i class="dot"></i><b>iPhone</b><span>drives the others</span><em>phone</em></div>
+            <div class="m-row"><i class="dot done"></i><b>Desktop</b><span>GPUI, drawn on the GPU</span><em>no Electron</em></div>
+            <div class="m-row"><i class="dot done"></i><b>iPhone</b><span>UIKit</span><em>native</em></div>
+            <div class="m-row"><i class="dot done"></i><b>Android</b><span>Jetpack Compose</span><em>native</em></div>
+            <div class="m-row"><i class="dot working"></i><b>Core</b><span>one Rust library under both phones</span><em>Rust</em></div>
+            <div class="m-row"><i class="dot working"></i><b>Engine</b><span>sessions, terminals, checkpoints</span><em>Rust</em></div>
           </div>
         </div>
-        <h3>One account, every machine</h3>
-        <p>Sign each machine in with Google and its engine joins your account. A chat on the Mac Studio opens from the laptop or the phone; the server only relays, the agent and your code stay on the machine.</p>
+        <h3>Native everywhere, Rust underneath</h3>
+        <p>No web view anywhere. The desktop is drawn on the GPU with GPUI, Zed’s framework; the phones are UIKit and Compose over a shared Rust core that lays out the transcript. A chat hundreds of turns long scrolls as smoothly as a short one.</p>
       </div>
       <div class="card feature w7">
         <div class="vig" aria-hidden="true">
           <canvas class="dither"></canvas>
-          <pre class="mock term"><b>❯</b> claude mcp add commutator -- commutator mcp
-<i>Added</i> stdio MCP server commutator
-<b>❯</b> claude
-<i>  ⎿</i> create_chats: 3 chats on mac-studio
-<i>  ⎿</i> wait_for_turn: <u>done</u> · fix-scroll, port-rows
-<i>  ⎿</i> read_chat: tests <u>412 passed</u>
-<b>❯</b> <span class="caret"></span></pre>
+          <div class="mock agents">
+            <div class="m-row"><i class="dot"></i><b>MacBook Pro</b><span>lid closed</span><em>asleep</em></div>
+            <div class="m-row"><i class="dot working"></i><b>mac-studio</b><span>2 running · Claude, Codex</span><em class="run">working</em></div>
+            <div class="m-row"><i class="dot working"></i><b>build-box</b><span>Linux · systemd service</span><em class="run">working</em></div>
+            <div class="m-row"><i class="dot blocked"></i><b>iPhone</b><span>Claude Code is waiting</span><em class="warn">push</em></div>
+          </div>
         </div>
-        <h3>Agents that start agents</h3>
-        <p><code>commutator mcp</code> hands an agent the same switchboard: it lists machines and models, starts chats on any provider, waits on them, reads their answers and runs commands on another machine.</p>
+        <h3>Close the laptop, the agent keeps going</h3>
+        <p>The engine runs as a background service, on a Mac at home or a Linux server. Start a task at your desk and follow it from the train; your phone gets a push when it finishes or needs you.</p>
       </div>
       <div class="card feature w5">
         <div class="vig" aria-hidden="true">
           <canvas class="dither"></canvas>
-          <div class="mock checks">
-            <div class="m-row"><b>#90 Stream pull request status</b></div>
-            <div class="m-row"><i class="dot done"></i><span>turn 4 · edited 3 files</span><em>checkpoint</em></div>
-            <div class="m-row"><i class="dot done"></i><span>turn 5 · ran tests</span><em>checkpoint</em></div>
-            <div class="m-row"><i class="dot done"></i><span>clippy</span><em>1m 12s</em></div>
-            <div class="m-row"><i class="dot working"></i><span>test · macOS</span><em class="run">running</em></div>
+          <div class="mock tree">
+            <div class="m-row"><b>your code</b><em>stays on your machine</em></div>
+            <div class="m-row sub"><span>the agent</span><em>runs there too</em></div>
+            <div class="m-row sub"><span>the relay</span><em>passes traffic</em></div>
+            <div class="m-row sub"><span>your own relay</span><em><u>supported</u></em></div>
+            <div class="m-row"><b>license</b><em>MIT</em></div>
           </div>
         </div>
-        <h3>Every turn, checkpointed</h3>
-        <p>The engine records each turn with a git checkpoint, so you can see what it changed and roll it back. The Pull requests page lists the branch’s PR with its checks.</p>
+        <h3>Your code stays yours</h3>
+        <p>Agents and repositories never leave your machines; the server only signs devices in and relays between them. Run your own and point <code>commutator login</code> at it.</p>
       </div>
     </div>
+    <ul class="also">
+      <li>Claude Code, Codex, Cursor, OpenCode and seven more in one window</li>
+      <li>Agents start agents over MCP, on any machine</li>
+      <li>A git checkpoint on every turn</li>
+      <li>Worktrees named after the chat</li>
+    </ul>
   </div>
 </section>
 
-<section class="sect" id="machines">
+<section class="sect" id="tools">
   <div class="wrap">
     <div class="head">
-      <h2><span>Your machines, your server.</span> A few commands.</h2>
+      <h2><span>Everything around the agent.</span> In the same window.</h2>
       <div class="head-side">
-        <p>Without an account the engine serves only this machine. Sign it in to reach it from your other devices. A Linux server takes one line from Add a server in the desktop app.</p>
+        <p>Read what it changed, tell it what to fix, check the pull request, look at the page it built. The loop stays next to the chat instead of across five apps.</p>
       </div>
     </div>
     <div class="bento">
-      <div class="card w7 keys-card">
-        <dl class="keys">
-          <dt><kbd>commutator login</kbd></dt><dd>Sign this machine in to your account</dd>
-          <dt><kbd>commutator headless</kbd></dt><dd>Run the engine without a window</dd>
-          <dt><kbd>commutator daemon install</kbd></dt><dd>Keep it running under launchd or systemd</dd>
-          <dt><kbd>curl … /install.sh | sh</kbd></dt><dd>Add a Linux server with a pair code</dd>
-          <dt><kbd>commutator mcp</kbd></dt><dd>MCP server for agents, on stdio</dd>
-          <dt><kbd>commutator update</kbd></dt><dd>Install the newest release, sha256 checked</dd>
-        </dl>
+      <div class="card feature w6">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <pre class="mock term diff"><b>@@ veil.rs</b>
+<s>-  let cut = text.len().min(limit);</s>
+<u>+  let cut = grapheme_floor(text, limit);</u>
+<u>+  debug_assert!(text.is_char_boundary(cut));</u>
+<span class="comment">💬 Keep the old path behind the flag</span></pre>
+        </div>
+        <h3>Diffs and review</h3>
+        <p>See what each turn changed, split or unified. Leave a comment on a line and it goes to the agent with your next message: code review, for an agent.</p>
       </div>
-      <div class="card feature w5 keys-note">
-        <canvas class="dither" aria-hidden="true"></canvas>
-        <h3>Host it yourself</h3>
-        <p>The relay is a small server: Google sign-in, the account’s devices and the traffic between them. The default one lets in the accounts it lists; run your own and pass its URL to <code>commutator login</code>.</p>
-        <p>The desktop app checks GitHub releases hourly and updates itself on restart.</p>
+      <div class="card feature w6">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock checks">
+            <div class="m-row"><b>#90 Stream pull request status</b></div>
+            <div class="m-row"><i class="dot done"></i><span>clippy</span><em>1m 12s</em></div>
+            <div class="m-row"><i class="dot done"></i><span>test · macOS</span><em>4m 03s</em></div>
+            <div class="m-row"><i class="dot done"></i><span>test · Linux</span><em>3m 41s</em></div>
+            <div class="m-row"><i class="dot working"></i><span>review requested</span><em class="run">waiting</em></div>
+          </div>
+        </div>
+        <h3>Pull requests</h3>
+        <p>Every pull request of the repos you work in, on one page, each with its description, checks and code. A chat’s branch shows its PR in the sidebar.</p>
+      </div>
+      <div class="card feature w6">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock browser">
+            <div class="b-bar"><i></i><i></i><i></i><span>localhost:5173/dashboard</span></div>
+            <div class="b-page"><div class="b-block"></div><div class="b-block short"></div><div class="b-ring"></div><div class="b-note">Too much padding here</div></div>
+          </div>
+        </div>
+        <h3>A browser next to the chat <span class="soon">Annotations soon</span></h3>
+        <p>The dev server the agent started opens beside it. Soon: circle a spot on the page, write what’s wrong and send it to the agent.</p>
+      </div>
+      <div class="card feature w6">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock agents">
+            <div class="m-row"><i class="dot done"></i><b>09:00</b><span>Triage new issues</span><em>weekdays</em></div>
+            <div class="m-row"><i class="dot working"></i><b>02:00</b><span>Bump dependencies, run tests</span><em class="run">nightly</em></div>
+            <div class="m-row"><i class="dot"></i><b>Mon</b><span>Summarise last week’s PRs</span><em>weekly</em></div>
+          </div>
+        </div>
+        <h3>Automations <span class="soon">Soon</span></h3>
+        <p>Prompts on a schedule, on the machine you pick. Each run becomes its own chat, so you read it like any other.</p>
       </div>
     </div>
   </div>
@@ -227,7 +268,7 @@
       <div class="dl-row">
         <div class="dl-lead">
           <h3>Linux</h3>
-          <p>The engine without a window, for a server or a build box. Add a server in the desktop app gives a one-line install with a pair code; it runs as a systemd user service.</p>
+          <p>The engine without a window, for a server or a build box. Add a server in the desktop app gives a one-line install with a pair code; it runs as a systemd user service. On a Mac, <code>commutator daemon install</code> keeps the engine running without the window.</p>
         </div>
         <ul class="dl-list">
           <li><span class="dl-name">Engine</span><span class="dl-meta">tar.gz · glibc 2.36+</span><span class="pair"><a class="btn" data-os="linux" data-asset="linux-x86_64\.tar\.gz$" href="https://github.com/getcommutator/commutator/releases/latest">x86_64</a><a class="btn ghost" data-asset="linux-aarch64\.tar\.gz$" href="https://github.com/getcommutator/commutator/releases/latest">aarch64</a></span></li>
