@@ -200,7 +200,7 @@ impl FilesSurface {
                 .border_color(theme.accent)
                 .bg(theme.input_glass_bg())
                 .font_family(theme.font_sans.clone())
-                .text_size(px(11.5))
+                .text_size(crate::typography::ui_rems(13.0))
                 .text_color(theme.text)
                 .cursor_text()
                 .occlude()
