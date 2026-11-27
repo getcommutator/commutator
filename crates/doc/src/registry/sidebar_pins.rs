@@ -88,7 +88,7 @@ impl RegistryDoc {
     }
 
     /// Readiness survives restarts even when the list is empty. No data import.
-    pub(super) fn initialize_sidebar_pins(&mut self) {
+    pub fn initialize_sidebar_pins(&mut self) {
         if !self.sidebar_pins_initialized() {
             self.write(
                 KIND_PREFERENCES,

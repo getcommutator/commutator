@@ -31,7 +31,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use commutator_doc::transcript_delta::{TranscriptUpdate, apply_transcript_frame};
 use commutator_doc::{QueuedMessage, SessionCommandStatus, SessionDoc, SessionMessageEntry};
-use commutator_proto::{Chat, Device, Session, Space};
+use commutator_proto::{Chat, Device, Session, SidebarPinChange, SidebarPreferencesState, Space};
 use commutator_rpc::{LinkCache, RpcClient, RpcError, methods};
 
 use crate::client::ClientInner;
@@ -104,7 +104,16 @@ pub(crate) struct LocalHost {
     engine_queue: Mutex<HashMap<String, HashSet<String>>>,
     /// Chat ids the engine last listed (only those are pruned when gone).
     engine_chats: Mutex<HashSet<String>>,
+    /// Pin writes the engine hasn't answered yet, and its newest pin list
+    /// held back meanwhile so it can't undo the optimistic replica.
+    pins: Mutex<EnginePins>,
     cancel: CancellationToken,
+}
+
+#[derive(Default)]
+struct EnginePins {
+    in_flight: usize,
+    latest: Option<SidebarPreferencesState>,
 }
 
 /// Default unary deadline; long ones below.
@@ -112,6 +121,32 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Raw bytes per UploadChunk slice (≈680k base64 chars: under a 1 MiB
 /// WebSocket message with headroom; a multiple of 3 so slices encode alone).
 const UPLOAD_SLICE_BYTES: usize = 510_000;
+
+/// Make the replica's pins the engine's list (`target`, in order). A pin
+/// whose chat the replica doesn't have yet is left for the next frame.
+fn mirror_pins(
+    doc: &mut commutator_doc::RegistryDoc,
+    target: &[String],
+) -> std::result::Result<(), commutator_doc::DocError> {
+    doc.initialize_sidebar_pins();
+    let current = doc.sidebar_preferences().unwrap_or_default().pinned_session_ids;
+    if current == target {
+        return Ok(());
+    }
+    for id in current.iter().filter(|id| !target.contains(id)) {
+        doc.change_sidebar_pin(&SidebarPinChange::Unpin { session_id: id.clone() })?;
+    }
+    let mut after = None;
+    for id in target {
+        let pin = SidebarPinChange::Pin { session_id: id.clone(), after: after.clone(), before: None };
+        match doc.change_sidebar_pin(&pin) {
+            Ok(()) => after = Some(id.clone()),
+            Err(commutator_doc::DocError::Schema(_)) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
 
 fn deadline(method: &str) -> Duration {
     match method {
@@ -150,6 +185,7 @@ impl LocalHost {
             engine_chats: Mutex::new(
                 client.workspace.state().0.chats.iter().map(|c| c.id.clone()).collect(),
             ),
+            pins: Mutex::new(EnginePins::default()),
             cancel: client.cancel.child_token(),
         })
     }
@@ -165,6 +201,7 @@ impl LocalHost {
             methods::WATCH_SPACES,
             methods::WATCH_CHATS,
             methods::WATCH_SESSIONS,
+            methods::WATCH_SIDEBAR_PREFERENCES,
         ] {
             let host = Arc::downgrade(self);
             self.spawn_watch(self.cancel.clone(), method, json!({}), move |item| {
@@ -416,6 +453,13 @@ impl LocalHost {
                 };
                 client.registry_write(|doc| sessions.iter().try_for_each(|s| doc.upsert_session(s)))
             }
+            methods::WATCH_SIDEBAR_PREFERENCES => {
+                let Ok(state) = serde_json::from_value::<SidebarPreferencesState>(item) else {
+                    return;
+                };
+                self.engine_pins(Some(state), false);
+                return;
+            }
             _ => return,
         };
         if let Err(err) = written {
@@ -444,8 +488,40 @@ impl LocalHost {
         }
     }
 
+    /// The engine's pin list, from its watch or a pin write's reply
+    /// (`answered`: one fewer write in flight). Kept if newest; mirrored into
+    /// the replica only once no pin write is in flight.
+    fn engine_pins(&self, state: Option<SidebarPreferencesState>, answered: bool) {
+        let apply = {
+            let mut pins = lock(&self.pins);
+            if answered {
+                pins.in_flight = pins.in_flight.saturating_sub(1);
+            }
+            if let Some(state) = state
+                && pins.latest.as_ref().is_none_or(|l| state.revision >= l.revision)
+            {
+                pins.latest = Some(state);
+            }
+            match &pins.latest {
+                Some(latest) if pins.in_flight == 0 && latest.initialized => {
+                    Some(latest.pinned_session_ids.clone())
+                }
+                _ => None,
+            }
+        };
+        let (Some(target), Some(client)) = (apply, self.client.upgrade()) else {
+            return;
+        };
+        if let Err(err) = client.registry_write(|doc| mirror_pins(doc, &target)) {
+            tracing::warn!(error = %err, "engine pins not mirrored");
+        }
+    }
+
     /// A workspace write (`Mutate {op, …}`) the replica already holds.
     pub(crate) fn mutate(&self, params: Value) {
+        if params["op"] == "changeSidebarPin" {
+            lock(&self.pins).in_flight += 1;
+        }
         let _ = self.outbox.send(Out {
             method: methods::MUTATE,
             params,
@@ -597,6 +673,13 @@ impl LocalHost {
                     reply => break reply,
                 }
             };
+            if out.method == methods::MUTATE && out.params["op"] == "changeSidebarPin" {
+                // Refused or not, the engine's list is the truth again.
+                let state = reply.as_ref().ok().and_then(|r| {
+                    serde_json::from_value(r["sidebarPreferences"].clone()).ok()
+                });
+                self.engine_pins(state, true);
+            }
             let Err(err) = reply else { continue };
             tracing::warn!(method = out.method, error = %err, "local engine refused a write");
             if let Some((chat, command)) = out.command
@@ -688,6 +771,29 @@ mod tests {
             continuation_of: None,
             duration_ms: None,
         }
+    }
+
+    #[test]
+    fn engine_pins_mirror_into_the_replica() {
+        let mut doc = commutator_doc::RegistryDoc::new("phone");
+        for id in ["a", "b", "c"] {
+            let chat: Chat = serde_json::from_value(json!({
+                "id": id, "deviceId": "mac", "archived": false,
+                "createdAt": "2026-11-27T00:00:00Z", "updatedAt": "2026-11-27T00:00:00Z",
+            }))
+            .unwrap();
+            doc.upsert_chat(&chat).unwrap();
+        }
+        let pins = |doc: &commutator_doc::RegistryDoc| {
+            doc.sidebar_preferences().unwrap().pinned_session_ids
+        };
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        mirror_pins(&mut doc, &[]).unwrap();
+        assert!(pins(&doc).is_empty(), "an empty list still marks pins ready");
+        mirror_pins(&mut doc, &ids(&["b", "a", "gone"])).unwrap();
+        assert_eq!(pins(&doc), ids(&["b", "a"]));
+        mirror_pins(&mut doc, &ids(&["c", "b"])).unwrap();
+        assert_eq!(pins(&doc), ids(&["c", "b"]));
     }
 
     #[test]
