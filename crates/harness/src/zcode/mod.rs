@@ -191,12 +191,12 @@ impl ZcodeHarness {
                     .await
                     .ok()
                     .and_then(Result::ok);
-                runner.error = Some(if status.is_some() {
+                runner.error = Some(explain_failure(&if status.is_some() {
                     tail.wait_closed().await;
                     crate::crash_message("ZCode", status, &tail)
                 } else {
                     error.to_string()
-                });
+                }));
             }
             client.close_stdin_for_teardown();
             child.shutdown(kill_grace).await;
@@ -445,8 +445,17 @@ pub(super) fn cap(text: &str) -> String {
     commutator_proto::command_output_cap(text).unwrap_or_default()
 }
 
-/// A failed turn's message, with what to do when it's the missing login.
-pub(super) fn explain_failure(message: &str) -> String {
+/// A ZCode failure (a turn's, a sign-in's) in words a person can act on:
+/// the missing login, or a keychain ZCode cannot reach — the CLI's
+/// "System credential storage is unavailable", which a standalone build
+/// missing its `@napi-rs/keyring` binding also prints.
+pub fn explain_failure(message: &str) -> String {
+    if message.contains("System credential storage is unavailable") {
+        return "ZCode has no access to the system keychain, where it keeps its login. Unlock \
+                the keychain and retry; if it keeps failing, reinstall ZCode (a build without \
+                its keyring module cannot store a login)."
+            .into();
+    }
     if message.contains("Select a model") {
         return format!(
             "{message}: ZCode has no model to run. Sign in with `zcode login` (or add a provider \

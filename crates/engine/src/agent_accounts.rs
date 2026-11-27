@@ -2847,6 +2847,11 @@ impl AgentAccounts {
                         .to_string()
                 })
             };
+            let message = if harness == HarnessId::Zcode {
+                commutator_harness::zcode::explain_failure(&message)
+            } else {
+                message
+            };
             // A CLI's last words can carry an authorize url, a device code or
             // worse — never hand them to the UI (or a log) raw.
             return Ok(AgentLoginPoll {

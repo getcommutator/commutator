@@ -54,6 +54,10 @@ fn a_turn_without_a_model_fails_with_zcodes_reason_on_both_versions() {
         Some(Event::TurnEnded { ended: Ended::Failed(m), .. }) if m == "Select a model before continuing"
     ));
     assert!(explain_failure("Select a model before continuing").contains("zcode login"));
+    let keychain = "Error: System credential storage is unavailable. Unlock the OS credential \
+                    store and restart to retry; headless servers require Secret Service, \
+                    ZCODE_CREDENTIAL_SECRET, or a readable ZCODE_CREDENTIAL_SECRET_FILE";
+    assert!(explain_failure(keychain).starts_with("ZCode has no access to the system keychain"));
 }
 
 #[test]
