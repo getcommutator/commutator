@@ -799,7 +799,6 @@ impl Onboarding {
             );
             widgets::option_card(
                 theme,
-                mode.icon(),
                 mode.label(),
                 selected,
                 selection_t,

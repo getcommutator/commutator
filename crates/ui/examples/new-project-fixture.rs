@@ -22,7 +22,6 @@ fn main() -> anyhow::Result<()> {
         if let Some(folder) = std::env::var_os("COMMUTATOR_FIXTURE_WALLPAPER_FOLDER") {
             settings.wallpaper_folder = Some(folder.into());
         }
-        settings.wallpaper_theme_colors = std::env::var_os("COMMUTATOR_FIXTURE_WALLPAPER_COLORS").is_some();
         settings.surface = if std::env::var_os("COMMUTATOR_FIXTURE_OPAQUE").is_some() {
             commutator_theme::SurfacePreference::Opaque
         } else {

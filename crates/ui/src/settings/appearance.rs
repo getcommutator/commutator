@@ -1508,14 +1508,6 @@ fn format_px(size: f32) -> String {
     }
 }
 
-fn bar(fraction: f32, tone: Hsla) -> gpui::Div {
-    div()
-        .h(px(5.0))
-        .w(gpui::relative(fraction))
-        .rounded(px(3.0))
-        .bg(tone)
-}
-
 fn surface_label(surface: SurfacePreference) -> &'static str {
     match surface {
         SurfacePreference::ThemeDefault => "Theme default",
@@ -1549,83 +1541,63 @@ fn surface_helper(surface: SurfacePreference, resolved: SurfaceTreatment) -> Str
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Corners {
-    All,
-    Left,
-    Right,
-}
+const MINI_W: f32 = 112.0;
+const MINI_H: f32 = 74.0;
 
-fn miniature(theme: &Theme, corners: Corners) -> AnyElement {
-    let line = theme.text.opacity(0.22);
-    let strong = theme.text.opacity(0.34);
-    let r = px(widgets::OPTION_CARD_RADIUS);
-    let root = div().size_full().flex().flex_row().bg(theme.surface);
-    let root = match corners {
-        Corners::All => root.rounded(r),
-        Corners::Left => root.rounded_tl(r).rounded_bl(r),
-        Corners::Right => root.rounded_tr(r).rounded_br(r),
-    };
-    root.child(
-        div()
-            .w(px(44.0))
-            .h_full()
-            .flex_none()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .gap(px(7.0))
-            .px(px(8.0))
-            .pt(px(14.0))
-            .child(bar(0.70, strong))
-            .child(bar(1.0, line))
-            .child(bar(0.85, line))
-            .child(bar(1.0, line)),
-    )
-    .child(
+/// A small window in `theme`'s colours: traffic lights, one wide pane over two.
+/// Surfaces are forced opaque so a glass theme still reads over the tile.
+fn mini_window(theme: &Theme) -> gpui::Div {
+    let solid = |color: Hsla| Hsla { a: 1.0, ..color };
+    let pane = || {
         div()
             .flex_1()
-            .min_w_0()
-            .my(px(8.0))
-            .mr(px(8.0))
-            .rounded(px(6.0))
+            .rounded(px(4.0))
+            .bg(solid(theme.bg))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.bg)
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .gap(px(7.0))
-            .p(px(10.0))
-            .child(bar(0.62, strong))
-            .child(bar(0.88, line))
-            .child(bar(0.76, line))
-            .child(bar(0.52, line)),
-    )
-    .into_any_element()
+    };
+    let light = |color: u32| div().size(px(5.0)).rounded_full().bg(gpui::rgb(color));
+    div()
+        .w(px(MINI_W))
+        .h(px(MINI_H))
+        .flex_none()
+        .rounded(px(8.0))
+        .bg(solid(theme.surface))
+        .border_1()
+        .border_color(theme.border_strong)
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .p(px(6.0))
+        .child(
+            div()
+                .flex()
+                .gap(px(3.0))
+                .child(light(0xff5f57))
+                .child(light(0xfebc2e))
+                .child(light(0x28c840)),
+        )
+        .child(pane())
+        .child(div().flex_1().flex().gap(px(4.0)).child(pane()).child(pane()))
 }
 
-fn miniature_split(themes: &ThemeSelection, surface: SurfacePreference) -> AnyElement {
-    let light = Theme::for_selection(Appearance::Light, &themes.light, surface);
-    let dark = Theme::for_selection(Appearance::Dark, &themes.dark, surface);
+/// The tile behind the window: a soft wash of the themes' accents. It rounds
+/// itself to the card radius because gpui clips children to their bounding box.
+fn preview_tile(from: Hsla, to: Hsla, window: impl IntoElement) -> AnyElement {
     div()
         .size_full()
+        .rounded(px(widgets::OPTION_CARD_RADIUS))
+        .border_1()
+        .border_color(crate::theme::hairline(0.10))
+        .bg(gpui::linear_gradient(
+            135.0,
+            gpui::linear_color_stop(from.opacity(0.75), 0.0),
+            gpui::linear_color_stop(to.opacity(0.30), 1.0),
+        ))
         .flex()
-        .flex_row()
-        .child(
-            div()
-                .w_1_2()
-                .h_full()
-                .overflow_hidden()
-                .child(miniature(&light, Corners::Left)),
-        )
-        .child(
-            div()
-                .w_1_2()
-                .h_full()
-                .overflow_hidden()
-                .child(miniature(&dark, Corners::Right)),
-        )
+        .items_center()
+        .justify_center()
+        .child(div().rounded(px(8.0)).shadow_md().child(window))
         .into_any_element()
 }
 
@@ -1634,17 +1606,66 @@ pub(crate) fn preview(
     themes: &ThemeSelection,
     surface: SurfacePreference,
 ) -> AnyElement {
+    let light = Theme::for_selection(Appearance::Light, &themes.light, surface);
+    let dark = Theme::for_selection(Appearance::Dark, &themes.dark, surface);
     match mode {
-        AppearanceMode::System => miniature_split(themes, surface),
-        AppearanceMode::Light => miniature(
-            &Theme::for_selection(Appearance::Light, &themes.light, surface),
-            Corners::All,
-        ),
-        AppearanceMode::Dark => miniature(
-            &Theme::for_selection(Appearance::Dark, &themes.dark, surface),
-            Corners::All,
-        ),
+        // Left half light, right half dark: the same window drawn twice, each
+        // clipped to its half.
+        AppearanceMode::System => {
+            let half = |theme: &Theme, offset: f32| {
+                div()
+                    .relative()
+                    .w(px(MINI_W / 2.0))
+                    .h(px(MINI_H))
+                    .overflow_hidden()
+                    .child(mini_window(theme).absolute().top_0().left(px(offset)))
+            };
+            preview_tile(
+                light.accent,
+                dark.accent,
+                div()
+                    .flex()
+                    .child(half(&light, 0.0))
+                    .child(half(&dark, -MINI_W / 2.0)),
+            )
+        }
+        AppearanceMode::Light => preview_tile(light.accent, light.accent, mini_window(&light)),
+        AppearanceMode::Dark => preview_tile(dark.accent, dark.accent, mini_window(&dark)),
     }
+}
+
+/// Theme swatch for the theme selects: a line of code in the theme's own
+/// background and syntax colours, so themes differ at a glance.
+fn palette_preview(theme: &Theme) -> gpui::Div {
+    let token = |width: f32, color: Hsla| div().w(px(width)).h(px(3.0)).rounded_full().bg(color);
+    let syntax = &theme.syntax;
+    div()
+        .flex_none()
+        .w(px(34.0))
+        .h(px(20.0))
+        .rounded(px(5.0))
+        .bg(Hsla { a: 1.0, ..theme.bg })
+        .border_1()
+        .border_color(crate::theme::hairline(0.12))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap(px(3.0))
+        .px(px(5.0))
+        .child(
+            div()
+                .flex()
+                .gap(px(2.0))
+                .child(token(7.0, syntax.keyword))
+                .child(token(12.0, syntax.function)),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(2.0))
+                .child(token(13.0, syntax.string))
+                .child(token(5.0, theme.accent)),
+        )
 }
 
 fn model_appearance(appearance: Appearance) -> commutator_theme::Appearance {
@@ -1652,21 +1673,6 @@ fn model_appearance(appearance: Appearance) -> commutator_theme::Appearance {
         Appearance::Dark => commutator_theme::Appearance::Dark,
         Appearance::Light => commutator_theme::Appearance::Light,
     }
-}
-
-fn palette_preview(theme: &Theme) -> gpui::Div {
-    div()
-        .flex_none()
-        .w(px(30.0))
-        .h(px(18.0))
-        .rounded(px(5.0))
-        .overflow_hidden()
-        .border_1()
-        .border_color(theme.border)
-        .flex()
-        .child(div().w_1_3().h_full().bg(theme.surface))
-        .child(div().w_1_3().h_full().bg(theme.bg))
-        .child(div().w_1_3().h_full().bg(theme.accent))
 }
 
 fn compact_action(
@@ -1688,11 +1694,7 @@ fn import_scene_preview(variant: &commutator_theme::ThemeVariant) -> AnyElement 
             div()
                 .w(px(152.0))
                 .h_full()
-                .overflow_hidden()
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.border)
-                .child(miniature(&theme, Corners::All)),
+                .child(preview_tile(theme.accent, theme.accent, mini_window(&theme))),
         )
         .child(
             div()
@@ -3445,7 +3447,6 @@ impl Render for AppearancePage {
                 );
                 widgets::option_card(
                     &theme,
-                    mode.icon(),
                     mode.label(),
                     selected,
                     selection_t,
@@ -3505,30 +3506,7 @@ impl Render for AppearancePage {
                 cx.notify();
             })
             .render(&self.surface_select, cx);
-        let mut settings_rows = theme_rows;
-        let match_wallpaper = crate::settings::current(cx).wallpaper_theme_colors;
-        settings_rows.push(
-            widgets::card_row(&theme, false)
-                .child(div().flex_1().min_w_0()
-                    .child(widgets::row_title(&theme, "Match wallpaper colors"))
-                    .child(widgets::meta_line(&theme, vec![div()
-                        .child("Use wallpaper colors for accents, highlights, and subtle surface tints.")
-                        .into_any_element()])))
-                .child(widgets::toggle_switch(&theme, match_wallpaper, "wallpaper-theme-colors")
-                    .id("wallpaper-theme-colors-toggle")
-                    .tab_index(0)
-                    .role(gpui::Role::Switch)
-                    .aria_label("Match wallpaper colors")
-                    .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .cursor_pointer()
-                    .aria_toggled(if match_wallpaper { gpui::Toggled::True } else { gpui::Toggled::False })
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        crate::settings::wallpaper_colors::set_enabled(!match_wallpaper, cx);
-                        cx.notify();
-                    })))
-                .into_any_element(),
-        );
-        let color_rows = settings_rows;
+        let color_rows = theme_rows;
         let mut settings_rows = Vec::new();
         settings_rows.push(
             widgets::card_row(&theme, true)

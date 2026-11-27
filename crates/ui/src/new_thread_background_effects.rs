@@ -347,11 +347,6 @@ impl PreloadedArtwork {
         Self(source)
     }
 
-    pub fn color(&self) -> Option<commutator_theme::Color> {
-        let stride = (self.0.colors.len() / 4096).max(1);
-        crate::settings::wallpaper_colors::extract(self.0.colors.iter().step_by(stride).copied())
-    }
-
     pub fn install(self, path: &Path) {
         let mut cache = CACHE.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
         cache.retain(|(key, _)| key != path);

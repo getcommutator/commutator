@@ -385,71 +385,59 @@ pub fn option_card_row() -> gpui::Div {
     div().flex().flex_row().items_start().gap(px(16.0)).w_full()
 }
 
-/// Default height of an [`option_card`] preview frame.
-pub const OPTION_CARD_HEIGHT: f32 = 148.0;
-/// Corner radius of the preview frame.
-///
-/// Public because the preview has to round *itself* to this. gpui content masks
-/// are axis-aligned rectangles, so `overflow_hidden` on the frame clips to its
-/// bounding box and not to its corner radius — a preview that paints its own
-/// background will square off the corners and cover the frame's border with it.
-pub const OPTION_CARD_RADIUS: f32 = 6.0;
+/// Height of an [`option_card`] preview tile.
+pub const OPTION_CARD_HEIGHT: f32 = 120.0;
+/// Corner radius of the preview tile. The selection ring sits outside it at
+/// `RING_GAP + RING_WIDTH`, and its radius grows by the same amount so the
+/// two curves stay concentric.
+pub const OPTION_CARD_RADIUS: f32 = 12.0;
+const RING_GAP: f32 = 2.0;
+const RING_WIDTH: f32 = 2.0;
 
-/// One card in an [`option_card_row`]: a fixed-height preview frame with a quiet
-/// selected edge and caption underneath. There is deliberately no outer card
-/// or ring; the preview itself is the control.
+/// One card in an [`option_card_row`]: a preview tile with an accent ring
+/// around it when selected, and the caption underneath.
 ///
-/// `preview` fills the frame and **must round its own corners** to
-/// [`OPTION_CARD_RADIUS`] if it paints a background — see that constant.
+/// The tile paints nothing itself; `preview` fills it and rounds its own
+/// corners to [`OPTION_CARD_RADIUS`] (gpui clips children to the bounding box,
+/// not to the radius).
 ///
 /// Returns a plain `Div` like the rest of this module — the caller adds `.id(..)`
 /// and `.on_click(..)`, so selection behaviour stays with the page that owns the
 /// state.
 pub fn option_card(
     theme: &Theme,
-    icon_path: &'static str,
     label: impl Into<SharedString>,
     selected: bool,
     selection_t: f32,
     preview: AnyElement,
 ) -> gpui::Div {
-    let selected_color = crate::motion::mix(theme.text_muted, theme.accent, selection_t);
     div()
         .flex_1()
         .min_w_0()
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(6.0))
         .cursor_pointer()
         .child(
             div()
-                .h(px(OPTION_CARD_HEIGHT))
-                .flex_none()
                 .w_full()
-                .rounded(px(OPTION_CARD_RADIUS))
-                .overflow_hidden()
-                .border_1()
-                .border_color(crate::motion::mix(theme.border, theme.accent, selection_t))
-                .child(preview),
+                .flex_none()
+                .p(px(RING_GAP))
+                .rounded(px(OPTION_CARD_RADIUS + RING_GAP + RING_WIDTH))
+                .border(px(RING_WIDTH))
+                .border_color(theme.accent.opacity(selection_t))
+                .child(div().h(px(OPTION_CARD_HEIGHT)).w_full().child(preview)),
         )
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
                 .text_size(crate::typography::ui_rems(13.0))
                 .font_weight(if selected {
                     gpui::FontWeight::MEDIUM
                 } else {
                     gpui::FontWeight::NORMAL
                 })
-                .text_color(selected_color)
-                .child(
-                    crate::icons::icon(icon_path)
-                        .size(px(16.0))
-                        .text_color(selected_color),
-                )
+                .text_color(crate::motion::mix(theme.text_muted, theme.text, selection_t))
                 .child(label.into()),
         )
 }

@@ -27,7 +27,6 @@ pub mod notifications;
 pub mod shortcuts;
 pub mod thread_naming;
 pub mod wallpaper;
-pub mod wallpaper_colors;
 pub mod widgets;
 mod worktrees;
 
@@ -572,18 +571,15 @@ pub fn install_new_thread_composer_background(source: &Path, cx: &mut App) -> Re
     let staged = crate::attachments::stage_file_verbatim(source)?;
     // Do not persist the candidate or retire the old managed file until the
     // renderer's decoder has accepted the exact bytes we are about to save.
-    let image = crate::new_thread_background_image::decode(staged.bytes()).map_err(|_| {
+    crate::new_thread_background_image::decode(staged.bytes()).map_err(|_| {
         "This background image is unsupported or damaged. Choose a valid image such as PNG or JPEG.".to_string()
     })?;
-    let proxy = image.thumbnail(64, 64).to_rgba8();
-    let color = wallpaper_colors::extract(proxy.pixels().map(|pixel| pixel.0));
-    install_staged_background(source, staged, color, cx)
+    install_staged_background(source, staged, cx)
 }
 
 fn install_staged_background(
     source: &Path,
     staged: crate::attachments::StagedAttachment,
-    color: Option<commutator_theme::Color>,
     cx: &mut App,
 ) -> Result<(), String> {
     let data_dir = cx
@@ -591,7 +587,7 @@ fn install_staged_background(
         .map(|store| store.data_dir.clone())
         .ok_or_else(|| "Unable to save the image. Restart Commutator and try again.".to_string())?;
     let prepared = prepare_background_file(staged, &data_dir)?;
-    commit_background(source, prepared, color, cx)
+    commit_background(source, prepared, cx)
 }
 
 /// Owns a prewritten managed file until it is committed; dropped queue entries
@@ -652,7 +648,6 @@ fn prepare_background_file(
 fn commit_background(
     source: &Path,
     mut prepared: PreparedBackgroundFile,
-    color: Option<commutator_theme::Color>,
     cx: &mut App,
 ) -> Result<(), String> {
     let data_dir = cx
@@ -667,7 +662,6 @@ fn commit_background(
     }
     wallpaper::remember(&mut next.wallpaper_history, source);
     next.wallpaper_source = Some(source.to_path_buf());
-    next.wallpaper_color = color;
     let previous = next
         .new_thread_composer_background
         .replace(replacement.clone());
@@ -682,9 +676,6 @@ fn commit_background(
     prepared.0.take();
     replace(next, SavePolicy::Immediate, cx);
     remove_managed_new_thread_background(previous.as_ref(), &backgrounds_dir);
-    if current(cx).wallpaper_theme_colors {
-        crate::appearance::apply(cx);
-    }
     cx.refresh_windows();
     Ok(())
 }
@@ -699,7 +690,6 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
     let mut next = current(cx);
     let previous = next.new_thread_composer_background.take();
     next.wallpaper_source = None;
-    next.wallpaper_color = None;
     if previous.is_none() {
         return Ok(());
     }
@@ -713,9 +703,6 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
         previous.as_ref(),
         &data_dir.join(NEW_THREAD_BACKGROUND_DIR),
     );
-    if current(cx).wallpaper_theme_colors {
-        crate::appearance::apply(cx);
-    }
     cx.refresh_windows();
     Ok(())
 }
@@ -1259,8 +1246,6 @@ pub struct UiSettings {
     pub wallpaper_source: Option<PathBuf>,
     /// Most recently displayed sources first; bounded by the shuffle cooldown.
     pub wallpaper_history: Vec<PathBuf>,
-    pub wallpaper_theme_colors: bool,
-    pub wallpaper_color: Option<commutator_theme::Color>,
     /// Non-destructive treatment composited inside the artwork's fade mask.
     pub new_thread_background_effect: NewThreadBackgroundEffect,
     /// Snap animations to rest. Defaults to following the OS.
@@ -1357,8 +1342,6 @@ impl Default for UiSettings {
             wallpaper_folder: None,
             wallpaper_source: None,
             wallpaper_history: Vec::new(),
-            wallpaper_theme_colors: false,
-            wallpaper_color: None,
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
@@ -2000,8 +1983,6 @@ impl UiSettings {
             wallpaper_folder,
             wallpaper_source,
             wallpaper_history,
-            wallpaper_theme_colors,
-            wallpaper_color,
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
@@ -3114,8 +3095,6 @@ mod tests {
             wallpaper_folder: Some("/tmp/wallpapers".into()),
             wallpaper_source: Some("/tmp/wallpapers/background.png".into()),
             wallpaper_history: vec!["/tmp/wallpapers/background.png".into()],
-            wallpaper_theme_colors: false,
-            wallpaper_color: None,
             new_thread_background_effect: NewThreadBackgroundEffect::Ascii,
             reduce_motion: crate::motion::ReduceMotion::On,
             pause_animations_in_background: true,

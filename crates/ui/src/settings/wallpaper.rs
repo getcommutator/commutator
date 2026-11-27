@@ -107,7 +107,6 @@ impl QueueKey {
 
 struct Candidate {
     source: PathBuf,
-    color: Option<commutator_theme::Color>,
     file: super::PreparedBackgroundFile,
     artwork: crate::new_thread_background_effects::PreloadedArtwork,
 }
@@ -123,11 +122,9 @@ impl Candidate {
             &image, key.effect, key.light,
         );
         drop(image);
-        let color = artwork.color();
         let file = super::prepare_background_file(staged, &key.data_dir)?;
         Ok(Self {
             source,
-            color,
             file,
             artwork,
         })
@@ -231,7 +228,7 @@ pub fn preload(cx: &mut App) {
 fn take_ready(cx: &mut App) -> Option<Result<(), String>> {
     let candidate = cx.global_mut::<PreloadQueue>().ready.pop_front()?;
     let path = candidate.file.path().to_path_buf();
-    let result = super::commit_background(&candidate.source, candidate.file, candidate.color, cx);
+    let result = super::commit_background(&candidate.source, candidate.file, cx);
     if result.is_ok() {
         // Seed the exact managed path the renderer reads. No file read, decode,
         // resize, or effect generation is needed on the next frame.
