@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commutator: your coding agents, from anywhere</title>
+<meta name="description" content="Commutator runs Claude Code, Codex, Cursor and other coding agents on your own machines and lets you drive them from the desktop, an iPhone or an Android phone.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="Commutator: your coding agents, from anywhere">
+<meta property="og:description" content="Agents run on your machines. You drive them from the desk or the phone.">
+<meta property="og:image" content="https://commutator.freethinkel.dev/assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/icon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
+<link rel="stylesheet" href="style.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="logo" href="/" aria-label="Commutator home"><img class="logo-mark" src="assets/icon.png" width="128" height="128" alt="">Commutator</a>
+    <div class="nav-mid">
+      <a href="#features">Features</a>
+      <a href="#machines">Machines</a>
+      <a href="#phone">Phone</a>
+      <a href="#downloads">Downloads</a>
+    </div>
+    <div class="links">
+      <a class="gh-icon" href="https://github.com/getcommutator/commutator" aria-label="GitHub">
+        <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span class="gh-stars" hidden></span>
+      </a>
+      <a class="btn small" href="#downloads">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap head">
+    <h1><span>Agents run on your machines.</span> You drive them from anywhere.</h1>
+    <div class="head-side">
+      <p>Commutator starts the agent CLIs you already have, Claude Code, Codex, Cursor and more, keeps their sessions running in the background and lets you open any of them from the desktop or a phone.</p>
+      <div class="cta-row">
+        <a class="btn" id="hero-download" href="#downloads">Download</a>
+        <a class="btn ghost" href="#phone">iPhone &amp; Android</a>
+      </div>
+      <p class="hero-note">macOS on Apple silicon, Linux servers, iPhone and Android. Open source, MIT.</p>
+    </div>
+  </div>
+</header>
+
+<section class="shot">
+  <div class="wrap">
+    <div class="card frame">
+      <canvas class="dither" aria-hidden="true"></canvas>
+      <img src="assets/screenshot.webp" width="2400" height="1600" alt="Commutator on macOS in the Nord theme: the sidebar lists projects and every agent with its status, chats open as tabs, and a Claude Code chat shows its code, the changed file and its todo list.">
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="features">
+  <div class="wrap">
+    <div class="head">
+      <h2><span>Not another agent.</span> A switchboard for yours.</h2>
+      <div class="head-side">
+        <p>The engine on each machine runs the agents you installed, with your logins and your config. Commutator is the window onto all of them, drawn with GPUI on the desktop and native on the phone.</p>
+      </div>
+    </div>
+    <div class="bento">
+      <div class="card feature w7">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock agents">
+            <div class="m-row"><i class="dot blocked"></i><b>claude</b><span>Which device serves the catalog?</span><em class="warn">needs you · 2m</em></div>
+            <div class="m-row"><i class="dot working"></i><b>codex</b><span>Keyboard avoidance for composer</span><em class="run">working · 6m</em></div>
+            <div class="m-row"><i class="dot working"></i><b>cursor</b><span>Durable Object hibernation</span><em class="run">working · 1m</em></div>
+            <div class="m-row"><i class="dot done"></i><b>claude</b><span>Streaming veil on transcript rows</span><em>done</em></div>
+            <div class="m-row"><i class="dot"></i><b>opencode</b><span>Tool group header colors</span><em>idle</em></div>
+          </div>
+        </div>
+        <h3>Every agent you use</h3>
+        <p>Claude Code, Codex, Cursor, OpenCode, Pi, Grok, Hermes, Devin, Muse Code, fx and Antigravity. Commutator finds them on PATH, and Settings › Providers installs a missing one with the vendor’s own installer.</p>
+      </div>
+      <div class="card feature w5">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock note">
+            <div class="note-head"><img src="assets/icon.png" width="128" height="128" alt=""><b>Claude Code is waiting</b><em>now</em></div>
+            <p>Which device should serve the model catalog?</p>
+            <div class="m-acts"><span class="m-btn">Later</span><span class="m-btn hi">Open</span></div>
+          </div>
+        </div>
+        <h3>A push when it needs you</h3>
+        <p>When a run finishes, fails or stops on a question, the machine tells your phones. Tap the notification and the chat opens on the question.</p>
+      </div>
+      <div class="card feature w5">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock tree">
+            <div class="m-row"><b>commutator</b><em>main</em></div>
+            <div class="m-row sub"><span>veil-fade</span><em><u>+212</u> <s>−38</s> · PR #90</em></div>
+            <div class="m-row sub"><span>catalog-sync</span><em><u>+96</u> <s>−140</s> · merged</em></div>
+            <div class="m-row sub"><span>fix/tool-colors</span><em><u>+8</u> <s>−2</s> · draft</em></div>
+            <div class="m-row"><b>edge</b><em>main</em></div>
+          </div>
+        </div>
+        <h3>Projects and worktrees</h3>
+        <p>The sidebar folds a project’s worktrees under it with their chats, branch and pull request. A new chat can start in a fresh worktree, named after what you asked.</p>
+      </div>
+      <div class="card feature w7">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock agents">
+            <div class="m-row"><i class="dot done"></i><b>MacBook Pro</b><span>this Mac · 4 chats</span><em>online</em></div>
+            <div class="m-row"><i class="dot working"></i><b>mac-studio</b><span>2 running · Claude, Codex</span><em class="run">working</em></div>
+            <div class="m-row"><i class="dot done"></i><b>build-box</b><span>Linux · systemd service</span><em>online</em></div>
+            <div class="m-row"><i class="dot"></i><b>iPhone</b><span>drives the others</span><em>phone</em></div>
+          </div>
+        </div>
+        <h3>One account, every machine</h3>
+        <p>Sign each machine in with Google and its engine joins your account. A chat on the Mac Studio opens from the laptop or the phone; the server only relays, the agent and your code stay on the machine.</p>
+      </div>
+      <div class="card feature w7">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <pre class="mock term"><b>❯</b> claude mcp add commutator -- commutator mcp
+<i>Added</i> stdio MCP server commutator
+<b>❯</b> claude
+<i>  ⎿</i> create_chats: 3 chats on mac-studio
+<i>  ⎿</i> wait_for_turn: <u>done</u> · fix-scroll, port-rows
+<i>  ⎿</i> read_chat: tests <u>412 passed</u>
+<b>❯</b> <span class="caret"></span></pre>
+        </div>
+        <h3>Agents that start agents</h3>
+        <p><code>commutator mcp</code> hands an agent the same switchboard: it lists machines and models, starts chats on any provider, waits on them, reads their answers and runs commands on another machine.</p>
+      </div>
+      <div class="card feature w5">
+        <div class="vig" aria-hidden="true">
+          <canvas class="dither"></canvas>
+          <div class="mock checks">
+            <div class="m-row"><b>#90 Stream pull request status</b></div>
+            <div class="m-row"><i class="dot done"></i><span>turn 4 · edited 3 files</span><em>checkpoint</em></div>
+            <div class="m-row"><i class="dot done"></i><span>turn 5 · ran tests</span><em>checkpoint</em></div>
+            <div class="m-row"><i class="dot done"></i><span>clippy</span><em>1m 12s</em></div>
+            <div class="m-row"><i class="dot working"></i><span>test · macOS</span><em class="run">running</em></div>
+          </div>
+        </div>
+        <h3>Every turn, checkpointed</h3>
+        <p>The engine records each turn with a git checkpoint, so you can see what it changed and roll it back. The Pull requests page lists the branch’s PR with its checks.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="machines">
+  <div class="wrap">
+    <div class="head">
+      <h2><span>Your machines, your server.</span> A few commands.</h2>
+      <div class="head-side">
+        <p>Without an account the engine serves only this machine. Sign it in to reach it from your other devices. A Linux server takes one line from Add a server in the desktop app.</p>
+      </div>
+    </div>
+    <div class="bento">
+      <div class="card w7 keys-card">
+        <dl class="keys">
+          <dt><kbd>commutator login</kbd></dt><dd>Sign this machine in to your account</dd>
+          <dt><kbd>commutator headless</kbd></dt><dd>Run the engine without a window</dd>
+          <dt><kbd>commutator daemon install</kbd></dt><dd>Keep it running under launchd or systemd</dd>
+          <dt><kbd>curl … /install.sh | sh</kbd></dt><dd>Add a Linux server with a pair code</dd>
+          <dt><kbd>commutator mcp</kbd></dt><dd>MCP server for agents, on stdio</dd>
+          <dt><kbd>commutator update</kbd></dt><dd>Install the newest release, sha256 checked</dd>
+        </dl>
+      </div>
+      <div class="card feature w5 keys-note">
+        <canvas class="dither" aria-hidden="true"></canvas>
+        <h3>Host it yourself</h3>
+        <p>The relay is a small server: Google sign-in, the account’s devices and the traffic between them. The default one lets in the accounts it lists; run your own and pass its URL to <code>commutator login</code>.</p>
+        <p>The desktop app checks GitHub releases hourly and updates itself on restart.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="phone">
+  <div class="wrap">
+    <div class="head">
+      <h2><span>Your agents,</span> in your pocket.</h2>
+      <div class="head-side">
+        <p>Commutator for iPhone and Android opens any chat on any of your machines, as one list or by project with its worktrees: read the transcript as it streams, answer the agent’s questions, start a new chat in a project, open its terminal. No agent runs on the phone; it drives the machine’s.</p>
+        <div class="cta-row">
+          <a class="btn" data-testflight href="https://github.com/getcommutator/commutator/releases/latest">TestFlight</a>
+          <a class="btn ghost" data-asset="-android-\d+\.apk$" href="https://github.com/getcommutator/commutator/releases/latest">Android APK</a>
+        </div>
+      </div>
+    </div>
+    <div class="card frame duo">
+      <canvas class="dither" aria-hidden="true"></canvas>
+      <img src="assets/phone-list.webp" width="600" height="1304" alt="Commutator on iPhone: sessions grouped into Pinned, P0 and Mobile, each with its agent, project, branch, status and pull request.">
+      <img src="assets/phone-projects.webp" width="600" height="1304" alt="Commutator on iPhone: the Projects view, each project with its worktrees and their status, then the chats.">
+      <img src="assets/phone-input.webp" width="600" height="1304" alt="Commutator on iPhone: Claude Code asks which device should serve the model catalog and offers three answers.">
+      <img src="assets/phone-visuals.webp" width="600" height="1304" alt="Commutator on iPhone: an agent's reply with a live dashboard, a latency chart with a range switch and a smoothing slider.">
+    </div>
+  </div>
+</section>
+
+<section class="sect downloads" aria-labelledby="downloads-title">
+  <div class="wrap" id="downloads">
+    <div class="head">
+      <h2 id="downloads-title"><span>Download Commutator.</span> Mac, Linux, phones.</h2>
+      <div class="head-side">
+        <p>The desktop app for the Mac, the engine for Linux servers, and the phone apps that reach both. <span class="version" hidden></span></p>
+      </div>
+    </div>
+    <div class="dl-rows">
+      <div class="dl-row">
+        <div class="dl-lead">
+          <h3>macOS</h3>
+          <p>Apple silicon. Signed and notarized, so Gatekeeper opens it without a prompt. Open the dmg and drag Commutator to Applications.</p>
+        </div>
+        <ul class="dl-list">
+          <li><span class="dl-name">Apple silicon</span><span class="dl-meta">dmg · arm64</span><a class="btn" data-os="macos" data-asset="\.dmg$" href="https://github.com/getcommutator/commutator/releases/latest">Download</a></li>
+        </ul>
+      </div>
+      <div class="dl-row">
+        <div class="dl-lead">
+          <h3>Linux</h3>
+          <p>The engine without a window, for a server or a build box. Add a server in the desktop app gives a one-line install with a pair code; it runs as a systemd user service.</p>
+        </div>
+        <ul class="dl-list">
+          <li><span class="dl-name">Engine</span><span class="dl-meta">tar.gz · glibc 2.36+</span><span class="pair"><a class="btn" data-os="linux" data-asset="linux-x86_64\.tar\.gz$" href="https://github.com/getcommutator/commutator/releases/latest">x86_64</a><a class="btn ghost" data-asset="linux-aarch64\.tar\.gz$" href="https://github.com/getcommutator/commutator/releases/latest">aarch64</a></span></li>
+        </ul>
+      </div>
+      <div class="dl-row">
+        <div class="dl-lead">
+          <h3>On your phone</h3>
+          <p>Sign in with the same Google account and pick a machine. Chats, questions, new sessions and terminals, with a push when an agent finishes or needs you.</p>
+        </div>
+        <ul class="dl-list">
+          <li><span class="dl-name">iPhone</span><span class="dl-meta">TestFlight beta</span><a class="btn ghost" data-testflight href="https://github.com/getcommutator/commutator/releases/latest">TestFlight</a></li>
+          <li><span class="dl-name">Android</span><span class="dl-meta">APK · arm64</span><a class="btn ghost" data-asset="-android-\d+\.apk$" href="https://github.com/getcommutator/commutator/releases/latest">APK</a></li>
+        </ul>
+      </div>
+      <div class="dl-row">
+        <div class="dl-lead">
+          <h3>Needs an agent</h3>
+          <p>Commutator drives agent CLIs, it doesn’t ship one. Install any of them on the machine, or let Settings › Providers do it.</p>
+        </div>
+        <ul class="dl-list">
+          <li><span class="dl-name">Claude Code</span><span class="dl-meta">Anthropic</span><a class="btn ghost" href="https://claude.com/claude-code">Get it</a></li>
+          <li><span class="dl-name">Codex</span><span class="dl-meta">OpenAI</span><a class="btn ghost" href="https://github.com/openai/codex">Get it</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="download-foot"><a href="https://github.com/getcommutator/commutator/releases">Release notes</a><a href="https://github.com/getcommutator/commutator#build">Build it yourself</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-lede">
+        <h2>Your coding agents, from anywhere.</h2>
+        <div class="cta-row">
+          <a class="btn" href="#downloads">Download</a>
+          <a class="btn ghost" href="https://github.com/getcommutator/commutator">Star on GitHub</a>
+        </div>
+      </div>
+      <ul class="foot-col">
+        <li>Commutator</li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#downloads">Downloads</a></li>
+        <li><a href="#phone">iPhone &amp; Android</a></li>
+        <li><a href="https://github.com/getcommutator/commutator/releases">Release notes</a></li>
+      </ul>
+      <ul class="foot-col">
+        <li>Built on</li>
+        <li><a href="https://github.com/zeronsh/zeron">Zeron</a></li>
+        <li><a href="https://github.com/zeronsh/zui">GPUI</a></li>
+        <li><a href="https://agentclientprotocol.com">Agent Client Protocol</a></li>
+      </ul>
+      <ul class="foot-col">
+        <li>Source</li>
+        <li><a href="https://github.com/getcommutator/commutator">GitHub</a></li>
+        <li><a href="https://github.com/getcommutator/commutator#own-server">Own server</a></li>
+        <li>MIT © 2026</li>
+      </ul>
+    </div>
+    <canvas class="wordmark" aria-hidden="true"></canvas>
+  </div>
+</footer>
+
+</body>
+</html>
