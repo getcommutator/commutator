@@ -78,7 +78,7 @@ pub(crate) fn signed_in(app: &App, user: &str) -> Response {
         tracing::error!(error = %err, "storing web session");
         return (StatusCode::INTERNAL_SERVER_ERROR, "could not sign in").into_response();
     }
-    let mut response = Redirect::to("/").into_response();
+    let mut response = Redirect::to("/account").into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         app.cookie(&token, SESSION_TTL.as_secs()),
@@ -223,7 +223,7 @@ pub(crate) async fn remove_device(
         return StatusCode::FORBIDDEN.into_response();
     };
     match app.remove_device_of(&user, &id) {
-        Ok(_) => Redirect::to("/").into_response(),
+        Ok(_) => Redirect::to("/account").into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }
@@ -236,7 +236,7 @@ pub(crate) async fn sign_out(State(app): State<Arc<App>>, headers: HeaderMap) ->
         // ponytail: ends every browser session of the account, not just this one.
         let _ = lock(&app.db).execute("DELETE FROM web_sessions WHERE user_id = ?1", [&user]);
     }
-    let mut response = Redirect::to("/").into_response();
+    let mut response = Redirect::to("/account").into_response();
     response
         .headers_mut()
         .insert(header::SET_COOKIE, app.cookie("", 0));
