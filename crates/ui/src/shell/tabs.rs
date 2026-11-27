@@ -202,10 +202,17 @@ impl Shell {
             if !state.chats_synced || state.selected_chat.is_some() || state.auto_selected {
                 return;
             }
-            state
-                .overview_chats(Utc::now())
-                .first()
-                .map(|(_, c)| c.id.clone())
+            // `COMMUTATOR_OPEN_CHAT=<id>` lands on that chat instead (a
+            // capture knob, like `COMMUTATOR_OPEN_ROUTE`).
+            let wanted = std::env::var("COMMUTATOR_OPEN_CHAT")
+                .ok()
+                .filter(|id| state.chats.iter().any(|chat| &chat.id == id));
+            wanted.or_else(|| {
+                state
+                    .overview_chats(Utc::now())
+                    .first()
+                    .map(|(_, c)| c.id.clone())
+            })
         };
         if let Some(first) = first {
             self.focus_composer(cx);

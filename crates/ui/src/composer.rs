@@ -9535,15 +9535,21 @@ impl Composer {
             // Selection reads on the row only while no typed override exists
             // (typed answers win — commutator question-panel.tsx `isSel`).
             let picked = wizard.is_picked(ix) && typed_empty;
+            // Agents mark their pick with a "(Recommended)" suffix; it reads
+            // as a quiet tag beside the label rather than part of it.
+            let (label, recommended) = match label.strip_suffix("(Recommended)") {
+                Some(rest) => (rest.trim_end().to_owned(), true),
+                None => (label.clone(), false),
+            };
             div()
                 .id(("wizard-option", ix))
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
-                .px(px(14.0))
-                .py(px(10.0))
-                .rounded(px(12.0))
+                .gap(px(10.0))
+                .px(px(12.0))
+                .py(px(7.0))
+                .rounded(px(10.0))
                 .border_1()
                 .border_color(if picked {
                     crate::theme::ink(0.16)
@@ -9567,25 +9573,41 @@ impl Composer {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(crate::typography::ui_rems(13.5))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(if picked {
-                            theme.text
-                        } else {
-                            theme.text.opacity(0.9)
-                        })
-                        .child(SharedString::from(label.clone())),
+                        .flex()
+                        .flex_row()
+                        .items_baseline()
+                        .gap(px(8.0))
+                        .text_size(crate::typography::ui_rems(13.0))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .when(picked, |el| el.font_weight(gpui::FontWeight::MEDIUM))
+                                .text_color(if picked {
+                                    theme.text
+                                } else {
+                                    theme.text.opacity(0.9)
+                                })
+                                .child(SharedString::from(label)),
+                        )
+                        .when(recommended, |el| {
+                            el.child(
+                                div()
+                                    .flex_none()
+                                    .text_size(crate::typography::ui_rems(11.0))
+                                    .text_color(theme.text_muted.opacity(0.7))
+                                    .child("Recommended"),
+                            )
+                        }),
                 )
                 .when(ix < 9, |el| {
                     el.child(
-                        // Number kbd chip: `size-[22px] rounded-md text-[11px]`.
                         div()
                             .flex_none()
-                            .size(px(22.0))
+                            .size(px(18.0))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(6.0))
+                            .rounded(px(5.0))
                             .bg(if picked {
                                 crate::theme::ink(0.16)
                             } else {
@@ -9660,7 +9682,7 @@ impl Composer {
                     .child(
                         div()
                             .mt(px(6.0))
-                            .text_size(crate::typography::ui_rems(15.0))
+                            .text_size(crate::typography::ui_rems(14.0))
                             .line_height(px(20.0))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(theme.text)
@@ -9677,10 +9699,10 @@ impl Composer {
                     })
                     .child(
                         div()
-                            .mt(px(12.0))
+                            .mt(px(10.0))
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
+                            .gap(px(2.0))
                             .children(options),
                     )
                     // Free-text override over a hairline (shares the composer
