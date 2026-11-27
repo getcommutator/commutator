@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 const FILE_MENTION_SCHEME: &str = "commutator-file:";
 
 /// Where a classified file link sits relative to a surface's ordered roots.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum FileLinkResolution {
     /// `roots[index]` owns the target: the link opens in that root's file
     /// context and `link.path` stays workspace-relative.
@@ -636,7 +636,7 @@ fn percent_decode_path(encoded: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn percent_encode_path(path: &str) -> String {
+pub(crate) fn percent_encode_path(path: &str) -> String {
     let mut out = String::new();
     for byte in path.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
@@ -966,8 +966,8 @@ mod tests {
             resolve_inline_code_path("Makefile", &local, &[], &mut probes),
             Some(InlineCodePath::File(t)) if t == target(&root.join("Makefile"))
         ));
-        // The directory a span names is context for later spans, never a
-        // link of its own.
+        // The directory a span names is context for later spans (and a
+        // link that opens it in the file manager).
         assert!(matches!(
             resolve_inline_code_path("Some Title/", &local, &[], &mut probes),
             Some(InlineCodePath::Directory(d)) if d == root.join("Some Title")

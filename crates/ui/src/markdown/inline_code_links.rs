@@ -11,9 +11,9 @@
 //!
 //! The rewrite walks a whole text part in document order, once per
 //! (link-roots revision, part): every probe is memoized for the revision, and
-//! the linked tree is reused across frames. A directory span is not a link,
-//! but it becomes the context a later bare name in the same part resolves
-//! against.
+//! the linked tree is reused across frames. A directory span links to the
+//! directory and becomes the context a later bare name in the same part
+//! resolves against.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -248,7 +248,19 @@ fn link_runs(
                 linked[ix].style.file_label =
                     Some(label.unwrap_or_else(|| file_name(&run.text)).to_owned());
             }
-            Some(InlineCodePath::Directory(dir)) => dirs.push(dir),
+            Some(InlineCodePath::Directory(dir)) => {
+                // A directory links too (a click opens it in the file
+                // manager); it keeps its text as written, `dir/` and all.
+                if let Some(path) = dir.to_str().filter(|path| path.starts_with('/')) {
+                    let linked = linked.get_or_insert_with(|| runs.to_vec());
+                    linked[ix].style.code = false;
+                    linked[ix].style.link = Some(format!(
+                        "file://{}",
+                        crate::workspace_links::percent_encode_path(path)
+                    ));
+                }
+                dirs.push(dir);
+            }
             None => {}
         }
     }
@@ -478,13 +490,17 @@ mod tests {
             )
         );
         assert_eq!(fixture.target(&linked, "missing.md"), None);
-        // The directory span itself names a directory: context, not a link.
+        // The directory span itself links to the directory, text unchanged.
         let dir = runs(&linked)
             .into_iter()
             .find(|run| run.text == "2026-09-28/Some Title/")
             .unwrap();
-        assert!(dir.style.code);
-        assert!(dir.style.link.is_none());
+        assert!(!dir.style.code);
+        assert!(dir.style.file_label.is_none());
+        assert_eq!(
+            dir.style.link.as_deref(),
+            Some(fixture.file_target("2026-09-28/Some Title").as_str())
+        );
     }
 
     #[test]

@@ -4065,9 +4065,11 @@ impl Shell {
         let roots = owner_state.read(cx).file_link_roots(chat_id);
         let root_refs: Vec<&str> = roots.iter().map(|root| root.root.as_str()).collect();
         use crate::workspace_links::FileLinkResolution;
-        let (owner_chat, link) = match crate::workspace_links::first_root_owning(target, root_refs)
-        {
-            Some(FileLinkResolution::Owned { root, link }) => match roots[root].chat.as_deref() {
+        let Some(resolution) = crate::workspace_links::first_root_owning(target, root_refs) else {
+            return false;
+        };
+        let (owner_chat, link) = match resolution.clone() {
+            FileLinkResolution::Owned { root, link } => match roots[root].chat.as_deref() {
                 Some(owner) => (owner.to_owned(), link),
                 // A linking chat without a checkout of its own resolves in
                 // its own file context, as before.
@@ -4088,9 +4090,22 @@ impl Shell {
             },
             // An absolute path no known root owns is still a file link: it
             // opens read-only through the linking chat's own file context.
-            Some(FileLinkResolution::Outside(link)) => (chat_id.to_owned(), link),
-            None => return false,
+            FileLinkResolution::Outside(link) => (chat_id.to_owned(), link),
         };
+        // A directory on this disk opens in the file manager, not the editor.
+        let local_dir = match &resolution {
+            FileLinkResolution::Owned { root, link } => {
+                roots[*root].local.then(|| roots[*root].absolute(link))
+            }
+            FileLinkResolution::Outside(link) => roots
+                .first()
+                .is_some_and(|root| root.local)
+                .then(|| std::path::PathBuf::from(&link.path)),
+        };
+        if let Some(dir) = local_dir.filter(|path| path.is_dir()) {
+            cx.open_with_system(&dir);
+            return true;
+        }
         let Some(owner) = self.link_owner(&owner_chat, cx) else {
             return false;
         };
