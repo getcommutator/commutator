@@ -62,9 +62,13 @@ final class SignInViewController: UIViewController {
         top.alignment = .center
         top.spacing = 12
         top.setCustomSpacing(26, after: mark)
-        let bottom = UIStackView(arrangedSubviews: [status, start])
+        let demo = Controls.plainButton("Try the demo") { [weak self] in self?.app.startDemo() }
+        demo.accessibilityIdentifier = "try-demo"
+
+        let bottom = UIStackView(arrangedSubviews: [status, start, demo])
         bottom.axis = .vertical
         bottom.spacing = 16
+        bottom.setCustomSpacing(4, after: start)
         for v in [top, bottom] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)

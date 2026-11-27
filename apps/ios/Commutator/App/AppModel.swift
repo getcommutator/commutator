@@ -337,6 +337,12 @@ final class AppModel {
         onSignedIn?()
     }
 
+    /// The sign-in page's "Try the demo" (and App Review's way in): the
+    /// offline demo workspace, nothing saved; Sign Out leaves it.
+    @MainActor func startDemo() {
+        if start(.demo(options: Self.demoOptions())) { onSignedIn?() }
+    }
+
     /// The account's machines (the picker's list), or why not.
     func machines() async throws -> [ServerDevice] {
         guard let account else { throw CoreError.Auth(message: "Signed out") }
