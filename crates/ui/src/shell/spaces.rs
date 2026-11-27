@@ -772,19 +772,13 @@ mod pinned_session_tests {
                     shell.state.update(cx, |state, _| {
                         if remote {
                             remote_pin_state(state, true, true);
-                            state.sidebar_preferences.pinned_session_ids = saved.clone();
                         } else {
                             state.workspace_scope = Some(WorkspaceScope::Local);
                         }
+                        state.sidebar_preferences.pinned_session_ids = saved.clone();
                         state.chats = vec![pin_test_chat("normal")];
                     });
                     let key = shell.active_sidebar_pin_profile_key(cx).unwrap();
-                    if !remote {
-                        shell
-                            .settings
-                            .sidebar_pinned_session_ids_by_profile
-                            .insert(key.clone(), saved.clone());
-                    }
                     shell.settings.space_filter = None;
                     let payload = SidebarSessionDrag {
                         chat_id: "normal".into(),
@@ -880,6 +874,38 @@ mod pinned_session_tests {
     }
 
     #[gpui::test]
+    fn local_pins_kept_in_settings_move_into_the_engine(cx: &mut gpui::TestAppContext) {
+        use super::*;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let (engine, mut requests, _replies) = pin_test_engine();
+        let dir = tempfile::tempdir().unwrap();
+        let window = pin_test_shell(cx, dir.path());
+        window
+            .update(cx, |shell, _, cx| {
+                shell.state.update(cx, |state, _| {
+                    state.workspace_scope = Some(WorkspaceScope::Local);
+                    state.sidebar_preferences.pinned_session_ids = ids(&["phone"]);
+                    state.chats = ["phone", "a", "b"].map(pin_test_chat).to_vec();
+                    state.chats_synced = true;
+                    state.set_test_engine(engine);
+                });
+                let key = shell.active_sidebar_pin_profile_key(cx).unwrap();
+                *shell.settings.sidebar_pins_mut(key.clone()) = ids(&["b", "gone", "phone", "a"]);
+                shell.reconcile_sidebar_pins(cx);
+                assert!(!shell.settings.sidebar_pinned_session_ids_by_profile.contains_key(&key));
+                assert_eq!(shell.active_sidebar_pins(cx), ids(&["phone", "b", "a"]));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let first = requests.try_recv().expect("the first pin goes to the engine");
+        assert!(first.contains("changeSidebarPin") && first.contains("\"b\""));
+    }
+
+    #[gpui::test]
     fn sidebar_project_groups_preserve_pin_order_and_keyboard_order(cx: &mut gpui::TestAppContext) {
         use super::*;
         let dir = tempfile::tempdir().unwrap();
@@ -887,12 +913,9 @@ mod pinned_session_tests {
         window
             .update(cx, |shell, _, cx| {
                 shell.settings.sidebar_organization = SidebarOrganization::ByProject;
-                shell
-                    .settings
-                    .sidebar_pins_mut("local".into())
-                    .push("pin".into());
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Local);
+                    state.sidebar_preferences.pinned_session_ids = ids(&["pin"]);
                     state.spaces = ["a", "b"].into_iter().map(|id| serde_json::from_value(serde_json::json!({
                         "id": id, "deviceId": "local", "path": format!("/project/{id}"), "createdAt": Utc::now()
                     })).unwrap()).collect();
@@ -1245,6 +1268,14 @@ mod pinned_session_tests {
         show_label: bool,
     ) {
         use super::*;
+        // Local pins are written to the engine: a test one that never replies
+        // leaves each drop as the optimistic overlay.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let (engine, _requests, _replies) = pin_test_engine();
 
         struct SidebarHost(Entity<Shell>);
         impl Render for SidebarHost {
@@ -1298,6 +1329,7 @@ mod pinned_session_tests {
                 shell.state.update(cx, |state, _| {
                     state.workspace_scope = Some(WorkspaceScope::Local);
                     state.local_device_id = Some("local".into());
+                    state.set_test_engine(engine);
                     state.chats = ["older", "newer"]
                         .into_iter()
                         .enumerate()
@@ -1750,8 +1782,11 @@ mod pinned_session_tests {
         });
         // A collapsed Sessions header remains an unpin target and opens on drop.
         shell.update(cx, |shell, cx| {
-            let key = shell.active_sidebar_pin_profile_key(cx).unwrap();
-            *shell.settings.sidebar_pins_mut(key) = ids(&["older"]);
+            // The engine confirmed ["older"]; earlier drops are settled.
+            shell.sidebar_pin_write = None;
+            shell.state.update(cx, |state, _| {
+                state.sidebar_preferences.pinned_session_ids = ids(&["older"]);
+            });
             shell.sidebar_session_return = None;
             shell.sidebar_resort.clear();
             shell.sidebar_disclosure_motion.clear();

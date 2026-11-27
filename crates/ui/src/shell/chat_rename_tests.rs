@@ -218,7 +218,9 @@ fn add_chats(shell: &Entity<Shell>, cx: &mut VisualTestContext, ids: &[&str], ar
 fn rename_opens_a_collapsed_pinned_section_with_its_motion(cx: &mut TestAppContext) {
     let (shell, cx) = setup(cx);
     shell.update(cx, |shell, cx| {
-        shell.set_chat_pinned("older".into(), true, cx);
+        shell.state.update(cx, |state, _| {
+            state.sidebar_preferences.pinned_session_ids = vec!["older".into()];
+        });
         shell.pinned_open = false;
         cx.notify();
     });

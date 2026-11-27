@@ -6044,22 +6044,41 @@ impl Shell {
             return;
         };
         let state = self.state.read(cx);
-        if state.workspace_scope == Some(WorkspaceScope::Local) {
-            if !state.chats_synced {
-                return;
-            }
-            let known = state.chats.iter().map(|chat| chat.id.clone()).collect();
-            let changed = self
+        // Pins live in the engine (phones read them there). Local pins an
+        // older build kept in settings move into it once, then go.
+        if state.workspace_scope != Some(WorkspaceScope::Local)
+            || !state.chats_synced
+            || state.engine().is_none()
+            || !self
                 .settings
                 .sidebar_pinned_session_ids_by_profile
-                .get_mut(&profile_key)
-                .is_some_and(|pins| spaces::retain_known_pins(pins, &known));
-            if changed {
-                self.schedule_save(cx);
-            }
+                .contains_key(&profile_key)
+        {
             return;
         }
-        // Remote pins come exclusively from per-pin registry records.
+        let known: std::collections::HashSet<String> = state.chats.iter().map(|chat| chat.id.clone()).collect();
+        let mut pins = self
+            .settings
+            .sidebar_pinned_session_ids_by_profile
+            .remove(&profile_key)
+            .unwrap_or_default();
+        spaces::retain_known_pins(&mut pins, &known);
+        self.schedule_save(cx);
+        let mut after = self.active_sidebar_pins(cx).last().cloned();
+        for id in pins {
+            if self.active_sidebar_pins(cx).contains(&id) {
+                continue;
+            }
+            let change = commutator_proto::SidebarPinChange::Pin {
+                session_id: id.clone(),
+                after: after.clone(),
+                before: None,
+            };
+            if !self.queue_sidebar_pin_write(profile_key.clone(), change, cx) {
+                break;
+            }
+            after = Some(id);
+        }
     }
 
     fn active_sidebar_pin_profile_key(&self, cx: &App) -> Option<String> {
@@ -6079,13 +6098,7 @@ impl Shell {
         }
         let state = self.state.read(cx);
         match state.workspace_scope {
-            Some(WorkspaceScope::Local) => self
-                .active_sidebar_pin_profile_key(cx)
-                .map(|key| self.settings.sidebar_pins(&key).to_vec())
-                .unwrap_or_default(),
-            Some(WorkspaceScope::Synced | WorkspaceScope::Development) => {
-                state.sidebar_preferences.pinned_session_ids.clone()
-            }
+            Some(_) => state.sidebar_preferences.pinned_session_ids.clone(),
             None => Vec::new(),
         }
     }
@@ -6139,24 +6152,9 @@ impl Shell {
             return false;
         }
         match self.state.read(cx).workspace_scope {
-            Some(WorkspaceScope::Local) => {
-                if pinned_session_ids.is_empty() {
-                    self.settings
-                        .sidebar_pinned_session_ids_by_profile
-                        .remove(&profile_key);
-                } else {
-                    self.settings
-                        .sidebar_pinned_session_ids_by_profile
-                        .insert(profile_key, pinned_session_ids);
-                }
-                self.schedule_save(cx);
-            }
-            Some(WorkspaceScope::Synced | WorkspaceScope::Development) => {
-                return self.queue_sidebar_pin_write(profile_key, change, cx);
-            }
-            None => return false,
+            Some(_) => self.queue_sidebar_pin_write(profile_key, change, cx),
+            None => false,
         }
-        true
     }
 
     fn set_chat_pinned(&mut self, chat_id: String, pinned: bool, cx: &mut Context<Self>) {
