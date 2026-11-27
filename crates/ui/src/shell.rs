@@ -4120,6 +4120,23 @@ impl Shell {
         use crate::terminal::panel::TerminalLinkEvent;
         match link {
             TerminalLinkEvent::OpenUrl { url } => cx.open_url(&url),
+            // ponytail: only the chat on screen; a shell exiting in another
+            // chat keeps its "[process exited]" tab until closed by hand.
+            TerminalLinkEvent::Exited { key, embedded: true } => {
+                let surface = RightSurface::Terminal(key);
+                if self
+                    .right_tabs
+                    .get(&self.panel_key(cx))
+                    .is_some_and(|tabs| tabs.contains(&surface))
+                {
+                    self.close_right_surface(surface, window, cx);
+                }
+            }
+            TerminalLinkEvent::Exited { key, embedded: false } => {
+                if let Some(panel) = self.terminal.clone() {
+                    panel.update(cx, |panel, cx| panel.close_tab_by_key(key, window, cx));
+                }
+            }
             TerminalLinkEvent::OpenFile {
                 chat,
                 path,
@@ -7600,7 +7617,7 @@ impl Shell {
         // The footer uses the chat sidebar's theme so the account and
         // settings buttons render identically in both places.
         let footer_theme = Theme::of(cx).clone();
-        let footer = self.render_sidebar_footer_row(&footer_theme, true, cx);
+        let footer = self.render_sidebar_footer_row(&footer_theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
         div()
             .id("settings-page")
@@ -9368,7 +9385,7 @@ impl Shell {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .child(self.render_sidebar_footer_row(theme, false, cx)),
+                    .child(self.render_sidebar_footer_row(theme, cx)),
             )
             .into_any_element()
     }
@@ -9716,15 +9733,9 @@ impl Shell {
     /// the right. Shared by the chat sidebar and the settings page so both
     /// sit in one position. Local runtimes advertise their storage boundary
     /// and offer sync; synced runtimes offer sign-out.
-    /// Account, settings, and (on Settings, which has no primary-action
-    /// block) the Pull requests entry. Chat and Settings both render this
-    /// exact row so the footer holds still across the swap.
-    fn render_sidebar_footer_row(
-        &mut self,
-        theme: &Theme,
-        show_pull_requests: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// Chat and Settings both render this exact row so the footer holds
+    /// still across the swap.
+    fn render_sidebar_footer_row(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("sidebar-footer-row")
             .debug_selector(|| "sidebar-footer-row".into())
@@ -9736,82 +9747,26 @@ impl Shell {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(self.render_sidebar_footer(theme, show_pull_requests, cx)),
+                    .child(self.render_sidebar_footer(theme, cx)),
             )
             .into_any_element()
     }
 
-    fn render_pull_requests_button(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .id("open-pull-requests")
-            .role(gpui::Role::Button)
-            .aria_label("Pull requests")
-            .tab_index(0)
-            .debug_selector(|| "open-pull-requests".into())
-            .focus_visible(|style| style.border_2().border_color(theme.accent))
-            .size(px(SIDEBAR_FOOTER_ACTION_SIZE))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(8.0))
-            .text_color(if matches!(self.route, Route::PullRequests) {
-                theme.text
-            } else {
-                theme.text_muted
-            })
-            .bg(if matches!(self.route, Route::PullRequests) {
-                theme.glass_hover()
-            } else {
-                motion::hover_blend(
-                    "open-pull-requests",
-                    theme.glass_hover().opacity(0.0),
-                    theme.glass_hover(),
-                )
-            })
-            .on_hover(motion::hover_listener("open-pull-requests"))
-            .cursor_pointer()
-            .on_click(cx.listener(|this, _, _, cx| {
-                // Leaving Settings through its own footer is a plain route
-                // change; nothing there should grab focus on the way out.
-                this.settings_focus_pending = false;
-                this.open_pull_requests(cx);
-            }))
-            .tooltip(crate::settings::widgets::text_tooltip("Pull requests"))
-            .child(icon(icons::PULL_REQUEST).size(px(15.0)).text_color(
-                if matches!(self.route, Route::PullRequests) {
-                    theme.text
-                } else {
-                    motion::hover_blend("open-pull-requests", theme.text_muted, theme.text)
-                },
-            ))
-            .into_any_element()
-    }
-
-    fn render_sidebar_footer(
-        &mut self,
-        theme: &Theme,
-        show_pull_requests: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_sidebar_footer(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let (user_line, menu_identity) = {
             let state = self.state.read(cx);
             sidebar_account_identity(state.workspace_scope, self.sync_flow, state.auth_user())
         };
-        self.render_user_menu(user_line, menu_identity, show_pull_requests, theme, cx)
+        self.render_user_menu(user_line, menu_identity, theme, cx)
     }
 
     fn render_user_menu(
         &mut self,
         user_line: SharedString,
         menu_identity: SharedString,
-        show_pull_requests: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // On Settings, where the chat sidebar's primary actions are absent,
-        // Pull requests sits just left of Settings in the same action group.
-        let pull_requests = show_pull_requests.then(|| self.render_pull_requests_button(theme, cx));
         let theme = &theme.for_popup();
         let open = self.user_menu.is_open();
         let state = self.state.read(cx);
@@ -10049,9 +10004,6 @@ impl Shell {
                     .flex_none()
                     .items_center()
                     .gap(px(2.0))
-                    .when_some(pull_requests, |el, pull_requests| {
-                        el.child(pull_requests)
-                    })
                     .child(
                         div()
                             .id("settings-trigger")
@@ -15255,7 +15207,7 @@ mod exit_regressions {
                 self.0.update(cx, |shell, cx| {
                     div()
                         .w(px(256.0))
-                        .child(shell.render_sidebar_footer(&Theme::default(), false, cx))
+                        .child(shell.render_sidebar_footer(&Theme::default(), cx))
                 })
             }
         }
@@ -15301,7 +15253,7 @@ mod exit_regressions {
     }
 
     #[gpui::test]
-    fn settings_footer_keeps_the_pull_requests_entry(cx: &mut TestAppContext) {
+    fn settings_footer_has_no_pull_requests_entry(cx: &mut TestAppContext) {
         // Chat and Settings both render this row; host it alone so the full
         // shell's pages don't cover it.
         struct FooterRow(Entity<Shell>);
@@ -15310,7 +15262,7 @@ mod exit_regressions {
                 self.0.update(cx, |shell, cx| {
                     div()
                         .w(px(256.0))
-                        .child(shell.render_sidebar_footer_row(&Theme::default(), true, cx))
+                        .child(shell.render_sidebar_footer_row(&Theme::default(), cx))
                 })
             }
         }
@@ -15341,21 +15293,12 @@ mod exit_regressions {
             shell.open_settings(SettingsSection::General, cx)
         });
         cx.update(|window, cx| window.draw(cx).clear());
-        let row = cx.debug_bounds("sidebar-footer-row").unwrap();
-        let entry = cx
-            .debug_bounds("open-pull-requests")
-            .expect("Settings keeps the Pull requests entry");
-        let gear = cx.debug_bounds("settings-trigger").unwrap();
-        // Just left of Settings, in the same action group.
-        assert!(entry.right() <= gear.left() && entry.left() >= row.left());
-        assert!((entry.center().y - gear.center().y).abs() < px(1.0));
-        cx.simulate_click(entry.center(), gpui::Modifiers::default());
-        shell.read_with(cx, |shell, _| {
-            assert!(
-                matches!(shell.route, Route::PullRequests),
-                "it opens the board straight from Settings"
-            )
-        });
+        assert!(cx.debug_bounds("sidebar-footer-row").is_some());
+        assert!(cx.debug_bounds("settings-trigger").is_some());
+        assert!(
+            cx.debug_bounds("open-pull-requests").is_none(),
+            "Settings' footer is account and settings only"
+        );
     }
 
     /// A ready Shell with no engine, for the Pull requests route.

@@ -85,6 +85,9 @@ pub enum TerminalLinkEvent {
         line: Option<u32>,
         col: Option<u32>,
     },
+    /// A tab's shell exited (`exit`, Ctrl+D): the shell closes the tab, and
+    /// with the last one the pane, as its ✕ would.
+    Exited { key: u64, embedded: bool },
 }
 
 /// Bind the terminal keymap (global): Cmd+J on macOS, Ctrl+J elsewhere.
@@ -984,6 +987,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> StreamDisposition {
         let mut flush_now = false;
+        let embedded = self.embedded;
         let disposition = {
             let Some(tab) = self.tab_mut(chat, key) else {
                 return StreamDisposition::Stop;
@@ -1005,6 +1009,7 @@ impl TerminalPanel {
                     tab.predictor.reset();
                     tab.marked_text = None;
                     tab.emulator.feed(&exit_message(exit_code));
+                    cx.emit(TerminalLinkEvent::Exited { key, embedded });
                     cx.notify();
                     StreamDisposition::Stop
                 }
@@ -3007,6 +3012,32 @@ mod tests {
             window.draw(cx).clear();
         });
         assert!(sent(&panel, cx).ends_with(b"\x1b[O\x1b[I"));
+    }
+
+    #[gpui::test]
+    fn a_shell_exit_asks_the_shell_to_close_its_tab(cx: &mut gpui::TestAppContext) {
+        let (panel, cx) = focused_panel(cx);
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&panel, move |_, event: &TerminalLinkEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        panel.update(cx, |panel, cx| {
+            panel.apply_stream_event(
+                "chat",
+                1,
+                TerminalEvent::Exit { seq: 1, exit_code: 0, signal: None },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(matches!(
+            seen.borrow().as_slice(),
+            [TerminalLinkEvent::Exited { key: 1, embedded: false }]
+        ));
     }
 
     #[gpui::test]
