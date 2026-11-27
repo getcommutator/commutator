@@ -7972,6 +7972,8 @@ impl Shell {
         let shows_metadata = branch.is_some() || change_request.is_some();
         let queued = queued && !undelivered;
         let working = status == commutator_proto::ChatIndicator::Working && !queued && !undelivered;
+        let awaiting =
+            status == commutator_proto::ChatIndicator::AwaitingInput && !queued && !undelivered;
         // Subagents running under this chat show as a "● N" pill beside the
         // row's own activity indicator, never in place of it: the pill takes
         // the time stamp's spot (compact) or leads the status (regular), and
@@ -8001,6 +8003,8 @@ impl Shell {
                     .size(px(11.0))
                     .text_color(status_color)
                     .into_any_element()
+            } else if awaiting {
+                spaces::awaiting_input_glyph(theme).into_any_element()
             } else {
                 div()
                     .size(px(6.0))
@@ -8106,6 +8110,8 @@ impl Shell {
                             cx,
                         )
                         .into_any_element()
+                    } else if awaiting {
+                        spaces::awaiting_input_glyph(theme).into_any_element()
                     } else {
                         div()
                             .size(px(6.0))

@@ -233,6 +233,7 @@ fn status_mark(
             loaders::mini_glyph_spinner(format!("{key}-working"), 2.0, theme.glyph, view, cx)
                 .into_any_element()
         }
+        ChatIndicator::AwaitingInput => spaces::awaiting_input_glyph(theme).into_any_element(),
         _ => div()
             .size(px(6.0))
             .rounded_full()

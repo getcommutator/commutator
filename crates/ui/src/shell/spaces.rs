@@ -3279,9 +3279,9 @@ pub(crate) fn status_dot_color(status: ChatIndicator, theme: &Theme) -> gpui::Hs
     match status {
         // Preset activity tone, not warning amber: running is routine.
         ChatIndicator::Working => theme.busy,
-        // Blue: "asking you a question" must read differently from "busy
-        // working" at a glance.
-        ChatIndicator::AwaitingInput => theme.accent,
+        // Shepherd's "blocked / needs you" red; its question-mark glyph
+        // ([`awaiting_input_glyph`]) keeps it apart from Errored's dot.
+        ChatIndicator::AwaitingInput => theme.danger,
         // Not working, not done: background work will wake it.
         ChatIndicator::Waiting => theme.text_muted.opacity(0.55),
         ChatIndicator::Errored => theme.danger.opacity(0.65),
@@ -3289,6 +3289,14 @@ pub(crate) fn status_dot_color(status: ChatIndicator, theme: &Theme) -> gpui::Hs
         ChatIndicator::Completed => theme.success, // emerald-400
         ChatIndicator::Idle => crate::theme::ink(0.14),
     }
+}
+
+/// Shepherd's status glyph for an agent waiting on you: its question mark,
+/// 15 px, in the AwaitingInput color (it overhangs the 13 px slot as in Shepherd).
+pub(crate) fn awaiting_input_glyph(theme: &Theme) -> gpui::Svg {
+    icon(icons::STATUS_QUESTION)
+        .size(px(15.0))
+        .text_color(status_dot_color(ChatIndicator::AwaitingInput, theme))
 }
 
 // Handle-based rail host for the spaces dropdown: its list is a plain
@@ -6003,6 +6011,7 @@ impl Shell {
                 .size(px(11.0))
                 .text_color(color)
                 .into_any_element(),
+            ChatIndicator::AwaitingInput => awaiting_input_glyph(theme).into_any_element(),
             _ => div()
                 .size(px(6.0))
                 .rounded_full()
@@ -9516,6 +9525,16 @@ mod tests {
         let mut list = [S::Idle, S::Working, S::Completed, S::AwaitingInput];
         list.sort_by_key(|s| super::agents_rank(*s));
         assert_eq!(list, [S::AwaitingInput, S::Completed, S::Working, S::Idle]);
+    }
+
+    #[test]
+    fn awaiting_input_wears_shepherds_red_apart_from_errored() {
+        use commutator_proto::ChatIndicator as S;
+        for theme in [crate::theme::Theme::dark(), crate::theme::Theme::light()] {
+            let awaiting = super::status_dot_color(S::AwaitingInput, &theme);
+            assert_eq!(awaiting, theme.danger);
+            assert_ne!(awaiting, super::status_dot_color(S::Errored, &theme));
+        }
     }
 
     #[test]

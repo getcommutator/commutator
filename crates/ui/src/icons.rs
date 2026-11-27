@@ -202,6 +202,9 @@ icon_assets![
     (HOME, "home"),
     (STOP, "stop"),
     (CHECK, "check"),
+    // Shepherd's `status-question`: a chat waiting on you (a question or
+    // permission prompt) in the sidebar and tab chips.
+    (STATUS_QUESTION, "status-question"),
     (COPY, "copy"),
     // Project Action icon family (Solar Linear-compatible strokes).
     (ACTION_PLAY, "action-play"),
@@ -412,6 +415,7 @@ mod tests {
             FILE_CODE,
             FOLDER_WITH_FILES,
             CHECK,
+            STATUS_QUESTION,
             CHECKLIST,
             DANGER_TRIANGLE,
             CLOCK_CIRCLE,

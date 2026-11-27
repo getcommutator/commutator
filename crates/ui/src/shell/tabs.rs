@@ -669,6 +669,9 @@ impl Shell {
                             .text_color(spaces::status_dot_color(status, &theme))
                             .into_any_element(),
                     ),
+                    commutator_proto::ChatIndicator::AwaitingInput => {
+                        Some(spaces::awaiting_input_glyph(&theme).into_any_element())
+                    }
                     commutator_proto::ChatIndicator::Idle => None,
                     _ => Some(
                         div()
