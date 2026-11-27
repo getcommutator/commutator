@@ -13,6 +13,9 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
     private let question = UILabel()
     /// Long questions scroll inside this instead of pushing the card off screen.
     private let questionScroll = UIScrollView()
+    /// "Show more" / "Show less" under a question longer than two lines.
+    private let more = UIButton(type: .system)
+    private var expanded = false
     private let options = UIStackView()
     private let other = UITextField()
     private let editor = UITextView()
@@ -33,7 +36,20 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
         // The transcript's body voice: long questions read like the message above.
         question.font = Fonts.ui(.sans, UIFontMetrics(forTextStyle: .body).scaledValue(for: 16.5))
         question.textColor = Palette.text
-        question.numberOfLines = 0
+        question.numberOfLines = 2
+        var moreConfig = UIButton.Configuration.plain()
+        moreConfig.baseForegroundColor = Palette.secondary
+        moreConfig.contentInsets = .zero
+        moreConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+            var a = a
+            a.font = Fonts.ui(.sansMedium, 14)
+            return a
+        }
+        more.configuration = moreConfig
+        more.contentHorizontalAlignment = .leading
+        more.isHidden = true
+        more.accessibilityIdentifier = "question-more"
+        more.addAction(UIAction { [weak self] _ in self?.toggleExpanded() }, for: .touchUpInside)
         options.axis = .vertical
         options.spacing = 6
         other.placeholder = "Other…"
@@ -114,10 +130,11 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
             fit,
         ])
         let questionRow = clearOfClose(questionScroll)
-        let stack = UIStackView(arrangedSubviews: [clearOfClose(header), questionRow, options, other, editor, buttons])
+        let stack = UIStackView(arrangedSubviews: [clearOfClose(header), questionRow, more, options, other, editor, buttons])
         stack.axis = .vertical
         stack.spacing = 10
         stack.setCustomSpacing(14, after: questionRow)
+        stack.setCustomSpacing(14, after: more)
         stack.setCustomSpacing(14, after: other)
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.contentView.addSubview(stack)
@@ -142,6 +159,32 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The toggle shows only when the text runs past two lines at this width.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = question.bounds.width
+        guard width > 0, let font = question.font, let text = question.text else { return }
+        let full = (text as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font], context: nil
+        ).height
+        let hide = full <= font.lineHeight * 2 + 1
+        if more.isHidden != hide {
+            more.isHidden = hide
+            onHeightChange?()
+        }
+    }
+
+    private func toggleExpanded() {
+        expanded.toggle()
+        question.numberOfLines = expanded ? 0 : 2
+        more.configuration?.title = expanded ? "Show less" : "Show more"
+        questionScroll.contentOffset = .zero
+        setNeedsLayout()
+        onHeightChange?()
+    }
+
     /// Glass materializes in/out with the panel.
     func setGlassVisible(_ visible: Bool, animated: Bool) {
         Glass.setVisible(card, visible, animated: animated)
@@ -164,6 +207,9 @@ final class QuestionPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
         guard let q = current else { return }
         header.text = items.count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(page + 1) of \(items.count)" : (q.header.isEmpty ? "Question" : q.header)
         question.text = q.text
+        expanded = false
+        question.numberOfLines = 2
+        more.configuration?.title = "Show more"
         questionScroll.contentOffset = .zero
         DispatchQueue.main.async { [weak self] in self?.questionScroll.flashScrollIndicators() }
         options.arrangedSubviews.forEach { $0.removeFromSuperview() }

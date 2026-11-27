@@ -701,6 +701,9 @@ pub enum WizardStep {
     Done(Vec<UserInputAnswer>),
 }
 
+/// Lines a long question shows before its "Show more" toggle.
+const QUESTION_COLLAPSED_LINES: usize = 2;
+
 /// Paged question state ("1/3"): single-select auto-advances, multi-select and
 /// typed answers advance explicitly, number keys 1-9 select, Back pages back.
 #[derive(Debug, Clone)]
@@ -710,6 +713,12 @@ pub struct Wizard {
     pub page: usize,
     picked: Vec<Vec<usize>>,
     typed: Vec<String>,
+    /// Whether the current page's question shows in full; long questions
+    /// open on their first lines.
+    pub question_expanded: bool,
+    /// The current question's laid-out (full height, line height) in px,
+    /// written at prepaint; shared by clones of this state.
+    question_metrics: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
 }
 
 impl Wizard {
@@ -725,7 +734,16 @@ impl Wizard {
             page: 0,
             picked: vec![Vec::new(); n],
             typed,
+            question_expanded: false,
+            question_metrics: Default::default(),
         }
+    }
+
+    /// A new page starts collapsed and is measured afresh.
+    fn turn_page(&mut self, page: usize) {
+        self.page = page;
+        self.question_expanded = false;
+        self.question_metrics.set((0.0, 0.0));
     }
 
     pub fn counter(&self) -> String {
@@ -790,7 +808,7 @@ impl Wizard {
     /// Explicit submit / auto-advance landing.
     pub fn advance(&mut self) -> WizardStep {
         if self.page + 1 < self.questions.len() {
-            self.page += 1;
+            self.turn_page(self.page + 1);
             WizardStep::Stay
         } else {
             WizardStep::Done(self.answers())
@@ -800,7 +818,7 @@ impl Wizard {
     /// Page back; false when already on the first page.
     pub fn back(&mut self) -> bool {
         if self.page > 0 {
-            self.page -= 1;
+            self.turn_page(self.page - 1);
             true
         } else {
             false
@@ -9679,11 +9697,19 @@ impl Composer {
                                 )
                             }),
                     )
-                    .child(
-                        div()
-                            .mt(px(6.0))
-                            // The chat's own prose voice: long questions read
-                            // like the message above them, not a bold wall.
+                    .child({
+                        // Long questions open on their first lines with a
+                        // "Show more" toggle. The full text stays laid out
+                        // behind a height clip, measured at prepaint, so the
+                        // toggle appears only when the text really overflows.
+                        let metrics = wizard.question_metrics.clone();
+                        let (full_h, line_h) = metrics.get();
+                        let clip_h = QUESTION_COLLAPSED_LINES as f32 * line_h;
+                        let collapsible = line_h > 0.0 && full_h > clip_h + 0.5;
+                        let collapsed = collapsible && !wizard.question_expanded;
+                        let entity = cx.entity_id();
+                        let text = div()
+                            .relative()
                             .text_size(crate::typography::ui_rems(
                                 crate::markdown::render::MD_TEXT_SIZE,
                             ))
@@ -9691,8 +9717,60 @@ impl Composer {
                                 crate::markdown::render::MD_LINE_HEIGHT,
                             ))
                             .text_color(theme.text)
-                            .child(SharedString::from(question.question.clone())),
-                    )
+                            .child(SharedString::from(question.question.clone()))
+                            .child(
+                                gpui::canvas(
+                                    move |bounds, window, cx| {
+                                        let line = f32::from(
+                                            crate::typography::ui_rems(
+                                                crate::markdown::render::MD_LINE_HEIGHT,
+                                            )
+                                            .to_pixels(window.rem_size()),
+                                        );
+                                        let next = (f32::from(bounds.size.height), line);
+                                        let (h, l) = metrics.get();
+                                        if (h - next.0).abs() > 0.5 || (l - next.1).abs() > 0.5 {
+                                            metrics.set(next);
+                                            cx.notify(entity);
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            );
+                        div()
+                            .mt(px(6.0))
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            // The chat's own prose voice: long questions read
+                            // like the message above them, not a bold wall.
+                            .child(if collapsed {
+                                div().h(px(clip_h)).overflow_hidden().child(text)
+                            } else {
+                                text
+                            })
+                            .when(collapsible, |el| {
+                                el.child(
+                                    div()
+                                        .id("wizard-question-toggle")
+                                        .role(gpui::Role::Button)
+                                        .mt(px(2.0))
+                                        .text_size(crate::typography::ui_rems(12.0))
+                                        .text_color(theme.text_muted)
+                                        .hover(|s| s.text_color(theme.text))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if let Some(wizard) = this.wizard.as_mut() {
+                                                wizard.question_expanded = !wizard.question_expanded;
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .child(if collapsed { "Show more" } else { "Show less" }),
+                                )
+                            })
+                    })
                     .when(question.multi_select, |el| {
                         el.child(
                             div()
