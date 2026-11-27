@@ -346,6 +346,7 @@ pub fn router(app: Arc<App>) -> Router {
         // is the browser sign-in and the account's devices.
         .route("/account", get(web::home))
         .route("/", get(|| async { Redirect::to("/account") }))
+        .route("/icon.png", get(web::icon))
         .route("/auth/web", get(web::start))
         .route("/signed-in", get(web::signed_in_page))
         .route("/web/devices/:id/remove", post(web::remove_device))
