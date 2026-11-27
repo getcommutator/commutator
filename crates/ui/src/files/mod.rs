@@ -63,7 +63,11 @@ pub(super) fn path_is_outside(path: &str) -> bool {
     path.starts_with('/')
 }
 
-pub(super) fn toolbar_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+pub(super) fn toolbar_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    let label = label.into();
     div()
         .id(id)
         .size(px(TOOLBAR_BUTTON_SIZE))
@@ -74,14 +78,14 @@ pub(super) fn toolbar_button(id: &'static str, label: &'static str) -> gpui::Sta
         .justify_center()
         .cursor_pointer()
         .role(gpui::Role::Button)
-        .aria_label(label)
+        .aria_label(label.clone())
         .occlude()
         .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
             window.prevent_default()
         })
         .hover(|style| style.bg(crate::theme::wash(0.14)))
         .tooltip(move |_, cx| {
-            cx.new(|_| preview::FileEditorTooltip { text: label.into() })
+            cx.new(|_| preview::FileEditorTooltip { text: label.clone() })
                 .into()
         })
         .tooltip_show_delay(Duration::from_millis(350))

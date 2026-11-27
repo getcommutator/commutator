@@ -24,7 +24,149 @@ fn button(
         )
 }
 
+/// Chrome's zoom levels, which the menu's − and + step through.
+const ZOOMS: [f64; 15] = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1., 1.1, 1.25, 1.5, 1.75, 2., 2.5, 3.];
+
+/// The zoom level after `now`, up or down; the last one at either end.
+fn zoom_step(now: f64, up: bool) -> f64 {
+    let next = match up {
+        true => ZOOMS.iter().find(|z| **z > now + 1e-3),
+        false => ZOOMS.iter().rev().find(|z| **z < now - 1e-3),
+    };
+    next.copied().unwrap_or(now)
+}
+
+/// WebKit's names for a site's cookies and its caches.
+#[cfg(target_os = "macos")]
+const COOKIES: [&str; 1] = ["WKWebsiteDataTypeCookies"];
+#[cfg(target_os = "macos")]
+const CACHE: [&str; 3] = [
+    "WKWebsiteDataTypeDiskCache",
+    "WKWebsiteDataTypeMemoryCache",
+    "WKWebsiteDataTypeFetchCache",
+];
+
 impl BrowserSurface {
+    /// The toolbar's `…` menu: Hard reload, DevTools, zoom, and clearing the
+    /// site's cookies or cache. Over the page, on GPUI's overlay plane.
+    fn menu(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let at = self.menu?;
+        let has_page = self.page.url.is_some() && self.page.error.is_none();
+        #[cfg(target_os = "macos")]
+        let devtools = self
+            .native
+            .as_ref()
+            .is_some_and(|n| n.handle().borrow().devtools_open());
+        #[cfg(not(target_os = "macos"))]
+        let devtools = false;
+        let row = |id: &'static str, glyph: &'static str, label: &'static str, enabled: bool| {
+            crate::popover::menu_row(theme, false, id)
+                .id(id)
+                .when(!enabled, |el| el.opacity(0.4).cursor_default())
+                .child(icons::icon(glyph).size(px(14.0)).text_color(theme.text_muted))
+                .child(div().flex_1().child(label))
+        };
+        let zoom = self.zoom;
+        let step = |id: &'static str, label: String, to: f64| {
+            let enabled = to != zoom;
+            div()
+                .id(id)
+                .h(px(22.0))
+                .min_w(px(22.0))
+                .px(px(4.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.0))
+                .text_color(if enabled { theme.text } else { theme.text_faint })
+                .child(label)
+                .when(enabled, |el| {
+                    el.cursor_pointer()
+                        .hover(|s| s.bg(crate::theme::wash(0.10)))
+                        // The menu stays open, for the next step.
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_zoom(to, cx)))
+                })
+        };
+        let host = self
+            .page
+            .url
+            .as_deref()
+            .and_then(|u| url::Url::parse(u).ok()?.host_str().map(str::to_string))
+            .filter(|_| has_page);
+        let card = crate::popover::popover_card(theme)
+            .w(px(240.0))
+            .flex()
+            .flex_col()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }))
+            .child(
+                row("browser-hard-reload", icons::RESTART, "Hard reload", has_page).when(has_page, |el| {
+                    el.on_click(cx.listener(|this, _, _, cx| {
+                        this.menu = None;
+                        this.hard_reload(cx);
+                    }))
+                }),
+            )
+            .child(
+                row(
+                    "browser-devtools",
+                    icons::CODE,
+                    if devtools { "Close DevTools" } else { "Open DevTools" },
+                    self.native.is_some(),
+                )
+                .child(
+                    div()
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .text_color(theme.text_faint)
+                        .child(if cfg!(target_os = "macos") { "⌥⌘I" } else { "Ctrl Alt I" }),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    this.toggle_devtools(cx);
+                })),
+            )
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(icons::icon(icons::MAGNIFIER_ZOOM_IN).size(px(14.0)).text_color(theme.text_muted))
+                    .child(div().flex_1().child("Zoom"))
+                    .child(step("browser-zoom-out", "−".into(), zoom_step(zoom, false)))
+                    // The level itself resets it.
+                    .child(step("browser-zoom-reset", format!("{:.0}%", zoom * 100.0), 1.0).min_w(px(44.0)))
+                    .child(step("browser-zoom-in", "+".into(), zoom_step(zoom, true))),
+            );
+        // The site's own data only: the profile's other sites stay signed in.
+        #[cfg(target_os = "macos")]
+        let card = match host {
+            Some(host) => {
+                let clear = |id: &'static str, glyph, label, kinds: &'static [&'static str], done: &'static str| {
+                    let host = host.clone();
+                    row(id, glyph, label, true).on_click(cx.listener(move |this, _, _, cx| {
+                        this.menu = None;
+                        if let Some(native) = &this.native {
+                            native.handle().borrow().clear_site_data(kinds, host.clone());
+                        }
+                        crate::toast::show(cx, crate::toast::ToastKind::Success, format!("{done} {host}"));
+                        cx.notify();
+                    }))
+                };
+                card.child(crate::popover::menu_separator())
+                    .child(clear("browser-clear-cookies", icons::TRASH_BIN_MINIMALISTIC, "Clear cookies", &COOKIES, "Cleared the cookies of"))
+                    .child(clear("browser-clear-cache", icons::BROOM, "Clear cache", &CACHE, "Cleared the cache of"))
+            }
+            None => card,
+        };
+        #[cfg(not(target_os = "macos"))]
+        let _ = host;
+        Some(crate::popover::menu_at("browser-menu", at, card.into_any_element(), None))
+    }
+
     pub(super) fn key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -644,10 +786,38 @@ impl Render for BrowserSurface {
         .when(has_page, |el| {
             el.on_click(cx.listener(|this, _, _, cx| this.open_external(cx)))
         });
+        let can_annotate = self.can_annotate();
+        let annotating = self.annotating();
+        let annotate = button(
+            "browser-annotate",
+            if annotating { "Stop annotating" } else { "Annotate an element for the chat" },
+            icons::CURSOR_SQUARE,
+            can_annotate,
+            &theme,
+            cx,
+        )
+        .when(annotating, |el| el.bg(crate::theme::wash(0.10)))
+        .when(can_annotate, |el| {
+            el.on_click(cx.listener(|this, _, w, cx| this.toggle_annotation(w, cx)))
+        });
+        let more = button("browser-more", "More", icons::MENU_DOTS, true, &theme, cx)
+            .when(self.menu.is_some(), |el| el.bg(crate::theme::wash(0.10)))
+            // Capture: a press on the open menu's button closes it.
+            .capture_any_mouse_down(cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.menu = match this.menu {
+                    Some(_) => None,
+                    None => Some(e.position),
+                };
+                cx.notify();
+            }));
         let toolbar = surface_chrome::toolbar(&theme)
             .when(!external, |el| el.child(back).child(forward).child(reload))
             .child(address)
-            .child(open);
+            .children(extension_buttons(&theme))
+            .when(!external && cfg!(target_os = "macos"), |el| el.child(annotate))
+            .child(open)
+            .when(!external, |el| el.child(more));
 
         let body = div()
             .id("browser-page")
@@ -794,6 +964,8 @@ impl Render for BrowserSurface {
             .on_action(cx.listener(|this, _: &super::FocusAddress, w, cx| this.focus_address(w, cx)))
             .on_action(cx.listener(|_, _: &super::NewTab, _, cx| cx.emit(BrowserEvent::NewTab(None))))
             .on_action(cx.listener(|_, _: &super::CloseTab, _, cx| cx.emit(BrowserEvent::Close)))
+            .on_action(cx.listener(|this, _: &super::ToggleDevTools, _, cx| this.toggle_devtools(cx)))
+            .on_action(cx.listener(|this, _: &super::HardReload, _, cx| this.hard_reload(cx)))
             .on_action(cx.listener(|this, _: &super::Back, _, _| this.history(false)))
             .on_action(cx.listener(|this, _: &super::Forward, _, _| this.history(true)))
             // Mouse side buttons drive the shell's route history everywhere
@@ -801,6 +973,7 @@ impl Render for BrowserSurface {
             .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Back), |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Forward), |_, _, cx| cx.stop_propagation())
             .child(toolbar)
+            .children(self.menu(&theme, cx))
             .when_some(persistence_notice, |el, message| el.child(div().px(px(12.0)).py(px(8.0))
                 .text_size(crate::typography::ui_rems(11.0)).text_color(theme.text_muted).child(message.to_owned())))
             .when_some(self.validation.clone(), |el, message| el.child(div().px(px(12.0)).py(px(8.0)).text_size(crate::typography::ui_rems(11.0)).text_color(theme.danger).child(message)))
@@ -811,5 +984,55 @@ impl Render for BrowserSurface {
             .when(external, |el| el.child(div().h(px(26.0)).px(px(10.0)).flex().items_center().gap(px(5.0)).border_t_1().border_color(theme.border)
                 .text_size(crate::typography::ui_rems(10.0)).text_color(theme.text_faint)
                 .child(icons::icon(icons::ARROW_UP_RIGHT).size(px(11.0))).child("Opens in your default browser")))
+    }
+}
+
+/// A button per Chrome extension with an action, left of the toolbar's own:
+/// a click runs it or opens its popup under the pointer.
+#[cfg(target_os = "macos")]
+fn extension_buttons(theme: &Theme) -> Vec<gpui::Stateful<gpui::Div>> {
+    super::extensions::actions()
+        .into_iter()
+        .map(|(path, label, icon)| {
+            let initial = label.chars().next().map(String::from).unwrap_or_default();
+            crate::files::toolbar_button(
+                gpui::ElementId::Name(format!("browser-ext-{}", path.display()).into()),
+                label,
+            )
+            .child(match icon {
+                Some(image) => gpui::img(image).size(px(16.0)).into_any_element(),
+                None => div()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_muted)
+                    .child(initial)
+                    .into_any_element(),
+            })
+            .on_click(move |e, window, _| {
+                use raw_window_handle::HasWindowHandle;
+                let Ok(handle) = window.window_handle() else { return };
+                let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else { return };
+                let view: &objc2_app_kit::NSView = unsafe { handle.ns_view.cast().as_ref() };
+                let at = e.position();
+                super::extensions::perform_action(&path, view, f64::from(at.x), f64::from(at.y));
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn extension_buttons(_: &Theme) -> Vec<gpui::Stateful<gpui::Div>> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::zoom_step;
+
+    #[test]
+    fn zoom_steps_through_chromes_levels() {
+        assert_eq!(zoom_step(1., true), 1.1);
+        assert_eq!(zoom_step(1., false), 0.9);
+        assert_eq!(zoom_step(3., true), 3., "the last level holds");
+        assert_eq!(zoom_step(0.25, false), 0.25);
     }
 }

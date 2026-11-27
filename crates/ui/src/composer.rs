@@ -1288,6 +1288,17 @@ impl TextProjection {
                 }),
         );
         links.extend(
+            commutator_proto::annotation::annotation_links(raw)
+                .into_iter()
+                .map(|(range, annotation)| FileMentionLink {
+                    range,
+                    basename: annotation.label(),
+                    path: annotation.selector,
+                    kind: ChipKind::Annotation,
+                    attachment: None,
+                }),
+        );
+        links.extend(
             commutator_proto::attachment_mentions::attachment_mentions(raw)
                 .into_iter()
                 .map(|mention| FileMentionLink {
@@ -1461,8 +1472,9 @@ fn mention_display_labels(links: &[FileMentionLink]) -> Vec<String> {
                         .iter()
                         .filter(|other| other.path != link.path)
                         .collect();
-                    // A chat's "path" is its id: always show its title.
-                    if duplicates.is_empty() || link.kind == ChipKind::Chat {
+                    // A chat's "path" is its id, an annotation's a selector:
+                    // always show its title.
+                    if duplicates.is_empty() || matches!(link.kind, ChipKind::Chat | ChipKind::Annotation) {
                         return link.basename.clone();
                     }
                     let parts: Vec<_> = link.path.split('/').collect();
@@ -1517,6 +1529,7 @@ fn has_mention_scheme(raw: &str) -> bool {
         || raw.contains(commutator_proto::attachment_mentions::IMAGE_MENTION_SCHEME)
         || raw.contains(commutator_proto::attachment_mentions::ATTACHMENT_MENTION_SCHEME)
         || raw.contains(commutator_proto::chat_mentions::CHAT_MENTION_SCHEME)
+        || raw.contains(commutator_proto::annotation::ANNOTATION_SCHEME)
 }
 
 /// Project a sent message's raw Markdown for transcript display: mention links
@@ -6374,6 +6387,37 @@ impl Composer {
             window.focus(&focus, cx);
             cx.notify();
         }
+    }
+
+    /// An element picked in the browser, as an `Annotation N` chip at the
+    /// caret; `N` is above every annotation the draft holds. Returns `N`, which
+    /// the page's marker shows too.
+    pub(crate) fn add_annotation(
+        &mut self,
+        annotation: commutator_proto::annotation::BrowserAnnotation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<u32> {
+        let draft = self.input.read(cx).text().to_owned();
+        let index = commutator_proto::annotation::annotation_links(&draft)
+            .iter()
+            .map(|(_, a)| a.index)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let link = commutator_proto::annotation::BrowserAnnotation { index, ..annotation }.link();
+        let inserted = self
+            .input
+            .update(cx, |input, cx| input.insert_reference(&link, cx));
+        if !inserted {
+            return None;
+        }
+        self.reset_mention(None, cx);
+        self.reset_slash(None, cx);
+        // The keyboard stays on the page while picking.
+        let _ = window;
+        cx.notify();
+        Some(index)
     }
 
     /// The next chip number for a draft: above everything it holds or
@@ -14229,6 +14273,24 @@ mod tests {
                 .all(|span| display[span.range.clone()].contains("Brief"))
         );
         assert!(!display.contains("a2c4"));
+    }
+
+    #[test]
+    fn annotations_show_as_numbered_chips_without_their_payload() {
+        let pick = |index, selector: &str| {
+            commutator_proto::annotation::BrowserAnnotation {
+                index,
+                selector: selector.into(),
+                ..Default::default()
+            }
+            .link()
+        };
+        let raw = format!("fix {} and {}", pick(1, "#a"), pick(2, "#b"));
+        let (display, spans) = sent_mention_display(&raw).expect("annotation chips");
+        assert_eq!(spans.len(), 2);
+        assert!(spans.iter().all(|span| span.kind == ChipKind::Annotation));
+        assert!(display.contains("Annotation\u{00A0}1") && display.contains("Annotation\u{00A0}2"));
+        assert!(!display.contains(commutator_proto::annotation::ANNOTATION_SCHEME));
     }
 
     #[test]

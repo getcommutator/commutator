@@ -3823,6 +3823,19 @@ impl Shell {
         let sub = cx.subscribe_in(&browser, window, move |this, _, event, window, cx| {
             match event {
                 crate::browser::BrowserEvent::Changed => cx.notify(),
+                // A pick goes to this session's composer; the page's marker
+                // takes the chip's number.
+                crate::browser::BrowserEvent::Annotated { annotation, marker } => {
+                    if this.panel_key(cx) != owner {
+                        return;
+                    }
+                    let index = this.composer.update(cx, |composer, cx| {
+                        composer.add_annotation(annotation.clone(), window, cx)
+                    });
+                    if let (Some(index), Some(browser)) = (index, this.browsers.get(&id)) {
+                        browser.read(cx).label_annotation(*marker, index);
+                    }
+                }
                 crate::browser::BrowserEvent::NewTab(url) => {
                     // A background page cannot open a tab in the wrong session.
                     if this.panel_key(cx) == owner
