@@ -1790,6 +1790,11 @@ impl Changes {
         }
     }
 
+    /// Whether this pane is pinned to one commit (see [`Self::for_commit`]).
+    pub fn is_commit(&self) -> bool {
+        self.commit.is_some()
+    }
+
     /// A pane pinned to one commit's diff (a History row click) — fetches
     /// `parent vs commit` once and never offers the scope menu.
     pub fn for_commit(

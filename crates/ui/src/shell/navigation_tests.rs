@@ -252,6 +252,25 @@ fn opening_a_diff_brings_up_a_closed_pane(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn open_turn_diff_reuses_the_working_tree_diff_tab(cx: &mut TestAppContext) {
+    let (shell, cx) = setup(cx);
+    cx.update(|window, cx| {
+        shell.update(cx, |shell, cx| {
+            let diffs = |shell: &Shell, cx: &App| {
+                shell.right_tabs[&shell.panel_key(cx)]
+                    .iter()
+                    .filter(|t| matches!(t, RightSurface::Diff(_)))
+                    .count()
+            };
+            shell.open_turn_diff(window, cx);
+            shell.open_turn_diff(window, cx);
+            assert_eq!(diffs(shell, cx), 1);
+            assert_eq!(shell.resolved_right_active(cx), RightSurface::Diff(1));
+        })
+    });
+}
+
+#[gpui::test]
 fn closing_active_and_last_tabs_recovers_the_correct_pane(cx: &mut TestAppContext) {
     let (shell, cx) = setup(cx);
     let tab = cx.debug_bounds("right-surface-tab-0").unwrap().center();

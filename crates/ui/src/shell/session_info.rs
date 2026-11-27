@@ -391,7 +391,7 @@ impl Shell {
                         .on_click(cx.listener(|this, _, window, cx| {
                             cx.stop_propagation();
                             this.close_session_info_overlay(cx);
-                            this.add_diff_surface(window, cx);
+                            this.open_turn_diff(window, cx);
                         }))
                         .child(stat(format!("+{adds}"), crate::changes::add_color(&theme)))
                         .child(stat(format!("−{dels}"), crate::changes::del_color(&theme)))

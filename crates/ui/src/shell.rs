@@ -3862,13 +3862,21 @@ impl Shell {
         self.register_diff_surface(changes, window, cx);
     }
 
-    /// A turn card's "Open diff": the chat's diff tab if it has one, else a
-    /// fresh one, with the pane brought up.
+    /// A turn card's "Open diff" / the session info card's +/− stat: the
+    /// chat's working-tree diff tab if it has one (a commit's pinned diff
+    /// does not count), else a fresh one, with the pane brought up.
     fn open_turn_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let existing = self
-            .right_tabs
-            .get(&self.panel_key(cx))
-            .and_then(|tabs| tabs.iter().find(|t| matches!(t, RightSurface::Diff(_))).copied());
+        let existing = self.right_tabs.get(&self.panel_key(cx)).and_then(|tabs| {
+            tabs.iter()
+                .find(|t| match t {
+                    RightSurface::Diff(id) => self
+                        .diffs
+                        .get(id)
+                        .is_some_and(|diff| !diff.read(cx).is_commit()),
+                    _ => false,
+                })
+                .copied()
+        });
         match existing {
             Some(tab) => self.set_right_active(tab, cx),
             None => self.add_diff_surface(window, cx),
