@@ -14,9 +14,6 @@ if (/iPhone|iPad|Android/.test(ua)) {
   hero.href = document.querySelector(`[data-os="${os}"]`).href
 }
 
-// TODO: the public TestFlight link (App Store Connect › TestFlight › External testing › Public link).
-const testflight = ''
-if (testflight) for (const a of document.querySelectorAll('[data-testflight]')) a.href = testflight
 
 // Point each download at the newest release that has its file; without the API the links open the releases page.
 fetch(repo + '/releases?per_page=10')
