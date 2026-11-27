@@ -1063,6 +1063,11 @@ pub enum RowKind {
         badges: Arc<Vec<crate::badges::MessageBadge>>,
         /// Optimistic echo not yet confirmed by a doc frame.
         pending: bool,
+        /// `text` parsed as Markdown, line breaks kept. `None` when chips sit
+        /// over the text: those still paint over a plain layout.
+        // ponytail: chip messages stay plain; render chips as inline runs in
+        // the Markdown renderer to give them Markdown too.
+        tree: Option<Arc<BlockTree>>,
     },
     /// One top-level markdown block of a completed message.
     Markdown {
@@ -1401,6 +1406,9 @@ pub fn rows_for_entry(
                     .any(|chip| crate::attachments::chip_names_attachment(chip, &att.path))
         });
         let copy_text = (!text.trim().is_empty()).then(|| SharedString::from(text.clone()));
+        let tree = mentions
+            .is_empty()
+            .then(|| Arc::new(crate::markdown::parser::parse_message(&user_markdown_source(&text))));
         return vec![Row {
             id: entry.id.clone().into(),
             version: (raw.len() as u64) << 1 | pending as u64,
@@ -1411,6 +1419,7 @@ pub fn rows_for_entry(
                 attachments: Arc::new(attachments),
                 badges: Arc::new(badges),
                 pending,
+                tree,
             },
             entry_id,
             // User rows always carry the strip (chat-view.tsx: whenever
@@ -6350,6 +6359,8 @@ impl Transcript {
         row_ix: usize,
         text: SharedString,
         mentions: Arc<Vec<crate::composer::SentMentionSpan>>,
+        tree: Option<Arc<BlockTree>>,
+        workspace_root: Option<SharedString>,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<Self>,
@@ -6419,18 +6430,29 @@ impl Transcript {
                     this.cancel_user_hold();
                 }))
             })
-            .child(user_bubble_text(
-                row_id,
-                text,
-                mentions,
-                theme,
-                measured_h.clone(),
-                cx.entity_id(),
-                chip_overlays,
-                Rc::new(cx.listener(|this, path: &SharedString, window, cx| {
-                    this.open_chip_image(path, window, cx);
-                })),
-            ));
+            .child(match tree {
+                Some(tree) => self.user_markdown(
+                    row_id,
+                    &tree,
+                    workspace_root,
+                    measured_h.clone(),
+                    theme,
+                    window,
+                    cx,
+                ),
+                None => user_bubble_text(
+                    row_id,
+                    text,
+                    mentions,
+                    theme,
+                    measured_h.clone(),
+                    cx.entity_id(),
+                    chip_overlays,
+                    Rc::new(cx.listener(|this, path: &SharedString, window, cx| {
+                        this.open_chip_image(path, window, cx);
+                    })),
+                ),
+            });
         // Height motion uses the same ease-out curve as sidebars, tool folds,
         // and pane transitions, with duration scaled to travel distance. The
         // full text remains laid out behind the clip; only the viewport over it
@@ -6480,6 +6502,62 @@ impl Transcript {
                     cx,
                 ))
             })
+            .into_any_element()
+    }
+
+    /// A user bubble's text rendered as Markdown, like an assistant reply:
+    /// links, file links, code blocks and lists. The full content height
+    /// feeds the collapse clip the way the plain layout's line count does.
+    #[allow(clippy::too_many_arguments)]
+    fn user_markdown(
+        &mut self,
+        row_id: &SharedString,
+        tree: &Arc<BlockTree>,
+        workspace_root: Option<SharedString>,
+        measured_h: Rc<Cell<f32>>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let link = self.link_ui(cx);
+        let tree = self.inline_code_tree(tree, link.as_ref(), cx);
+        let mut code = HashMap::new();
+        for (ix, top) in tree.blocks.iter().enumerate() {
+            code.extend(self.code_uis_for(row_id, &top.block, ix, cx).unwrap_or_default());
+        }
+        let opts = RenderOptions {
+            tasks: None,
+            media: Some(self.diagram_media(cx)),
+            row_key: row_id.clone(),
+            veil: None,
+            cache: (!render_cache_disabled()).then(|| self.render_cache.clone()),
+            now: Instant::now(),
+            copy: Some(self.copy_ui_for(row_id, cx)),
+            link,
+            workspace_root,
+            code: (!code.is_empty()).then_some(code),
+            math: crate::settings::math_style(cx),
+        };
+        let highlight = self.code_highlight_for(row_id, &tree, None, cx);
+        let entity_id = cx.entity_id();
+        let measure = canvas(
+            |_, _, _| (),
+            move |bounds, _, _, cx| {
+                let next_h = f32::from(bounds.size.height);
+                if (measured_h.get() - next_h).abs() > 0.5 {
+                    measured_h.set(next_h);
+                    cx.notify(entity_id);
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+        div()
+            .relative()
+            .child(measure)
+            .child(render::render_tree(&tree, &opts, theme, window, &|ix| {
+                highlight.get(&ix).cloned().flatten()
+            }))
             .into_any_element()
     }
 
@@ -7405,7 +7483,9 @@ impl Transcript {
                 attachments,
                 badges,
                 pending,
+                tree,
             } => {
+                let tree = tree.clone();
                 let attachments = attachments.clone();
                 let badges = badges.clone();
                 let text = text.clone();
@@ -7464,7 +7544,15 @@ impl Transcript {
                                 .text_color(theme.text)
                                 .when(pending, |el| el.opacity(0.65))
                                 .child(self.render_user_body(
-                                    &row.id, ix, text, mentions, &theme, window, cx,
+                                    &row.id,
+                                    ix,
+                                    text,
+                                    mentions,
+                                    tree,
+                                    workspace_root.clone(),
+                                    &theme,
+                                    window,
+                                    cx,
                                 )),
                         ),
                     );
@@ -8782,6 +8870,18 @@ fn agent_message_display(text: &str) -> String {
     let suffix = format!(" ({id})");
     let name = label.strip_suffix(&suffix).unwrap_or(label);
     format!("Message from {name}\n\n{body}")
+}
+
+/// A user message's Markdown source: an agent attribution's header line
+/// becomes bold, the rest is the text as sent.
+fn user_markdown_source(text: &str) -> std::borrow::Cow<'_, str> {
+    match text
+        .strip_prefix("Message from ")
+        .and_then(|rest| rest.split_once("\n\n"))
+    {
+        Some((name, body)) => format!("**Message from {name}**\n\n{body}").into(),
+        None => text.into(),
+    }
 }
 
 /// The bubble text's runs: body text in the sans font, chips as labels in it
