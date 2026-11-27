@@ -337,25 +337,20 @@ impl Pickers {
         self.compact_model_list = true;
         self.model_rail = rail;
         self.reset_compact_search(placeholder, cx);
-        // Open on the current model: its provider's group at the top when
-        // the model sits near the start of it, else centred on the model.
+        // Open on the current provider's tab, at the current model.
+        self.compact_tab = self
+            .effective_harness(cx)
+            .filter(|harness| {
+                self.compact_groups(cx)
+                    .iter()
+                    .any(|(group, _)| *group == Some(*harness))
+            })
+            .map(Some);
         let selected = self.selected_model_index(cx);
         self.active = selected;
-        let start = self
-            .compact_groups(cx)
-            .into_iter()
-            .rev()
-            .find(|(_, start)| *start <= selected)
-            .map_or(0, |(_, start)| start);
-        if selected - start < COMPACT_LIST_ROWS as usize - 2 {
-            // One row of the previous group stays above, under the edge
-            // fade, so the group's first row is never washed out and the
-            // list shows there is more above.
-            self.model_scroll.scroll_to_item_strict_with_offset(
-                start,
-                gpui::ScrollStrategy::Top,
-                usize::from(start > 0),
-            );
+        if selected < COMPACT_LIST_ROWS as usize - 2 {
+            self.model_scroll
+                .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
         } else {
             self.model_scroll
                 .scroll_to_item_strict(selected, gpui::ScrollStrategy::Center);
@@ -391,10 +386,13 @@ impl Pickers {
         self.show_compact_panel(cx);
     }
 
-    /// Where each provider's group starts in the unsearched list: starred
-    /// models first, then one run per provider.
+    /// Where each provider's group starts in the unsearched, unfiltered
+    /// list: starred models first, then one run per provider. These are the
+    /// list's tabs.
     pub(super) fn compact_groups(&self, cx: &App) -> Vec<(Option<HarnessId>, usize)> {
-        let rows = self.model_rows(cx);
+        // ponytail: uncached flatten per render; cache like model_rows if
+        // the catalog grows big enough to show up in a profile.
+        let rows = self.visible_model_rows(cx);
         let mut groups: Vec<(Option<HarnessId>, usize)> = Vec::new();
         for (ix, row) in rows.iter().enumerate() {
             let group =
@@ -407,9 +405,8 @@ impl Pickers {
     }
 
     /// The model list's top row: back to the panel, then the providers as
-    /// tabs. Each tab jumps the list to its group, and the group at the top
-    /// of the scroll lights its tab. The strip fades at both edges over the
-    /// tabs scrolled past them.
+    /// tabs. Each tab filters the list to its group. The strip fades at both
+    /// edges over the tabs scrolled past them.
     pub(super) fn compact_model_back_header(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = Theme::of(cx).for_popup();
         let searching = !self.search.read(cx).text().trim().is_empty();
@@ -418,18 +415,9 @@ impl Pickers {
         } else {
             self.compact_groups(cx)
         };
-        // Rows share one pitch, so the scroll offset names the top row.
-        let top = (f32::from(-self.model_scroll_base().offset().y)
-            / (COMPACT_ROW_HEIGHT + popover::MENU_GAP))
-            .round()
-            .max(0.0) as usize;
-        let current = groups
-            .iter()
-            .rev()
-            .find(|(_, start)| *start <= top)
-            .map(|(group, _)| *group);
-        // Many providers overflow the strip: keep the viewed tab in sight
-        // as the list scrolls, without fighting a manual sideways scroll.
+        let current = self.compact_tab;
+        // Many providers overflow the strip: keep the chosen tab in sight,
+        // without fighting a manual sideways scroll.
         let viewed_ix = groups.iter().position(|(group, _)| current == Some(*group));
         if viewed_ix != self.compact_strip_viewed {
             self.compact_strip_viewed = viewed_ix;
@@ -468,7 +456,7 @@ impl Pickers {
                     div()
                         .id(SharedString::from(format!("compact-group-{start}")))
                         .role(gpui::Role::Button)
-                        .aria_label(SharedString::from(format!("Jump to {name}")))
+                        .aria_label(SharedString::from(format!("Show {name}")))
                         .tooltip(move |_, cx| cx.new(|_| PickerHint(hint.clone())).into())
                         // A row-height square with the rows' corners, so the
                         // strip sits on the card's grid like the list below.
@@ -486,9 +474,12 @@ impl Pickers {
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.compact_keyboard = false;
-                            this.active = start;
+                            // Clicking the chosen tab again shows every tab.
+                            this.compact_tab =
+                                (this.compact_tab != Some(group)).then_some(group);
+                            this.active = 0;
                             this.model_scroll
-                                .scroll_to_item_strict(start, gpui::ScrollStrategy::Top);
+                                .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
                             cx.notify();
                         }))
                         .child(crate::icons::icon(icon).size(px(14.0)).text_color(

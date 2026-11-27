@@ -633,6 +633,7 @@ struct ModelRowsKey {
     locked: bool,
     catalog_rev: u64,
     selected: Option<String>,
+    tab: Option<Option<HarnessId>>,
 }
 
 /// One row of the model list: the model plus the harness it belongs to —
@@ -798,6 +799,9 @@ pub struct Pickers {
     /// tab last brought into view as the list scrolled.
     compact_strip_scroll: gpui::ScrollHandle,
     compact_strip_viewed: Option<usize>,
+    /// The compact list's chosen tab: `Some(None)` Starred, `Some(Some(h))`
+    /// one provider. The unsearched list shows only that tab's models.
+    compact_tab: Option<Option<HarnessId>>,
     effort_dragging: bool,
     compact_motion: compact::CompactMotion,
     compact_keyboard: bool,
@@ -1081,6 +1085,7 @@ impl Pickers {
             compact_model_list: false,
             compact_strip_scroll: gpui::ScrollHandle::new(),
             compact_strip_viewed: None,
+            compact_tab: None,
             effort_dragging: false,
             compact_motion: compact::CompactMotion::default(),
             compact_keyboard: false,
@@ -2375,20 +2380,32 @@ impl Pickers {
     /// Cached [`Self::visible_model_rows`]: selection/highlight changes and
     /// re-renders share one flattened list until an input actually changes.
     fn model_rows(&self, cx: &App) -> std::sync::Arc<Vec<ModelRowData>> {
+        let query = self.search.read(cx).text().trim().to_string();
+        // A search spans every tab, as the strip hides while searching.
+        let tab = self
+            .compact_tab
+            .filter(|_| query.is_empty() && self.compact_model_list && self.compact_model_picker(cx));
         let key = ModelRowsKey {
-            query: self.search.read(cx).text().trim().to_string(),
+            query,
             rail: self.model_rail,
             effective: self.effective_harness(cx),
             locked: self.harness_locked(cx),
             catalog_rev: self.catalog_rev,
             selected: self.effective_model_id(cx).map(str::to_owned),
+            tab,
         };
         if let Some((cached_key, rows)) = self.model_rows_cache.borrow().as_ref()
             && *cached_key == key
         {
             return rows.clone();
         }
-        let rows = std::sync::Arc::new(self.visible_model_rows(cx));
+        let mut rows = self.visible_model_rows(cx);
+        match tab {
+            Some(None) => rows.retain(|row| self.defaults.is_favorite(row.harness, &row.model.id)),
+            Some(Some(harness)) => rows.retain(|row| row.harness == harness),
+            None => {}
+        }
+        let rows = std::sync::Arc::new(rows);
         *self.model_rows_cache.borrow_mut() = Some((key, rows.clone()));
         rows
     }
@@ -9351,15 +9368,20 @@ mod tests {
                     Loadable::Ready(vec![bare_model("claude", "Claude model")]),
                 );
                 picker.catalog_rev += 1;
-                // A provider's models become directly selectable when its
-                // catalog finishes loading; no provider-page detour is needed.
-                assert_eq!(picker.model_rows_len(cx), 2);
-                assert_eq!(picker.model_rows(cx)[1].harness, HarnessId::ClaudeCode);
-                picker.activate_model_index(1, cx);
+                // A provider gets its tab when its catalog finishes loading,
+                // and its models are directly selectable there.
+                assert_eq!(
+                    picker.compact_groups(cx),
+                    vec![(Some(HarnessId::Codex), 0), (Some(HarnessId::ClaudeCode), 1)]
+                );
+                picker.compact_tab = Some(Some(HarnessId::ClaudeCode));
+                assert_eq!(picker.model_rows_len(cx), 1);
+                picker.activate_model_index(0, cx);
                 assert_eq!(picker.resolved(cx).harness, Some(HarnessId::ClaudeCode));
                 assert_eq!(picker.resolved(cx).model.as_deref(), Some("claude"));
                 picker.show_compact_models(cx);
-                assert_eq!(picker.model_rows_len(cx), 2);
+                assert_eq!(picker.compact_tab, Some(Some(HarnessId::ClaudeCode)));
+                assert_eq!(picker.model_rows_len(cx), 1);
                 assert_eq!(
                     picker.model_rows(cx)[picker.active].harness,
                     HarnessId::ClaudeCode
@@ -9491,7 +9513,9 @@ mod tests {
                         (Some(HarnessId::ClaudeCode), 2),
                     ]
                 );
+                picker.compact_tab = Some(None);
                 let rows = picker.model_rows(cx);
+                assert_eq!(rows.len(), 1);
                 assert_eq!(
                     (rows[0].harness, rows[0].model.id.as_str()),
                     (HarnessId::Codex, "gpt-a")
@@ -9535,8 +9559,14 @@ mod tests {
             .update(cx, |picker, window, cx| {
                 picker.open_model_menu(window, cx);
                 assert!(!picker.compact_model_list);
-                // Models from every offered provider are directly selectable.
+                // The list opens on the current provider's tab, filtered to it.
                 picker.show_compact_models(cx);
+                assert_eq!(picker.compact_tab, Some(Some(HarnessId::Codex)));
+                assert_eq!(picker.model_rows_len(cx), 1);
+                picker.compact_tab = Some(Some(HarnessId::ClaudeCode));
+                assert_eq!(picker.model_rows(cx)[0].harness, HarnessId::ClaudeCode);
+                // No tab: models from every offered provider are selectable.
+                picker.compact_tab = None;
                 assert_eq!(picker.model_rows_len(cx), 2);
                 assert_eq!(picker.model_rows(cx)[0].harness, HarnessId::Codex);
                 assert_eq!(picker.model_rows(cx)[1].harness, HarnessId::ClaudeCode);
@@ -9553,6 +9583,7 @@ mod tests {
                 picker.pick_harness(HarnessId::Codex, cx);
                 // Clicking a foreign-provider row works without a search too.
                 picker.show_compact_models(cx);
+                picker.compact_tab = None;
                 picker.activate_model_index(1, cx);
                 assert_eq!(picker.resolved(cx).harness, Some(HarnessId::ClaudeCode));
                 picker.pick_harness(HarnessId::Codex, cx);
