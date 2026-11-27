@@ -9462,7 +9462,8 @@ impl Composer {
 
     fn on_wizard_key(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
         // Keys bubbling out of the free-text input must not double-handle:
-        // digits select options only while the input is empty, and Enter is the
+        // digits select options only while the input is unfocused (a focused
+        // input types them, even as its first character), and Enter is the
         // input's own Submit action when it has focus.
         let input_focused = self.input.read(cx).focus_handle.is_focused(window);
         let input_empty = self.input.read(cx).is_empty();
@@ -9474,10 +9475,8 @@ impl Composer {
             && (1..=9).contains(&digit)
             && !event.keystroke.modifiers.modified()
         {
-            if !input_focused || input_empty {
+            if !input_focused {
                 self.wizard_select(digit - 1, cx);
-                // Consumed as a selection: stop the platform from also
-                // inserting the digit into the focused free-text input.
                 cx.stop_propagation();
             }
         } else if key == "enter" {
