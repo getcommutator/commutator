@@ -8496,6 +8496,7 @@ impl Shell {
                             format!("chat-title-{content_id}").into(),
                             true,
                             div()
+                                .when(selected, |el| el.font_weight(gpui::FontWeight::MEDIUM))
                                 .text_size(crate::typography::ui_rems(13.0))
                                 .line_height(px(17.0))
                                 .child(popover::search_highlight(title, search_query, theme)),
