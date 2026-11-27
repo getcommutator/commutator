@@ -239,6 +239,19 @@ fn side_chat_to_diff_retains_right_focus_and_custom_bindings(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn opening_a_diff_brings_up_a_closed_pane(cx: &mut TestAppContext) {
+    let (shell, cx) = setup(cx);
+    cx.update(|window, cx| {
+        shell.update(cx, |shell, cx| {
+            shell.set_surfaces_open(false, cx);
+            assert!(!shell.right_pane_open(cx));
+            shell.add_diff_surface(window, cx);
+            assert!(shell.right_pane_open(cx));
+        })
+    });
+}
+
+#[gpui::test]
 fn closing_active_and_last_tabs_recovers_the_correct_pane(cx: &mut TestAppContext) {
     let (shell, cx) = setup(cx);
     let tab = cx.debug_bounds("right-surface-tab-0").unwrap().center();

@@ -4230,6 +4230,9 @@ impl Shell {
             .or_default()
             .push(RightSurface::Diff(id));
         self.set_right_active(RightSurface::Diff(id), cx);
+        // Openers outside the pane (session info card, palette) would
+        // otherwise add the tab to a closed pane, out of sight.
+        self.set_surfaces_open(true, cx);
     }
 
     /// The picker's Terminal card / the `+` menu's Terminal row: every click
