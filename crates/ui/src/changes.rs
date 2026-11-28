@@ -886,6 +886,9 @@ pub enum DiffScope {
     /// History row click opens. Never listed in the scope menu
     /// ([`Self::ALL`]); a commit-pinned pane is born this way and stays.
     Commit,
+    /// One turn's checkpoint diff (`GetCheckpointDiff`, start vs end) — the
+    /// tab a transcript turn card opens. Pinned like [`Self::Commit`].
+    Turn,
 }
 
 impl DiffScope {
@@ -900,6 +903,7 @@ impl DiffScope {
             Self::LatestTurn => "Latest turn",
             Self::History => "History",
             Self::Commit => "Commit",
+            Self::Turn => "Turn",
         }
     }
 
@@ -909,6 +913,7 @@ impl DiffScope {
             Self::WorkingTree => "workingTree",
             Self::Branch => "branch",
             Self::LatestTurn => "turn",
+            Self::Turn => "checkpoint",
             Self::History => "history",
             Self::Commit => "commit",
         }
@@ -927,6 +932,7 @@ pub fn scope_label(scope: DiffScope, count: usize, base: Option<&str>) -> String
         DiffScope::LatestTurn => format!("{count} Changed {files} this turn"),
         DiffScope::History => "History".to_string(),
         DiffScope::Commit => format!("{count} Changed {files} in this commit"),
+        DiffScope::Turn => format!("{count} Changed {files} in this turn"),
     }
 }
 
@@ -962,6 +968,7 @@ pub fn clean_message(scope: DiffScope, base: Option<&str>) -> String {
         DiffScope::LatestTurn => "No changes this turn".to_string(),
         DiffScope::History => "No commits found".to_string(),
         DiffScope::Commit => "Empty commit".to_string(),
+        DiffScope::Turn => "No changes in this turn".to_string(),
     }
 }
 
@@ -1696,7 +1703,21 @@ pub struct Changes {
     /// Pinned commit for a [`DiffScope::Commit`] pane (sha + subject drive
     /// the fetch and the surface-tab title).
     commit: Option<GitHistoryCommit>,
+    /// Pinned turn for a [`DiffScope::Turn`] pane.
+    checkpoint: Option<CheckpointPin>,
+    /// File to bring into view once the diff is parsed.
+    focus_path: Option<String>,
     _observe: Subscription,
+}
+
+/// A chat turn's start and end checkpoints: what a [`DiffScope::Turn`] pane
+/// diffs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointPin {
+    pub chat_id: String,
+    pub turn: u32,
+    pub from: u64,
+    pub to: u64,
 }
 
 /// Events the host (the right pane's surface strip) listens for.
@@ -1787,6 +1808,8 @@ impl Changes {
             history_view_button: None,
             history_events: None,
             commit: None,
+            checkpoint: None,
+            focus_path: None,
             _observe: observe,
         }
     }
@@ -1794,6 +1817,123 @@ impl Changes {
     /// Whether this pane is pinned to one commit (see [`Self::for_commit`]).
     pub fn is_commit(&self) -> bool {
         self.commit.is_some()
+    }
+
+    /// Whether this pane is pinned to a commit or a turn, rather than
+    /// following the selected chat's scopes.
+    pub fn is_pinned(&self) -> bool {
+        self.commit.is_some() || self.checkpoint.is_some()
+    }
+
+    /// A pane pinned to one turn's checkpoint diff (a transcript turn card),
+    /// scrolled to `focus` once it loads.
+    pub fn for_checkpoint(
+        state: Entity<AppState>,
+        pin: CheckpointPin,
+        focus: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut changes = Self::new(state, cx);
+        changes.scope = DiffScope::Turn;
+        changes.checkpoint = Some(pin);
+        changes.focus_path = focus;
+        changes
+    }
+
+    pub fn checkpoint_pin(&self) -> Option<&CheckpointPin> {
+        self.checkpoint.as_ref()
+    }
+
+    /// Bring `path`'s file header to the top (now, or once parsed).
+    pub fn focus_file(&mut self, path: String, cx: &mut Context<Self>) {
+        self.focus_path = Some(path);
+        self.apply_focus();
+        cx.notify();
+    }
+
+    fn apply_focus(&mut self) {
+        let Some(parsed) = &self.parsed else {
+            return;
+        };
+        let Some(path) = self.focus_path.take() else {
+            return;
+        };
+        let Some(ix) = parsed.files.iter().position(|file| file.path == path) else {
+            return;
+        };
+        if let Some(range) = self.row_ranges.get(ix) {
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: range.start,
+                offset_in_item: px(0.0),
+            });
+        }
+    }
+
+    /// The pinned turn's diff, fetched once: checkpoints never change.
+    fn ensure_checkpoint_diff(&mut self, cx: &mut Context<Self>) {
+        let Some(pin) = self.checkpoint.clone() else {
+            return;
+        };
+        let key = format!("{}|{}|{}", pin.chat_id, pin.from, pin.to);
+        if self.scoped_for.as_deref() == Some(key.as_str())
+            || self.scoped_inflight.as_deref() == Some(key.as_str())
+        {
+            return;
+        }
+        let (engine, target) = {
+            let state = self.state.read(cx);
+            let Some(engine) = state.engine().cloned() else {
+                return;
+            };
+            let target = state
+                .chats
+                .iter()
+                .find(|chat| chat.id == pin.chat_id)
+                .map(|chat| chat.device_id.clone())
+                .filter(|device| state.local_device_id.as_deref() != Some(device.as_str()));
+            (engine, target)
+        };
+        self.scoped_inflight = Some(key.clone());
+        self.scoped_task = Some(cx.spawn(async move |this, cx| {
+            let mut params =
+                serde_json::to_value(commutator_proto::checkpoints::GetCheckpointDiffRequest {
+                    chat_id: pin.chat_id.clone(),
+                    from: pin.from,
+                    to: Some(pin.to),
+                })
+                .unwrap_or_default();
+            if let Some(target) = target {
+                params["targetDeviceId"] = target.into();
+            }
+            let result = engine
+                .client()
+                .call(methods::GET_CHECKPOINT_DIFF, params)
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<CheckoutDiff>(value)
+                        .map_err(|e| commutator_rpc::RpcError::Failed(e.to_string()))
+                });
+            this.update(cx, |changes, cx| {
+                if changes.scoped_inflight.as_deref() != Some(key.as_str()) {
+                    return;
+                }
+                changes.scoped_inflight = None;
+                match result {
+                    Ok(diff) => {
+                        changes.scoped = Some(diff);
+                        changes.scoped_error = None;
+                    }
+                    Err(err) => {
+                        changes.scoped = None;
+                        changes.scoped_error = Some(err.to_string().into());
+                    }
+                }
+                changes.scoped_for = Some(key);
+                changes.sync(cx);
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// A pane pinned to one commit's diff (a History row click) — fetches
@@ -1824,6 +1964,9 @@ impl Changes {
     /// The surface-tab title (contextual, user request): the pinned commit's
     /// subject (short sha for subject-less commits), else the scope's label.
     pub fn tab_title(&self) -> gpui::SharedString {
+        if let Some(pin) = &self.checkpoint {
+            return format!("Turn {} changes", pin.turn).into();
+        }
         if let Some(commit) = &self.commit {
             let subject = commit.subject.trim();
             if !subject.is_empty() {
@@ -1952,7 +2095,9 @@ impl Changes {
     fn active_diff(&self, cx: &App) -> Option<CheckoutDiff> {
         match self.scope {
             DiffScope::WorkingTree => self.resolved(cx),
-            DiffScope::Branch | DiffScope::LatestTurn | DiffScope::Commit => self.scoped.clone(),
+            DiffScope::Branch | DiffScope::LatestTurn | DiffScope::Commit | DiffScope::Turn => {
+                self.scoped.clone()
+            }
             DiffScope::History => None,
         }
     }
@@ -1987,6 +2132,10 @@ impl Changes {
                 "commit:{}",
                 self.commit.as_ref().map(|c| c.sha.as_str()).unwrap_or("")
             ),
+            DiffScope::Turn => match &self.checkpoint {
+                Some(pin) => format!("cp:{}:{}:{}", pin.chat_id, pin.from, pin.to),
+                None => "cp".to_string(),
+            },
         }
     }
 
@@ -2067,6 +2216,10 @@ impl Changes {
     /// checksum-only refresh keeps the old diff visible until the new one
     /// lands.
     fn ensure_scoped(&mut self, cx: &mut Context<Self>) {
+        if self.scope == DiffScope::Turn {
+            self.ensure_checkpoint_diff(cx);
+            return;
+        }
         if matches!(self.scope, DiffScope::WorkingTree | DiffScope::History) {
             self.scoped_inflight = None;
             self.scoped_task = None;
@@ -2296,7 +2449,7 @@ impl Changes {
                 .update(cx, |history, cx| history.ensure_loaded(cx));
             return;
         }
-        if self.scope != DiffScope::Commit {
+        if !matches!(self.scope, DiffScope::Commit | DiffScope::Turn) {
             self.ensure_branches(cx);
         }
         self.ensure_scoped(cx);
@@ -2371,6 +2524,7 @@ impl Changes {
                     horizontal,
                     files: Arc::new(files),
                 });
+                changes.apply_focus();
                 cx.notify();
             })
             .ok();
@@ -3135,6 +3289,8 @@ impl Changes {
             .flatten();
         let fetch_file = file.clone();
         let fetch_path = path.clone();
+        // GetCheckoutFileDiffText has no checkpoint mode: excerpts only.
+        let active = active.filter(|_| self.scope != DiffScope::Turn);
         let fetch_task = match (active, engine) {
             (Some(diff), Some(engine)) => Some(cx.spawn(async move |this, cx| {
                 let request = commutator_proto::GetCheckoutFileDiffTextRequest {
@@ -3812,11 +3968,21 @@ impl Changes {
     /// alongside, shell-owned (they mutate shell state).
     pub fn render_header_controls(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        // Commit-pinned pane: the pin never changes, so a fixed identity
-        // chip (mono short sha + subject) replaces the scope dropdown;
-        // fold-all still trails.
-        if let Some(commit) = self.commit.clone() {
-            let short: String = commit.sha.chars().take(7).collect();
+        // Commit- or turn-pinned pane: the pin never changes, so a fixed
+        // identity chip (mono short sha + subject, or the turn) replaces the
+        // scope dropdown; fold-all still trails.
+        let pinned = match (&self.commit, &self.checkpoint) {
+            (Some(commit), _) => Some((
+                commit.sha.chars().take(7).collect::<String>(),
+                commit.subject.clone(),
+            )),
+            (None, Some(pin)) => Some((
+                format!("turn {}", pin.turn),
+                "Changes in this turn".to_string(),
+            )),
+            (None, None) => None,
+        };
+        if let Some((short, subject)) = pinned {
             return div()
                 .size_full()
                 .flex()
@@ -3844,7 +4010,7 @@ impl Changes {
                         .truncate()
                         .text_size(px(12.0))
                         .text_color(theme.text)
-                        .child(SharedString::from(commit.subject.clone())),
+                        .child(SharedString::from(subject)),
                 )
                 .child(self.split_toggle(&theme, cx))
                 .child(self.wrap_toggle(&theme, cx))

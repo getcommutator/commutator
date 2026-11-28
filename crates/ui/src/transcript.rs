@@ -1110,10 +1110,11 @@ pub enum RowKind {
         source_chat_id: SharedString,
         source_title: SharedString,
     },
-    /// The settled turn's "N changed files" card: per-file counts its file
-    /// tools reported ([`commutator_doc::turn_diff_stats`]).
+    /// The settled turn's "N changed files" card: the turn's checkpoint
+    /// diff once fetched ([`Transcript::turn_changes`]), else the per-file
+    /// counts its file tools reported ([`commutator_doc::turn_diff_stats`]).
     TurnChanges {
-        stats: Arc<Vec<commutator_doc::ToolDiffStat>>,
+        changes: Arc<crate::turn_changes::TurnChanges>,
     },
     /// The provider-switch seam: a labeled divider over `[logo] From → [logo] To`.
     SwitchMarker {
@@ -1863,19 +1864,13 @@ pub fn rows_for_entry(
 
     if !streaming {
         let stats = commutator_doc::turn_diff_stats(&entry.parts);
-        if !stats.is_empty() {
-            let mut key = Vec::new();
-            for stat in &stats {
-                key.extend_from_slice(stat.path.as_bytes());
-                key.extend_from_slice(&stat.additions.to_le_bytes());
-                key.extend_from_slice(&stat.deletions.to_le_bytes());
-            }
+        if let Some(changes) = crate::turn_changes::TurnChanges::from_tool_stats(&stats) {
             rows.push(Row {
-                id: format!("{}#changes", entry.id).into(),
-                version: fnv1a(&key),
+                id: turn_changes_row_id(&entry.id),
+                version: changes.fingerprint(),
                 turn_start: false,
                 kind: RowKind::TurnChanges {
-                    stats: Arc::new(stats),
+                    changes: Arc::new(changes),
                 },
                 entry_id: entry_id.clone(),
                 timestamp: None,
@@ -1904,6 +1899,148 @@ pub fn rows_for_entry(
     }
     rows
 }
+
+fn turn_changes_row_id(entry_id: &str) -> SharedString {
+    format!("{entry_id}#changes").into()
+}
+
+/// What a turn's checkpoints say it changed: `None` when nothing.
+type TurnVerdict = Option<Arc<crate::turn_changes::TurnChanges>>;
+
+/// The bit [`rows_for_entry`] flips on the row carrying the entry's
+/// hover-timestamp strip.
+const TIMESTAMP_VERSION_BIT: u64 = 1 << 62;
+
+/// Hand the entry's timestamp strip and copy action from `from` to `to`.
+fn move_entry_footer(rows: &mut [Row], from: usize, to: usize) {
+    let timestamp = rows[from].timestamp.take();
+    let copy_text = rows[from].copy_text.take();
+    if timestamp.is_some() {
+        rows[from].version ^= TIMESTAMP_VERSION_BIT;
+        rows[to].version ^= TIMESTAMP_VERSION_BIT;
+    }
+    rows[to].timestamp = timestamp;
+    rows[to].copy_text = copy_text;
+}
+
+/// Swap checkpoint verdicts into the built rows: an entry with one gets its
+/// checkpoint card (or none, when its turn changed nothing) in place of the
+/// tool-reported card; an entry without one keeps the tool card. `show`
+/// off drops every card. The card is always the entry's last row, so it
+/// carries the entry's timestamp strip.
+fn apply_turn_changes(rows: &mut Vec<Row>, verdicts: &HashMap<String, TurnVerdict>, show: bool) {
+    if show && verdicts.is_empty() {
+        return;
+    }
+    let mut ix = 0;
+    while ix < rows.len() {
+        if !matches!(rows[ix].kind, RowKind::TurnChanges { .. }) {
+            ix += 1;
+            continue;
+        }
+        match (show, verdicts.get(rows[ix].entry_id.as_ref())) {
+            (true, None) => ix += 1,
+            (true, Some(Some(changes))) => {
+                let row = &mut rows[ix];
+                row.version = changes.fingerprint()
+                    ^ if row.timestamp.is_some() {
+                        TIMESTAMP_VERSION_BIT
+                    } else {
+                        0
+                    };
+                row.kind = RowKind::TurnChanges {
+                    changes: changes.clone(),
+                };
+                ix += 1;
+            }
+            _ => {
+                if ix > 0 && rows[ix - 1].entry_id == rows[ix].entry_id {
+                    move_entry_footer(rows, ix, ix - 1);
+                }
+                rows.remove(ix);
+            }
+        }
+    }
+    if !show {
+        return;
+    }
+    for (entry_id, verdict) in verdicts {
+        let Some(changes) = verdict else {
+            continue;
+        };
+        let Some(last) = rows
+            .iter()
+            .rposition(|row| row.entry_id.as_ref() == entry_id)
+        else {
+            continue;
+        };
+        if matches!(rows[last].kind, RowKind::TurnChanges { .. }) {
+            continue;
+        }
+        rows.insert(
+            last + 1,
+            Row {
+                id: turn_changes_row_id(entry_id),
+                version: changes.fingerprint(),
+                turn_start: false,
+                kind: RowKind::TurnChanges {
+                    changes: changes.clone(),
+                },
+                entry_id: rows[last].entry_id.clone(),
+                timestamp: None,
+                copy_text: None,
+                compact_fold: None,
+            },
+        );
+        move_entry_footer(rows, last, last + 1);
+    }
+}
+
+/// What one checkpoint diff fetch found.
+enum CheckpointDiffState {
+    Changed(Arc<crate::turn_changes::TurnChanges>),
+    Unchanged,
+    /// The fetch failed: the turn keeps its tool-reported card.
+    Failed,
+}
+
+/// The attached chat's per-turn checkpoints and their fetched diffs
+/// (`ListCheckpoints` / `GetCheckpointDiff`), matched to transcript entries.
+#[derive(Default)]
+struct TurnChangesFetch {
+    chat_id: Option<String>,
+    /// Transcript shape the last `ListCheckpoints` was sent for: settled
+    /// turns re-list, streaming commits do not.
+    listed_for: Option<String>,
+    list_task: Option<Task<()>>,
+    ranges: Vec<crate::turn_changes::TurnRange>,
+    diffs: HashMap<(u64, u64), CheckpointDiffState>,
+    diff_inflight: Option<(u64, u64)>,
+    diff_task: Option<Task<()>>,
+    /// Re-lists while the newest turn's end checkpoint is still being written.
+    retries: u8,
+    retry_task: Option<Task<()>>,
+    /// Entry id → its turn's verdict.
+    verdicts: HashMap<String, TurnVerdict>,
+}
+
+/// Re-list attempts after a settle that found the turn's end checkpoint
+/// missing (it is written in the background after `Done`).
+const CHECKPOINT_RELIST_RETRIES: u8 = 5;
+const CHECKPOINT_RELIST_DELAY: Duration = Duration::from_millis(1_500);
+
+/// A card's UI state: folder folds (t3code's expand-all plus per-folder
+/// overrides) and the whole list folded under its header.
+#[derive(Default, Clone)]
+struct ChangesCardFold {
+    collapsed: bool,
+    all_expanded: bool,
+    overrides: HashMap<String, bool>,
+}
+
+/// Card rows beyond this go to the full diff.
+const TURN_CHANGES_MAX_ROWS: usize = 200;
+const TURN_CHANGES_ROW_HEIGHT: f32 = 28.0;
 
 fn is_compact_work_part(ix: usize, part: &MessagePart, reply_start: Option<usize>) -> bool {
     match part {
@@ -3481,6 +3618,12 @@ pub struct Transcript {
     /// recently (click "Show full output" after a diff → see the output).
     blob_fetch_order: HashMap<SharedString, u64>,
     blob_fetch_counter: u64,
+    /// Checkpoint-backed turn cards for the attached chat.
+    turn_changes: TurnChangesFetch,
+    /// Folder and list folds of the turn cards, by row id.
+    card_folds: HashMap<SharedString, ChangesCardFold>,
+    /// [`crate::settings::show_turn_changes`], polled during render.
+    show_turn_changes: bool,
     _observe: Subscription,
     _text_changes: Subscription,
 }
@@ -3772,6 +3915,9 @@ impl Transcript {
             blob_details: HashMap::new(),
             blob_fetch_order: HashMap::new(),
             blob_fetch_counter: 0,
+            turn_changes: TurnChangesFetch::default(),
+            card_folds: HashMap::new(),
+            show_turn_changes: crate::settings::show_turn_changes(cx),
             _observe: observe,
             _text_changes: text_changes,
         };
@@ -4909,6 +5055,12 @@ impl Transcript {
             self.stop_selection_scroll();
         }
 
+        if attached {
+            self.card_folds.clear();
+        }
+        self.ensure_turn_changes(cx);
+        self.refresh_turn_verdicts(cx);
+
         let mut new_rows: Vec<Row> = Vec::new();
         // Borrow the transcript only while deriving rows. Cloning the entity
         // handle lets rows_for mutate our caches without copying every text
@@ -4945,6 +5097,11 @@ impl Transcript {
                     .is_some_and(|e| e.status == Some(MessageStatus::Streaming)),
             )
         };
+        apply_turn_changes(
+            &mut new_rows,
+            &self.turn_changes.verdicts,
+            self.show_turn_changes,
+        );
 
         let baseline = self
             .chat_id
@@ -5310,6 +5467,569 @@ impl Transcript {
             }
         }
         cx.notify();
+    }
+
+    /// The attached chat's host when it is not the connected engine: the
+    /// checkpoints live with the checkout (relay-forwarded).
+    fn chat_target_device(&self, cx: &gpui::App) -> Option<String> {
+        let state = self.state.read(cx);
+        let chat_id = self.chat_id.as_deref()?;
+        let device = &state
+            .chats
+            .iter()
+            .find(|chat| chat.id == chat_id)?
+            .device_id;
+        (state.local_device_id.as_deref() != Some(device.as_str())).then(|| device.clone())
+    }
+
+    /// List the chat's checkpoints again once a turn has settled (not on
+    /// every streaming commit). Subagent tabs have none of their own.
+    fn ensure_turn_changes(&mut self, cx: &mut Context<Self>) {
+        if self.doc_override.is_some() {
+            return;
+        }
+        if self.turn_changes.chat_id != self.chat_id {
+            self.turn_changes = TurnChangesFetch {
+                chat_id: self.chat_id.clone(),
+                ..Default::default()
+            };
+        }
+        let Some(chat_id) = self.chat_id.clone() else {
+            return;
+        };
+        let key = {
+            let entries = &self.state.read(cx).transcript;
+            let Some(last) = entries.last() else {
+                return;
+            };
+            if last.status == Some(MessageStatus::Streaming) {
+                return;
+            }
+            let settled = entries
+                .iter()
+                .filter(|e| e.role == MessageRole::Assistant)
+                .count();
+            format!("{settled}|{}", last.id)
+        };
+        if self.turn_changes.listed_for.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.turn_changes.listed_for = Some(key);
+        self.turn_changes.retries = 0;
+        self.list_checkpoints(chat_id, cx);
+    }
+
+    fn list_checkpoints(&mut self, chat_id: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            // Engine still booting: the next sync asks again.
+            self.turn_changes.listed_for = None;
+            return;
+        };
+        let target = self.chat_target_device(cx);
+        self.turn_changes.list_task = Some(cx.spawn(async move |this, cx| {
+            let mut params = serde_json::json!({ "chatId": chat_id });
+            if let Some(target) = target {
+                params["targetDeviceId"] = target.into();
+            }
+            let result = engine
+                .client()
+                .call(commutator_rpc::methods::LIST_CHECKPOINTS, params)
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<
+                        commutator_proto::checkpoints::ListCheckpointsResponse,
+                    >(value)
+                    .map_err(|e| commutator_rpc::RpcError::Failed(e.to_string()))
+                });
+            this.update(cx, |this, cx| {
+                if this.turn_changes.chat_id.as_deref() != Some(chat_id.as_str()) {
+                    return;
+                }
+                let checkpoints = match result {
+                    Ok(response) => response.checkpoints,
+                    Err(error) => {
+                        // An older engine, or a cwd outside git: the tool
+                        // counts stay.
+                        tracing::debug!(%error, "transcript: ListCheckpoints failed");
+                        return;
+                    }
+                };
+                // `Done` writes the end checkpoint in the background, so a
+                // fresh settle can list before it lands.
+                let end_pending = checkpoints.last().is_some_and(|c| {
+                    c.phase == commutator_proto::checkpoints::CheckpointPhase::TurnStart
+                });
+                if end_pending && this.turn_changes.retries < CHECKPOINT_RELIST_RETRIES {
+                    this.turn_changes.retries += 1;
+                    let chat_id = chat_id.clone();
+                    this.turn_changes.retry_task = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(CHECKPOINT_RELIST_DELAY)
+                            .await;
+                        this.update(cx, |this, cx| {
+                            if this.turn_changes.chat_id.as_deref() == Some(chat_id.as_str()) {
+                                this.list_checkpoints(chat_id, cx);
+                            }
+                        })
+                        .ok();
+                    }));
+                }
+                let ranges = crate::turn_changes::turn_ranges(&checkpoints);
+                for range in &ranges {
+                    if range.unchanged {
+                        this.turn_changes
+                            .diffs
+                            .insert((range.from, range.to), CheckpointDiffState::Unchanged);
+                    }
+                }
+                this.turn_changes.ranges = ranges;
+                this.fetch_next_turn_diff(cx);
+                this.turn_verdicts_changed(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Fetch the newest turn diff not fetched yet, one at a time.
+    fn fetch_next_turn_diff(&mut self, cx: &mut Context<Self>) {
+        if self.turn_changes.diff_inflight.is_some() {
+            return;
+        }
+        let Some(chat_id) = self.turn_changes.chat_id.clone() else {
+            return;
+        };
+        let Some(range) = self
+            .turn_changes
+            .ranges
+            .iter()
+            .rev()
+            .find(|r| !self.turn_changes.diffs.contains_key(&(r.from, r.to)))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let target = self.chat_target_device(cx);
+        let key = (range.from, range.to);
+        self.turn_changes.diff_inflight = Some(key);
+        self.turn_changes.diff_task = Some(cx.spawn(async move |this, cx| {
+            let mut params =
+                serde_json::to_value(commutator_proto::checkpoints::GetCheckpointDiffRequest {
+                    chat_id: chat_id.clone(),
+                    from: range.from,
+                    to: Some(range.to),
+                })
+                .unwrap_or_default();
+            if let Some(target) = target {
+                params["targetDeviceId"] = target.into();
+            }
+            let result = engine
+                .client()
+                .call(commutator_rpc::methods::GET_CHECKPOINT_DIFF, params)
+                .await
+                .ok()
+                .and_then(|value| {
+                    serde_json::from_value::<commutator_proto::CheckoutDiff>(value).ok()
+                });
+            this.update(cx, |this, cx| {
+                if this.turn_changes.chat_id.as_deref() != Some(chat_id.as_str()) {
+                    return;
+                }
+                this.turn_changes.diff_inflight = None;
+                let state = match result {
+                    None => CheckpointDiffState::Failed,
+                    Some(diff) => {
+                        let source = crate::turn_changes::ChangesSource::Checkpoint {
+                            chat_id: chat_id.clone(),
+                            turn: range.turn,
+                            from: range.from,
+                            to: range.to,
+                        };
+                        match crate::turn_changes::TurnChanges::from_checkout_diff(&diff, source) {
+                            Some(changes) => CheckpointDiffState::Changed(Arc::new(changes)),
+                            None => CheckpointDiffState::Unchanged,
+                        }
+                    }
+                };
+                this.turn_changes.diffs.insert(key, state);
+                this.fetch_next_turn_diff(cx);
+                this.turn_verdicts_changed(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Match the fetched turns to the settled assistant entries.
+    fn refresh_turn_verdicts(&mut self, cx: &gpui::App) -> bool {
+        let verdicts: HashMap<String, TurnVerdict> = if self.doc_override.is_some()
+            || self.turn_changes.ranges.is_empty()
+        {
+            HashMap::new()
+        } else {
+            let state = self.state.read(cx);
+            let stamps: Vec<crate::turn_changes::EntryStamp> = state
+                .transcript
+                .iter()
+                .filter(|e| {
+                    e.role == MessageRole::Assistant && e.status != Some(MessageStatus::Streaming)
+                })
+                .map(|e| crate::turn_changes::EntryStamp {
+                    id: &e.id,
+                    created_ms: e.created_at,
+                })
+                .collect();
+            crate::turn_changes::assign_turns(&self.turn_changes.ranges, &stamps)
+                .into_iter()
+                .filter_map(|(id, range)| {
+                    let verdict = match self.turn_changes.diffs.get(&(range.from, range.to))? {
+                        CheckpointDiffState::Changed(changes) => Some(changes.clone()),
+                        CheckpointDiffState::Unchanged => None,
+                        CheckpointDiffState::Failed => return None,
+                    };
+                    Some((id.to_owned(), verdict))
+                })
+                .collect()
+        };
+        let changed = verdicts.len() != self.turn_changes.verdicts.len()
+            || verdicts.iter().any(|(id, verdict)| {
+                self.turn_changes
+                    .verdicts
+                    .get(id)
+                    .is_none_or(|old| match (old, verdict) {
+                        (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+                        (None, None) => false,
+                        _ => true,
+                    })
+            });
+        self.turn_changes.verdicts = verdicts;
+        changed
+    }
+
+    fn turn_verdicts_changed(&mut self, cx: &mut Context<Self>) {
+        if self.refresh_turn_verdicts(cx) {
+            self.last_source = None;
+            self.sync(cx);
+        }
+    }
+
+    fn update_card_fold(
+        &mut self,
+        row_id: &SharedString,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut ChangesCardFold),
+    ) {
+        update(self.card_folds.entry(row_id.clone()).or_default());
+        if let Some(ix) = self.rows.iter().position(|row| &row.id == row_id) {
+            self.list.remeasure_items(ix..ix + 1);
+        }
+        cx.notify();
+    }
+
+    /// The turn-end "changed files" card (t3code's `ChangedFilesCard`): the
+    /// count and totals over a compact folder tree with per-file counts.
+    /// A file opens its diff in the changes pane.
+    fn render_turn_changes(
+        &mut self,
+        row_id: &SharedString,
+        changes: &Arc<crate::turn_changes::TurnChanges>,
+        workspace_root: Option<&str>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use crate::turn_changes::ChangesSource;
+        let fold = self.card_folds.get(row_id).cloned().unwrap_or_default();
+        let stat = |additions: u64, deletions: u64, size: f32| {
+            div()
+                .flex_none()
+                .flex()
+                .gap(px(4.0))
+                .font_family(theme.font_mono.clone())
+                .text_size(crate::typography::ui_rems(size))
+                .when(additions > 0 || deletions == 0, |el| {
+                    el.child(
+                        div()
+                            .text_color(theme.success)
+                            .child(SharedString::from(format!("+{additions}"))),
+                    )
+                })
+                .when(deletions > 0, |el| {
+                    el.child(
+                        div()
+                            .text_color(theme.danger)
+                            .child(SharedString::from(format!("−{deletions}"))),
+                    )
+                })
+        };
+        // Tool paths are absolute; checkpoint paths are already relative.
+        let relative = |path: &str| -> String {
+            workspace_root
+                .and_then(|root| path.strip_prefix(root.trim_end_matches('/')))
+                .and_then(|rest| rest.strip_prefix('/'))
+                .unwrap_or(path)
+                .to_owned()
+        };
+        let files: Vec<crate::turn_changes::ChangedFile> = changes
+            .files
+            .iter()
+            .map(|file| crate::turn_changes::ChangedFile {
+                path: relative(&file.path),
+                ..file.clone()
+            })
+            .collect();
+        let has_dirs = files.iter().any(|f| f.path.contains('/'));
+        let source = changes.source.clone();
+        let open_diff = Rc::new(
+            move |path: Option<String>, window: &mut Window, cx: &mut gpui::App| match &source {
+                ChangesSource::Checkpoint {
+                    chat_id,
+                    turn,
+                    from,
+                    to,
+                } => window.dispatch_action(
+                    Box::new(crate::shell::OpenCheckpointDiff {
+                        chat_id: chat_id.clone(),
+                        turn: *turn,
+                        from: *from,
+                        to: *to,
+                        path,
+                    }),
+                    cx,
+                ),
+                ChangesSource::Tools => {
+                    window.dispatch_action(Box::new(crate::shell::OpenTurnDiff), cx)
+                }
+            },
+        );
+        let title = match changes.files.len() {
+            1 => "1 changed file".to_owned(),
+            n => format!("{n} changed files"),
+        };
+        let header_button = |id: String| {
+            div()
+                .id(SharedString::from(id))
+                .flex_none()
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(6.0))
+                .rounded(px(6.0))
+                .text_color(theme.text_muted)
+                .cursor_pointer()
+                .hover(|s| s.bg(crate::theme::ink(0.08)).text_color(theme.text))
+        };
+        let chevron = |open: bool, color: gpui::Hsla| {
+            crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
+                .size(px(14.0))
+                .with_transformation(gpui::Transformation::rotate(gpui::radians(if open {
+                    0.0
+                } else {
+                    -std::f32::consts::FRAC_PI_2
+                })))
+                .text_color(color)
+        };
+        let collapse_id = row_id.clone();
+        let header = div()
+            .h(px(36.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .id(SharedString::from(format!("{row_id}-fold")))
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(4.0))
+                    .h(px(24.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::theme::ink(0.06)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.update_card_fold(&collapse_id, cx, |fold| {
+                            fold.collapsed = !fold.collapsed
+                        });
+                    }))
+                    .child(chevron(!fold.collapsed, theme.text_muted))
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child(SharedString::from(title)),
+                    )
+                    .when(changes.additions > 0 || changes.deletions > 0, |el| {
+                        el.child(stat(changes.additions, changes.deletions, 12.0))
+                    }),
+            )
+            .child(div().flex_1())
+            .when(has_dirs && !fold.collapsed, |el| {
+                let id = row_id.clone();
+                let label = if fold.all_expanded {
+                    "Collapse folders"
+                } else {
+                    "Expand folders"
+                };
+                el.child(
+                    header_button(format!("{row_id}-folders"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.update_card_fold(&id, cx, |fold| {
+                                fold.all_expanded = !fold.all_expanded;
+                                fold.overrides.clear();
+                            });
+                        }))
+                        .child(
+                            crate::icons::icon(crate::icons::FOLD_VERTICAL)
+                                .size(px(13.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child(SharedString::from(label)),
+                )
+            })
+            .child({
+                let open = open_diff.clone();
+                header_button(format!("{row_id}-open-diff"))
+                    .on_click(move |_, window, cx| open(None, window, cx))
+                    .child(
+                        crate::icons::icon(crate::icons::LUCIDE_FILE_TEXT)
+                            .size(px(13.0))
+                            .text_color(theme.text_muted),
+                    )
+                    .child(SharedString::from("Open diff"))
+            });
+
+        let mut body = Vec::new();
+        let mut hidden = 0;
+        if !fold.collapsed {
+            let tree = crate::turn_changes::build_tree(&files);
+            let rows = crate::turn_changes::visible_rows(&tree, fold.all_expanded, &fold.overrides);
+            hidden = rows.len().saturating_sub(TURN_CHANGES_MAX_ROWS);
+            for (ix, row) in rows.into_iter().take(TURN_CHANGES_MAX_ROWS).enumerate() {
+                let left = 8.0 + row.depth as f32 * 14.0;
+                let line = div()
+                    .id(SharedString::from(format!("{row_id}-r{ix}")))
+                    .h(px(TURN_CHANGES_ROW_HEIGHT))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .pl(px(left))
+                    .pr(px(8.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::theme::ink(0.06)));
+                let element = match row.folder {
+                    Some(expanded) => {
+                        let id = row_id.clone();
+                        let path = row.path.clone();
+                        line.on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            let path = path.clone();
+                            this.update_card_fold(&id, cx, move |fold| {
+                                fold.overrides.insert(path, !expanded);
+                            });
+                        }))
+                        .child(chevron(expanded, theme.text_faint))
+                        .child(
+                            crate::file_icons::icon(
+                                crate::file_icons::FileIconIdentity::directory(&row.path, expanded),
+                                theme.appearance,
+                            )
+                            .size(px(14.0))
+                            .flex_none(),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .truncate()
+                                .font_family(theme.font_mono.clone())
+                                .text_size(crate::typography::ui_rems(11.5))
+                                .text_color(theme.text_muted)
+                                .child(SharedString::from(row.name)),
+                        )
+                        .child(stat(row.additions, row.deletions, 11.0))
+                    }
+                    None => {
+                        let open = open_diff.clone();
+                        let source_path = match &changes.source {
+                            ChangesSource::Checkpoint { .. } => Some(row.path.clone()),
+                            ChangesSource::Tools => None,
+                        };
+                        line.on_click(move |_, window, cx| open(source_path.clone(), window, cx))
+                            .when(has_dirs || row.depth > 0, |el| {
+                                el.child(div().size(px(14.0)).flex_none())
+                            })
+                            .child(
+                                crate::file_icons::icon(
+                                    crate::file_icons::FileIconIdentity::file(&row.path),
+                                    theme.appearance,
+                                )
+                                .size(px(14.0))
+                                .flex_none(),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .font_family(theme.font_mono.clone())
+                                    .text_size(crate::typography::ui_rems(12.0))
+                                    .text_color(theme.text)
+                                    .child(SharedString::from(row.name)),
+                            )
+                            .child(stat(row.additions, row.deletions, 11.0))
+                    }
+                };
+                body.push(element.into_any_element());
+            }
+        }
+        div()
+            .py(px(4.0))
+            .w_full()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(crate::theme::hairline(0.08))
+                    .bg(crate::theme::ink(0.045))
+                    .text_size(crate::typography::ui_rems(12.5))
+                    .child(header)
+                    .when(!body.is_empty(), |card| {
+                        card.child(
+                            div()
+                                .px(px(6.0))
+                                .pb(px(6.0))
+                                .flex()
+                                .flex_col()
+                                .children(body),
+                        )
+                    })
+                    .when(hidden > 0, |card| {
+                        let open = open_diff.clone();
+                        card.child(
+                            div().px(px(10.0)).pb(px(8.0)).child(
+                                header_button(format!("{row_id}-more"))
+                                    .on_click(move |_, window, cx| open(None, window, cx))
+                                    .child(SharedString::from(match hidden {
+                                        1 => "1 more in the full diff".to_owned(),
+                                        n => format!("{n} more in the full diff"),
+                                    })),
+                            ),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 
     fn compact_worked_secs_for(&self, entry: &SessionMessageEntry) -> Option<i64> {
@@ -7752,8 +8472,8 @@ impl Transcript {
                 from_harness,
                 to_harness,
             } => switch_marker(from.clone(), to.clone(), *from_harness, *to_harness, &theme),
-            RowKind::TurnChanges { stats } => {
-                turn_changes_card(&row.id, stats, workspace_root.as_deref(), &theme)
+            RowKind::TurnChanges { changes } => {
+                self.render_turn_changes(&row.id, changes, workspace_root.as_deref(), &theme, cx)
             }
         };
         // Diagram fences this row just requested start rendering after layout.
@@ -9304,129 +10024,6 @@ fn error_chip(
         .into_any_element()
 }
 
-/// Files listed on the turn-end card before "+N more".
-const TURN_CHANGES_MAX_FILES: usize = 8;
-
-/// The settled turn's "N changed files +A −D" card: one row per file the
-/// turn's tools touched, and "Open diff" bringing up the changes pane.
-fn turn_changes_card(
-    id: &SharedString,
-    stats: &[commutator_doc::ToolDiffStat],
-    workspace_root: Option<&str>,
-    theme: &Theme,
-) -> AnyElement {
-    let additions: u64 = stats.iter().map(|s| s.additions).sum();
-    let deletions: u64 = stats.iter().map(|s| s.deletions).sum();
-    let counts = |additions: u64, deletions: u64| {
-        div()
-            .flex_none()
-            .flex()
-            .gap(px(6.0))
-            .font_family(theme.font_mono.clone())
-            .child(div().text_color(theme.success).child(SharedString::from(format!("+{additions}"))))
-            .child(div().text_color(theme.danger).child(SharedString::from(format!("−{deletions}"))))
-    };
-    let relative = |path: &str| -> SharedString {
-        workspace_root
-            .and_then(|root| path.strip_prefix(root.trim_end_matches('/')))
-            .and_then(|rest| rest.strip_prefix('/'))
-            .unwrap_or(path)
-            .to_owned()
-            .into()
-    };
-    let title = match stats.len() {
-        1 => "1 changed file".to_owned(),
-        n => format!("{n} changed files"),
-    };
-    let header = div()
-        .h(px(28.0))
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .child(
-            div()
-                .flex_none()
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme.text)
-                .child(SharedString::from(title)),
-        )
-        .child(counts(additions, deletions))
-        .child(div().flex_1())
-        .child(
-            div()
-                .id(SharedString::from(format!("{id}-open-diff")))
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .px(px(8.0))
-                .py(px(3.0))
-                .rounded(px(6.0))
-                .text_color(theme.text_muted)
-                .cursor_pointer()
-                .hover(|s| s.bg(crate::theme::ink(0.08)))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(crate::shell::OpenTurnDiff), cx)
-                })
-                .child(SharedString::from("Open diff")),
-        );
-    let files = stats.iter().take(TURN_CHANGES_MAX_FILES).map(|stat| {
-        div()
-            .h(px(24.0))
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .child(
-                crate::file_icons::icon(
-                    crate::file_icons::FileIconIdentity::file(&stat.path),
-                    theme.appearance,
-                )
-                .size(px(14.0))
-                .flex_none(),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .truncate()
-                    .text_color(theme.text_muted)
-                    .child(relative(&stat.path)),
-            )
-            .child(counts(stat.additions, stat.deletions))
-    });
-    let more = stats.len().saturating_sub(TURN_CHANGES_MAX_FILES);
-    div()
-        .py(px(4.0))
-        .w_full()
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .rounded(px(10.0))
-                .border_1()
-                .border_color(crate::theme::hairline(0.08))
-                .bg(crate::theme::ink(0.045))
-                .px(px(12.0))
-                .py(px(6.0))
-                .text_size(crate::typography::ui_rems(12.5))
-                .child(header)
-                .children(files)
-                .when(more > 0, |card| {
-                    card.child(
-                        div()
-                            .h(px(24.0))
-                            .flex()
-                            .items_center()
-                            .text_color(theme.text_faint)
-                            .child(SharedString::from(format!("+{more} more"))),
-                    )
-                }),
-        )
-        .into_any_element()
-}
-
 /// A quiet fork seam. The source gets its own constrained line so long
 /// titles cannot widen a narrow side-chat pane. No message metadata lane.
 fn fork_marker(source_title: SharedString, theme: &Theme) -> AnyElement {
@@ -10603,6 +11200,12 @@ impl Render for Transcript {
             // The row SPLIT differs by mode (one work fold vs per-segment
             // groups + narration rows) — the fingerprint above already keys
             // on it, so a fresh sync rebuilds everything.
+            self.last_source = None;
+            self.sync(cx);
+        }
+        let show_turn_changes = crate::settings::show_turn_changes(cx);
+        if self.show_turn_changes != show_turn_changes {
+            self.show_turn_changes = show_turn_changes;
             self.last_source = None;
             self.sync(cx);
         }
