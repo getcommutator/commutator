@@ -1197,7 +1197,8 @@ pub fn inline_code_wash(theme: &Theme) -> Hsla {
 pub const INLINE_CODE_RADIUS: f32 = 4.5;
 pub const INLINE_CODE_PAD_X: f32 = 0.0;
 pub const INLINE_CODE_INSET_Y: f32 = 2.0;
-/// Inline code's wash above and below its glyphs, in ems of the code.
+/// Inline code's wash above its ascent and under its descent, in ems of the
+/// code.
 pub const INLINE_CODE_PAD_Y_EMS: f32 = 0.12;
 
 /// Flatten inline runs into shaped-text inputs. Pure given a theme.
@@ -1486,15 +1487,20 @@ pub(super) fn flat_text_presented_element(
         .collect();
     // Inline code set at its own size (`link_presentation::with_code_size`):
     // its wash wraps the code's own glyphs, not the prose's line box.
+    // The code's own run is its largest: the padding slots at its ends are
+    // set smaller, to their width.
     let code_font = {
         let mut at = 0;
-        text_runs.iter().find_map(|run| {
-            let start = at;
-            at += run.len;
-            (run.font.size.is_some()
-                && flat.code_ranges.iter().any(|code| code.start <= start && start < code.end))
-            .then(|| run.font.clone())
-        })
+        text_runs
+            .iter()
+            .filter(|run| {
+                let start = at;
+                at += run.len;
+                run.font.size.is_some()
+                    && flat.code_ranges.iter().any(|code| code.start <= start && start < code.end)
+            })
+            .max_by(|a, b| a.font.size.partial_cmp(&b.font.size).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|run| run.font.clone())
     };
     let styled = StyledText::new(flat.text.clone()).with_runs(text_runs);
     let layout = styled.layout().clone();
@@ -1665,8 +1671,8 @@ fn link_text_element(
 
 /// Inline code's wash on one row, wrapping the code's own glyphs: from its
 /// face's ascent above the line's baseline to its descent below, and
-/// [`INLINE_CODE_PAD_Y_EMS`] more each way. `rect` is the row's line box
-/// less [`INLINE_CODE_INSET_Y`].
+/// [`INLINE_CODE_PAD_Y_EMS`] more each way (as the phones' chip). `rect` is
+/// the row's line box less [`INLINE_CODE_INSET_Y`].
 fn code_wash_rect(
     rect: Bounds<gpui::Pixels>,
     layout: &gpui::TextLayout,
