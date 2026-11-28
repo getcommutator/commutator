@@ -514,23 +514,23 @@ final class PullRequestGroupHeader: UICollectionReusableView {
     }
 }
 
-/// A pull request row, Shepherd's: the state glyph (a conflict lays a red triangle over its
-/// corner); `#number` and the title over the author, repository and status chips; CI and
-/// the size over the time on the right.
+/// A pull request row, t3code's: the state glyph (a conflict lays a red triangle over its
+/// corner); the author, repository and `!number` over the whole title, then the label
+/// chips that fit and how many more on the left, CI and the size on the right.
 final class PullRequestCell: UICollectionViewListCell {
     private let icon = UIImageView()
     private let conflict = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
     private let title = UILabel()
-    private let author = UILabel()
     private let avatar = AvatarView()
-    private let repo = UILabel()
+    private let source = UILabel()
     private let chips = UIStackView()
+    private let size = UIStackView()
     private let ci = UIImageView()
     private let stats = UILabel()
     private let time = UILabel()
     private var labels: [PullRequestLabel] = []
-    /// How many labels get a chip; drops while the last one is squeezed.
-    private var shown = 0
+    /// How many labels get a chip: as many as fit, measured on layout.
+    private var shown = -1
 
     private static let grouped: NumberFormatter = {
         let f = NumberFormatter()
@@ -538,41 +538,46 @@ final class PullRequestCell: UICollectionViewListCell {
         f.locale = Locale(identifier: "en_US")
         return f
     }()
+    private static let chipFont = Fonts.ui(.sans, TypeScale.size(12.5))
+    private static let chipMaxWidth: CGFloat = 170
+    private static let chipGap: CGFloat = 6
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         conflict.preferredSymbolConfiguration = .init(pointSize: 10, weight: .bold)
         conflict.tintColor = Palette.danger
-        title.numberOfLines = 2
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        author.font = Fonts.ui(.sans, TypeScale.size(13.5))
-        author.textColor = Palette.secondary
-        repo.font = Fonts.ui(.sans, TypeScale.size(13.5))
-        repo.textColor = Palette.secondary
-        repo.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        chips.spacing = 6
-        chips.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        title.numberOfLines = 3
+        title.font = Fonts.ui(.sansMedium, TypeScale.size(15.5))
+        title.textColor = Palette.text
+        source.font = Fonts.ui(.sans, TypeScale.size(13))
+        source.textColor = Palette.secondary
+        source.lineBreakMode = .byTruncatingMiddle
+        source.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chips.spacing = Self.chipGap
+        chips.alignment = .center
         ci.preferredSymbolConfiguration = .init(pointSize: 13, weight: .regular)
         stats.font = Fonts.ui(.mono, TypeScale.size(12.5))
         time.font = Fonts.ui(.sans, TypeScale.size(13))
         time.textColor = Palette.secondary
-        for v in [ci, stats, time, author] as [UIView] {
+        for v in [ci, stats, time, size] as [UIView] {
             v.setContentCompressionResistancePriority(.required, for: .horizontal)
             v.setContentHuggingPriority(.required, for: .horizontal)
         }
 
-        let size = UIStackView(arrangedSubviews: [ci, stats])
+        size.addArrangedSubview(ci)
+        size.addArrangedSubview(stats)
         size.spacing = 6
         size.alignment = .center
-        let top = UIStackView(arrangedSubviews: [title, size])
-        top.spacing = 10
-        top.alignment = .firstBaseline
-        let meta = UIStackView(arrangedSubviews: [avatar, author, repo, chips, UIView(), time])
-        meta.spacing = 8
-        meta.alignment = .center
-        let column = UIStackView(arrangedSubviews: [top, meta])
+        let head = UIStackView(arrangedSubviews: [avatar, source, UIView(), time])
+        head.spacing = 6
+        head.alignment = .center
+        let foot = UIStackView(arrangedSubviews: [chips, UIView(), size])
+        foot.spacing = 8
+        foot.alignment = .center
+        let column = UIStackView(arrangedSubviews: [head, title, foot])
         column.axis = .vertical
-        column.spacing = 6
+        column.spacing = 5
+        column.setCustomSpacing(8, after: title)
         for v in [icon, conflict, column] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
@@ -586,8 +591,8 @@ final class PullRequestCell: UICollectionViewListCell {
             conflict.centerYAnchor.constraint(equalTo: icon.bottomAnchor, constant: -1),
             column.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             column.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            column.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            column.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+            column.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            column.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
         ])
         var bg = UIBackgroundConfiguration.listPlainCell()
         bg.backgroundColor = .clear
@@ -614,20 +619,12 @@ final class PullRequestCell: UICollectionViewListCell {
         }
         conflict.isHidden = pr.tone != .conflict || pr.state != .open
 
-        let text = NSMutableAttributedString(
-            string: "\(pr.provider == "gitlab" ? "!" : "#")\(pr.number)  ",
-            attributes: [.font: Fonts.ui(.mono, TypeScale.size(13)), .foregroundColor: Palette.secondary]
-        )
-        text.append(NSAttributedString(string: pr.title, attributes: [.font: Fonts.ui(.sansMedium, TypeScale.size(15.5)), .foregroundColor: Palette.text]))
-        title.attributedText = text
-        title.lineBreakMode = .byTruncatingTail
-
-        author.text = pr.author
+        title.text = pr.title
         avatar.load(pr.authorAvatarUrl, name: pr.author)
-        repo.text = pr.repository
+        source.text = "\(pr.author) · \(pr.repository) \(pr.provider == "gitlab" ? "!" : "#")\(pr.number)"
         labels = pr.labels
-        shown = min(3, labels.count)
-        layoutChips()
+        shown = -1
+        setNeedsLayout()
         time.text = relativeTimeLabel(atMs: pr.updatedAtMs, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
 
         switch pr.ci {
@@ -638,9 +635,9 @@ final class PullRequestCell: UICollectionViewListCell {
         }
         ci.isHidden = ci.image == nil
         let n = { (v: UInt64) in Self.grouped.string(from: NSNumber(value: v)) ?? String(v) }
-        let size = NSMutableAttributedString(string: "+\(n(pr.additions))", attributes: [.foregroundColor: Palette.success])
-        size.append(NSAttributedString(string: " −\(n(pr.deletions))", attributes: [.foregroundColor: Palette.danger]))
-        stats.attributedText = size
+        let text = NSMutableAttributedString(string: "+\(n(pr.additions))", attributes: [.foregroundColor: Palette.success])
+        text.append(NSAttributedString(string: " −\(n(pr.deletions))", attributes: [.foregroundColor: Palette.danger]))
+        stats.attributedText = text
         stats.isHidden = pr.additions == 0 && pr.deletions == 0
 
         accessibilityIdentifier = "pull-request-\(pr.number)"
@@ -648,41 +645,55 @@ final class PullRequestCell: UICollectionViewListCell {
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
-    /// Shepherd's: the first three labels, then how many more.
-    private func layoutChips() {
-        chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for label in labels.prefix(shown) {
-            chips.addArrangedSubview(Self.chip(label))
-        }
-        if labels.count > shown {
-            let more = UILabel()
-            more.text = "+\(labels.count - shown)"
-            more.font = Fonts.ui(.sans, TypeScale.size(12.5))
-            more.textColor = Palette.secondary
-            more.setContentCompressionResistancePriority(.required, for: .horizontal)
-            chips.addArrangedSubview(more)
-        }
-    }
-
     override func layoutSubviews() {
         super.layoutSubviews()
-        // A chip squeezed past a few letters goes into the +N instead of
-        // showing as an empty pill. ponytail: drops one per pass, at most three.
-        guard shown > 0, let last = chips.arrangedSubviews[shown - 1].subviews.first as? UILabel,
-              last.bounds.width < min(last.intrinsicContentSize.width, 36) else { return }
-        shown -= 1
-        layoutChips()
-        setNeedsLayout()
+        // Chips at full width, as many as fit beside the size, then +N; measured,
+        // not squeezed, so none shows as an empty pill.
+        guard let row = chips.superview, row.bounds.width > 0 else { return }
+        let room = row.bounds.width - (size.isHidden ? 0 : size.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width + 8)
+        let fit = Self.fitting(labels.map { Self.chipWidth($0.name) }, room: room, more: { Self.moreWidth($0) })
+        guard fit != shown else { return }
+        shown = fit
+        chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        labels.prefix(fit).forEach { chips.addArrangedSubview(Self.chip($0)) }
+        if labels.count > fit {
+            let more = UILabel()
+            more.text = "+\(labels.count - fit)"
+            more.font = Self.chipFont
+            more.textColor = Palette.secondary
+            chips.addArrangedSubview(more)
+        }
+        chips.isHidden = labels.isEmpty
+        super.layoutSubviews()
     }
 
-    /// A label in its own colour, t3code's: a faint wash, the name lifted to read.
+    /// How many of `widths` fit in `room`, leaving space for a `+N` when some don't.
+    static func fitting(_ widths: [CGFloat], room: CGFloat, more: (Int) -> CGFloat) -> Int {
+        var used: CGFloat = 0
+        for (i, w) in widths.enumerated() {
+            used += (i > 0 ? chipGap : 0) + w
+            let rest = widths.count - i - 1
+            if used + (rest > 0 ? chipGap + more(rest) : 0) > room { return i }
+        }
+        return widths.count
+    }
+
+    private static func chipWidth(_ name: String) -> CGFloat {
+        min(ceil((name as NSString).size(withAttributes: [.font: chipFont]).width) + 14, chipMaxWidth)
+    }
+
+    private static func moreWidth(_ n: Int) -> CGFloat {
+        ceil(("+\(n)" as NSString).size(withAttributes: [.font: chipFont]).width)
+    }
+
+    /// A label in its own colour, t3code's (without the dot): a faint wash, the name lifted to read.
     private static func chip(_ label: PullRequestLabel) -> UIView {
         let text = UILabel()
         text.text = label.name
-        text.font = Fonts.ui(.sans, TypeScale.size(12.5))
-        text.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        text.font = chipFont
+        text.lineBreakMode = .byTruncatingTail
         let box = UIView()
-        box.layer.cornerRadius = 5
+        box.layer.cornerRadius = 6
         let digits = label.color.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
         if digits.count == 6, let hex = UInt32(digits, radix: 16) {
             let base = UIColor(hex: hex)
@@ -705,6 +716,7 @@ final class PullRequestCell: UICollectionViewListCell {
             text.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -7),
             text.topAnchor.constraint(equalTo: box.topAnchor, constant: 3),
             text.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -3),
+            box.widthAnchor.constraint(equalToConstant: chipWidth(label.name)),
         ])
         return box
     }
