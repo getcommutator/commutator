@@ -29,9 +29,9 @@ use super::veil::{RowVeil, apply_veil, slice_spans};
 
 /// Gap between markdown blocks inside one message (commutator mdBlockGap).
 pub const MD_BLOCK_GAP: f32 = 12.0;
-/// Body text size / line height (commutator: 14px / 22px).
-pub const MD_TEXT_SIZE: f32 = 14.0;
-pub const MD_LINE_HEIGHT: f32 = 22.0;
+/// Body text size / line height: new Zeron's prose, 15 on 24 (a 1.6 leading).
+pub const MD_TEXT_SIZE: f32 = 15.0;
+pub const MD_LINE_HEIGHT: f32 = 24.0;
 /// Default code block metrics; the rendered size comes from the theme.
 pub const CODE_TEXT_SIZE: f32 = 12.5;
 pub const CODE_LINE_HEIGHT: f32 = 18.0;
@@ -48,7 +48,7 @@ const CODE_SCROLLBAR_HIT_HEIGHT: f32 = 10.0;
 // resolved md theme. The design is frameless ("flat hairline"): 1px horizontal
 // rules under the header and between rows are the only chrome — no outer box,
 // no header fill, no corner radius (theme: headerBackground transparent,
-// radius 0). Cells use the body scale (14/22) with a uniform 12px padding;
+// radius 0). Cells use the body scale (15/24) with a uniform 12px padding;
 // the header row is weight-700 per `table.headerWeight`.
 /// Uniform cell padding in px (commutator `table.cellPadding`).
 pub const TABLE_CELL_PADDING: f32 = 12.0;
@@ -861,14 +861,12 @@ fn render_math_block(
     scroller.into_any_element()
 }
 
-/// Tight monochrome heading scale (commutator: h2 ≈ 16px semibold; headings step
-/// down quickly toward body size).
+/// Heading scale in three real steps over the 15/24 body (new Zeron's prose).
 fn heading_metrics(level: u8) -> (f32, f32) {
     match level {
-        1 => (19.0, 27.0),
-        2 => (16.0, 24.0),
-        3 => (15.0, 22.0),
-        _ => (14.0, 22.0),
+        1 => (22.0, 30.0),
+        2 => (18.0, 26.0),
+        _ => (MD_TEXT_SIZE, MD_LINE_HEIGHT),
     }
 }
 
