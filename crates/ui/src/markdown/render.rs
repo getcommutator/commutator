@@ -730,7 +730,9 @@ pub fn render_block(
                             .into_any_element(),
                         None => div()
                             .flex_none()
-                            .min_w(px(18.0))
+                            // Narrower than the number's slot: the disc sits
+                            // 12px from the text, not 20.
+                            .min_w(px(10.0))
                             // Center the disc on the first text line's cap band.
                             .h(px(MD_LINE_HEIGHT))
                             .flex()
