@@ -6192,8 +6192,8 @@ pub(crate) fn harness_brand_icon(harness: HarnessId) -> (&'static str, Option<gp
         HarnessId::Opencode => (crate::icons::OPENCODE_MARK, None),
         HarnessId::Antigravity => (crate::icons::ANTIGRAVITY_MARK, None),
         HarnessId::Muse => (crate::icons::MUSE_MARK, Some(crate::icons::muse_brand())),
-        // ponytail: no brand marks for Fx or ACP registry agents yet.
-        HarnessId::Fx | HarnessId::Registry(_) => (crate::icons::TERMINAL, None),
+        // ponytail: no brand marks for Fx, ZCode or ACP registry agents yet.
+        HarnessId::Fx | HarnessId::Zcode | HarnessId::Registry(_) => (crate::icons::TERMINAL, None),
     }
 }
 

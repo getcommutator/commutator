@@ -525,6 +525,7 @@ pub mod process;
 mod scratch;
 pub mod shell_env;
 pub(crate) mod skills;
+pub mod zcode;
 #[cfg(windows)]
 pub mod windows_process;
 
@@ -870,6 +871,7 @@ pub use cursor::CursorHarness;
 pub use opencode::OpencodeHarness;
 pub use muse::MuseHarness;
 pub use pi::PiHarness;
+pub use zcode::ZcodeHarness;
 
 // ---------------------------------------------------------------------------
 // Child lifecycle (shared by the codex and ACP harnesses)

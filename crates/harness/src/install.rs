@@ -60,6 +60,9 @@ fn methods(id: HarnessId, platform: Platform) -> Vec<Method> {
         // A registry agent installs from its registry entry
         // (`crate::acp_registry`), never through a vendor script.
         Mock | Registry(_) => vec![],
+        // ponytail: ZCode publishes only its desktop app (no CLI installer URL);
+        // add its install.sh here once Z.ai hosts one.
+        Zcode => vec![],
         Fx if windows => vec![],
         Fx => vec![Shell("curl -fsSL https://fx.sh/setup.sh | bash", "bash")],
         Antigravity => vec![Archive],
@@ -171,7 +174,7 @@ pub fn manual_command(id: HarnessId) -> Option<&'static str> {
         Devin => "curl -fsSL https://cli.devin.ai/install.sh | bash",
         Muse => "curl -fsSL https://dev.meta.ai/install.sh | bash",
         Fx => "curl -fsSL https://fx.sh/setup.sh | bash",
-        Antigravity | Mock | Registry(_) => return None,
+        Antigravity | Zcode | Mock | Registry(_) => return None,
     })
 }
 
@@ -188,6 +191,7 @@ fn cli_and_dir(id: HarnessId) -> (&'static str, &'static str) {
         Devin => ("devin", "~/.local/bin"),
         Antigravity => ("agy_acp_server", "~/.commutator/adapters"),
         Muse => ("muse", "~/.local/bin"),
+        Zcode => ("zcode", "~/.local/bin or the ZCode desktop app"),
         Mock => ("mock", "PATH"),
         Fx => ("fx", "~/.local/bin"),
         Registry(agent) => (agent.registry_id(), "~/.commutator/agents"),
@@ -207,6 +211,7 @@ pub fn installed(id: HarnessId) -> bool {
         Devin => crate::AcpHarness::devin().installed(),
         Antigravity => crate::AcpHarness::antigravity().installed(),
         Muse => crate::MuseHarness::new().installed(),
+        Zcode => crate::ZcodeHarness::new().installed(),
         Mock => false,
         Fx => crate::AcpHarness::fx().installed(),
         Registry(agent) => crate::acp_registry::installed(agent),
