@@ -765,6 +765,21 @@ pub fn transcript_compact_mode(cx: &App) -> bool {
         .unwrap_or_default()
 }
 
+/// Whether the composer styles Markdown as it is typed (a bool read per
+/// render, like [`transcript_compact_mode`]).
+pub fn composer_rich_text(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_none_or(|store| store.current.composer_rich_text)
+}
+
+pub fn set_composer_rich_text(enabled: bool, cx: &mut App) {
+    if update(SavePolicy::Immediate, cx, |settings| {
+        settings.composer_rich_text = enabled;
+    }) {
+        cx.refresh_windows();
+    }
+}
+
 pub fn set_transcript_compact_mode(enabled: bool, cx: &mut App) {
     if update(SavePolicy::Immediate, cx, |settings| {
         settings.transcript_compact_mode = enabled;
@@ -821,7 +836,11 @@ pub fn update(policy: SavePolicy, cx: &mut App, mutate: impl FnOnce(&mut UiSetti
     if !cx.has_global::<SettingsStore>() {
         return false;
     }
-    let extensions = cx.global::<SettingsStore>().current.browser_extensions.clone();
+    let extensions = cx
+        .global::<SettingsStore>()
+        .current
+        .browser_extensions
+        .clone();
     if !cx.global_mut::<SettingsStore>().update_current(mutate) {
         return false;
     }
@@ -1229,6 +1248,9 @@ pub struct UiSettings {
     /// the narration between them) fold into one collapsed accordion, so only
     /// the reply text stays visible.
     pub transcript_compact_mode: bool,
+    /// Rich composer: Markdown styled as it is typed (bold, code, hidden
+    /// markers). Off shows the draft as plain text.
+    pub composer_rich_text: bool,
     /// Destination shared by PR badges and the pull-request board.
     pub pull_request_destination: PullRequestDestination,
     /// The Pull requests page's sort and filters.
@@ -1351,6 +1373,7 @@ impl Default for UiSettings {
             transcript_width: TRANSCRIPT_WIDTH_DEFAULT,
             open_web_links_in_commutator: true,
             transcript_compact_mode: false,
+            composer_rich_text: true,
             pull_request_destination: PullRequestDestination::Native,
             pull_request_picks: Default::default(),
             files_autosave_enabled: false,
@@ -1995,6 +2018,7 @@ impl UiSettings {
             transcript_width,
             open_web_links_in_commutator,
             transcript_compact_mode,
+            composer_rich_text,
             files_autosave_enabled,
             files_autosave_delay_ms,
             files_word_wrap,
@@ -3088,6 +3112,7 @@ mod tests {
             transcript_width: 960.0,
             open_web_links_in_commutator: false,
             transcript_compact_mode: true,
+            composer_rich_text: false,
             pull_request_destination: PullRequestDestination::External,
             pull_request_picks: crate::pull_requests::PullRequestPicks {
                 author: "ann".into(),

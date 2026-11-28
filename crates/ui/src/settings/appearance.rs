@@ -335,9 +335,55 @@ pub struct AppearancePage {
     review_entry: Option<String>,
     library_error: Option<SharedString>,
     background_error: Option<SharedString>,
+    /// Settings › Chat: the same page, showing only the conversation rows
+    /// (it owns the width slider's drag state).
+    chat_only: bool,
 }
 
 impl AppearancePage {
+    /// Show the Chat section's rows instead of Appearance's.
+    pub fn show_chat(&mut self, chat_only: bool) {
+        self.chat_only = chat_only;
+    }
+
+    fn render_rich_composer_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let rich = crate::settings::composer_rich_text(cx);
+        widgets::card_row(theme, false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(widgets::row_title(theme, "Rich composer"))
+                    .child(widgets::meta_line(
+                        theme,
+                        vec![
+                            div()
+                                .child("Show formatted Markdown as you type.")
+                                .into_any_element(),
+                        ],
+                    )),
+            )
+            .child(
+                widgets::toggle_switch(theme, rich, "rich-composer")
+                    .id("rich-composer-toggle")
+                    .tab_index(0)
+                    .role(gpui::Role::Switch)
+                    .aria_label("Rich composer")
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .cursor_pointer()
+                    .aria_toggled(if rich {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        crate::settings::set_composer_rich_text(!rich, cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn queue_width(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) {
         let width = crate::settings::normalize_transcript_width(width);
         if self
@@ -719,6 +765,7 @@ impl AppearancePage {
             review_entry: None,
             library_error: None,
             background_error: None,
+            chat_only: false,
         }
     }
 
@@ -1578,7 +1625,14 @@ fn mini_window(theme: &Theme) -> gpui::Div {
                 .child(light(0x28c840)),
         )
         .child(pane())
-        .child(div().flex_1().flex().gap(px(4.0)).child(pane()).child(pane()))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .gap(px(4.0))
+                .child(pane())
+                .child(pane()),
+        )
 }
 
 /// The tile behind the window: a soft wash of the themes' accents. It rounds
@@ -1690,12 +1744,11 @@ fn import_scene_preview(variant: &commutator_theme::ThemeVariant) -> AnyElement 
         .h(px(86.0))
         .flex()
         .gap(px(8.0))
-        .child(
-            div()
-                .w(px(152.0))
-                .h_full()
-                .child(preview_tile(theme.accent, theme.accent, mini_window(&theme))),
-        )
+        .child(div().w(px(152.0)).h_full().child(preview_tile(
+            theme.accent,
+            theme.accent,
+            mini_window(&theme),
+        )))
         .child(
             div()
                 .flex_1()
@@ -3953,15 +4006,19 @@ impl Render for AppearancePage {
                         .child(widgets::row_title(&theme, "Terminal line height"))
                         .child(widgets::meta_line(
                             &theme,
-                            vec![div()
-                                .child("Row height as a multiple of the font size")
-                                .into_any_element()],
+                            vec![
+                                div()
+                                    .child("Row height as a multiple of the font size")
+                                    .into_any_element(),
+                            ],
                         )),
                 )
                 .child(line_height_control),
         );
-        font_rows = font_rows
+        let chat_card = widgets::section_card(&theme)
+            .mt_0()
             .child(self.render_transcript_width(&theme, window, cx))
+            .child(self.render_rich_composer_row(&theme, cx))
             .children(self.render_math_rows(&theme, cx));
         let mut font_section = widgets::section(&theme, "Fonts and layout", font_rows);
         let cursor_settings = crate::settings::current(cx);
@@ -4072,50 +4129,64 @@ impl Render for AppearancePage {
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll.scroll)
-                        .child(
-                            widgets::page_column()
-                                .child(widgets::page_header(&theme, "Appearance", None))
-                                .child(
-                                    widgets::section(
+                        .when(self.chat_only, |scroll| {
+                            scroll.child(
+                                widgets::page_column()
+                                    .child(widgets::page_header(&theme, "Chat", None))
+                                    .child(
+                                        widgets::section(&theme, "Conversation", chat_card)
+                                            .mt(px(24.0)),
+                                    ),
+                            )
+                        })
+                        .when(!self.chat_only, |scroll| {
+                            scroll.child(
+                                widgets::page_column()
+                                    .child(widgets::page_header(&theme, "Appearance", None))
+                                    .child(
+                                        widgets::section(
+                                            &theme,
+                                            "Color scheme",
+                                            widgets::option_card_row().children(cards),
+                                        )
+                                        .mt(px(24.0))
+                                        .gap(px(12.0)),
+                                    )
+                                    .child(
+                                        widgets::section_card(&theme)
+                                            .children(color_rows)
+                                            .mt(px(16.0)),
+                                    )
+                                    .child(widgets::section(
                                         &theme,
-                                        "Color scheme",
-                                        widgets::option_card_row().children(cards),
+                                        "Material and background",
+                                        widgets::section_card(&theme)
+                                            .mt_0()
+                                            .children(settings_rows),
+                                    ))
+                                    .child(widgets::section(
+                                        &theme,
+                                        "Motion",
+                                        widgets::section_card(&theme).mt_0().children(motion_rows),
+                                    ))
+                                    .child(
+                                        widgets::section_card(&theme)
+                                            .mt(px(32.0))
+                                            .children(library_rows),
                                     )
-                                    .mt(px(24.0))
-                                    .gap(px(12.0)),
-                                )
-                                .child(
-                                    widgets::section_card(&theme)
-                                        .children(color_rows)
-                                        .mt(px(16.0)),
-                                )
-                                .child(widgets::section(
-                                    &theme,
-                                    "Material and background",
-                                    widgets::section_card(&theme).mt_0().children(settings_rows),
-                                ))
-                                .child(widgets::section(
-                                    &theme,
-                                    "Motion",
-                                    widgets::section_card(&theme).mt_0().children(motion_rows),
-                                ))
-                                .child(
-                                    widgets::section_card(&theme)
-                                        .mt(px(32.0))
-                                        .children(library_rows),
-                                )
-                                .child(font_section)
-                                .child(cursor_section)
-                                .when_some(library_warning, |page, warning| {
-                                    page.child(
-                                        div()
-                                            .mt(px(8.0))
-                                            .text_size(crate::typography::ui_rems(11.5))
-                                            .text_color(theme.warning)
-                                            .child(warning),
-                                    )
-                                }),
-                        ),
+                                    .child(font_section)
+                                    .child(cursor_section)
+                                    .when_some(library_warning, |page, warning| {
+                                        page.child(
+                                            div()
+                                                .mt(px(8.0))
+                                                .text_size(crate::typography::ui_rems(11.5))
+                                                .text_color(theme.warning)
+                                                .child(warning),
+                                        )
+                                    }),
+                            )
+                        }),
                 )
                 .fade_overflow_y(&self.scroll.scroll),
             )

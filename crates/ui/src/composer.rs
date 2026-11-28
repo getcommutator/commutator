@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyTooltip, App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle,
     DispatchPhase, ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, GlobalElementId, KeyBinding, KeyDownEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
-    PaintQuad, PathPromptOptions, Pixels, Point, Role, ScrollWheelEvent, SharedString, Style,
-    StyledImage as _, Subscription, Task, TextRun, TextStyle, UTF16Selection, UnderlineStyle,
-    Window, WrappedLine, actions, div, fill, img, point, prelude::*, px, quad, relative, size,
+    Focusable, GlobalElementId, KeyBinding, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ObjectFit, PaintQuad, PathPromptOptions, Pixels, Point, Role,
+    ScrollWheelEvent, SharedString, Style, StyledImage as _, Subscription, Task, TextRun,
+    TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, img, point,
+    prelude::*, px, quad, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1492,7 +1492,9 @@ fn mention_display_labels(links: &[FileMentionLink]) -> Vec<String> {
                         .collect();
                     // A chat's "path" is its id, an annotation's a selector:
                     // always show its title.
-                    if duplicates.is_empty() || matches!(link.kind, ChipKind::Chat | ChipKind::Annotation) {
+                    if duplicates.is_empty()
+                        || matches!(link.kind, ChipKind::Chat | ChipKind::Annotation)
+                    {
                         return link.basename.clone();
                     }
                     let parts: Vec<_> = link.path.split('/').collect();
@@ -1967,6 +1969,9 @@ pub struct ComposerInput {
     mentions_enabled: bool,
     /// Secret entry (API keys): shown as bullets and never copied or cut.
     masked: bool,
+    /// The "Rich composer" setting, last read in `layout_text`: off, Markdown
+    /// shows as typed — no faces, no hidden markers.
+    rich_text: bool,
     /// Bumped once per `layout_text` pass — the flip logic uses it to apply at
     /// most one compact↔expanded flip per layout (a flip is only re-evaluated
     /// after the input has been measured in the new mode).
@@ -2073,6 +2078,7 @@ impl ComposerInput {
             ghost: None,
             mentions_enabled: false,
             masked: false,
+            rich_text: true,
             layout_epoch: 0,
             display_is_placeholder: true,
             blink_anchor: Instant::now(),
@@ -2219,7 +2225,7 @@ impl ComposerInput {
                 .map(|images| images.keys().copied().collect());
             TextProjection::rich(
                 &self.content,
-                Some(self.editing_source_range()),
+                self.rich_text.then(|| self.editing_source_range()),
                 live.as_ref(),
             )
         } else {
@@ -3134,7 +3140,9 @@ impl ComposerInput {
             }
             text.push_str(&self.content[at..link.range.start]);
             text.push_str(&commutator_proto::invocation::invocation_prompt(
-                &commutator_proto::file_mentions::file_mention_prompt(&self.content[link.range.clone()]),
+                &commutator_proto::file_mentions::file_mention_prompt(
+                    &self.content[link.range.clone()],
+                ),
             ));
             at = link.range.end;
         }
@@ -3215,7 +3223,9 @@ impl ComposerInput {
                     .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
                 {
                     if value.get("text").and_then(|v| v.as_str()) == Some(text.as_str()) {
-                        if let Some(raw) = value.get("commutatorComposerV1").and_then(|v| v.as_str()) {
+                        if let Some(raw) =
+                            value.get("commutatorComposerV1").and_then(|v| v.as_str())
+                        {
                             // Chip numbers belong to one draft: chips copied from
                             // another chat would name the wrong attachment, so
                             // they paste as their plain labels instead.
@@ -3907,6 +3917,12 @@ impl ComposerInput {
         window: &mut Window,
         cx: &App,
     ) -> f32 {
+        let rich_text = crate::settings::composer_rich_text(cx);
+        if rich_text != self.rich_text {
+            self.rich_text = rich_text;
+            self.refresh_projection();
+            self.needs_measure = true;
+        }
         let theme = Theme::of(cx);
         let key = InputLayoutKey {
             width,
@@ -3969,7 +3985,7 @@ impl ComposerInput {
             }),
             strikethrough: None,
         };
-        let raw_faces = if self.mentions_enabled && !is_placeholder {
+        let raw_faces = if self.mentions_enabled && self.rich_text && !is_placeholder {
             composer_markdown::faces(&self.content)
         } else {
             Vec::new()
@@ -5421,17 +5437,32 @@ impl WorkspaceCommand {
                 "Commutator: choose agent, model, and reasoning",
                 false,
             ),
-            (Self::New, "new", "Commutator: start a new conversation", false),
+            (
+                Self::New,
+                "new",
+                "Commutator: start a new conversation",
+                false,
+            ),
             (
                 Self::Resume,
                 "resume",
                 "Commutator: search and open conversations",
                 false,
             ),
-            (Self::Settings, "settings", "Commutator: open settings", false),
+            (
+                Self::Settings,
+                "settings",
+                "Commutator: open settings",
+                false,
+            ),
             (Self::Diff, "diff", "Commutator: open changes", true),
             (Self::Files, "files", "Commutator: open project files", true),
-            (Self::Terminal, "terminal", "Commutator: open a terminal", true),
+            (
+                Self::Terminal,
+                "terminal",
+                "Commutator: open a terminal",
+                true,
+            ),
             (
                 Self::Rename,
                 "rename",
@@ -6423,7 +6454,11 @@ impl Composer {
             .max()
             .unwrap_or(0)
             + 1;
-        let link = commutator_proto::annotation::BrowserAnnotation { index, ..annotation }.link();
+        let link = commutator_proto::annotation::BrowserAnnotation {
+            index,
+            ..annotation
+        }
+        .link();
         let inserted = self
             .input
             .update(cx, |input, cx| input.insert_reference(&link, cx));
@@ -6489,9 +6524,9 @@ impl Composer {
                 }
                 None => Some(att.name.as_str()),
             };
-            links.push(commutator_proto::attachment_mentions::attachment_mention_link(
-                index, file_name,
-            ));
+            links.push(
+                commutator_proto::attachment_mentions::attachment_mention_link(index, file_name),
+            );
             indices.push(index);
         }
         // Chips are inserted before the attachments join the draft, so a
@@ -7817,8 +7852,10 @@ impl Composer {
                         .client()
                         .call(methods::LIST_SKILLS, params.clone())
                         .await?;
-                    serde_json::from_value::<Option<Vec<commutator_proto::invocation::Skill>>>(value)
-                        .map_err(|e| RpcError::Failed(e.to_string()))
+                    serde_json::from_value::<Option<Vec<commutator_proto::invocation::Skill>>>(
+                        value,
+                    )
+                    .map_err(|e| RpcError::Failed(e.to_string()))
                 };
                 let (commands, skills) = futures::join!(commands, skills);
                 merge_invocation_results(commands, skills, skill).map(
@@ -8440,7 +8477,12 @@ impl Composer {
         let has_files = !self.staged().is_empty() || !self.staged_appshots().is_empty();
         // With queueing as the default, the alternate send is the steer.
         let queue_on_purpose = alternate != crate::settings::queue_follow_ups(cx);
-        busy_send_steers(queue_on_purpose, can_steer, has_files, state.queue.is_empty())
+        busy_send_steers(
+            queue_on_purpose,
+            can_steer,
+            has_files,
+            state.queue.is_empty(),
+        )
     }
 
     /// `alternate` is Cmd/Ctrl+Enter: during a live turn it queues instead of steering.
@@ -8649,7 +8691,8 @@ impl Composer {
             .iter()
             .filter_map(|att| att.mention)
             .collect();
-        let text = commutator_proto::attachment_mentions::demote_unattached_mentions(&text, &attached);
+        let text =
+            commutator_proto::attachment_mentions::demote_unattached_mentions(&text, &attached);
         let text = crate::comments::with_comments(&text, &comments);
         self.preview = None;
         let message_id = uuid::Uuid::new_v4().to_string();
@@ -9807,7 +9850,8 @@ impl Composer {
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             if let Some(wizard) = this.wizard.as_mut() {
-                                                wizard.question_expanded = !wizard.question_expanded;
+                                                wizard.question_expanded =
+                                                    !wizard.question_expanded;
                                                 cx.notify();
                                             }
                                         }))
@@ -10782,8 +10826,7 @@ impl Render for Composer {
                 self.pickers
                     .update(cx, |pickers, cx| pickers.render_footer(cx))
             });
-            if (session_chrome_opacity > 0.0 || new_thread_chrome_opacity > 0.0)
-                && !self.side_chat
+            if (session_chrome_opacity > 0.0 || new_thread_chrome_opacity > 0.0) && !self.side_chat
             {
                 let harness = self.pickers.read(cx).resolved(cx).harness;
                 let target = {
@@ -11856,7 +11899,9 @@ mod tests {
         let updated = now - TimeDelta::seconds(10);
         let state = cx.new(|cx| {
             let mut state = AppState::new();
-            state.sessions = vec![commutator_proto::Session { background_tasks: Default::default(), waiting: Default::default(),
+            state.sessions = vec![commutator_proto::Session {
+                background_tasks: Default::default(),
+                waiting: Default::default(),
                 last_completed_turn: None,
                 chat_id: "c".into(),
                 device_id: "remote".into(),
@@ -12339,7 +12384,10 @@ mod tests {
                 if change_target {
                     assert_eq!(text, raw);
                 } else {
-                    assert_eq!(commutator_proto::invocation::invocation_links(text).len(), 2);
+                    assert_eq!(
+                        commutator_proto::invocation::invocation_links(text).len(),
+                        2
+                    );
                     assert!(text.ends_with(" @README.md"));
                 }
             });
@@ -14370,7 +14418,8 @@ mod tests {
             assert!(display[span.range.clone()].contains("Brief\u{00A0}Hello"));
         }
         // Two chats with one title keep their titles, never their ids.
-        let other = commutator_proto::chat_mentions::chat_mention_link("a2c4", "Brief Hello").unwrap();
+        let other =
+            commutator_proto::chat_mentions::chat_mention_link("a2c4", "Brief Hello").unwrap();
         let (display, spans) = sent_mention_display(&format!("{link} {other}")).unwrap();
         assert!(
             spans
@@ -14414,7 +14463,8 @@ mod tests {
     }
 
     fn question(id: &str, options: &[&str], multi: bool) -> UserInputQuestion {
-        UserInputQuestion { note: Default::default(),
+        UserInputQuestion {
+            note: Default::default(),
             id: id.into(),
             header: "Header".into(),
             question: format!("Question {id}"),
@@ -15106,10 +15156,22 @@ mod tests {
     #[test]
     fn a_busy_send_steers_unless_queued_on_purpose_or_unsteerable() {
         assert!(busy_send_steers(false, true, false, true));
-        assert!(!busy_send_steers(true, true, false, true), "Cmd/Ctrl+Enter queues");
-        assert!(!busy_send_steers(false, false, false, true), "no mid-turn steering");
-        assert!(!busy_send_steers(false, true, true, true), "staged files queue");
-        assert!(!busy_send_steers(false, true, false, false), "never overtakes queued rows");
+        assert!(
+            !busy_send_steers(true, true, false, true),
+            "Cmd/Ctrl+Enter queues"
+        );
+        assert!(
+            !busy_send_steers(false, false, false, true),
+            "no mid-turn steering"
+        );
+        assert!(
+            !busy_send_steers(false, true, true, true),
+            "staged files queue"
+        );
+        assert!(
+            !busy_send_steers(false, true, false, false),
+            "never overtakes queued rows"
+        );
     }
 
     #[test]
@@ -15325,7 +15387,8 @@ mod tests {
             vec![SessionMessageEntry {
                 id: "assistant".into(),
                 role: MessageRole::Assistant,
-                parts: vec![MessagePart::Input { answers: Default::default(),
+                parts: vec![MessagePart::Input {
+                    answers: Default::default(),
                     id: "input".into(),
                     request_id: id.into(),
                     questions: vec![q],
@@ -15387,7 +15450,8 @@ mod tests {
     #[test]
     fn pending_input_detection() {
         use commutator_doc::MessageStatus;
-        let input_part = MessagePart::Input { answers: Default::default(),
+        let input_part = MessagePart::Input {
+            answers: Default::default(),
             id: "in-r1".into(),
             request_id: "r1".into(),
             questions: vec![question("q", &["a"], false)],
@@ -15443,7 +15507,8 @@ mod tests {
         ];
         assert!(pending_input_request(&t).is_none());
         // Resolved part → no panel.
-        let resolved = MessagePart::Input { answers: Default::default(),
+        let resolved = MessagePart::Input {
+            answers: Default::default(),
             id: "in-r1".into(),
             request_id: "r1".into(),
             questions: vec![],
@@ -15572,4 +15637,3 @@ impl Composer {
         cx.notify();
     }
 }
-
