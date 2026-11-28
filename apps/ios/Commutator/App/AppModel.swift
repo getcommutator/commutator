@@ -1020,9 +1020,7 @@ final class AppModel {
 
     var accountDetail: String {
         if isDemo { return "Offline demo workspace" }
-        guard let account else { return "Commutator account" }
-        let server = URL(string: account.serverUrl)?.host ?? account.serverUrl
-        return [account.name != nil ? account.email : nil, server].compactMap { $0 }.joined(separator: " · ")
+        return account?.email ?? "Commutator account"
     }
 
     @MainActor var projectOptions: [ProjectOption] {

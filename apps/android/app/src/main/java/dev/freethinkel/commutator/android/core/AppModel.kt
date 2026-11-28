@@ -448,10 +448,7 @@ class AppModel(private val app: Application) {
         }
 
     val accountDetail: String
-        get() = if (isDemo) "Offline demo workspace" else _account.value?.let { a ->
-            val server = runCatching { android.net.Uri.parse(a.serverUrl).host }.getOrNull() ?: a.serverUrl
-            listOfNotNull(if (a.name != null) a.email else null, server).joinToString(" · ")
-        } ?: "Commutator account"
+        get() = if (isDemo) "Offline demo workspace" else _account.value?.email ?: "Commutator account"
 
     // ── events ─────────────────────────────────────────────────────────────
 
