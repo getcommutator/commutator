@@ -1625,14 +1625,7 @@ fn mini_window(theme: &Theme) -> gpui::Div {
                 .child(light(0x28c840)),
         )
         .child(pane())
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .gap(px(4.0))
-                .child(pane())
-                .child(pane()),
-        )
+        .child(div().flex_1().flex().gap(px(4.0)).child(pane()).child(pane()))
 }
 
 /// The tile behind the window: a soft wash of the themes' accents. It rounds
@@ -1744,11 +1737,12 @@ fn import_scene_preview(variant: &commutator_theme::ThemeVariant) -> AnyElement 
         .h(px(86.0))
         .flex()
         .gap(px(8.0))
-        .child(div().w(px(152.0)).h_full().child(preview_tile(
-            theme.accent,
-            theme.accent,
-            mini_window(&theme),
-        )))
+        .child(
+            div()
+                .w(px(152.0))
+                .h_full()
+                .child(preview_tile(theme.accent, theme.accent, mini_window(&theme))),
+        )
         .child(
             div()
                 .flex_1()
@@ -4006,11 +4000,9 @@ impl Render for AppearancePage {
                         .child(widgets::row_title(&theme, "Terminal line height"))
                         .child(widgets::meta_line(
                             &theme,
-                            vec![
-                                div()
-                                    .child("Row height as a multiple of the font size")
-                                    .into_any_element(),
-                            ],
+                            vec![div()
+                                .child("Row height as a multiple of the font size")
+                                .into_any_element()],
                         )),
                 )
                 .child(line_height_control),
@@ -4139,54 +4131,52 @@ impl Render for AppearancePage {
                                     ),
                             )
                         })
-                        .when(!self.chat_only, |scroll| {
-                            scroll.child(
-                                widgets::page_column()
-                                    .child(widgets::page_header(&theme, "Appearance", None))
-                                    .child(
-                                        widgets::section(
-                                            &theme,
-                                            "Color scheme",
-                                            widgets::option_card_row().children(cards),
-                                        )
-                                        .mt(px(24.0))
-                                        .gap(px(12.0)),
-                                    )
-                                    .child(
-                                        widgets::section_card(&theme)
-                                            .children(color_rows)
-                                            .mt(px(16.0)),
-                                    )
-                                    .child(widgets::section(
+                        // ponytail: Appearance's rows keep their old indent
+                        // inside this `when`, so the diff stays small.
+                        .when(!self.chat_only, |scroll| scroll.child(
+                            widgets::page_column()
+                                .child(widgets::page_header(&theme, "Appearance", None))
+                                .child(
+                                    widgets::section(
                                         &theme,
-                                        "Material and background",
-                                        widgets::section_card(&theme)
-                                            .mt_0()
-                                            .children(settings_rows),
-                                    ))
-                                    .child(widgets::section(
-                                        &theme,
-                                        "Motion",
-                                        widgets::section_card(&theme).mt_0().children(motion_rows),
-                                    ))
-                                    .child(
-                                        widgets::section_card(&theme)
-                                            .mt(px(32.0))
-                                            .children(library_rows),
+                                        "Color scheme",
+                                        widgets::option_card_row().children(cards),
                                     )
-                                    .child(font_section)
-                                    .child(cursor_section)
-                                    .when_some(library_warning, |page, warning| {
-                                        page.child(
-                                            div()
-                                                .mt(px(8.0))
-                                                .text_size(crate::typography::ui_rems(11.5))
-                                                .text_color(theme.warning)
-                                                .child(warning),
-                                        )
-                                    }),
-                            )
-                        }),
+                                    .mt(px(24.0))
+                                    .gap(px(12.0)),
+                                )
+                                .child(
+                                    widgets::section_card(&theme)
+                                        .children(color_rows)
+                                        .mt(px(16.0)),
+                                )
+                                .child(widgets::section(
+                                    &theme,
+                                    "Material and background",
+                                    widgets::section_card(&theme).mt_0().children(settings_rows),
+                                ))
+                                .child(widgets::section(
+                                    &theme,
+                                    "Motion",
+                                    widgets::section_card(&theme).mt_0().children(motion_rows),
+                                ))
+                                .child(
+                                    widgets::section_card(&theme)
+                                        .mt(px(32.0))
+                                        .children(library_rows),
+                                )
+                                .child(font_section)
+                                .child(cursor_section)
+                                .when_some(library_warning, |page, warning| {
+                                    page.child(
+                                        div()
+                                            .mt(px(8.0))
+                                            .text_size(crate::typography::ui_rems(11.5))
+                                            .text_color(theme.warning)
+                                            .child(warning),
+                                    )
+                                }),
+                        )),
                 )
                 .fade_overflow_y(&self.scroll.scroll),
             )

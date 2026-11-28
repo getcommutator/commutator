@@ -836,11 +836,7 @@ pub fn update(policy: SavePolicy, cx: &mut App, mutate: impl FnOnce(&mut UiSetti
     if !cx.has_global::<SettingsStore>() {
         return false;
     }
-    let extensions = cx
-        .global::<SettingsStore>()
-        .current
-        .browser_extensions
-        .clone();
+    let extensions = cx.global::<SettingsStore>().current.browser_extensions.clone();
     if !cx.global_mut::<SettingsStore>().update_current(mutate) {
         return false;
     }

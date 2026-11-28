@@ -22,10 +22,10 @@ use gpui::{
     Window, WindowControlArea, actions, div, prelude::*, px,
 };
 
+use gpui_tokio::Tokio;
 use commutator_engine::InstanceLock;
 use commutator_proto::{AuthState, WorkspaceScope};
 use commutator_rpc::methods;
-use gpui_tokio::Tokio;
 
 use crate::changes::{Changes, ChangesEvent, DiscardWorkingTreeRequest};
 use crate::composer::{Composer, ComposerEvent, ComposerInput, ComposerInputEvent};
@@ -57,7 +57,8 @@ use crate::settings::{
     platform_combo, sidebar_pin_profile_key,
 };
 use crate::state::{
-    AppState, ConnectionStatus, EngineBootConfig, EngineMode, GatePhase, Indicator, format_time_ago,
+    AppState, ConnectionStatus, EngineBootConfig, EngineMode, GatePhase, Indicator,
+    format_time_ago,
 };
 use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_height};
 use crate::theme::Theme;
@@ -71,6 +72,8 @@ mod chat_dropzone_tests;
 mod chat_pull_requests;
 #[cfg(test)]
 mod chat_rename_tests;
+#[cfg(test)]
+mod session_card_tests;
 mod command_palette;
 mod file_mutations;
 mod files_panel;
@@ -79,24 +82,22 @@ mod navigation_focus;
 #[cfg(test)]
 mod navigation_tests;
 mod panel_layout;
-#[cfg(test)]
-mod session_card_tests;
 use panel_layout::{AuxiliaryPanel, FitInputs, HorizontalPanelFit, panel_content_tween};
 #[cfg(test)]
 mod panel_interaction_tests;
 pub(crate) mod project_icon;
-mod project_reorder;
 mod pull_request_pane;
-mod search_warm;
 mod session_hover_card;
 mod session_info;
 mod session_lanes;
 mod side_chats;
 mod sidebar_pins;
 mod sleep;
+mod worktree_cleanup;
+mod project_reorder;
+mod search_warm;
 pub(crate) mod spaces;
 mod thread_search;
-mod worktree_cleanup;
 use side_chats::SideChatTab;
 mod tabs;
 
@@ -1620,7 +1621,9 @@ enum SyncFlow {
     Idle,
     Enabling,
     Canceling,
-    RestartPending { notice_open: bool },
+    RestartPending {
+        notice_open: bool,
+    },
     SignOutConfirm,
     SigningOut,
 }
@@ -2892,11 +2895,7 @@ impl Shell {
             }
             if let Some(sound) = self
                 .connectivity_notifications
-                .update(
-                    connectivity,
-                    connectivity_observed,
-                    std::time::Instant::now(),
-                )
+                .update(connectivity, connectivity_observed, std::time::Instant::now())
                 .map(crate::sound::Sound::from)
             {
                 if self.settings.session_sound_enabled(sound)
@@ -3773,8 +3772,7 @@ impl Shell {
                 LinkAction::External
             };
         }
-        let outcome =
-            resolved.web_outcome(cfg!(any(target_os = "macos", target_os = "linux", windows)));
+        let outcome = resolved.web_outcome(cfg!(any(target_os = "macos", target_os = "linux", windows)));
         if outcome == LinkOutcome::Internal {
             self.set_surfaces_open(true, cx);
             self.add_browser_surface(activation.target.navigation.clone().ok(), window, cx);
@@ -3838,11 +3836,9 @@ impl Shell {
         let shown_chat = chat == self.active_chat;
         let remote = {
             let state = self.state.read(cx);
-            state
-                .chats
-                .iter()
-                .find(|row| row.id == chat)
-                .is_some_and(|row| Some(row.device_id.as_str()) != state.local_device_id.as_deref())
+            state.chats.iter().find(|row| row.id == chat).is_some_and(|row| {
+                Some(row.device_id.as_str()) != state.local_device_id.as_deref()
+            })
         };
         self.browser_seq += 1;
         let id = self.browser_seq;
@@ -3892,9 +3888,7 @@ impl Shell {
         crate::browser::extensions::on_new_tab(move |url, cx| {
             let shell = shell.clone();
             let _ = handle.update(cx, |_, window, cx| {
-                let _ = shell.update(cx, |shell, cx| {
-                    shell.add_browser_surface(Some(url), window, cx)
-                });
+                let _ = shell.update(cx, |shell, cx| shell.add_browser_surface(Some(url), window, cx));
             });
         });
         self.right_tabs
@@ -3904,8 +3898,7 @@ impl Shell {
         if shown_chat {
             self.set_right_active(RightSurface::Browser(id), cx);
         } else {
-            self.panels
-                .update(&chat, |p| p.right_active = RightSurface::Browser(id));
+            self.panels.update(&chat, |p| p.right_active = RightSurface::Browser(id));
         }
         browser.update(cx, |browser, cx| {
             if let Some(url) = url {
@@ -4200,10 +4193,7 @@ impl Shell {
             TerminalLinkEvent::OpenUrl { url } => cx.open_url(&url),
             // ponytail: only the chat on screen; a shell exiting in another
             // chat keeps its "[process exited]" tab until closed by hand.
-            TerminalLinkEvent::Exited {
-                key,
-                embedded: true,
-            } => {
+            TerminalLinkEvent::Exited { key, embedded: true } => {
                 let surface = RightSurface::Terminal(key);
                 if self
                     .right_tabs
@@ -4213,10 +4203,7 @@ impl Shell {
                     self.close_right_surface(surface, window, cx);
                 }
             }
-            TerminalLinkEvent::Exited {
-                key,
-                embedded: false,
-            } => {
+            TerminalLinkEvent::Exited { key, embedded: false } => {
                 if let Some(panel) = self.terminal.clone() {
                     panel.update(cx, |panel, cx| panel.close_tab_by_key(key, window, cx));
                 }
@@ -4538,9 +4525,7 @@ impl Shell {
                     let entries: Vec<commutator_doc::SessionMessageEntry> =
                         serde_json::from_str(value.get("text")?.as_str()?).ok()?;
                     let update = commutator_doc::TranscriptUpdate {
-                        replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(
-                            &entries,
-                        )),
+                        replay_baseline: Some(commutator_doc::TranscriptBaseline::capture(&entries)),
                         frame: commutator_doc::TranscriptFrame::Reset { reset: entries },
                         context_usage: None,
                     };
@@ -5174,7 +5159,9 @@ impl Shell {
             }
             popover::HoverAction::Defer => {
                 self.chat_copy_intent.defer(cx, move |this, cx| {
-                    if this.chat_menu.is_open() && this.chat_copy_intent.pending() == Some(&key) {
+                    if this.chat_menu.is_open()
+                        && this.chat_copy_intent.pending() == Some(&key)
+                    {
                         this.chat_copy_intent.cancel();
                         this.set_chat_submenu(ChatMenuPage::for_row(key), cx);
                         this.chat_copy_intent.record_origin(pointer);
@@ -5201,11 +5188,9 @@ impl Shell {
                     this.chat_copy_intent.leave(&key);
                 }
             }))
-            .on_mouse_move(
-                cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
-                    this.hover_chat_menu_row(key, event.position, true, cx);
-                }),
-            )
+            .on_mouse_move(cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                this.hover_chat_menu_row(key, event.position, true, cx);
+            }))
             .child(row)
             .into_any_element()
     }
@@ -5289,12 +5274,10 @@ impl Shell {
                             }
                             let _ = exit_entity.update(cx, |this, cx| {
                                 let (bounds, left) = (this.chat_copy_bounds, this.chat_copy_left);
-                                if this.chat_copy_intent.contains_pointer(
-                                    trigger,
-                                    bounds,
-                                    event.position,
-                                    left,
-                                ) {
+                                if this
+                                    .chat_copy_intent
+                                    .contains_pointer(trigger, bounds, event.position, left)
+                                {
                                     return;
                                 }
                                 this.chat_copy_intent.reset();
@@ -5318,7 +5301,11 @@ impl Shell {
 
     /// A chat submenu's card, recording its bounds so the pointer heading
     /// into it keeps it open.
-    fn track_chat_submenu_bounds(&self, card: gpui::Div, cx: &mut Context<Self>) -> AnyElement {
+    fn track_chat_submenu_bounds(
+        &self,
+        card: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let entity = cx.entity().downgrade();
         card.child(
             gpui::canvas(
@@ -5363,11 +5350,7 @@ impl Shell {
             popover::menu_row(theme, false, format!("{id}-{chat_id}"))
                 .id(id)
                 .debug_selector(move || id.to_owned())
-                .child(
-                    icon(icons::COPY)
-                        .size(px(16.0))
-                        .text_color(theme.text_muted),
-                )
+                .child(icon(icons::COPY).size(px(16.0)).text_color(theme.text_muted))
                 .child(label)
         };
         let card = popover::popover_card(theme)
@@ -5377,25 +5360,19 @@ impl Shell {
             .flex_col()
             .gap(px(2.0))
             .when(has_path, |menu| {
-                menu.child(item("chat-copy-path", "Path".into()).on_click(
-                    cx.listener(move |this, _, _, cx| this.copy_chat_path(&path_chat_id, cx)),
-                ))
+                menu.child(item("chat-copy-path", "Path".into()).on_click(cx.listener(
+                    move |this, _, _, cx| this.copy_chat_path(&path_chat_id, cx),
+                )))
             })
             .child(
-                item(
-                    "chat-copy-commutator",
-                    "Commutator conversation link".into(),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.copy_commutator_conversation_link(&commutator_id, cx)
-                })),
+                item("chat-copy-commutator", "Commutator conversation link".into()).on_click(cx.listener(
+                    move |this, _, _, cx| this.copy_commutator_conversation_link(&commutator_id, cx),
+                )),
             )
             .when_some(harness_link, |menu, link| {
-                menu.child(
-                    item("chat-copy-harness", link.label.into()).on_click(cx.listener(
-                        move |this, _, _, cx| this.copy_harness_conversation_link(&harness_id, cx),
-                    )),
-                )
+                menu.child(item("chat-copy-harness", link.label.into()).on_click(cx.listener(
+                    move |this, _, _, cx| this.copy_harness_conversation_link(&harness_id, cx),
+                )))
             })
             .when(session_id, |menu| {
                 menu.child(
@@ -5419,17 +5396,9 @@ impl Shell {
         };
         if let Some(link) = link {
             cx.write_to_clipboard(ClipboardItem::new_string(link));
-            self.show_notice(
-                crate::toast::ToastKind::Success,
-                "Commutator conversation link copied",
-                cx,
-            );
+            self.show_notice(crate::toast::ToastKind::Success, "Commutator conversation link copied", cx);
         } else {
-            self.show_notice(
-                crate::toast::ToastKind::Error,
-                "Conversation link is not ready yet",
-                cx,
-            );
+            self.show_notice(crate::toast::ToastKind::Error, "Conversation link is not ready yet", cx);
         }
         self.close_chat_menu(cx);
         cx.notify();
@@ -5445,11 +5414,7 @@ impl Shell {
             .and_then(crate::links::harness_conversation_link);
         if let Some(link) = link {
             cx.write_to_clipboard(ClipboardItem::new_string(link.url));
-            self.show_notice(
-                crate::toast::ToastKind::Success,
-                format!("{} copied", link.label),
-                cx,
-            );
+            self.show_notice(crate::toast::ToastKind::Success, format!("{} copied", link.label), cx);
         }
         self.close_chat_menu(cx);
         cx.notify();
@@ -5465,11 +5430,7 @@ impl Shell {
             .and_then(|chat| chat.harness_session_id.clone());
         if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
             cx.write_to_clipboard(ClipboardItem::new_string(id));
-            self.show_notice(
-                crate::toast::ToastKind::Success,
-                "Harness session ID copied",
-                cx,
-            );
+            self.show_notice(crate::toast::ToastKind::Success, "Harness session ID copied", cx);
         }
         self.close_chat_menu(cx);
         cx.notify();
@@ -6019,11 +5980,7 @@ impl Shell {
         if !revealed {
             // The sidebar explains its own refusals.
             if surface == ChatRenameSurface::SessionCard {
-                self.show_notice(
-                    crate::toast::ToastKind::Error,
-                    "Open this side chat's parent to rename it",
-                    cx,
-                );
+                self.show_notice(crate::toast::ToastKind::Error, "Open this side chat's parent to rename it", cx);
             }
             cx.notify();
             return;
@@ -6188,8 +6145,7 @@ impl Shell {
         {
             return;
         }
-        let known: std::collections::HashSet<String> =
-            state.chats.iter().map(|chat| chat.id.clone()).collect();
+        let known: std::collections::HashSet<String> = state.chats.iter().map(|chat| chat.id.clone()).collect();
         let mut pins = self
             .settings
             .sidebar_pinned_session_ids_by_profile
@@ -6585,11 +6541,7 @@ impl Shell {
                         if local {
                             shell.sync_flow = SyncFlow::Enabling;
                         }
-                        shell.show_notice(
-                            crate::toast::ToastKind::Error,
-                            format!("Could not cancel sign-in: {err}"),
-                            cx,
-                        );
+                        shell.show_notice(crate::toast::ToastKind::Error, format!("Could not cancel sign-in: {err}"), cx);
                     }
                 }
                 cx.notify();
@@ -6701,11 +6653,7 @@ impl Shell {
                     if shell.sync_flow == SyncFlow::Enabling {
                         shell.sync_flow = SyncFlow::Idle;
                     }
-                    shell.show_notice(
-                        crate::toast::ToastKind::Error,
-                        format!("Sign in failed: {err}"),
-                        cx,
-                    );
+                    shell.show_notice(crate::toast::ToastKind::Error, format!("Sign in failed: {err}"), cx);
                     cx.notify();
                 }
             })
@@ -8125,10 +8073,7 @@ impl Shell {
                     cx,
                 )
                 .into_any_element()
-            } else if status == commutator_proto::ChatIndicator::Completed
-                && !queued
-                && !undelivered
-            {
+            } else if status == commutator_proto::ChatIndicator::Completed && !queued && !undelivered {
                 icon(icons::CHECK)
                     .size(px(11.0))
                     .text_color(status_color)
@@ -8225,8 +8170,7 @@ impl Shell {
                     // Glyph slot: Working wears the preset's animated pixel
                     // glyph beside its label, Done wears the check, and the
                     // remaining statuses use a compact dot.
-                    let glyph: AnyElement = if status == commutator_proto::ChatIndicator::Completed
-                    {
+                    let glyph: AnyElement = if status == commutator_proto::ChatIndicator::Completed {
                         icon(icons::CHECK)
                             .size(px(11.0))
                             .flex_none()
@@ -8375,7 +8319,13 @@ impl Shell {
             && !preview
             && rename_input.is_none()
             && self.session_hover_card.shown() == Some(id.as_str()))
-        .then(|| self.render_session_hover_card(&id, time_ago.clone(), cx))
+        .then(|| {
+            self.render_session_hover_card(
+                &id,
+                time_ago.clone(),
+                cx,
+            )
+        })
         .flatten();
         let card_id = id.clone();
         // Hover fades over transition-colors (commutator session-row.tsx) — both
@@ -9137,8 +9087,8 @@ impl Shell {
         let working_key = self.sidebar_working_row_key();
         let working_section = (keyed.len() > regular_start
             && keyed.last().is_some_and(|(key, _, _)| *key == working_key))
-        .then(|| keyed.pop())
-        .flatten();
+            .then(|| keyed.pop())
+            .flatten();
         let regular_count = session_rows.regular_count;
         let ungrouped = self.sidebar_organization() == SidebarOrganization::InOneList;
         let regular_body_height = spaces::SIDEBAR_DISCLOSURE_BODY_INSET
@@ -9190,7 +9140,11 @@ impl Shell {
                 order.push((
                     "sidebar-sessions-header".into(),
                     spaces::SIDEBAR_DISCLOSURE_HEADER_HEIGHT
-                        + if show_pinned_section { 12.0 } else { 0.0 }
+                        + if show_pinned_section {
+                            12.0
+                        } else {
+                            0.0
+                        }
                         + if self.sessions_open {
                             spaces::SIDEBAR_DISCLOSURE_BODY_INSET - SIDEBAR_LIST_GAP
                         } else {
@@ -9445,64 +9399,60 @@ impl Shell {
             SIDEBAR_GLASS_FADE_BAND,
             true,
             true,
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .child(crate::overscroll::overscroll(
-                    "sidebar-overscroll",
-                    crate::overscroll::OverscrollSource::Handle(self.sidebar_scroll.clone()),
-                    div()
-                        .id("sidebar-lists")
-                        .relative()
-                        .size_full()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.sidebar_scroll)
-                        .on_drag_move::<SidebarSessionDrag>(cx.listener(
-                            move |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, cx| {
+            div().relative().flex_1().min_h_0().child(crate::overscroll::overscroll(
+                "sidebar-overscroll",
+                crate::overscroll::OverscrollSource::Handle(self.sidebar_scroll.clone()),
+                div()
+                    .id("sidebar-lists")
+                    .relative()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.sidebar_scroll)
+                    .on_drag_move::<SidebarSessionDrag>(cx.listener(
+                        move |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, cx| {
+                            if let Some(transfer) = this.sidebar_session_transfer.as_mut() {
+                                transfer.viewport = Some(event.bounds);
+                            }
+                            if !event.bounds.contains(&event.event.position) {
                                 if let Some(transfer) = this.sidebar_session_transfer.as_mut() {
-                                    transfer.viewport = Some(event.bounds);
+                                    transfer.preview = None;
                                 }
-                                if !event.bounds.contains(&event.event.position) {
-                                    if let Some(transfer) = this.sidebar_session_transfer.as_mut() {
-                                        transfer.preview = None;
-                                    }
-                                    return;
-                                }
-                                let payload = event.drag(cx).clone();
-                                this.track_pinned_session_drag_pointer(
-                                    payload,
-                                    f32::from(event.event.position.y),
-                                    f32::from(event.bounds.top()),
-                                    f32::from(event.bounds.bottom()),
-                                    cx,
-                                );
-                            },
-                        ))
-                        // Empty space and Archived are not transfer targets.
-                        .on_drop::<SidebarSessionDrag>(cx.listener(
-                            |this, _: &SidebarSessionDrag, _, cx| {
-                                this.cancel_sidebar_session_transfer(cx);
-                            },
-                        ))
-                        .px(px(Theme::SPACE_SM))
-                        .flex()
-                        .flex_col()
-                        // No "Sessions" header (user request) — the list
-                        // is the whole column; a little air stands in.
-                        .pt(px(SIDEBAR_LIST_PAD_TOP))
-                        // Working sits at the bottom, over Archived: the list
-                        // takes the room above it. Archived is always last.
-                        .map(|el| match working_section {
-                            Some(working) => el
-                                .child(div().flex_grow(1.0).flex_shrink_0().child(active_list))
-                                .child(div().flex_shrink_0().child(working)),
-                            None => el.child(active_list),
-                        })
-                        .children(asleep_section)
-                        .children(archived_section)
-                        .children(moving_row),
-                )),
+                                return;
+                            }
+                            let payload = event.drag(cx).clone();
+                            this.track_pinned_session_drag_pointer(
+                                payload,
+                                f32::from(event.event.position.y),
+                                f32::from(event.bounds.top()),
+                                f32::from(event.bounds.bottom()),
+                                cx,
+                            );
+                        },
+                    ))
+                    // Empty space and Archived are not transfer targets.
+                    .on_drop::<SidebarSessionDrag>(cx.listener(
+                        |this, _: &SidebarSessionDrag, _, cx| {
+                            this.cancel_sidebar_session_transfer(cx);
+                        },
+                    ))
+                    .px(px(Theme::SPACE_SM))
+                    .flex()
+                    .flex_col()
+                    // No "Sessions" header (user request) — the list
+                    // is the whole column; a little air stands in.
+                    .pt(px(SIDEBAR_LIST_PAD_TOP))
+                    // Working sits at the bottom, over Archived: the list
+                    // takes the room above it. Archived is always last.
+                    .map(|el| match working_section {
+                        Some(working) => el
+                            .child(div().flex_grow(1.0).flex_shrink_0().child(active_list))
+                            .child(div().flex_shrink_0().child(working)),
+                        None => el.child(active_list),
+                    })
+                    .children(asleep_section)
+                    .children(archived_section)
+                    .children(moving_row),
+            )),
         )
         .fade_overflow_y(&self.sidebar_scroll);
 
@@ -9752,8 +9702,7 @@ impl Shell {
                         vec![UpdatePromptButton::Close("OK")],
                     ),
                     Some(latest) => {
-                        let title: SharedString =
-                            format!("Commutator {latest} is available").into();
+                        let title: SharedString = format!("Commutator {latest} is available").into();
                         if let Some(blocker) = update.blocker() {
                             (
                                 title,
@@ -10154,49 +10103,52 @@ impl Shell {
             .gap(px(4.0))
             .child(trigger)
             .child(
-                div().flex().flex_none().items_center().gap(px(2.0)).child(
-                    div()
-                        .id("settings-trigger")
-                        .debug_selector(|| "settings-trigger".into())
-                        .role(gpui::Role::Button)
-                        .aria_label(if settings_open {
-                            "Close settings"
-                        } else {
-                            "Settings"
-                        })
-                        .aria_toggled(if settings_open {
-                            gpui::Toggled::True
-                        } else {
-                            gpui::Toggled::False
-                        })
-                        .tooltip(move |_, cx| {
-                            let text = settings_tooltip.clone();
-                            cx.new(|_| SurfaceTabTooltip { text }).into()
-                        })
-                        .tab_index(0)
-                        .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
-                        .flex_none()
-                        .rounded(px(8.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .bg(if settings_open {
-                            theme.glass_hover()
-                        } else {
-                            motion::hover_blend(
-                                "settings-trigger",
-                                theme.glass_hover().opacity(0.0),
-                                theme.glass_hover(),
-                            )
-                        })
-                        .on_hover(motion::hover_listener("settings-trigger"))
-                        .focus_visible(|s| s.border_2().border_color(theme.accent))
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
-                        .child(
-                            icon(icons::SETTINGS)
-                                .size(px(15.0))
-                                .text_color(if settings_open {
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .id("settings-trigger")
+                            .debug_selector(|| "settings-trigger".into())
+                            .role(gpui::Role::Button)
+                            .aria_label(if settings_open {
+                                "Close settings"
+                            } else {
+                                "Settings"
+                            })
+                            .aria_toggled(if settings_open {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .tooltip(move |_, cx| {
+                                let text = settings_tooltip.clone();
+                                cx.new(|_| SurfaceTabTooltip { text }).into()
+                            })
+                            .tab_index(0)
+                            .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
+                            .flex_none()
+                            .rounded(px(8.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(if settings_open {
+                                theme.glass_hover()
+                            } else {
+                                motion::hover_blend(
+                                    "settings-trigger",
+                                    theme.glass_hover().opacity(0.0),
+                                    theme.glass_hover(),
+                                )
+                            })
+                            .on_hover(motion::hover_listener("settings-trigger"))
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
+                            .child(icon(icons::SETTINGS).size(px(15.0)).text_color(
+                                if settings_open {
                                     theme.text
                                 } else {
                                     motion::hover_blend(
@@ -10204,9 +10156,9 @@ impl Shell {
                                         theme.text_muted,
                                         theme.text,
                                     )
-                                }),
-                        ),
-                ),
+                                },
+                            )),
+                    ),
             )
             .into_any_element()
     }
@@ -10492,15 +10444,14 @@ impl Shell {
             let menu = if chat_id.is_empty() {
                 menu
             } else {
-                let rename =
-                    popover::menu_row(&theme, false, format!("chat-menu-rename-{chat_id}"))
-                        .id("chat-menu-rename")
-                        .debug_selector(|| "chat-menu-rename".into())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_rename_chat(rename_id.clone(), cx)
-                        }))
-                        .child(icon(icons::PEN).size(px(16.0)).text_color(theme.text_muted))
-                        .child(SharedString::from("Rename"));
+                let rename = popover::menu_row(&theme, false, format!("chat-menu-rename-{chat_id}"))
+                    .id("chat-menu-rename")
+                    .debug_selector(|| "chat-menu-rename".into())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_rename_chat(rename_id.clone(), cx)
+                    }))
+                    .child(icon(icons::PEN).size(px(16.0)).text_color(theme.text_muted))
+                    .child(SharedString::from("Rename"));
                 let menu = menu.child(self.chat_menu_hover_row(CHAT_MENU_ROW_RENAME, rename, cx));
                 let menu = if is_side_chat {
                     menu
@@ -10531,21 +10482,20 @@ impl Shell {
                         .child(self.chat_menu_hover_row(CHAT_MENU_ROW_ARCHIVE, archive, cx))
                         .child(self.chat_menu_hover_row(CHAT_MENU_ROW_COPY, copy, cx))
                 };
-                let delete =
-                    popover::menu_row(&theme, false, format!("chat-menu-delete-{chat_id}"))
-                        .id("chat-menu-delete")
-                        .text_color(theme.danger)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.close_chat_menu(cx);
-                            this.delete_confirm = Some(delete_id.clone());
-                            cx.notify();
-                        }))
-                        .child(
-                            icon(icons::TRASH_BIN_MINIMALISTIC)
-                                .size(px(16.0))
-                                .text_color(theme.danger),
-                        )
-                        .child(SharedString::from("Delete…"));
+                let delete = popover::menu_row(&theme, false, format!("chat-menu-delete-{chat_id}"))
+                    .id("chat-menu-delete")
+                    .text_color(theme.danger)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.close_chat_menu(cx);
+                        this.delete_confirm = Some(delete_id.clone());
+                        cx.notify();
+                    }))
+                    .child(
+                        icon(icons::TRASH_BIN_MINIMALISTIC)
+                            .size(px(16.0))
+                            .text_color(theme.danger),
+                    )
+                    .child(SharedString::from("Delete…"));
                 menu.child(popover::menu_separator())
                     .child(self.chat_menu_hover_row(CHAT_MENU_ROW_DELETE, delete, cx))
             };
@@ -10566,22 +10516,25 @@ impl Shell {
                     let enabled = !self.tabs_to_close(surface, action, cx).is_empty();
                     let key = key.clone();
                     let row = popover::menu_row(&theme, false, label)
-                        .id(SharedString::from(label))
-                        .when(!enabled, |el| el.opacity(0.4).cursor_default())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if !enabled {
-                                return;
-                            }
-                            this.close_chat_menu(cx);
-                            if this.panel_key(cx) == key {
-                                for tab in this.tabs_to_close(surface, action, cx) {
-                                    this.close_right_surface(tab, window, cx);
+                            .id(SharedString::from(label))
+                            .when(!enabled, |el| el.opacity(0.4).cursor_default())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if !enabled {
+                                    return;
                                 }
-                            }
-                        }))
-                        .child(label);
-                    menu =
-                        menu.child(self.chat_menu_hover_row(CHAT_MENU_ROW_TAB + ix as u8, row, cx));
+                                this.close_chat_menu(cx);
+                                if this.panel_key(cx) == key {
+                                    for tab in this.tabs_to_close(surface, action, cx) {
+                                        this.close_right_surface(tab, window, cx);
+                                    }
+                                }
+                            }))
+                            .child(label);
+                    menu = menu.child(self.chat_menu_hover_row(
+                        CHAT_MENU_ROW_TAB + ix as u8,
+                        row,
+                        cx,
+                    ));
                 }
             }
             let menu = menu.into_any_element();
@@ -10734,8 +10687,11 @@ impl Shell {
     {
         let theme = Theme::of(cx);
         let fade_key = format!("pane-resize-{id}");
-        let hover_highlight =
-            motion::hover_blend(&fade_key, theme.accent.opacity(0.0), theme.accent);
+        let hover_highlight = motion::hover_blend(
+            &fade_key,
+            theme.accent.opacity(0.0),
+            theme.accent,
+        );
         let active = self.pane_resize_active == Some(kind);
         let constrained = self.pane_resize_dragging == Some(kind) && !active;
         let highlight = if constrained {
@@ -10901,9 +10857,8 @@ impl Shell {
         // over a column too tight for that, it floats once opened.
         let (session_docked, session_reveal, session_reserve) =
             self.session_info_frame(has_selection, cx);
-        self.transcript.update(cx, |transcript, cx| {
-            transcript.set_right_reserve(session_reserve, cx)
-        });
+        self.transcript
+            .update(cx, |transcript, cx| transcript.set_right_reserve(session_reserve, cx));
         // Panel open/close glides the composer width; a window resize or a
         // seam drag is direct manipulation, so the width tracks the pointer.
         let direct_width =
@@ -11066,7 +11021,10 @@ impl Shell {
         let session_card = self.render_session_info(
             session_docked,
             session_reveal,
-            self.viewport_height - Theme::TITLEBAR_HEIGHT - self.bottom_stack.get() - 24.0,
+            self.viewport_height
+                - Theme::TITLEBAR_HEIGHT
+                - self.bottom_stack.get()
+                - 24.0,
             cx,
         );
         self.chat_dropzone("chat-dropzone", self.composer.clone(), cx)
@@ -12311,6 +12269,7 @@ impl Shell {
             window,
         )
     }
+
 }
 
 /// A size-6 icon button for the titlebar strip (commutator window-controls.tsx:
@@ -12995,9 +12954,9 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &PrevSession, window, cx| {
                 this.cycle_navigation(false, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, _: &OpenTurnDiff, window, cx| this.open_turn_diff(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &OpenTurnDiff, window, cx| {
+                this.open_turn_diff(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleChanges, window, cx| {
                 if matches!(this.route, Route::PullRequests) {
                     this.toggle_pull_request_pane(cx);
@@ -13086,9 +13045,7 @@ impl Render for Shell {
                     let unseen_selected = {
                         let s = self.state.read(cx);
                         s.selected_chat_row()
-                            .filter(|c| {
-                                commutator_proto::view::has_unseen_activity(c, s.session_for(&c.id))
-                            })
+                            .filter(|c| commutator_proto::view::has_unseen_activity(c, s.session_for(&c.id)))
                             .map(|c| c.id.clone())
                     };
                     if let Some(chat_id) = unseen_selected {
@@ -13304,9 +13261,15 @@ impl Render for Shell {
                 // (zero layout width, same idiom as the changes-pane grabber)
                 // so the sidebar's right gutter stays exactly as wide as its
                 // left one — a 5px flex child here read as lopsided spacing.
-                let sidebar_seam = div().w(px(0.0)).h_full().flex_none().relative().children(
-                    sidebar_handle.map(|handle| handle.left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH))),
-                );
+                let sidebar_seam = div()
+                    .w(px(0.0))
+                    .h_full()
+                    .flex_none()
+                    .relative()
+                    .children(
+                        sidebar_handle
+                            .map(|handle| handle.left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH))),
+                    );
                 // Keep the right resize target outside the pane's
                 // overflow-hidden width container. This mirrors the sidebar
                 // seam and lets the target straddle both adjacent panes.
@@ -13356,7 +13319,7 @@ impl Render for Shell {
                                     .h_full()
                                     .flex_none()
                                     .relative()
-                                    .child(
+                                                    .child(
                                         div()
                                             .h_full()
                                             .flex()
@@ -13367,7 +13330,14 @@ impl Render for Shell {
                                     .child(right_seam),
                             ),
                     )
-                    .child(div().absolute().top_0().left_0().right_0().child(title_bar))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                                    .child(title_bar),
+                    )
                     .child(self.render_titlebar_cluster(cx))
                     .children(self.render_sidebar_options_titlebar(cx))
                     .children(overlays);
@@ -13411,7 +13381,9 @@ impl Render for Shell {
         // the native `Drag` control area, on Linux the explicit
         // `start_window_move` strip (the control-area hit-test is inert
         // there); macOS drags gate windows natively.
-        let root = if matches!(gate, GatePhase::Ready) || cfg!(target_os = "macos") {
+        let root = if matches!(gate, GatePhase::Ready)
+            || cfg!(target_os = "macos")
+        {
             root
         } else {
             root.child(
@@ -13446,9 +13418,7 @@ mod tests {
         cwd: Option<&str>,
         source: Option<(&str, &str)>,
     ) -> commutator_proto::Chat {
-        commutator_proto::Chat {
-            child_kind: Default::default(),
-            sleep: Default::default(),
+        commutator_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
             id: "chat".into(),
             device_id: "remote-device".into(),
             title: None,
@@ -13786,9 +13756,7 @@ mod tests {
         status: commutator_proto::SessionStatus,
         updated_at: DateTime<Utc>,
     ) -> commutator_proto::Session {
-        commutator_proto::Session {
-            background_tasks: Default::default(),
-            waiting: Default::default(),
+        commutator_proto::Session { background_tasks: Default::default(), waiting: Default::default(),
             last_completed_turn: None,
             chat_id: chat_id.into(),
             device_id: "remote".into(),
@@ -14202,18 +14170,11 @@ mod tests {
             "launching signed in asks for nothing"
         );
         assert_eq!(
-            sync_flow_after_auth(
-                SyncFlow::RestartPending { notice_open: false },
-                local,
-                Some(&signed_in)
-            ),
+            sync_flow_after_auth(SyncFlow::RestartPending { notice_open: false }, local, Some(&signed_in)),
             SyncFlow::RestartPending { notice_open: false },
             "a postponed restart notice stays postponed"
         );
-        for flow in [
-            SyncFlow::RestartPending { notice_open: true },
-            SyncFlow::SigningOut,
-        ] {
+        for flow in [SyncFlow::RestartPending { notice_open: true }, SyncFlow::SigningOut] {
             assert_eq!(
                 sync_flow_after_auth(flow, local, Some(&AuthState::SignedOut)),
                 SyncFlow::Idle
@@ -15045,10 +15006,7 @@ mod exit_regressions {
                         assert_eq!(current.pull_request_picks.author, "ann");
                         assert_eq!(current.window_geometry, geometry);
                         assert_eq!(current.new_thread_background_effect, effect);
-                        assert_eq!(
-                            current.open_web_links_in_commutator,
-                            open_links_in_commutator
-                        );
+                        assert_eq!(current.open_web_links_in_commutator, open_links_in_commutator);
                         assert_eq!(
                             current.pull_request_destination,
                             settings::PullRequestDestination::External
@@ -15084,10 +15042,7 @@ mod exit_regressions {
                         Some(dir.path().join("wallpapers/current.png"))
                     );
                     assert_eq!(loaded.new_thread_background_effect, effect);
-                    assert_eq!(
-                        loaded.open_web_links_in_commutator,
-                        open_links_in_commutator
-                    );
+                    assert_eq!(loaded.open_web_links_in_commutator, open_links_in_commutator);
                     assert_eq!(
                         loaded.pull_request_destination,
                         settings::PullRequestDestination::External
@@ -15940,8 +15895,7 @@ mod exit_regressions {
         });
         window
             .update(cx, |shell, _, cx| {
-                let space = |id: &str, device: &str| commutator_proto::Space {
-                    icon: Default::default(),
+                let space = |id: &str, device: &str| commutator_proto::Space { icon: Default::default(),
                     github_repo: None,
                     id: id.into(),
                     device_id: device.into(),
@@ -16198,8 +16152,7 @@ mod exit_regressions {
         window
             .update(cx, |shell, _, cx| {
                 shell.state.update(cx, |state, _| {
-                    state.apply_spaces(vec![commutator_proto::Space {
-                        icon: Default::default(),
+                    state.apply_spaces(vec![commutator_proto::Space { icon: Default::default(),
                         id: "repo".into(),
                         device_id: "local".into(),
                         path: "/repo".into(),
@@ -16265,8 +16218,7 @@ mod exit_regressions {
                 cx,
             )
         });
-        let space = |id: &str, device: &str| commutator_proto::Space {
-            icon: Default::default(),
+        let space = |id: &str, device: &str| commutator_proto::Space { icon: Default::default(),
             id: id.into(),
             device_id: device.into(),
             path: format!("/{id}"),
@@ -16282,9 +16234,7 @@ mod exit_regressions {
             .update(cx, |shell, _, cx| {
                 shell.state.update(cx, |state, cx| {
                     state.apply_spaces(vec![space("mine", "local"), space("other", "remote")]);
-                    state.apply_chats(vec![commutator_proto::Chat {
-                        child_kind: Default::default(),
-                        sleep: Default::default(),
+                    state.apply_chats(vec![commutator_proto::Chat { child_kind: Default::default(), sleep: Default::default(),
                         id: "elsewhere".into(),
                         device_id: "remote".into(),
                         title: None,
@@ -16350,8 +16300,7 @@ mod exit_regressions {
                 cx,
             )
         });
-        let space = |id: &str| commutator_proto::Space {
-            icon: Default::default(),
+        let space = |id: &str| commutator_proto::Space { icon: Default::default(),
             id: id.into(),
             device_id: "local".into(),
             path: format!("/{id}"),
@@ -16614,8 +16563,7 @@ mod exit_regressions {
                 // different file under the linking chat's checkout.
                 let project = dir.path().join("other-project");
                 shell.state.update(cx, |state, _| {
-                    state.apply_spaces(vec![commutator_proto::Space {
-                        icon: Default::default(),
+                    state.apply_spaces(vec![commutator_proto::Space { icon: Default::default(),
                         id: "other".into(),
                         device_id: "local".into(),
                         path: project.to_string_lossy().into_owned(),
@@ -17956,7 +17904,9 @@ mod settings_modal_regressions {
     /// Carried out of the sidebar it follows the pointer, and dropped on a
     /// conversation it becomes a chat chip in that composer.
     #[gpui::test]
-    fn a_dragged_session_leaves_the_sidebar_and_drops_as_a_chat_mention(cx: &mut TestAppContext) {
+    fn a_dragged_session_leaves_the_sidebar_and_drops_as_a_chat_mention(
+        cx: &mut TestAppContext,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         init_settings_test(settings::UiSettings::default(), dir.path(), cx);
         let (shell, cx) = cx.add_window_view(|_, cx| test_shell(dir.path(), cx));
@@ -18004,16 +17954,10 @@ mod settings_modal_regressions {
         // selector; the lifted row's own window position is the check.
         let sidebar_width = shell.read_with(cx, |shell, _| shell.settings.sidebar_width);
         shell.read_with(cx, |shell, _| {
-            let transfer = shell
-                .sidebar_session_transfer
-                .as_ref()
-                .expect("still dragging");
+            let transfer = shell.sidebar_session_transfer.as_ref().expect("still dragging");
             let left = transfer.slide_x.to;
             let expected = f32::from(transfer.pointer.x - transfer.cursor_offset.x);
-            assert!(
-                left > sidebar_width,
-                "outside the sidebar the row follows the pointer"
-            );
+            assert!(left > sidebar_width, "outside the sidebar the row follows the pointer");
             assert!((left - expected).abs() < 0.5);
         });
         let drop = gpui::point(from.x + px(724.0), from.y + px(40.0));
