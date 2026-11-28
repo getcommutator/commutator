@@ -623,7 +623,7 @@ final class PullRequestCell: UICollectionViewListCell {
         title.lineBreakMode = .byTruncatingTail
 
         author.text = pr.author
-        avatar.load(pr.authorAvatarUrl)
+        avatar.load(pr.authorAvatarUrl, name: pr.author)
         repo.text = pr.repository
         labels = pr.labels
         shown = min(3, labels.count)
@@ -710,10 +710,12 @@ final class PullRequestCell: UICollectionViewListCell {
     }
 }
 
-/// An author's picture, 18 pt round; hidden until it loads. Kept for the session.
+/// An author's picture, 18 pt round; their initial until it loads, or when it
+/// can't (a private GitLab serves avatars to a signed-in browser only). Kept for the session.
 final class AvatarView: UIImageView {
     private static let cache = NSCache<NSString, UIImage>()
     private var url: String?
+    private let letter = UILabel()
 
     init() {
         super.init(frame: .zero)
@@ -721,21 +723,28 @@ final class AvatarView: UIImageView {
         clipsToBounds = true
         layer.cornerRadius = 9
         backgroundColor = Palette.chip
+        letter.font = Fonts.ui(.sans, 10.5)
+        letter.textColor = Palette.secondary
+        letter.textAlignment = .center
+        letter.frame = CGRect(x: 0, y: 0, width: 18, height: 18)
+        addSubview(letter)
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([widthAnchor.constraint(equalToConstant: 18), heightAnchor.constraint(equalToConstant: 18)])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func load(_ url: String?) {
+    func load(_ url: String?, name: String) {
         self.url = url
+        letter.text = name.first.map { String($0).uppercased() }
         image = url.flatMap { Self.cache.object(forKey: $0 as NSString) }
-        isHidden = url == nil
+        letter.isHidden = image != nil
+        isHidden = url == nil && name.isEmpty
         guard image == nil, let url, let remote = URL(string: url) else { return }
         Task { @MainActor [weak self] in
             guard let (data, _) = try? await URLSession.shared.data(from: remote), let image = UIImage(data: data) else { return }
             Self.cache.setObject(image, forKey: url as NSString)
-            if self?.url == url { self?.image = image }
+            if self?.url == url { self?.image = image; self?.letter.isHidden = true }
         }
     }
 }
