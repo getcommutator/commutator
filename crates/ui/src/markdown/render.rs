@@ -15,12 +15,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 
+use commutator_syntax::{HighlightKind, HighlightSpan, HighlightedDocument};
 use gpui::{
     AnyElement, BorderStyle, Bounds, Context, CursorStyle, Div, FontStyle, FontWeight, Hsla,
     Render, SharedString, StyledText, TextRun, UnderlineStyle, Window, canvas, div, font, point,
     prelude::*, px, quad, size,
 };
-use commutator_syntax::{HighlightKind, HighlightSpan, HighlightedDocument};
 
 use crate::theme::Theme;
 
@@ -1176,9 +1176,9 @@ pub struct FlatText {
     pub runs: Vec<TextRun>,
     pub links: Vec<(Range<usize>, String)>,
     pub code_ranges: Vec<Range<usize>>,
-    /// Reserved slots after resolved file links — displayed-text
-    /// coordinates. Each slot paints the trailing open glyph.
-    pub file_glyphs: Vec<Range<usize>>,
+    /// Reserved slots before resolved file links — displayed-text
+    /// coordinates, with the link's path. Each slot paints its file icon.
+    pub file_glyphs: Vec<(Range<usize>, SharedString)>,
     /// Reserved slots for formulas — displayed-text coordinates. Each slot
     /// paints its formula; copy and selection read its `$tex$` source.
     pub math: Vec<super::math::MathSlot>,
@@ -1587,13 +1587,13 @@ fn link_text_element(
     ix: usize,
     opts: &RenderOptions,
 ) -> AnyElement {
-    // A resolved file link's hit range covers its reserved glyph slot,
-    // so the trailing open glyph activates the link too.
-    let glyph_end = |range: &std::ops::Range<usize>| {
+    // A resolved file link's hit range covers its reserved icon slot, so
+    // the leading file icon activates the link too.
+    let glyph_start = |range: &std::ops::Range<usize>| {
         flat.file_glyphs
             .iter()
-            .find(|slot| slot.start == range.end)
-            .map_or(range.end, |slot| slot.end)
+            .find(|(slot, _)| slot.end == range.start)
+            .map_or(range.start, |(slot, _)| slot.start)
     };
     let child = super::link_interaction::LinkRanges {
         id: format!(
@@ -1612,7 +1612,7 @@ fn link_text_element(
             .iter()
             .map(|(range, url)| {
                 (
-                    range.start..glyph_end(range),
+                    glyph_start(range)..range.end,
                     LinkTarget::new(
                         flat.original
                             .as_ref()
@@ -1628,7 +1628,7 @@ fn link_text_element(
         ui: opts.link.clone(),
     }
     .into_any_element();
-    // Trailing open glyphs of resolved file links paint over the shaped text.
+    // File icons of resolved file links paint over the shaped text.
     if flat.file_glyphs.is_empty() {
         return child;
     }

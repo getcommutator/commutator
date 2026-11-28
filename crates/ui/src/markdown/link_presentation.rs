@@ -181,7 +181,11 @@ pub fn truncate(
             .map(|(r, url)| (shown(r), url.clone()))
             .collect(),
         code_ranges: flat.code_ranges.iter().map(shown).collect(),
-        file_glyphs: flat.file_glyphs.iter().map(shown).collect(),
+        file_glyphs: flat
+            .file_glyphs
+            .iter()
+            .map(|(r, path)| (shown(r), path.clone()))
+            .collect(),
         // A formula cut away with its label leaves no slot to paint over.
         math: flat
             .math
@@ -271,15 +275,14 @@ pub(super) fn present(
     })
 }
 
-/// The slot reserved after a resolved file link for its trailing open glyph:
-/// four NBSPs of text advance, holding a 12px glyph 4px in — a reserved slot
-/// the shaped text never notices. Copy and selection map the slot back to the
-/// link end, so the raw text survives and nothing reflows on hover.
+/// The slot reserved before a resolved file link for its file-type icon (as
+/// t3code's file chips): four NBSPs of text advance holding a 14px icon — a
+/// reserved slot the shaped text never notices. Copy and selection map the
+/// slot back to the link start, so the raw text survives.
 const FILE_GLYPH_SLOT: &str = "\u{00A0}\u{00A0}\u{00A0}\u{00A0}";
-pub(crate) const FILE_GLYPH_SIZE: f32 = 12.0;
-pub(crate) const FILE_GLYPH_GAP: f32 = 4.0;
+pub(crate) const FILE_GLYPH_SIZE: f32 = 14.0;
 
-/// Reserve a slot after every file link the surface's roots resolve. Web
+/// Reserve a slot before every file link the surface's roots resolve. Web
 /// links and targets no known root owns keep their shape, as does a
 /// paragraph that is nothing but one file link — that renders as the sole
 /// file row with its own icon tile.
@@ -290,12 +293,11 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
     if flat.links.is_empty() || paragraph_is_sole_file_link(flat, opts.workspace_root.as_deref()) {
         return flat.clone();
     }
-    let insertions: Vec<usize> = flat
+    let (insertions, paths): (Vec<usize>, Vec<SharedString>) = flat
         .links
         .iter()
-        .filter(|(_, target)| ui.file_link(target).is_some())
-        .map(|(range, _)| range.end)
-        .collect();
+        .filter_map(|(range, target)| Some((range.start, ui.file_link(target)?.path.into())))
+        .unzip();
     if insertions.is_empty() {
         return flat.clone();
     }
@@ -349,7 +351,7 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
         offsets
             .omissions
             .push((*insert_at..*insert_at, start..text.len()));
-        glyphs.push(start..text.len());
+        glyphs.push((start..text.len(), paths[ix].clone()));
         at = *insert_at;
     }
     text.push_str(&flat.text[at..]);
@@ -500,7 +502,7 @@ pub(crate) struct FileLinkGlyphs {
     pub id: SharedString,
     pub child: AnyElement,
     pub layout: TextLayout,
-    pub slots: Vec<Range<usize>>,
+    pub slots: Vec<(Range<usize>, SharedString)>,
 }
 
 impl IntoElement for FileLinkGlyphs {
@@ -544,7 +546,7 @@ impl Element for FileLinkGlyphs {
         self.child.prepaint(window, cx);
         let theme = Theme::of(cx).clone();
         let mut overlays = Vec::new();
-        for slot in &self.slots {
+        for (slot, path) in &self.slots {
             let Some(rect) = range_rects(&self.layout, slot, 0.0, INLINE_CODE_INSET_Y)
                 .first()
                 .copied()
@@ -558,13 +560,15 @@ impl Element for FileLinkGlyphs {
                 .items_center()
                 .justify_center()
                 .child(
-                    crate::icons::icon(crate::icons::ARROW_UP_RIGHT)
-                        .size(px(FILE_GLYPH_SIZE))
-                        .text_color(theme.text_faint),
+                    crate::file_icons::icon(
+                        crate::file_icons::FileIconIdentity::file(path),
+                        theme.appearance,
+                    )
+                    .size(px(FILE_GLYPH_SIZE)),
                 )
                 .into_any_element();
             icon_el.prepaint_as_root(
-                point(rect.origin.x + px(FILE_GLYPH_GAP), rect.origin.y),
+                point(rect.origin.x, rect.origin.y),
                 size(px(FILE_GLYPH_SIZE), rect.size.height).map(AvailableSpace::Definite),
                 window,
                 cx,
@@ -649,12 +653,13 @@ mod tests {
         // Only the resolved file link grows a slot: the web link and the
         // escaped target keep their shape.
         assert_eq!(shown.file_glyphs.len(), 1);
-        assert_eq!(&shown.text[shown.file_glyphs[0].clone()], FILE_GLYPH_SLOT);
+        assert_eq!(&shown.text[shown.file_glyphs[0].0.clone()], FILE_GLYPH_SLOT);
+        assert_eq!(shown.file_glyphs[0].1.as_ref(), "src/lib.rs");
         assert_eq!(shown.links.len(), 3);
-        // The reserved slot sits right after the link and never reaches copy
-        // or selection — both glyph ends map back to the link's end.
-        let slot = &shown.file_glyphs[0];
-        assert_eq!(slot.start, shown.links[0].0.end);
+        // The reserved slot sits right before the link and never reaches copy
+        // or selection — both slot ends map back to the link's start.
+        let slot = &shown.file_glyphs[0].0;
+        assert_eq!(slot.end, shown.links[0].0.start);
         let map = &shown.original.as_ref().unwrap().offsets;
         assert_eq!(map.original(slot.start), map.original(slot.end));
         assert_eq!(map.original(slot.start), map.original(slot.start - 1) + 1);
