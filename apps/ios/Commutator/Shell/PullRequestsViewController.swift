@@ -528,6 +528,9 @@ final class PullRequestCell: UICollectionViewListCell {
     private let ci = UIImageView()
     private let stats = UILabel()
     private let time = UILabel()
+    private var labels: [PullRequestLabel] = []
+    /// How many labels get a chip; drops while the last one is squeezed.
+    private var shown = 0
 
     private static let grouped: NumberFormatter = {
         let f = NumberFormatter()
@@ -622,18 +625,9 @@ final class PullRequestCell: UICollectionViewListCell {
         author.text = pr.author
         avatar.load(pr.authorAvatarUrl)
         repo.text = pr.repository
-        // Shepherd's: the first three labels, then how many more.
-        chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for label in pr.labels.prefix(3) {
-            chips.addArrangedSubview(Self.chip(label.name))
-        }
-        if pr.labels.count > 3 {
-            let more = UILabel()
-            more.text = "+\(pr.labels.count - 3)"
-            more.font = Fonts.ui(.sans, TypeScale.size(12.5))
-            more.textColor = Palette.secondary
-            chips.addArrangedSubview(more)
-        }
+        labels = pr.labels
+        shown = min(3, labels.count)
+        layoutChips()
         time.text = relativeTimeLabel(atMs: pr.updatedAtMs, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
 
         switch pr.ci {
@@ -654,22 +648,63 @@ final class PullRequestCell: UICollectionViewListCell {
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
-    private static func chip(_ text: String) -> UIView {
-        let label = UILabel()
-        label.text = text
-        label.font = Fonts.ui(.sans, TypeScale.size(12.5))
-        label.textColor = Palette.text
-        label.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+    /// Shepherd's: the first three labels, then how many more.
+    private func layoutChips() {
+        chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for label in labels.prefix(shown) {
+            chips.addArrangedSubview(Self.chip(label))
+        }
+        if labels.count > shown {
+            let more = UILabel()
+            more.text = "+\(labels.count - shown)"
+            more.font = Fonts.ui(.sans, TypeScale.size(12.5))
+            more.textColor = Palette.secondary
+            more.setContentCompressionResistancePriority(.required, for: .horizontal)
+            chips.addArrangedSubview(more)
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // A chip squeezed past a few letters goes into the +N instead of
+        // showing as an empty pill. ponytail: drops one per pass, at most three.
+        guard shown > 0, let last = chips.arrangedSubviews[shown - 1].subviews.first as? UILabel,
+              last.bounds.width < min(last.intrinsicContentSize.width, 36) else { return }
+        shown -= 1
+        layoutChips()
+        setNeedsLayout()
+    }
+
+    /// A label in its own colour, t3code's: a faint wash, the name lifted to read.
+    private static func chip(_ label: PullRequestLabel) -> UIView {
+        let text = UILabel()
+        text.text = label.name
+        text.font = Fonts.ui(.sans, TypeScale.size(12.5))
+        text.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         let box = UIView()
-        box.backgroundColor = Palette.chip
-        box.layer.cornerRadius = 6
-        label.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(label)
+        box.layer.cornerRadius = 5
+        let digits = label.color.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+        if digits.count == 6, let hex = UInt32(digits, radix: 16) {
+            let base = UIColor(hex: hex)
+            box.backgroundColor = base.withAlphaComponent(0.16)
+            text.textColor = UIColor { traits in
+                var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                base.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+                return traits.userInterfaceStyle == .dark
+                    ? UIColor(hue: h, saturation: min(s, 0.55), brightness: max(b, 0.9), alpha: 1)
+                    : UIColor(hue: h, saturation: max(s, 0.6), brightness: min(b, 0.5), alpha: 1)
+            }
+        } else {
+            box.backgroundColor = Palette.chip
+            text.textColor = Palette.secondary
+        }
+        text.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(text)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 7),
-            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -7),
-            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 3),
-            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -3),
+            text.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 7),
+            text.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -7),
+            text.topAnchor.constraint(equalTo: box.topAnchor, constant: 3),
+            text.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -3),
         ])
         return box
     }
