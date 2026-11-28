@@ -347,43 +347,70 @@ impl AppearancePage {
     }
 
     fn render_rich_composer_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let rich = crate::settings::composer_rich_text(cx);
-        widgets::card_row(theme, false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(widgets::row_title(theme, "Rich composer"))
-                    .child(widgets::meta_line(
-                        theme,
-                        vec![
-                            div()
-                                .child("Show formatted Markdown as you type.")
-                                .into_any_element(),
-                        ],
-                    )),
-            )
-            .child(
-                widgets::toggle_switch(theme, rich, "rich-composer")
-                    .id("rich-composer-toggle")
-                    .tab_index(0)
-                    .role(gpui::Role::Switch)
-                    .aria_label("Rich composer")
-                    .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .cursor_pointer()
-                    .aria_toggled(if rich {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        crate::settings::set_composer_rich_text(!rich, cx);
-                        cx.notify();
-                    })),
-            )
-            .into_any_element()
+        chat_switch_row(
+            theme,
+            "Rich composer",
+            "Show formatted Markdown as you type.",
+            crate::settings::composer_rich_text(cx),
+            crate::settings::set_composer_rich_text,
+            cx,
+        )
     }
 
+    fn render_turn_changes_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        chat_switch_row(
+            theme,
+            "Changed files",
+            "End a turn that changed files with a card of its diff.",
+            crate::settings::show_turn_changes(cx),
+            crate::settings::set_show_turn_changes,
+            cx,
+        )
+    }
+}
+
+/// A Chat section row: a title, one line under it, and a switch.
+fn chat_switch_row(
+    theme: &Theme,
+    title: &'static str,
+    detail: &'static str,
+    on: bool,
+    set: fn(bool, &mut gpui::App),
+    cx: &mut Context<AppearancePage>,
+) -> AnyElement {
+    widgets::card_row(theme, false)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(widgets::row_title(theme, title))
+                .child(widgets::meta_line(
+                    theme,
+                    vec![div().child(detail).into_any_element()],
+                )),
+        )
+        .child(
+            widgets::toggle_switch(theme, on, title)
+                .id(title)
+                .tab_index(0)
+                .role(gpui::Role::Switch)
+                .aria_label(title)
+                .focus_visible(|s| s.border_2().border_color(theme.accent))
+                .cursor_pointer()
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    set(!on, cx);
+                    cx.notify();
+                })),
+        )
+        .into_any_element()
+}
+
+impl AppearancePage {
     fn queue_width(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) {
         let width = crate::settings::normalize_transcript_width(width);
         if self
@@ -4011,6 +4038,7 @@ impl Render for AppearancePage {
             .mt_0()
             .child(self.render_transcript_width(&theme, window, cx))
             .child(self.render_rich_composer_row(&theme, cx))
+            .child(self.render_turn_changes_row(&theme, cx))
             .children(self.render_math_rows(&theme, cx));
         let mut font_section = widgets::section(&theme, "Fonts and layout", font_rows);
         let cursor_settings = crate::settings::current(cx);

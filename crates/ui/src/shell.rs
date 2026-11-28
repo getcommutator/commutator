@@ -343,6 +343,18 @@ pub struct JumpSession(pub usize);
 #[action(namespace = shell, no_json)]
 pub struct SelectPaletteTab(pub usize);
 
+/// A turn card's file (or its "Open diff"): show that turn's checkpoint diff
+/// in its own diff tab, scrolled to `path`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenCheckpointDiff {
+    pub chat_id: String,
+    pub turn: u32,
+    pub from: u64,
+    pub to: u64,
+    pub path: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Traffic-light-aware titlebar layout (feature-inventory §1.1)
 // ---------------------------------------------------------------------------
@@ -3928,7 +3940,7 @@ impl Shell {
                     RightSurface::Diff(id) => self
                         .diffs
                         .get(id)
-                        .is_some_and(|diff| !diff.read(cx).is_commit()),
+                        .is_some_and(|diff| !diff.read(cx).is_pinned()),
                     _ => false,
                 })
                 .copied()
@@ -3938,6 +3950,47 @@ impl Shell {
             None => self.add_diff_surface(window, cx),
         }
         self.set_surfaces_open(true, cx);
+    }
+
+    /// A turn card's click: focus that turn's diff tab when one is open,
+    /// else open one, and bring the clicked file into view.
+    fn open_checkpoint_diff(
+        &mut self,
+        action: &OpenCheckpointDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pin = crate::changes::CheckpointPin {
+            chat_id: action.chat_id.clone(),
+            turn: action.turn,
+            from: action.from,
+            to: action.to,
+        };
+        let existing = self.right_tabs.get(&self.panel_key(cx)).and_then(|tabs| {
+            tabs.iter().find_map(|t| match t {
+                RightSurface::Diff(id) => self
+                    .diffs
+                    .get(id)
+                    .filter(|diff| diff.read(cx).checkpoint_pin() == Some(&pin))
+                    .map(|diff| (*id, diff.clone())),
+                _ => None,
+            })
+        });
+        match existing {
+            Some((id, diff)) => {
+                if let Some(path) = action.path.clone() {
+                    diff.update(cx, |diff, cx| diff.focus_file(path, cx));
+                }
+                self.set_right_active(RightSurface::Diff(id), cx);
+                self.set_surfaces_open(true, cx);
+            }
+            None => {
+                let path = action.path.clone();
+                let changes =
+                    cx.new(|cx| Changes::for_checkpoint(self.state.clone(), pin, path, cx));
+                self.register_diff_surface(changes, window, cx);
+            }
+        }
     }
 
     /// Open or focus a session-owned editor tab. The explorer is independent.
@@ -12956,6 +13009,9 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|this, _: &OpenTurnDiff, window, cx| {
                 this.open_turn_diff(window, cx)
+            }))
+            .on_action(cx.listener(|this, action: &OpenCheckpointDiff, window, cx| {
+                this.open_checkpoint_diff(action, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleChanges, window, cx| {
                 if matches!(this.route, Route::PullRequests) {

@@ -780,6 +780,21 @@ pub fn set_composer_rich_text(enabled: bool, cx: &mut App) {
     }
 }
 
+/// Whether a turn that changed files ends on its "changed files" card
+/// ([`UiSettings::show_turn_changes`]). Transcripts poll this during render.
+pub fn show_turn_changes(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_none_or(|store| store.current.show_turn_changes)
+}
+
+pub fn set_show_turn_changes(enabled: bool, cx: &mut App) {
+    if update(SavePolicy::Immediate, cx, |settings| {
+        settings.show_turn_changes = enabled;
+    }) {
+        cx.refresh_windows();
+    }
+}
+
 pub fn set_transcript_compact_mode(enabled: bool, cx: &mut App) {
     if update(SavePolicy::Immediate, cx, |settings| {
         settings.transcript_compact_mode = enabled;
@@ -1247,6 +1262,8 @@ pub struct UiSettings {
     /// Rich composer: Markdown styled as it is typed (bold, code, hidden
     /// markers). Off shows the draft as plain text.
     pub composer_rich_text: bool,
+    /// The "N changed files" card at the end of a turn that changed files.
+    pub show_turn_changes: bool,
     /// Destination shared by PR badges and the pull-request board.
     pub pull_request_destination: PullRequestDestination,
     /// The Pull requests page's sort and filters.
@@ -1370,6 +1387,7 @@ impl Default for UiSettings {
             open_web_links_in_commutator: true,
             transcript_compact_mode: false,
             composer_rich_text: true,
+            show_turn_changes: true,
             pull_request_destination: PullRequestDestination::Native,
             pull_request_picks: Default::default(),
             files_autosave_enabled: false,
@@ -2015,6 +2033,7 @@ impl UiSettings {
             open_web_links_in_commutator,
             transcript_compact_mode,
             composer_rich_text,
+            show_turn_changes,
             files_autosave_enabled,
             files_autosave_delay_ms,
             files_word_wrap,
@@ -3109,6 +3128,7 @@ mod tests {
             open_web_links_in_commutator: false,
             transcript_compact_mode: true,
             composer_rich_text: false,
+            show_turn_changes: false,
             pull_request_destination: PullRequestDestination::External,
             pull_request_picks: crate::pull_requests::PullRequestPicks {
                 author: "ann".into(),

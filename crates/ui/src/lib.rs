@@ -80,6 +80,7 @@ pub mod theme;
 pub mod theme_library;
 pub mod toast;
 pub mod transcript;
+pub mod turn_changes;
 pub mod typography;
 pub mod visuals;
 mod workspace_links;
