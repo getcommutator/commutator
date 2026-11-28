@@ -665,6 +665,17 @@ final class PullRequestCell: UICollectionViewListCell {
         }
         chips.isHidden = labels.isEmpty
         super.layoutSubviews()
+        // The chips' line changed height: ask the list to size the row again.
+        invalidateIntrinsicContentSize()
+    }
+
+    /// Self-sizing measures before the cell has its width, so the chips (which
+    /// need it) weren't in yet: the row came out short and squeezed the title to
+    /// an ellipsis until the next pass. Lay out at the target width first.
+    override func systemLayoutSizeFitting(_ target: CGSize, withHorizontalFittingPriority h: UILayoutPriority, verticalFittingPriority v: UILayoutPriority) -> CGSize {
+        if bounds.width != target.width { bounds.size.width = target.width }
+        layoutIfNeeded()
+        return super.systemLayoutSizeFitting(target, withHorizontalFittingPriority: h, verticalFittingPriority: v)
     }
 
     /// How many of `widths` fit in `room`, leaving space for a `+N` when some don't.
