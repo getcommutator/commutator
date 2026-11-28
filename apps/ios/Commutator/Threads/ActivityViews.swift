@@ -20,7 +20,7 @@ final class SleepPickerViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
+        view.backgroundColor = Palette.background
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             self?.dismiss(animated: true)
         })
@@ -44,12 +44,12 @@ final class SleepPickerViewController: UIViewController {
         picker.addAction(UIAction { [weak self] _ in self?.updateSummary() }, for: .valueChanged)
 
         summary.font = .preferredFont(forTextStyle: .footnote)
-        summary.textColor = .secondaryLabel
+        summary.textColor = Palette.secondary
         summary.numberOfLines = 0
         summary.adjustsFontForContentSizeCategory = true
 
         let card = UIView()
-        card.backgroundColor = .secondarySystemGroupedBackground
+        card.backgroundColor = Palette.elevated
         card.layer.cornerRadius = 26
         card.layer.cornerCurve = .continuous
         picker.translatesAutoresizingMaskIntoConstraints = false

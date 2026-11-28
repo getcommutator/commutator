@@ -200,7 +200,9 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
         } else {
             c.raised.with_alpha(0.9)
         }),
-        elevated: argb(c.raised),
+        // Not the theme's `raised`: on most themes it barely parts from (or clashes with) the
+        // background. Light lifts toward white, dark toward the text, as iOS grouped lists do.
+        elevated: argb(if dark { tint(0.05) } else { bg.mix(Color::WHITE, 0.7) }),
         text: argb(text),
         secondary: argb(c.text_muted),
         tertiary: argb(c.text_faint),
