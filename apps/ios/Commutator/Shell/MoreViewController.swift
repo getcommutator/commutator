@@ -1,7 +1,7 @@
 import UIKit
 import UserNotifications
 
-/// Settings & utilities: account, devices, notifications, appearance, math, activity.
+/// Settings & utilities: account, devices, appearance, chat, notifications, activity.
 final class MoreViewController: SettingsListController {
     private let app: AppModel
 
@@ -16,6 +16,7 @@ final class MoreViewController: SettingsListController {
     override func viewDidLoad() {
         super.viewDidLoad()
         themeObserver = NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
+        mathObserver = NotificationCenter.default.addObserver(forName: MathSettings.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         appToken = app.observe { [weak self] in self?.reload() }
         // Back from iOS Settings (notifications may have been allowed there).
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -64,14 +65,8 @@ final class MoreViewController: SettingsListController {
         return notificationsOn ? "On" : "Off"
     }
 
-    override func toggled(_ id: String, _ on: Bool) {
-        if id == "math:render" {
-            MathSettings.render = on
-            return reload()
-        }
-    }
-
     private var themeObserver: NSObjectProtocol?
+    private var mathObserver: NSObjectProtocol?
     private var appToken: AnyObject?
 
     override func sections() -> [(title: String, rows: [Row])] {
@@ -92,16 +87,12 @@ final class MoreViewController: SettingsListController {
                 )
             }))
         }
-        var display = [Row(id: "appearance", title: "Appearance", subtitle: AppearanceViewController.summary(traits: traitCollection), symbol: "paintpalette")]
+        var display = [
+            Row(id: "appearance", title: "Appearance", subtitle: AppearanceViewController.summary(traits: traitCollection), symbol: "paintpalette"),
+            Row(id: "chat", title: "Chat", subtitle: ChatSettingsViewController.summary, symbol: "text.bubble"),
+        ]
         if !app.isDemo { display.append(Row(id: "notifications", title: "Notifications", subtitle: notificationSummary, symbol: "bell")) }
         out.append(("Display", display))
-        var math = [Row(id: "math:render", title: "Render Math", subtitle: "Off shows LaTeX as its source", symbol: "function", accessory: .toggle(MathSettings.render))]
-        if MathSettings.render {
-            let face = MathSettings.face
-            math.append(Row(id: "math:font", title: "Math Font", subtitle: "\(MathSettings.label(face)) — \(MathSettings.detail(face))", symbol: "textformat"))
-            math.append(Row(id: "math:size", title: "Math Size", subtitle: "\(MathSettings.size)% of the text around it", symbol: "textformat.size"))
-        }
-        out.append(("Math", math))
         out.append(("Activity", AppModel.SessionsView.allCases.map { view in
             Row(id: "view:" + view.rawValue, title: view.title, symbol: view.symbol, accessory: .check(app.sessionsView == view))
         }))
@@ -120,36 +111,12 @@ final class MoreViewController: SettingsListController {
             present(alert, animated: true)
         case "appearance":
             navigationController?.pushViewController(AppearanceViewController(), animated: true)
+        case "chat":
+            navigationController?.pushViewController(ChatSettingsViewController(), animated: true)
         case "notifications":
             navigationController?.pushViewController(NotificationsViewController(app: app), animated: true)
         case let id where id.hasPrefix("view:"):
             AppModel.SessionsView(rawValue: String(id.dropFirst(5))).map { app.sessionsView = $0 }
-        case "math:font":
-            let sheet = UIAlertController(title: "Math Font", message: nil, preferredStyle: .actionSheet)
-            for f in MathSettings.allFaces {
-                let action = UIAlertAction(title: MathSettings.label(f), style: .default) { [weak self] _ in
-                    MathSettings.face = f
-                    self?.reload()
-                }
-                action.setValue(f == MathSettings.face, forKey: "checked")
-                sheet.addAction(action)
-            }
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            sheet.popoverPresentationController?.sourceView = collectionView.cellForItem(at: path)
-            present(sheet, animated: true)
-        case "math:size":
-            let sheet = UIAlertController(title: "Math Size", message: nil, preferredStyle: .actionSheet)
-            for size in MathSettings.allSizes {
-                let action = UIAlertAction(title: "\(size)%", style: .default) { [weak self] _ in
-                    MathSettings.size = size
-                    self?.reload()
-                }
-                action.setValue(size == MathSettings.size, forKey: "checked")
-                sheet.addAction(action)
-            }
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            sheet.popoverPresentationController?.sourceView = collectionView.cellForItem(at: path)
-            present(sheet, animated: true)
         case "signout":
             let alert = UIAlertController(title: "Sign out?", message: "Local drafts stay on this device.", preferredStyle: .actionSheet)
             alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in self?.app.signOut() })

@@ -256,13 +256,18 @@ final class SessionFlowTests: XCTestCase {
         snapshot(app, "bottom-bar-after-pop")
     }
 
-    /// Render Math toggles the Math Font row; the font picks from a sheet of
-    /// every face.
+    /// Settings › Chat: Render Math toggles the Math Font row; the font
+    /// picks from a sheet of every face.
     func testMathSettings() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Sessions"].waitForExistence(timeout: 10))
         app.buttons["bottom-settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        let chat = app.cells["settings-chat"]
+        for _ in 0..<4 where !chat.exists || !chat.isHittable { app.swipeUp() }
+        XCTAssertTrue(chat.waitForExistence(timeout: 5))
+        chat.tap()
+        XCTAssertTrue(app.navigationBars["Chat"].waitForExistence(timeout: 5))
         let toggle = app.switches["toggle-math:render"]
         for _ in 0..<6 where !toggle.exists || !toggle.isHittable { app.swipeUp() }
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
