@@ -1365,6 +1365,15 @@ impl PullRequestDetailPage {
                 })),
             )
             .child(
+                item("pr-menu-refresh", icons::REFRESH, "Refresh".into()).on_click(cx.listener(
+                    |page, _, _, cx| {
+                        page.close_menu(cx);
+                        page.refresh(cx);
+                    },
+                )),
+            )
+            .child(crate::popover::menu_separator())
+            .child(
                 item("pr-menu-link", icons::COPY, "Copy link".into()).on_click(cx.listener(
                     move |page, _, _, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(link.clone()));
@@ -1373,6 +1382,28 @@ impl PullRequestDetailPage {
                 )),
             );
         if let Some(detail) = self.detail.clone() {
+            let copy = |id: &'static str, glyph: &'static str, label: &str, text: String| {
+                item(id, glyph, label.into()).on_click(cx.listener(move |page, _, _, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                    page.close_menu(cx);
+                }))
+            };
+            card = card
+                .child(copy("pr-menu-number", icons::COPY, "Copy number", format!("#{}", detail.number)))
+                .when(!detail.head_ref_name.is_empty(), |el| {
+                    el.child(copy(
+                        "pr-menu-branch",
+                        icons::GIT_BRANCH,
+                        "Copy branch name",
+                        detail.head_ref_name.clone(),
+                    ))
+                })
+                .child(copy(
+                    "pr-menu-checkout",
+                    icons::TERMINAL,
+                    "Copy checkout command",
+                    handoff::checkout_command(&detail, &self.url),
+                ));
             let kinds = handoff::handoffs(&detail);
             if !kinds.is_empty() {
                 card = card
@@ -1392,6 +1423,76 @@ impl PullRequestDetailPage {
             }
             let state = detail.state.to_ascii_uppercase();
             if state == "OPEN" {
+                // The same `act` calls as the footer; the menu click is the
+                // deliberate second step, so no armed confirm here.
+                let action = |id: &'static str,
+                              glyph: &'static str,
+                              label: &'static str,
+                              params: serde_json::Value,
+                              busy: &'static str,
+                              done: &'static str| {
+                    item(id, glyph, label.into()).on_click(cx.listener(move |page, _, _, cx| {
+                        page.close_menu(cx);
+                        page.act(params.clone(), busy, done, cx);
+                    }))
+                };
+                card = card.child(crate::popover::menu_separator());
+                if detail.is_draft {
+                    card = card.child(action(
+                        "pr-menu-ready",
+                        icons::CHECK,
+                        "Mark as ready",
+                        serde_json::json!({"action": "ready"}),
+                        "ready",
+                        "Marked as ready for review",
+                    ));
+                } else {
+                    card = card
+                        .child(action(
+                            "pr-menu-draft",
+                            icons::PULL_REQUEST_DRAFT,
+                            "Convert to draft",
+                            serde_json::json!({"action": "draft"}),
+                            "ready",
+                            "Converted to draft",
+                        ))
+                        .child(if detail.auto_merge_request.is_some() {
+                            action(
+                                "pr-menu-auto",
+                                icons::CLOCK_CIRCLE,
+                                "Disable auto-merge",
+                                serde_json::json!({"action": "disableAutoMerge"}),
+                                "merge",
+                                "Auto-merge cancelled",
+                            )
+                        } else {
+                            action(
+                                "pr-menu-auto",
+                                icons::CLOCK_CIRCLE,
+                                "Enable auto-merge",
+                                serde_json::json!({"action": "merge", "method": "squash", "auto": true}),
+                                "merge",
+                                "Merges once the checks pass",
+                            )
+                        });
+                    if !detail.mergeable.eq_ignore_ascii_case("CONFLICTING") {
+                        card = card.child(crate::popover::menu_separator());
+                        for (id, label, method) in [
+                            ("pr-menu-merge", "Merge", "merge"),
+                            ("pr-menu-squash", "Squash and merge", "squash"),
+                            ("pr-menu-rebase", "Rebase and merge", "rebase"),
+                        ] {
+                            card = card.child(action(
+                                id,
+                                icons::LUCIDE_GIT_MERGE,
+                                label,
+                                serde_json::json!({"action": "merge", "method": method}),
+                                "merge",
+                                "Merged",
+                            ));
+                        }
+                    }
+                }
                 card = card.child(crate::popover::menu_separator()).child(
                     item(
                         "pr-menu-close",

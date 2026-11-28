@@ -82,8 +82,8 @@ pub const MARKER_WIDTH: f32 = 12.0;
 /// Width of the coloured accent bar on the left edge of +/− rows.
 pub const ACCENT_BAR_WIDTH: f32 = 3.0;
 /// The marker column in split mode: each half pays for its own, so it is
-/// narrower than [`MARKER_WIDTH`] to leave the code the room.
-pub const SPLIT_MARKER_WIDTH: f32 = 8.0;
+/// none at all; the gutter's own padding keeps the code off the numbers.
+pub const SPLIT_MARKER_WIDTH: f32 = 0.0;
 /// Hairline between the two split columns.
 pub const SPLIT_DIVIDER_WIDTH: f32 = 1.0;
 const DIFF_TEXT_SIZE: f32 = 12.0;

@@ -546,6 +546,7 @@ impl GitHubCli {
         let args: Vec<String> = match action {
             ChangeRequestAction::Approve => vec!["pr".into(), "review".into(), url.clone(), "--approve".into()],
             ChangeRequestAction::Ready => vec!["pr".into(), "ready".into(), url.clone()],
+            ChangeRequestAction::Draft => vec!["pr".into(), "ready".into(), url.clone(), "--undo".into()],
             ChangeRequestAction::Close => vec!["pr".into(), "close".into(), url.clone()],
             ChangeRequestAction::Reopen => vec!["pr".into(), "reopen".into(), url.clone()],
             ChangeRequestAction::DisableAutoMerge => vec!["pr".into(), "merge".into(), url.clone(), "--disable-auto".into()],
@@ -2213,6 +2214,8 @@ pub enum ChangeRequestAction {
     },
     DisableAutoMerge,
     Ready,
+    /// Back to draft (`gh pr ready --undo`).
+    Draft,
     Close,
     Reopen,
 }
