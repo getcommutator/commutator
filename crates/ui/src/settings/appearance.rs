@@ -4454,13 +4454,13 @@ mod tests {
             registry
                 .variants_for(commutator_theme::Appearance::Light)
                 .count(),
-            10
+            26
         );
         assert_eq!(
             registry
                 .variants_for(commutator_theme::Appearance::Dark)
                 .count(),
-            20
+            44
         );
     }
 

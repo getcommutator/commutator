@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
+mod rex;
+
 use crate::{
     AccentRoles, Appearance, Color, SurfaceTreatment, TerminalPalette, ThemeColors, ThemeFamily,
     ThemeRegistry, ThemeSource, ThemeVariant,
@@ -11,13 +13,10 @@ use crate::{
 pub fn builtin_registry() -> &'static ThemeRegistry {
     static REGISTRY: OnceLock<ThemeRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| ThemeRegistry {
-        families: vec![
+        families: [
             family("commutator", "Commutator", vec![commutator_light(), commutator_dark()]),
-            family(
-                "vscode-default",
-                "VS Code Default",
-                vec![vscode_light(), vscode_dark()],
-            ),
+            family("snowfall", "Snowfall", vec![snowfall_light(), snowfall_dark()]),
+            family("vesper", "Vesper", vec![vesper()]),
             family(
                 "catppuccin",
                 "Catppuccin",
@@ -28,7 +27,7 @@ pub fn builtin_registry() -> &'static ThemeRegistry {
                 "Tokyo Night",
                 vec![tokyo_light(), tokyo_dark()],
             ),
-            family("dracula", "Dracula", vec![dracula()]),
+            family("dracula", "Dracula", vec![alucard(), dracula()]),
             family("github", "GitHub", vec![github_light(), github_dark()]),
             family("ayu", "Ayu", vec![ayu_light(), ayu_dark(), ayu_mirage()]),
             family("gruvbox", "Gruvbox", vec![gruvbox_light(), gruvbox_dark()]),
@@ -38,28 +37,19 @@ pub fn builtin_registry() -> &'static ThemeRegistry {
                 vec![rose_pine_dawn(), rose_pine_moon()],
             ),
             family("nord", "Nord", vec![nord()]),
-            family("one-dark-pro", "One Dark Pro", vec![one_dark_pro()]),
-            family("atom-one-dark", "Atom One Dark", vec![atom_one_dark()]),
+            family("one-dark-pro", "One Dark Pro", vec![one_light(), one_dark_pro()]),
+            family("atom-one-dark", "Atom One Dark", vec![atom_one_light(), atom_one_dark()]),
             family(
                 "night-owl",
                 "Night Owl",
                 vec![night_owl_light(), night_owl()],
             ),
-            family(
-                "winter-is-coming",
-                "Winter is Coming",
-                vec![winter_light(), winter_dark_blue()],
-            ),
-            family("palenight", "Palenight", vec![palenight()]),
             family("synthwave-84", "SynthWave '84", vec![synthwave_84()]),
-            family(
-                "shades-of-purple",
-                "Shades of Purple",
-                vec![shades_of_purple()],
-            ),
-            family("cobalt2", "Cobalt2", vec![cobalt2()]),
             family("andromeda", "Andromeda", vec![andromeda()]),
-        ],
+        ]
+        .into_iter()
+        .chain(rex::families())
+        .collect(),
     })
 }
 
@@ -304,76 +294,7 @@ fn commutator_light() -> ThemeVariant {
     })
 }
 
-fn vscode_dark() -> ThemeVariant {
-    variant(Seeds {
-        id: "vscode-dark-plus",
-        family_id: "vscode-default",
-        name: "Dark+",
-        appearance: Appearance::Dark,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#1e1e1e",
-        shell: "#181818",
-        raised: "#2a2d2e",
-        card: "#252526",
-        text: "#d4d4d4",
-        muted: "#a8a8a8",
-        faint: "#858585",
-        accent: "#007acc",
-        danger: "#f48771",
-        warning: "#cca700",
-        success: "#89d185",
-        terminal_background: "#1e1e1e",
-        ansi: [
-            "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
-            "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#e5e5e5",
-        ],
-        syntax: [
-            "#6a9955", "#c586c0", "#ce9178", "#b5cea8", "#4ec9b0", "#dcdcaa", "#9cdcfe", "#d4d4d4",
-            "#d4d4d4", "#569cd6", "#9cdcfe", "#f44747",
-        ],
-        source: source(
-            "vscode-dark-plus",
-            "vscode",
-            "https://github.com/microsoft/vscode",
-            "e33d147d4c0fa65ce17cb73ec9d798f064b4bf1f",
-            "MIT",
-        ),
-    })
-}
 
-fn vscode_light() -> ThemeVariant {
-    variant(Seeds {
-        id: "vscode-light-plus",
-        family_id: "vscode-default",
-        name: "Light+",
-        appearance: Appearance::Light,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#ffffff",
-        shell: "#f3f3f3",
-        raised: "#e8e8e8",
-        card: "#ffffff",
-        text: "#1f1f1f",
-        muted: "#616161",
-        faint: "#767676",
-        accent: "#0078d4",
-        danger: "#a1260d",
-        warning: "#895503",
-        success: "#008000",
-        terminal_background: "#ffffff",
-        ansi: ANSI_LIGHT,
-        syntax: [
-            "#008000", "#0000ff", "#a31515", "#098658", "#267f99", "#795e26", "#001080", "#1f1f1f",
-            "#1f1f1f", "#800000", "#ff0000", "#cd3131",
-        ],
-        source: source(
-            "vscode-light-plus",
-            "vscode",
-            "https://github.com/microsoft/vscode",
-            "e33d147d4c0fa65ce17cb73ec9d798f064b4bf1f",
-            "MIT",
-        ),
-    })
-}
 
 fn catppuccin_mocha() -> ThemeVariant {
     variant(Seeds {
@@ -1078,116 +999,8 @@ fn night_owl_light() -> ThemeVariant {
     })
 }
 
-fn winter_dark_blue() -> ThemeVariant {
-    variant(Seeds {
-        id: "winter-dark-blue",
-        family_id: "winter-is-coming",
-        name: "Winter is Coming Dark Blue",
-        appearance: Appearance::Dark,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#011627",
-        shell: "#01111d",
-        raised: "#0b253a",
-        card: "#071d2e",
-        text: "#d6deeb",
-        muted: "#8ca6ba",
-        faint: "#5f7e97",
-        accent: "#219fd5",
-        danger: "#ef5350",
-        warning: "#ffca28",
-        success: "#22da6e",
-        terminal_background: "#011627",
-        ansi: [
-            "#011627", "#ef5350", "#22da6e", "#f7ecb5", "#219fd5", "#c792ea", "#80cbc4", "#d6deeb",
-            "#5f7e97", "#ef9a9a", "#addb67", "#ffcb6b", "#82aaff", "#c792ea", "#7fdbca", "#ffffff",
-        ],
-        syntax: [
-            "#8095a8", "#c792ea", "#78bd65", "#8dec95", "#d29ffc", "#87aff4", "#7fdbca", "#cbcdd2",
-            "#4fb4d8", "#6dbdfa", "#f7ecb5", "#ef5350",
-        ],
-        source: source(
-            "winter-dark-blue",
-            "vscode",
-            "https://github.com/johnpapa/vscode-winteriscoming",
-            "260547834cb6ac37dd5b8bb5842cc1c8d3164946",
-            "MIT",
-        ),
-    })
-}
 
-fn winter_light() -> ThemeVariant {
-    variant(Seeds {
-        id: "winter-light",
-        family_id: "winter-is-coming",
-        name: "Winter is Coming Light",
-        appearance: Appearance::Light,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#ffffff",
-        shell: "#f3f3f3",
-        raised: "#e5e5e5",
-        card: "#ffffff",
-        text: "#1857a4",
-        muted: "#62626a",
-        faint: "#66768a",
-        accent: "#2f86d2",
-        danger: "#de3d3b",
-        warning: "#9b6a00",
-        success: "#08916a",
-        terminal_background: "#ffffff",
-        ansi: [
-            "#011627", "#de3d3b", "#08916a", "#c5a332", "#236ebf", "#7c4dff", "#0097a7", "#7e8993",
-            "#403f53", "#f76c6c", "#49d0b0", "#e7c244", "#4e8cdf", "#b15a91", "#00bcd4", "#403f53",
-        ],
-        syntax: [
-            "#357b42", "#7942a8", "#87429a", "#174781", "#0444ac", "#b1108e", "#207b76", "#224555",
-            "#4f7aa0", "#0444ac", "#b46a0f", "#c73532",
-        ],
-        source: source(
-            "winter-light",
-            "vscode",
-            "https://github.com/johnpapa/vscode-winteriscoming",
-            "260547834cb6ac37dd5b8bb5842cc1c8d3164946",
-            "MIT",
-        ),
-    })
-}
 
-fn palenight() -> ThemeVariant {
-    variant(Seeds {
-        id: "palenight",
-        family_id: "palenight",
-        name: "Palenight",
-        appearance: Appearance::Dark,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#292d3e",
-        shell: "#232635",
-        raised: "#34384c",
-        card: "#292d3e",
-        text: "#eeffff",
-        muted: "#a6accd",
-        faint: "#697098",
-        accent: "#82aaff",
-        danger: "#ff5572",
-        warning: "#ffcb6b",
-        success: "#c3e88d",
-        terminal_background: "#292d3e",
-        ansi: [
-            "#676e95", "#ff5572", "#a9c77d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#ffffff",
-            "#676e95", "#ff5572", "#c3e88d", "#ffcb6b", "#82aaff", "#c792ea", "#89ddff", "#ffffff",
-        ],
-        syntax: [
-            "#697098", "#c792ea", "#c3e88d", "#f78c6c", "#eeffff", "#ffcb6b", "#89ddff", "#bfc7d5",
-            "#82aaff", "#89ddff", "#7986e7", "#ff5572",
-        ],
-        source: source(
-            "palenight",
-            "vscode",
-            "https://github.com/whizkydee/vscode-palenight-theme",
-            "6291efaace90855abe3d79025327ca41b9a3138c",
-            "MIT",
-        ),
-    })
-}
 
 fn synthwave_84() -> ThemeVariant {
     variant(Seeds {
@@ -1226,79 +1039,7 @@ fn synthwave_84() -> ThemeVariant {
     })
 }
 
-fn shades_of_purple() -> ThemeVariant {
-    variant(Seeds {
-        id: "shades-of-purple",
-        family_id: "shades-of-purple",
-        name: "Shades of Purple",
-        appearance: Appearance::Dark,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#2d2b55",
-        shell: "#222244",
-        raised: "#393668",
-        card: "#1e1e3f",
-        text: "#ffffff",
-        muted: "#b8afea",
-        faint: "#8d84c7",
-        accent: "#fad000",
-        danger: "#ec3a37",
-        warning: "#fad000",
-        success: "#3ad900",
-        terminal_background: "#1e1e3f",
-        ansi: [
-            "#000000", "#ec3a37", "#3ad900", "#fad000", "#7857fe", "#ff2c70", "#80fcff", "#ffffff",
-            "#5c5c61", "#ec3a37", "#3ad900", "#fad000", "#6943ff", "#fb94ff", "#80fcff", "#ffffff",
-        ],
-        syntax: [
-            "#b362ff", "#ff628c", "#fb94ff", "#fad000", "#fb94ff", "#fad000", "#fad000", "#9effff",
-            "#fad000", "#fad000", "#ff9d00", "#ec3a37",
-        ],
-        source: source(
-            "shades-of-purple",
-            "vscode",
-            "https://github.com/ahmadawais/shades-of-purple-vscode",
-            "e8eb49f33e5db05ceba6677367b33ddb27ad821c",
-            "MIT with additional upstream condition; see THIRD_PARTY_NOTICES.md",
-        ),
-    })
-}
 
-fn cobalt2() -> ThemeVariant {
-    variant(Seeds {
-        id: "cobalt2",
-        family_id: "cobalt2",
-        name: "Cobalt2",
-        appearance: Appearance::Dark,
-        treatment: SurfaceTreatment::Opaque,
-        background: "#193549",
-        shell: "#15232d",
-        raised: "#20455e",
-        card: "#122738",
-        text: "#ffffff",
-        muted: "#b7c9d3",
-        faint: "#7da1b5",
-        accent: "#ffc600",
-        danger: "#ff628c",
-        warning: "#ffc600",
-        success: "#3ad900",
-        terminal_background: "#122738",
-        ansi: [
-            "#000000", "#ff628c", "#3ad900", "#ffc600", "#0088ff", "#fb94ff", "#80fcff", "#ffffff",
-            "#0050a4", "#ff628c", "#3ad900", "#ffc600", "#0088ff", "#fb94ff", "#80fcff", "#ffffff",
-        ],
-        syntax: [
-            "#0088ff", "#ff9d00", "#ffee80", "#ffc600", "#ff68b8", "#ffc600", "#9effff", "#ffffff",
-            "#ffee80", "#ffc600", "#ffb454", "#f44542",
-        ],
-        source: source(
-            "cobalt2",
-            "vscode",
-            "https://github.com/wesbos/cobalt2-vscode",
-            "c4e9574372b85afad1682ed0fdd1ac0411c62512",
-            "MIT",
-        ),
-    })
-}
 
 fn andromeda() -> ThemeVariant {
     variant(Seeds {
@@ -1332,6 +1073,228 @@ fn andromeda() -> ThemeVariant {
             "vscode",
             "https://github.com/EliverLara/Andromeda",
             "d1abb48c69493000aa0133a32d594eb25e523d4f",
+            "MIT",
+        ),
+    })
+}
+
+fn snowfall_dark() -> ThemeVariant {
+    variant(Seeds {
+        id: "snowfall-dark",
+        family_id: "snowfall",
+        name: "Snowfall Dark",
+        appearance: Appearance::Dark,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#24272d",
+        shell: "#272a30",
+        raised: "#2c3036",
+        card: "#272a30",
+        text: "#91a2a6",
+        muted: "#7b898e",
+        faint: "#606b70",
+        accent: "#84c4df",
+        danger: "#fa7583",
+        warning: "#ebd2a7",
+        success: "#bdb969",
+        terminal_background: "#24272d",
+        ansi: [
+            "#1c1c1c", "#cc6666", "#bdb968", "#f0c674", "#81a2be", "#b193ba", "#7fb2c8", "#c8ccd4",
+            "#636363", "#a04041", "#8b9440", "#ebd2a7", "#5d7f9a", "#82658c", "#5e8d87", "#ffffff",
+        ],
+        syntax: [
+            "#474c54", "#b08cba", "#bdb969", "#ebd2a7", "#acbdc3", "#7fb2c7", "#91a2a6", "#ebd2a7",
+            "#91a2a6", "#7fb2c7", "#ebd2a7", "#fa7583",
+        ],
+        source: source(
+            "snowfall-dark",
+            "zed",
+            "https://github.com/freethinkel/snowfall-zed",
+            "v0.2.2 (e80957dd6dfa3b6106090fa4e8e26cc54c46eed9)",
+            "Author's own",
+        ),
+    })
+}
+
+fn snowfall_light() -> ThemeVariant {
+    variant(Seeds {
+        id: "snowfall-light",
+        family_id: "snowfall",
+        name: "Snowfall Light",
+        appearance: Appearance::Light,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#ffffff",
+        shell: "#fbfbfb",
+        raised: "#f3f3f4",
+        card: "#fbfbfb",
+        text: "#5c6165",
+        muted: "#7d8184",
+        faint: "#a5a8aa",
+        accent: "#88c0d0",
+        danger: "#fa7583",
+        warning: "#ec9c62",
+        success: "#8acb6b",
+        terminal_background: "#ffffff",
+        ansi: [
+            "#1c1c1c", "#cc6666", "#bdb968", "#f0c674", "#81a2be", "#b193ba", "#7fb2c8", "#c8ccd4",
+            "#636363", "#a04041", "#8b9440", "#ec9c62", "#5d7f9a", "#82658c", "#5e8d87", "#ffffff",
+        ],
+        syntax: [
+            "#bdc1c8", "#a25cb5", "#85b300", "#d59225", "#5c6165", "#50afce", "#5c6165", "#d59225",
+            "#5c6165", "#50afce", "#d59225", "#fa7583",
+        ],
+        source: source(
+            "snowfall-light",
+            "zed",
+            "https://github.com/freethinkel/snowfall-zed",
+            "v0.2.2 (e80957dd6dfa3b6106090fa4e8e26cc54c46eed9)",
+            "Author's own",
+        ),
+    })
+}
+
+fn vesper() -> ThemeVariant {
+    variant(Seeds {
+        id: "vesper",
+        family_id: "vesper",
+        name: "Vesper",
+        appearance: Appearance::Dark,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#101010",
+        shell: "#0b0b0b",
+        raised: "#282828",
+        card: "#161616",
+        text: "#ffffff",
+        muted: "#a0a0a0",
+        faint: "#7e7e7e",
+        accent: "#ffc799",
+        danger: "#ff8080",
+        warning: "#ffc799",
+        success: "#99ffe4",
+        terminal_background: "#101010",
+        ansi: [
+            "#1c1c1c", "#ff8080", "#99ffe4", "#ffc799", "#a0a0a0", "#ffc799", "#99ffe4", "#ffffff",
+            "#505050", "#ff8080", "#99ffe4", "#ffc799", "#a0a0a0", "#ffc799", "#99ffe4", "#ffffff",
+        ],
+        syntax: [
+            "#8b8b8b", "#a0a0a0", "#99ffe4", "#ffc799", "#ffc799", "#ffc799", "#ffffff", "#ffffff",
+            "#a0a0a0", "#ffc799", "#a0a0a0", "#ff8080",
+        ],
+        source: source(
+            "vesper",
+            "vscode",
+            "https://github.com/raunofreiberg/vesper",
+            "9043f3849b776949445f0cd4990365959cca35a3",
+            "MIT",
+        ),
+    })
+}
+
+fn one_light() -> ThemeVariant {
+    variant(Seeds {
+        id: "one-light",
+        family_id: "one-dark-pro",
+        name: "One Light",
+        appearance: Appearance::Light,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#fafafa",
+        shell: "#eaeaeb",
+        raised: "#dbdbdc",
+        card: "#fafafa",
+        text: "#383a42",
+        muted: "#696c77",
+        faint: "#a0a1a7",
+        accent: "#526fff",
+        danger: "#e45649",
+        warning: "#986801",
+        success: "#50a14f",
+        terminal_background: "#fafafa",
+        ansi: [
+            "#383a42", "#e45649", "#50a14f", "#986801", "#4078f2", "#a626a4", "#0184bc", "#a0a1a7",
+            "#696c77", "#e45649", "#50a14f", "#c18401", "#4078f2", "#a626a4", "#0184bc", "#fafafa",
+        ],
+        syntax: [
+            "#a0a1a7", "#a626a4", "#50a14f", "#986801", "#c18401", "#4078f2", "#e45649", "#383a42",
+            "#383a42", "#e45649", "#986801", "#ca1243",
+        ],
+        source: source(
+            "one-light",
+            "vscode",
+            "https://github.com/akamud/vscode-theme-onelight",
+            "5866e900db932d580e978a58db42f65cde07998b",
+            "MIT",
+        ),
+    })
+}
+
+fn atom_one_light() -> ThemeVariant {
+    variant(Seeds {
+        id: "atom-one-light",
+        family_id: "atom-one-dark",
+        name: "Atom One Light",
+        appearance: Appearance::Light,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#fafafa",
+        shell: "#eaeaeb",
+        raised: "#dbdbdc",
+        card: "#fafafa",
+        text: "#383a42",
+        muted: "#696c77",
+        faint: "#a0a1a7",
+        accent: "#526fff",
+        danger: "#e45649",
+        warning: "#986801",
+        success: "#50a14f",
+        terminal_background: "#fafafa",
+        ansi: [
+            "#383a42", "#e45649", "#50a14f", "#986801", "#4078f2", "#a626a4", "#0184bc", "#a0a1a7",
+            "#696c77", "#e45649", "#50a14f", "#c18401", "#4078f2", "#a626a4", "#0184bc", "#fafafa",
+        ],
+        syntax: [
+            "#a0a1a7", "#a626a4", "#50a14f", "#986801", "#c18401", "#4078f2", "#e45649", "#383a42",
+            "#383a42", "#e45649", "#986801", "#ca1243",
+        ],
+        source: source(
+            "atom-one-light",
+            "vscode",
+            "https://github.com/akamud/vscode-theme-onelight",
+            "5866e900db932d580e978a58db42f65cde07998b",
+            "MIT",
+        ),
+    })
+}
+
+fn alucard() -> ThemeVariant {
+    variant(Seeds {
+        id: "alucard",
+        family_id: "dracula",
+        name: "Alucard",
+        appearance: Appearance::Light,
+        treatment: SurfaceTreatment::Opaque,
+        background: "#fffbeb",
+        shell: "#efeddc",
+        raised: "#dedccf",
+        card: "#fffbeb",
+        text: "#1f1f1f",
+        muted: "#6c664b",
+        faint: "#8f8a72",
+        accent: "#644ac9",
+        danger: "#cb3a2a",
+        warning: "#846e15",
+        success: "#14710a",
+        terminal_background: "#fffbeb",
+        ansi: [
+            "#fffbeb", "#cb3a2a", "#14710a", "#846e15", "#644ac9", "#a3144d", "#036a96", "#1f1f1f",
+            "#6c664b", "#d74c3d", "#198d0c", "#9e841a", "#7862d0", "#bf185a", "#047fb4", "#2c2b31",
+        ],
+        syntax: [
+            "#6c664b", "#a3144d", "#846e15", "#644ac9", "#036a96", "#14710a", "#036a96", "#1f1f1f",
+            "#1f1f1f", "#a3144d", "#14710a", "#cb3a2a",
+        ],
+        source: source(
+            "alucard",
+            "spec",
+            "https://draculatheme.com/spec",
+            "Alucard Classic 2026-11-28",
             "MIT",
         ),
     })

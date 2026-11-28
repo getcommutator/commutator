@@ -94,12 +94,12 @@ fn families_split_by_appearance() {
     let ids: Vec<&str> = families.iter().map(|f| f.id.as_str()).collect();
     let registry: Vec<&str> = builtin_registry().families.iter().map(|f| f.id.as_str()).collect();
     assert_eq!(ids, registry);
-    let dracula = families.iter().find(|f| f.id == "dracula").unwrap();
-    assert!(dracula.variants.iter().all(|v| v.dark));
+    let nord = families.iter().find(|f| f.id == "nord").unwrap();
+    assert!(nord.variants.iter().all(|v| v.dark));
     let commutator = families.iter().find(|f| f.id == "commutator").unwrap();
     assert_eq!(commutator.variants.iter().filter(|v| v.dark).count(), 1);
     assert_eq!(commutator.variants.iter().filter(|v| !v.dark).count(), 1);
-    assert!(families.iter().flat_map(|f| &f.variants).all(|v| v.swatches.len() == 4));
+    assert!(families.iter().flat_map(|f| &f.variants).all(|v| v.swatches.len() == 3));
 }
 
 #[test]

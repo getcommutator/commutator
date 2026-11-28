@@ -721,7 +721,7 @@ mod tests {
     #[test]
     fn builtins_have_complete_provenance_and_no_validation_errors() {
         let registry = ThemeRegistry::builtin();
-        assert_eq!(registry.families.len(), 19);
+        assert_eq!(registry.families.len(), 55);
         assert!(registry.variant("commutator-light").is_some());
         assert!(registry.variant("commutator-dark").is_some());
         let errors: Vec<_> = registry
@@ -740,7 +740,7 @@ mod tests {
             .iter()
             .map(|family| family.variants.len())
             .sum::<usize>();
-        assert_eq!(variants, 30);
-        assert_eq!(variants * VisualFixture::ALL.len(), 300);
+        assert_eq!(variants, 70);
+        assert_eq!(variants * VisualFixture::ALL.len(), 700);
     }
 }
