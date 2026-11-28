@@ -766,9 +766,9 @@ final class SessionFlowTests: XCTestCase {
         try XCTSkipUnless(FileManager.default.fileExists(atPath: path), "needs a host image at \(path)")
         let app = launch(["-wallpaper", path, "-wallpaper-effect", "halftone", "-route", "more"])
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
-        // The wallpaper lives on the Appearance page.
-        app.cells["settings-appearance"].tap()
-        XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 5))
+        // The wallpaper lives on the Chat page.
+        app.cells["settings-chat"].tap()
+        XCTAssertTrue(app.navigationBars["Chat"].waitForExistence(timeout: 5))
         let effect = app.staticTexts["Effect"]
         for _ in 0..<4 where !effect.isHittable { app.swipeUp() }
         XCTAssertTrue(effect.waitForExistence(timeout: 5))

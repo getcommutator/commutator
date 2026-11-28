@@ -1,6 +1,6 @@
 import UIKit
 
-/// Settings → Appearance: light/dark mode, the light and the dark theme, the wallpaper.
+/// Settings → Appearance: light/dark mode, the light and the dark theme.
 final class AppearanceViewController: SettingsListController {
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -20,7 +20,7 @@ final class AppearanceViewController: SettingsListController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        observers = [WallpaperStore.didChange, ThemeStore.didChange].map {
+        observers = [ThemeStore.didChange].map {
             NotificationCenter.default.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         }
     }
@@ -34,12 +34,6 @@ final class AppearanceViewController: SettingsListController {
     override func sections() -> [(title: String, rows: [Row])] {
         let style = UserDefaults.standard.integer(forKey: "appearance")
         let light = ThemeStore.lightId, dark = ThemeStore.darkId
-        var wall = [Row(id: "wallpaper:choose", title: WallpaperStore.isSet ? "Change Wallpaper…" : "Choose Wallpaper…", subtitle: WallpaperStore.isSet ? WallpaperStore.name : "Shown behind new chats and the sessions list", symbol: "photo")]
-        if WallpaperStore.isSet {
-            let effect = WallpaperStore.effect
-            wall.append(Row(id: "wallpaper:effect", title: "Effect", subtitle: "\(WallpaperStore.label(effect)) — \(WallpaperStore.detail(effect))", symbol: "wand.and.stars"))
-            wall.append(Row(id: "wallpaper:remove", title: "Remove Wallpaper", symbol: "trash", accessory: .none, destructive: true))
-        }
         return [
             ("Mode", [
                 Row(id: "appearance:0", title: "System", symbol: "circle.lefthalf.filled", accessory: .check(style == 0)),
@@ -52,7 +46,6 @@ final class AppearanceViewController: SettingsListController {
                 Row(id: "theme:dark", title: "Dark Theme", subtitle: Self.variantName(dark), symbol: "moon",
                     swatches: ThemeStore.variant(dark)?.swatches ?? []),
             ]),
-            ("Wallpaper", wall),
         ]
     }
 
@@ -65,20 +58,6 @@ final class AppearanceViewController: SettingsListController {
             reload()
         case "theme:light", "theme:dark":
             navigationController?.pushViewController(ThemePickerViewController(dark: row.id == "theme:dark"), animated: true)
-        case "wallpaper:choose":
-            WallpaperPicker.present(from: self)
-        case "wallpaper:effect":
-            let sheet = UIAlertController(title: "Wallpaper Effect", message: nil, preferredStyle: .actionSheet)
-            for e in WallpaperStore.allEffects {
-                let action = UIAlertAction(title: WallpaperStore.label(e), style: .default) { _ in WallpaperStore.effect = e }
-                action.setValue(e == WallpaperStore.effect, forKey: "checked")
-                sheet.addAction(action)
-            }
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            sheet.popoverPresentationController?.sourceView = collectionView.cellForItem(at: path)
-            present(sheet, animated: true)
-        case "wallpaper:remove":
-            WallpaperStore.remove()
         default:
             break
         }
