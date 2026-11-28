@@ -80,6 +80,11 @@ pub(super) fn repository(url: &str) -> String {
 }
 
 pub(super) fn checkout_command(detail: &ChangeRequestDetail, url: &str) -> String {
+    // GitLab: the project path runs up to `/-/` and may hold subgroups.
+    if let Some((project, _)) = url.split_once("/-/merge_requests/") {
+        let project = project.split('/').skip(3).collect::<Vec<_>>().join("/");
+        return format!("glab mr checkout {} --repo {project}", detail.number);
+    }
     format!(
         "gh pr checkout {} --repo {}",
         detail.number,

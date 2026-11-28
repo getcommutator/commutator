@@ -12948,6 +12948,18 @@ impl Render for Shell {
                 },
             ))
             .on_action(cx.listener(
+                |this, action: &crate::pull_request_detail::OpenPullRequestInBrowser, window, cx| {
+                    // Browser tabs belong to a chat; off the chat route there
+                    // is none to hold it.
+                    if this.chat_pull_requests_available() {
+                        this.set_surfaces_open(true, cx);
+                        this.add_browser_surface(Some(action.0.clone()), window, cx);
+                    } else {
+                        cx.open_url(&action.0);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
                 |this, _: &crate::pull_request_detail::ClosePullRequest, _, cx| {
                     if let Some(ix) = this.pull_request_pane.active_index() {
                         this.close_pull_request_tab(ix, cx);

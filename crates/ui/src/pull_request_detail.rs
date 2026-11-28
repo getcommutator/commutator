@@ -30,6 +30,12 @@ pub struct OpenPullRequest(pub String, pub Option<String>);
 #[action(namespace = shell, no_json)]
 pub struct ClosePullRequest;
 
+/// Open this page in a Commutator browser tab beside the chat; the default
+/// browser where no chat is in focus.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenPullRequestInBrowser(pub String);
+
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
 pub struct OpenPrImage(pub String);
@@ -1347,17 +1353,28 @@ impl PullRequestDetailPage {
             .detail
             .as_ref()
             .map_or(self.url.clone(), |d| d.url.clone());
-        let (web, link) = (url.clone(), url.clone());
+        let (web, link, inside) = (url.clone(), url.clone(), url.clone());
+        let gitlab = url::Url::parse(&url)
+            .is_ok_and(|url| url.host_str().is_some_and(|host| host.contains("gitlab")));
+        let (noun, host, sigil) = if gitlab { ("MR", "GitLab", "!") } else { ("PR", "GitHub", "#") };
         let mut card = crate::popover::popover_card(theme)
             .w(px(240.0))
             .flex()
             .flex_col()
             .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_menu(cx)))
             .child(
+                item("pr-menu-inside", icons::GLOBE, format!("Open {noun} here")).on_click(
+                    cx.listener(move |page, _, window, cx| {
+                        page.close_menu(cx);
+                        window.dispatch_action(Box::new(OpenPullRequestInBrowser(inside.clone())), cx);
+                    }),
+                ),
+            )
+            .child(
                 item(
                     "pr-menu-web",
                     icons::LUCIDE_SQUARE_ARROW_OUT_UP_RIGHT,
-                    "Open in the browser".into(),
+                    format!("Open on {host}"),
                 )
                 .on_click(cx.listener(move |page, _, _, cx| {
                     cx.open_url(&web);
@@ -1389,7 +1406,12 @@ impl PullRequestDetailPage {
                 }))
             };
             card = card
-                .child(copy("pr-menu-number", icons::COPY, "Copy number", format!("#{}", detail.number)))
+                .child(copy(
+                    "pr-menu-number",
+                    icons::COPY,
+                    &format!("Copy {noun} number"),
+                    format!("{sigil}{}", detail.number),
+                ))
                 .when(!detail.head_ref_name.is_empty(), |el| {
                     el.child(copy(
                         "pr-menu-branch",

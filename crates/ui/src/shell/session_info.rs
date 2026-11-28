@@ -101,6 +101,33 @@ fn info_row(theme: &Theme, glyph: AnyElement, label: SharedString) -> gpui::Div 
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
+/// The card's status chip: what needs doing first, else the lifecycle state.
+fn pull_request_status(
+    pr: &commutator_proto::ChangeRequestSummary,
+    theme: &Theme,
+) -> (&'static str, gpui::Hsla) {
+    use commutator_proto::{
+        ChangeRequestReviewDecision as Review, ChangeRequestState as State,
+        change_request_assessment::CiState,
+    };
+    match pr.state {
+        State::Merged => return ("Merged", theme.code_text),
+        State::Closed => return ("Closed", theme.danger),
+        State::Open => {}
+    }
+    let Some(signals) = &pr.signals else {
+        return ("Open", theme.success);
+    };
+    match (signals.ci, signals.review_decision) {
+        (CiState::Failed, _) => ("Checks failing", theme.danger),
+        (_, Review::ChangesRequested) => ("Changes requested", theme.warning),
+        (CiState::Pending, _) => ("Checks running", theme.warning),
+        (_, Review::Approved) => ("Approved", theme.success),
+        (_, Review::ReviewRequired) => ("Review required", theme.text_muted),
+        _ => ("Open", theme.success),
+    }
+}
+
 fn row_glyph(path: &'static str, theme: &Theme) -> AnyElement {
     icon(path)
         .size(px(15.0))
@@ -398,6 +425,92 @@ impl Shell {
                 }))
         });
 
+        // ── The branch's pull request (t3code's card): state-tinted glyph,
+        // the title on two lines, then the number and where it stands.
+        let pull_request = self
+            .state
+            .read(cx)
+            .change_request_for_chat(&chat)
+            .cloned()
+            .map(|pr| {
+                let (label, tone) = pull_request_status(&pr, &theme);
+                let glyph = crate::change_requests::ChangeRequestBadgeModel::from_summary(&pr)
+                    .tone
+                    .color(&theme);
+                let (url, device) = (pr.url.clone(), chat.device_id.clone());
+                div()
+                    .id("session-info-pull-request")
+                    .debug_selector(|| "session-info-pull-request".into())
+                    .flex()
+                    .items_start()
+                    .gap(px(8.0))
+                    .px(px(9.0))
+                    .py(px(5.0))
+                    .rounded(px(popover::MENU_ITEM_RADIUS))
+                    .text_size(crate::typography::ui_rems(13.0))
+                    .text_color(theme.text)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(crate::theme::ink(0.06)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_session_info_overlay(cx);
+                        crate::pull_request_detail::open_on_device(
+                            &url,
+                            Some(device.clone()),
+                            window,
+                            cx,
+                        );
+                    }))
+                    .child(popover::picker_icon_slot(
+                        icon(icons::PULL_REQUEST)
+                            .size(px(15.0))
+                            .text_color(glyph)
+                            .into_any_element(),
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .line_clamp(2)
+                                    .child(SharedString::from(pr.title.replace(['\r', '\n'], " "))),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .font_family(theme.font_mono.clone())
+                                            .text_color(theme.text_muted)
+                                            .child(format!(
+                                                "{}{}",
+                                                if pr.provider == "gitlab" { "!" } else { "#" },
+                                                pr.number
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .px(px(7.0))
+                                            .py(px(2.0))
+                                            .rounded(px(5.0))
+                                            .bg(tone.opacity(0.12))
+                                            .text_size(px(11.0))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(tone)
+                                            .child(label),
+                                    ),
+                            ),
+                    )
+            });
+
         // ── The project's run actions.
         let actions = self.render_session_info_actions(&theme, cx);
 
@@ -419,6 +532,7 @@ impl Shell {
             .child(device_row)
             .child(project_row)
             .children(branch_row)
+            .children(pull_request)
             .children(actions);
 
         // The session card keeps its height; only the lanes under it give.
