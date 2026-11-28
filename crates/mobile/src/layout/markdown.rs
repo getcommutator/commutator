@@ -342,7 +342,10 @@ pub(crate) fn prepare_runs(ctx: &mut Ctx, runs: &[InlineRun], kind: TextKind, mu
     let body = ctx.typo.style(Family::Sans, base_weight, false, size);
     let code = ctx.typo.style(Family::Mono, Weight::Regular, false, size * TYPE.inline_code / TYPE.body.0);
     let pad = ctx.typo.px(4.0);
-    let chip_h = code.ascent + code.descent + ctx.typo.px(4.0);
+    // The chip wraps the code's own glyphs, which sit on the prose's
+    // baseline: 2pt above its ascent and below its descent.
+    let chip_pad = ctx.typo.px(2.0);
+    let chip_h = code.ascent + code.descent + 2.0 * chip_pad;
     let lh = ctx.typo.px(lh);
     // A thin space either side of a formula, like TeX's math surround.
     let math_pad = ctx.typo.px(1.5);
@@ -457,13 +460,14 @@ pub(crate) fn prepare_runs(ctx: &mut Ctx, runs: &[InlineRun], kind: TextKind, mu
             ..PrepareOptions::default()
         },
     );
+    let base = baseline(lh, body);
     PText {
         p,
         lh,
-        base: baseline(lh, body),
+        base,
         paints,
         links,
-        chip: ((lh - chip_h) / 2.0, chip_h),
+        chip: ((base - code.ascent - chip_pad).max(0.0), chip_h),
         badges: Vec::new(),
         marks: Vec::new(),
         math,

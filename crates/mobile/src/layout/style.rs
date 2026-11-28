@@ -105,7 +105,7 @@ pub(crate) const TYPE: TypeScale = TypeScale {
     body: (16.5, 25.0),
     h: [(22.0, 29.0), (19.5, 27.0), (17.5, 25.0), (16.5, 25.0)],
     code: (13.5, 20.0),
-    inline_code: 14.5,
+    inline_code: 15.0,
     small: (13.5, 19.0),
 };
 
