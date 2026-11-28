@@ -180,6 +180,60 @@ fn a_chat_round_trips_through_a_local_engine() {
     drop(engine_rt);
 }
 
+/// Archive and sleep set on one device reach another through the engine:
+/// a phone's sleep goes to the engine (not only its replica), and each
+/// client's replica takes the engine's archive and sleep.
+#[test]
+fn archive_and_sleep_reach_other_devices_through_a_local_engine() {
+    let engine_dir = tempfile::tempdir().unwrap();
+    let desktop_dir = tempfile::tempdir().unwrap();
+    let phone_dir = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let engine_rt = start_engine(engine_dir.path(), port);
+    let desktop = connect(desktop_dir.path(), engine_dir.path(), port);
+    let mut config = ClientConfig::new(phone_dir.path());
+    config.device_id = "phone-test".into();
+    let phone = Client::new(
+        config,
+        Credentials::Local {
+            port,
+            engine_data_dir: engine_dir.path().to_path_buf(),
+        },
+        Arc::new(NullListener),
+    )
+    .unwrap();
+    let host = engine_device(&desktop);
+    let chat_id = mock_chat(&desktop, &host, "Shelves");
+    let row = |client: &Client| client.workspace().session(&chat_id).cloned();
+    wait_for("the chat on the phone", Duration::from_secs(10), || {
+        row(&phone).is_some_and(|r| r.title == "Shelves")
+    });
+
+    let until = chrono::Utc::now().timestamp_millis() + 3_600_000;
+    phone.sleep_session(&chat_id, Some(until)).unwrap();
+    wait_for(
+        "the phone's sleep on the desktop",
+        Duration::from_secs(10),
+        || row(&desktop).is_some_and(|r| r.sleep_until_ms == Some(until)),
+    );
+    desktop.archive_session(&chat_id).unwrap();
+    wait_for(
+        "the desktop's archive on the phone",
+        Duration::from_secs(10),
+        || row(&phone).is_some_and(|r| r.archived),
+    );
+    desktop.sleep_session(&chat_id, None).unwrap();
+    wait_for(
+        "the desktop's wake on the phone",
+        Duration::from_secs(10),
+        || row(&phone).is_some_and(|r| r.sleep_until_ms.is_none()),
+    );
+
+    desktop.shutdown();
+    phone.shutdown();
+    drop(engine_rt);
+}
+
 /// A send with an image echoes at once (with its `pending://` ref) and the
 /// bytes upload behind it; the engine runs the turn on its own copy.
 #[test]

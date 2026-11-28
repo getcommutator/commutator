@@ -841,7 +841,11 @@ impl Client {
             ),
             None => None,
         };
-        self.chat_write(chat_id, |doc| doc.set_chat_sleep(chat_id, until, Utc::now()))
+        self.chat_write(chat_id, |doc| doc.set_chat_sleep(chat_id, until, Utc::now()))?;
+        self.local_mutate(
+            serde_json::json!({"op": "setChatSleep", "chatId": chat_id, "until": until_ms}),
+        );
+        Ok(())
     }
 
     /// Stop waiting on the background processes a chat's agent said it

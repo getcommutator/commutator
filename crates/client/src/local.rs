@@ -426,6 +426,9 @@ impl LocalHost {
                 let written = client.registry_write(|doc| {
                     for chat in &chats {
                         doc.upsert_chat(chat)?;
+                        // Not part of an upsert: without this the replica
+                        // never sees a sleep set or woken elsewhere.
+                        doc.mirror_chat_sleep(&chat.id, chat.sleep.as_ref())?;
                     }
                     for id in &gone {
                         doc.delete_chat(id)?;
