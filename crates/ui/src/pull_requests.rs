@@ -1582,7 +1582,9 @@ impl PullRequestsPage {
                 .mx_auto()
                 .px(px(PAGE_PAD_X - 12.0))
         };
-        match self.lines.get(index).cloned() {
+        // A list item is laid out as a root, where `mx_auto` does nothing:
+        // the column centres inside a full-width wrapper instead.
+        let line = match self.lines.get(index).cloned() {
             None => div().into_any_element(),
             Some(Line::Header(group, count, first)) => column()
                 .pt(px(if first { 4.0 } else { 18.0 }))
@@ -1619,7 +1621,8 @@ impl PullRequestsPage {
                     .child(self.render_row(i, &theme, cx))
                     .into_any_element()
             }
-        }
+        };
+        div().w_full().child(line).into_any_element()
     }
 
     fn render_row(&self, i: usize, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
