@@ -202,6 +202,10 @@ pub(super) enum NativeEvent {
     NewTab(String),
     Key(gpui::Keystroke),
     Favicon { page: String, url: String },
+    /// A click landed in the page: GPUI's focus follows it there.
+    Clicked,
+    /// The Web Store's Add button asked for extension `id`.
+    InstallExtension(String),
 }
 
 struct ObserverState {
@@ -228,6 +232,10 @@ define_class!(
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn policy(&self, _view: &WKWebView, action: &WKNavigationAction, decision: &block2::Block<dyn Fn(WKNavigationActionPolicy)>) {
             let url = unsafe { action.request().URL() }.and_then(|u| u.absoluteString()).map(|u| u.to_string()).unwrap_or_default();
+            if let Some(id) = super::extensions::install_link(&url) {
+                let _ = self.ivars().tx.try_send(NativeEvent::InstallExtension(id));
+                return decision.call((WKNavigationActionPolicy::Cancel,));
+            }
             if allowed_navigation(&url) && unsafe { action.targetFrame() }.is_some_and(|frame| unsafe { frame.isMainFrame() }) {
                 *self.ivars().requested_url.borrow_mut() = Some(url.clone());
             }
@@ -330,6 +338,14 @@ pub(super) struct Host {
     view: Retained<WKWebView>,
     observer: Retained<Observer>,
     clip: Retained<BrowserClipView>,
+    /// The web view's own superview inside the clip, at the page's bounds: the
+    /// web view fills it, and WebKit docks its inspector in it beside the page.
+    frame: Retained<NSView>,
+    /// GPUI's focus is on the page: it takes AppKit's keyboard while shown.
+    keyboard: bool,
+    tab: String,
+    /// Extensions know the page as a tab while it lives.
+    _extension_tab: Option<super::extensions::TabMark>,
     clip_mask: Retained<AnyObject>,
     parent: Retained<NSView>,
     visible_bounds: Option<Bounds<Pixels>>,
@@ -344,11 +360,29 @@ pub(super) struct Host {
 }
 
 impl NativePage {
-    pub fn new(window: &Window, data: &BrowserData, tx: Sender) -> Result<Self, String> {
+    pub fn new(
+        window: &Window,
+        data: &BrowserData,
+        tx: Sender,
+        cx: &mut gpui::App,
+    ) -> Result<Self, String> {
         let mtm = MainThreadMarker::new().ok_or("Browser must be created on the main thread")?;
         let new_tab = tx.clone();
-        let web = wry::WebViewBuilder::new()
-            .with_webview_configuration(data.configuration(mtm))
+        let configuration = data.configuration(mtm);
+        let extended = super::extensions::attach(&configuration, cx);
+        let builder = wry::WebViewBuilder::new()
+            .with_webview_configuration(configuration)
+            .with_devtools(true)
+            // Each page's requests and console lines, for agents' tools.
+            .with_initialization_script(super::agent::INSTRUMENT)
+            // A two-finger swipe goes back and forward, as in Safari.
+            .with_back_forward_navigation_gestures(true);
+        // The Web Store's own button installs into Commutator.
+        let builder = match extended {
+            true => builder.with_initialization_script(super::extensions::STORE_SCRIPT),
+            false => builder,
+        };
+        let web = builder
             .with_visible(false)
             .with_focused(false)
             .with_new_window_req_handler(move |url, _| {
@@ -396,7 +430,17 @@ impl NativePage {
                 break;
             }
         }
-        clip.addSubview(&view);
+        let frame = NSView::initWithFrame(NSView::alloc(mtm), objc2_foundation::NSRect::ZERO);
+        frame.setAutoresizesSubviews(true);
+        clip.addSubview(&frame);
+        view.setFrame(frame.bounds());
+        view.setAutoresizingMask(
+            objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable
+                | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        frame.addSubview(&view);
+        // A trackpad's pinch zooms the page, as in Safari.
+        let _: () = unsafe { msg_send![&*view, setAllowsMagnification: true] };
 
         let observer = Observer::new(tx.clone(), mtm);
         unsafe {
@@ -411,20 +455,41 @@ impl NativePage {
             }
         }
         let shortcuts = Rc::new(RefCell::new(Vec::<String>::new()));
-        let monitor_view = view.clone();
+        let monitor_view = frame.clone();
+        let monitor_clip = clip.clone();
         let monitor_tx = tx.clone();
         let monitor_shortcuts = shortcuts.clone();
         let callback = block2::RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
             let e = unsafe { event.as_ref() };
-            if monitor_view.isHidden()
-                || !has_focus(&monitor_view)
-                || e.window(mtm) != monitor_view.window()
-            {
+            if monitor_clip.isHidden() || e.window(mtm) != monitor_view.window() {
                 return event.as_ptr();
             }
+            if e.r#type() != objc2_app_kit::NSEventType::KeyDown {
+                // What AppKit will deliver the click to: the page (or its
+                // inspector) tells GPUI, whose focus follows it there.
+                let hit = monitor_view
+                    .window()
+                    .and_then(|w| w.contentView())
+                    .and_then(|content| content.hitTest(e.locationInWindow()));
+                if hit.is_some_and(|v| v.isDescendantOf(&monitor_view)) {
+                    let _ = monitor_tx.try_send(NativeEvent::Clicked);
+                }
+                return event.as_ptr();
+            }
+            let responder = monitor_view
+                .window()
+                .and_then(|w| w.firstResponder())
+                .and_then(|r| r.downcast::<NSView>().ok())
+                .filter(|v| v.isDescendantOf(&monitor_view));
+            let Some(responder) = responder else {
+                return event.as_ptr();
+            };
             let mods = e.modifierFlags();
+            // The key as ⌘ types it: Latin in a layout like Russian, whose own
+            // letters ⌘ doesn't use (⌥ left out, as charactersIgnoringModifiers).
+            let as_cmd = NSEventModifierFlags::Command | (mods & NSEventModifierFlags::Shift);
             let key = e
-                .charactersIgnoringModifiers()
+                .charactersByApplyingModifiers(as_cmd)
                 .map(|s| s.to_string().to_lowercase())
                 .unwrap_or_default();
             let mut combo = String::new();
@@ -447,30 +512,58 @@ impl NativePage {
             let browser_key = matches!(
                 combo.as_str(),
                 "cmd-l" | "cmd-t" | "cmd-w" | "cmd-[" | "cmd-]" | "cmd-shift-r" | "cmd-k" | "cmd-,"
+                    | "cmd-alt-i"
             );
             let app_key = monitor_shortcuts
                 .borrow()
                 .iter()
                 .any(|s| gpui::Keystroke::parse(s).is_ok_and(|s| s == keystroke));
-            if browser_key || app_key {
-                if monitor_tx.try_send(NativeEvent::Key(keystroke)).is_ok() {
-                    std::ptr::null_mut()
-                } else {
-                    event.as_ptr()
-                }
-            } else {
-                event.as_ptr()
+            if (browser_key || app_key) && monitor_tx.try_send(NativeEvent::Key(keystroke)).is_ok() {
+                return std::ptr::null_mut();
             }
+            // ⌘C, ⌘V and the rest go to the page's first responder, as an Edit
+            // menu's items would send them.
+            if let Some(action) = edit_action(mods, &key) {
+                let sent = unsafe {
+                    objc2_app_kit::NSApplication::sharedApplication(mtm).sendAction_to_from(
+                        objc2::runtime::Sel::register(action),
+                        None,
+                        None,
+                    )
+                };
+                if sent {
+                    return std::ptr::null_mut();
+                }
+            }
+            // An arrow, ⌃ or ⌥ chord would reach GPUI's view as a key
+            // equivalent first: the page takes it straight. Other ⌘ chords stay
+            // on AppKit's way, to WebKit's key equivalents and the menu.
+            if mods.contains(NSEventModifierFlags::Command)
+                && !mods.contains(NSEventModifierFlags::Function)
+            {
+                return event.as_ptr();
+            }
+            responder.keyDown(e);
+            std::ptr::null_mut()
         });
         let monitor = unsafe {
-            NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &callback)
+            NSEvent::addLocalMonitorForEventsMatchingMask_handler(
+                NSEventMask::KeyDown | NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown,
+                &callback,
+            )
         };
+        let tab = tab_id();
+        let _extension_tab = extended.then(|| super::extensions::opened_tab(&tab, &view));
         Ok(Self(Rc::new(RefCell::new(Host {
             data: data.clone(),
             web,
             view,
             observer,
             clip,
+            frame,
+            keyboard: false,
+            tab,
+            _extension_tab,
             clip_mask,
             parent,
             visible_bounds: None,
@@ -574,6 +667,31 @@ impl NativePage {
     }
 }
 
+/// Each page's id as extensions know it.
+fn tab_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!("browser-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The Edit menu's action for a ⌘ chord typed in the page.
+fn edit_action(flags: NSEventModifierFlags, key: &str) -> Option<&'static std::ffi::CStr> {
+    let has = |f| flags.contains(f);
+    if !has(NSEventModifierFlags::Command) || has(NSEventModifierFlags::Control) {
+        return None;
+    }
+    let (alt, shift) = (has(NSEventModifierFlags::Option), has(NSEventModifierFlags::Shift));
+    Some(match (key, alt, shift) {
+        ("c", false, false) => c"copy:",
+        ("x", false, false) => c"cut:",
+        ("v", false, false) => c"paste:",
+        ("v", true, true) => c"pasteAsPlainText:",
+        ("a", false, false) => c"selectAll:",
+        ("z", false, false) => c"undo:",
+        ("z", false, true) => c"redo:",
+        _ => return None,
+    })
+}
+
 fn has_focus(view: &NSView) -> bool {
     view.window()
         .and_then(|w| w.firstResponder())
@@ -653,7 +771,7 @@ impl Host {
             } else {
                 self.parent.bounds().size.height - web_y - web_height
             };
-            self.view.setFrame(objc2_foundation::NSRect::new(
+            self.frame.setFrame(objc2_foundation::NSRect::new(
                 objc2_foundation::NSPoint::new(f64::from(f32::from(bounds.origin.x)), web_y),
                 objc2_foundation::NSSize::new(
                     f64::from(f32::from(bounds.size.width)).max(0.),
@@ -691,9 +809,6 @@ impl Host {
             && self
                 .visible_bounds
                 .is_some_and(|b| f32::from(b.size.width) > 0. && f32::from(b.size.height) > 0.);
-        if (!visible || self.presentation == Presentation::Passthrough) && has_focus(&self.view) {
-            let _ = self.web.focus_parent();
-        }
         if self.view.isHidden() == visible {
             #[cfg(feature = "browser-fixture")]
             self.visibility_changes
@@ -701,9 +816,116 @@ impl Host {
             let _ = self.web.set_visible(visible);
         }
         self.clip.setHidden(!visible);
+        // AppKit's keyboard follows GPUI's focus: the page has it only while
+        // GPUI's focus is on it and it is shown; a menu or dialog that takes
+        // GPUI's focus takes the keys too.
+        let wants = visible && self.keyboard && self.presentation == Presentation::Live;
+        if wants && !has_focus(&self.frame) {
+            let _ = self.web.focus();
+        } else if !wants && has_focus(&self.frame) {
+            let _ = self.web.focus_parent();
+        }
+    }
+    pub fn set_keyboard(&mut self, keyboard: bool) {
+        if self.keyboard != keyboard {
+            self.keyboard = keyboard;
+            self.update_visibility();
+        }
+    }
+    pub fn devtools_open(&self) -> bool {
+        self.web.is_devtools_open()
+    }
+    /// WebKit's inspector, docked beside the page inside the panel.
+    pub fn toggle_devtools(&self) {
+        match self.web.is_devtools_open() {
+            true => self.web.close_devtools(),
+            false => self.web.open_devtools(),
+        }
+    }
+    pub fn set_zoom(&self, zoom: f64) {
+        let _ = self.web.zoom(zoom);
+    }
+    pub fn hard_reload(&self) {
+        self.observer.ivars().error.borrow_mut().take();
+        let _: Option<Retained<AnyObject>> = unsafe { msg_send![&*self.view, reloadFromOrigin] };
+        self.observer.changed();
+    }
+    /// The page as its viewport shows it, at one pixel a point (small enough
+    /// for an agent), as a PNG.
+    pub fn snapshot(&self, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return done(Err("not on the main thread".into()));
+        };
+        let done = std::cell::Cell::new(Some(done));
+        let finish = block2::RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+            let Some(done) = done.take() else { return };
+            let png = unsafe { image.as_ref() }
+                .and_then(|image| {
+                    let tiff = image.TIFFRepresentation()?;
+                    let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+                    let png = unsafe {
+                        rep.representationUsingType_properties(
+                            NSBitmapImageFileType::PNG,
+                            &objc2_foundation::NSDictionary::new(),
+                        )
+                    }?;
+                    Some(png.to_vec())
+                })
+                .ok_or_else(|| {
+                    unsafe { error.as_ref() }
+                        .map_or("WebKit took no picture".into(), |e| e.localizedDescription().to_string())
+                });
+            done(png);
+        });
+        unsafe {
+            let config = objc2_web_kit::WKSnapshotConfiguration::new(mtm);
+            let width = self.view.bounds().size.width;
+            let number = objc2_foundation::NSNumber::new_f64(width);
+            config.setSnapshotWidth(Some(&number));
+            self.view
+                .takeSnapshotWithConfiguration_completionHandler(Some(&config), &finish);
+        }
+    }
+    /// Runs `script` in the page; `done` gets its result as JSON.
+    pub fn eval_with_callback(&self, script: &str, done: impl Fn(String) + Send + 'static) {
+        let _ = self.web.evaluate_script_with_callback(script, done);
+    }
+    /// Removes the data of `kinds` WebKit keeps for `host`'s site in this
+    /// profile's store: the records named `host` or a domain it is under.
+    pub fn clear_site_data(&self, kinds: &[&str], host: String) {
+        use objc2_foundation::{NSArray, NSSet};
+        let kinds: Vec<Retained<NSString>> = kinds.iter().map(|k| NSString::from_str(k)).collect();
+        let kinds = NSSet::from_retained_slice(&kinds);
+        let store: Retained<AnyObject> = unsafe {
+            let configuration: Retained<AnyObject> = msg_send![&*self.view, configuration];
+            msg_send![&configuration, websiteDataStore]
+        };
+        let (from, removed) = (store.clone(), kinds.clone());
+        let found = block2::RcBlock::new(move |records: std::ptr::NonNull<NSArray<AnyObject>>| {
+            let records = unsafe { records.as_ref() };
+            let ours: Vec<Retained<AnyObject>> = records
+                .iter()
+                .filter(|r| {
+                    let name: Retained<NSString> = unsafe { msg_send![&**r, displayName] };
+                    let name = name.to_string();
+                    host == name || host.ends_with(&format!(".{name}"))
+                })
+                .collect();
+            let ours = NSArray::from_retained_slice(&ours);
+            let done = block2::RcBlock::new(|| {});
+            let () = unsafe {
+                msg_send![&from, removeDataOfTypes: &*removed, forDataRecords: &*ours, completionHandler: &*done]
+            };
+        });
+        let () = unsafe { msg_send![&store, fetchDataRecordsOfTypes: &*kinds, completionHandler: &*found] };
     }
     fn present(&mut self, presentation: Presentation) {
         self.presentation = presentation;
+        // The tab shown is the one extensions act on, as a Chrome window's.
+        if presentation == Presentation::Live && self._extension_tab.is_some() {
+            super::extensions::activate_tab(&self.tab);
+        }
         self.clip
             .ivars()
             .dragging
@@ -714,7 +936,7 @@ impl Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        if has_focus(&self.view) {
+        if has_focus(&self.frame) {
             let _ = self.web.focus_parent();
         }
         unsafe {
@@ -728,7 +950,11 @@ impl Drop for Host {
             self.view.setNavigationDelegate(None);
             self.view.stopLoading();
         }
+        if self.web.is_devtools_open() {
+            self.web.close_devtools();
+        }
         self.view.removeFromSuperview();
+        self.frame.removeFromSuperview();
         self.clip.removeFromSuperview();
     }
 }

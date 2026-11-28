@@ -9,6 +9,9 @@ use linux as native;
 use macos as native;
 #[cfg(windows)]
 mod windows_webview;
+pub(crate) mod extensions;
+mod annotate;
+pub(crate) mod agent;
 #[cfg(windows)]
 use windows_webview as native;
 pub mod model;
@@ -22,7 +25,7 @@ use gpui::{
 use model::{PageState, Presentation};
 gpui::actions!(
     browser,
-    [Reload, FocusAddress, NewTab, CloseTab, Back, Forward]
+    [Reload, FocusAddress, NewTab, CloseTab, Back, Forward, ToggleDevTools, HardReload]
 );
 
 pub(crate) fn bind_keys(cx: &mut App, keymap: &crate::settings::KeymapConfig) {
@@ -53,6 +56,7 @@ pub(crate) fn bind_keys(cx: &mut App, keymap: &crate::settings::KeymapConfig) {
     bind!("mod-w", CloseTab);
     bind!("mod-[", Back);
     bind!("mod-]", Forward);
+    bind!("mod-alt-i", ToggleDevTools);
     let reload = keymap.get(ShortcutId::BrowserReload);
     if available(reload, Some(ShortcutId::BrowserReload))
         && gpui::Keystroke::parse(&platform_combo(reload)).is_ok()
@@ -68,6 +72,12 @@ pub(crate) fn bind_keys(cx: &mut App, keymap: &crate::settings::KeymapConfig) {
 #[derive(Clone, Debug)]
 pub enum BrowserEvent {
     Changed,
+    /// An element picked on the page, for the chat's composer; `marker` is
+    /// the page's mark for it, numbered once the chip is.
+    Annotated {
+        annotation: commutator_proto::annotation::BrowserAnnotation,
+        marker: u32,
+    },
     NewTab(Option<String>),
     Close,
 }
@@ -112,6 +122,13 @@ pub struct BrowserSurface {
     #[cfg(feature = "browser-fixture")]
     fixture_preview_open: std::rc::Rc<std::cell::Cell<Option<gpui::Point<gpui::Pixels>>>>,
     presentation: Presentation,
+    /// The page's zoom, 1 unless changed in the `…` menu.
+    zoom: f64,
+    /// The toolbar's `…` menu, open at this point.
+    menu: Option<gpui::Point<gpui::Pixels>>,
+    /// While the user picks elements on the page for the chat.
+    annotations: Option<annotate::Session>,
+    _focus_subs: [Subscription; 2],
     #[cfg(target_os = "macos")]
     resize_inset: gpui::Pixels,
     #[cfg(any(target_os = "macos", windows))]
@@ -150,7 +167,7 @@ impl BrowserSurface {
     ) -> Self {
         let address = cx.new(|cx| {
             ComposerInput::with_context("Website or localhost:3000", "PaletteSearch", cx)
-                .with_text_metrics(11.0, 16.0)
+                .with_text_metrics(12.5, 18.0)
                 .with_single_line()
                 .with_accessibility_role(gpui::Role::TextInput)
         });
@@ -178,12 +195,18 @@ impl BrowserSurface {
             }
         });
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-        let _ = (window, context);
+        let _ = context;
+        let focus = cx.focus_handle();
+        // AppKit's keyboard goes to the page only while GPUI's focus is on it.
+        let focus_subs = [
+            cx.on_focus(&focus, window, |this, _, cx| this.set_keyboard(true, cx)),
+            cx.on_blur(&focus, window, |this, _, cx| this.set_keyboard(false, cx)),
+        ];
         Self {
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             context,
             address,
-            focus: cx.focus_handle(),
+            focus,
             page: PageState::default(),
             favicon: None,
             address_edited: false,
@@ -195,6 +218,10 @@ impl BrowserSurface {
             #[cfg(feature = "browser-fixture")]
             fixture_preview_open: Default::default(),
             presentation: Presentation::Hidden,
+            zoom: 1.0,
+            menu: None,
+            annotations: None,
+            _focus_subs: focus_subs,
             #[cfg(target_os = "macos")]
             resize_inset: gpui::px(0.0),
             #[cfg(any(target_os = "macos", windows))]
@@ -374,7 +401,17 @@ impl BrowserSurface {
             } else {
                 #[cfg(any(target_os = "macos", windows))]
                 {
-                    native::NativePage::new(window, &self.context.data, self.native_tx.clone())
+                    #[cfg(target_os = "macos")]
+                    let made = native::NativePage::new(
+                        window,
+                        &self.context.data,
+                        self.native_tx.clone(),
+                        cx,
+                    );
+                    #[cfg(windows)]
+                    let made =
+                        native::NativePage::new(window, &self.context.data, self.native_tx.clone());
+                    made
                         .map(|mut native| {
                             native.present(self.presentation);
                             self.native = Some(native);
@@ -390,6 +427,9 @@ impl BrowserSurface {
             if let Err(error) = result {
                 self.page.error = Some(format!("Could not open this page: {error}"));
             }
+            #[cfg(target_os = "macos")]
+            self.set_keyboard(self.focus.is_focused(window), cx);
+            #[cfg(not(target_os = "macos"))]
             window.focus(&self.focus, cx);
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
@@ -401,9 +441,53 @@ impl BrowserSurface {
         cx.notify();
     }
 
+    /// The address field's Enter: a search for what doesn't read as an
+    /// address, and the keyboard to the page.
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let url = self.address.read(cx).text().to_owned();
+        let url = model::typed_address(self.address.read(cx).text());
         self.navigate(&url, window, cx);
+        if self.validation.is_none() {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// GPUI's focus came to the page, or left it.
+    fn set_keyboard(&mut self, keyboard: bool, _cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &self.native {
+            native.handle().borrow_mut().set_keyboard(keyboard);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = keyboard;
+    }
+
+    fn toggle_devtools(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &self.native {
+            native.handle().borrow().toggle_devtools();
+        }
+        cx.notify();
+    }
+
+    fn hard_reload(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &self.native {
+            self.page.error = None;
+            native.handle().borrow().hard_reload();
+        }
+        #[cfg(not(target_os = "macos"))]
+        return self.reload(cx);
+        #[cfg(target_os = "macos")]
+        cx.notify();
+    }
+
+    fn set_zoom(&mut self, zoom: f64, cx: &mut Context<Self>) {
+        self.zoom = zoom;
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &self.native {
+            native.handle().borrow().set_zoom(zoom);
+        }
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -530,6 +614,34 @@ impl BrowserSurface {
                 if self.presentation == Presentation::Live {
                     cx.emit(BrowserEvent::NewTab(Some(url)));
                 }
+            }
+            #[cfg(target_os = "macos")]
+            native::NativeEvent::Clicked => {
+                self.menu = None;
+                if !self.focus.is_focused(window) {
+                    window.focus(&self.focus, cx);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            native::NativeEvent::InstallExtension(id) => {
+                crate::toast::show(cx, crate::toast::ToastKind::Info, "Installing the extension…");
+                let task = cx.background_spawn(async move { extensions::install_from_store(&id) });
+                cx.spawn(async move |_, cx| {
+                    let result = task.await;
+                    let _ = cx.update(|cx| match result {
+                        Ok(path) => {
+                            let name = extensions::info(&path).map(|i| i.name).unwrap_or_default();
+                            crate::settings::browser::add_extension(cx, path);
+                            crate::toast::show(
+                                cx,
+                                crate::toast::ToastKind::Success,
+                                format!("Added {name}. It runs in browser tabs from their next load."),
+                            );
+                        }
+                        Err(why) => crate::toast::show(cx, crate::toast::ToastKind::Error, why),
+                    });
+                })
+                .detach();
             }
             native::NativeEvent::Key(key) => {
                 if self.presentation == Presentation::Live {

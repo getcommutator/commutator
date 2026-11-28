@@ -100,6 +100,21 @@ pub fn normalize_address(input: &str) -> Result<String, &'static str> {
     Ok(parsed.into())
 }
 
+/// What's typed in the address field: an address when it reads as one, else
+/// a web search for it (a space, or a host without a dot, port or localhost).
+pub fn typed_address(input: &str) -> String {
+    let text = input.trim();
+    let host = text.split(['/', '?', '#']).next().unwrap_or_default();
+    let address = text.contains("://")
+        || (!text.contains(char::is_whitespace)
+            && (host.contains('.') || host.contains(':') || host == "localhost"));
+    if address || text.is_empty() {
+        return text.to_string();
+    }
+    let query: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect();
+    format!("https://duckduckgo.com/?q={query}")
+}
+
 /// Chat links require an explicit web authority; never infer a scheme or
 /// silently strip controls, credentials, malformed escapes or backslashes.
 pub fn transcript_address(input: &str) -> Result<String, &'static str> {
@@ -180,6 +195,14 @@ mod tests {
             ("http://example.com", "http://example.com/"),
         ] {
             assert_eq!(normalize_address(input), Ok(expected.into()), "{input}");
+        }
+    }
+    #[test]
+    fn typed_text_that_is_no_address_searches() {
+        assert_eq!(typed_address("rust lifetimes"), "https://duckduckgo.com/?q=rust+lifetimes");
+        assert_eq!(typed_address("gpui"), "https://duckduckgo.com/?q=gpui");
+        for kept in ["localhost:3000", "localhost", "docs.rs/gpui", "https://x.dev/a b", ""] {
+            assert_eq!(typed_address(kept), kept);
         }
     }
     #[test]

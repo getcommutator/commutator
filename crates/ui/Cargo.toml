@@ -115,13 +115,14 @@ rust-embed = "=8.7.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 libc.workspace = true
 objc = "0.2"
-wry = { version = "0.56", default-features = false, features = ["os-webview"] }
+wry = { version = "0.56", default-features = false, features = ["os-webview", "devtools"] }
 raw-window-handle = "0.6"
 objc2 = "0.6"
 block2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSHapticFeedback", "NSBitmapImageRep", "NSImage", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSHapticFeedback", "NSBitmapImageRep", "NSImage", "NSImageRep", "NSEvent", "NSPopover", "NSResponder", "NSView", "NSWindow"] }
 objc2-foundation = "0.3.2"
-objc2-web-kit = { version = "0.3.2", features = ["WKWebView", "WKNavigationDelegate", "WKNavigationAction", "WKSnapshotConfiguration"] }
+# Chrome extensions in the browser (src/browser/extensions.rs): WebKit's WKWebExtension, macOS 15.4+
+objc2-web-kit = { version = "0.3.2", features = ["block2", "objc2-app-kit", "WKWebView", "WKNavigationDelegate", "WKNavigationAction", "WKSnapshotConfiguration", "WKUserContentController", "WKUserScript", "WKWebExtension", "WKWebExtensionAction", "WKWebExtensionContext", "WKWebExtensionController", "WKWebExtensionControllerConfiguration", "WKWebExtensionControllerDelegate", "WKWebExtensionMatchPattern", "WKWebExtensionPermission", "WKWebExtensionTab", "WKWebExtensionTabConfiguration", "WKWebExtensionWindow", "WKWebViewConfiguration", "WKWebsiteDataStore"] }
 core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["elcapitan", "highsierra", "link"] }
 foreign-types = "0.5"

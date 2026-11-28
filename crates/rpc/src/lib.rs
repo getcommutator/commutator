@@ -386,6 +386,14 @@ pub mod methods {
     /// Store an image file an agent shows and fold it into that chat's live
     /// turn as an image part (`show_image`). Local only, like `PublishVisual`.
     pub const PUBLISH_IMAGE: &str = "PublishImage";
+    /// An agent's call on its chat's browser tabs (`{chatId, request}` →
+    /// the app's answer): the engine hands it to the app watching
+    /// [`WATCH_BROWSER_REQUESTS`] and waits for its [`BROWSER_REPLY`].
+    pub const BROWSER_CALL: &str = "BrowserCall";
+    /// The app's side: a stream of `{id, chatId, request}` to carry out.
+    pub const WATCH_BROWSER_REQUESTS: &str = "WatchBrowserRequests";
+    /// `{id, ok}` or `{id, error}`: the app's answer to a request.
+    pub const BROWSER_REPLY: &str = "BrowserReply";
     /// Lazy full-tool-output fetch from the R2 sidecar by doc-resident ref
     /// (chat2-sync A3). Edge-direct from any device — never relay-forwarded.
     pub const FETCH_TOOL_BLOB: &str = "FetchToolBlob";
@@ -425,6 +433,10 @@ pub fn local_only(method: &str) -> bool {
             // An API key typed into this device's app: stored here alone.
             | methods::ADD_AGENT_API_KEY
             | methods::POST_NOTIFICATION
+            // This device's own app window holds the browser tabs.
+            | methods::BROWSER_CALL
+            | methods::WATCH_BROWSER_REQUESTS
+            | methods::BROWSER_REPLY
             // Which server and account this machine signs in to.
             | methods::SIGN_IN
     )
@@ -468,6 +480,8 @@ pub fn agent_allowed(method: &str) -> bool {
             // Showing the person something in the calling chat.
             | methods::PUBLISH_VISUAL
             | methods::PUBLISH_IMAGE
+            // Driving the calling chat's browser tabs in the app.
+            | methods::BROWSER_CALL
             // Saying what the calling chat's agent waits on.
             | methods::AWAIT_BACKGROUND
             // Commands on any of the person's devices (Commutator MCP's

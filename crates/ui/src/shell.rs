@@ -43,6 +43,7 @@ use crate::rail;
 use crate::settings::accounts::AccountsPage;
 use crate::settings::appearance::{AppearancePage, AppearanceSettingsEvent};
 use crate::settings::archived::ArchivedPage;
+use crate::settings::browser::BrowserSettingsPage;
 use crate::settings::devices::DevicesPage;
 use crate::settings::files::{FilesSettingsEvent, FilesSettingsPage};
 use crate::settings::harnesses::HarnessesPage;
@@ -64,6 +65,7 @@ use crate::theme::Theme;
 use crate::transcript::{self, Transcript, TranscriptEvent};
 
 mod actions_ui;
+mod browser_agent;
 mod chat_dropzone;
 #[cfg(test)]
 mod chat_dropzone_tests;
@@ -564,6 +566,8 @@ pub enum SettingsSection {
     Agents,
     Appearance,
     Files,
+    /// Chrome extensions in the browser tabs.
+    Browser,
     Notifications,
     Shortcuts,
     /// Composer and conversation behavior plus thread naming.
@@ -575,7 +579,7 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
-    pub const ALL: [SettingsSection; 9] = [
+    pub const ALL: [SettingsSection; 10] = [
         SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::Notifications,
@@ -583,6 +587,7 @@ impl SettingsSection {
         SettingsSection::Harnesses,
         SettingsSection::Devices,
         SettingsSection::Files,
+        SettingsSection::Browser,
         SettingsSection::Appshots,
         SettingsSection::Archived,
     ];
@@ -621,6 +626,7 @@ impl SettingsSection {
             SettingsSection::Agents => "agents",
             SettingsSection::Appearance => "appearance",
             SettingsSection::Files => "files",
+            SettingsSection::Browser => "browser",
             SettingsSection::Notifications => "notifications",
             SettingsSection::Shortcuts => "shortcuts",
             SettingsSection::General => "general",
@@ -637,6 +643,7 @@ impl SettingsSection {
             "agents" => SettingsSection::Agents,
             "appearance" => SettingsSection::Appearance,
             "files" => SettingsSection::Files,
+            "browser" => SettingsSection::Browser,
             "notifications" => SettingsSection::Notifications,
             "shortcuts" => SettingsSection::Shortcuts,
             "general" | "conversations" => SettingsSection::General,
@@ -661,6 +668,7 @@ impl SettingsSection {
             SettingsSection::Agents => "Accounts",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Files => "Files",
+            SettingsSection::Browser => "Browser",
             SettingsSection::Notifications => "Notifications",
             SettingsSection::Shortcuts => "Shortcuts",
             SettingsSection::General => "General",
@@ -1950,6 +1958,8 @@ pub struct Shell {
     side_chat_creating: bool,
     browsers: std::collections::HashMap<u64, Entity<crate::browser::BrowserSurface>>,
     browser_subs: std::collections::HashMap<u64, Subscription>,
+    /// Agents' browser calls from the engine (`browser_agent.rs`).
+    browser_agents: Option<Task<()>>,
     browser_seq: u64,
     /// Pull request tabs in session panes, keyed like the other surfaces.
     chat_pull_requests: std::collections::HashMap<u64, chat_pull_requests::ChatPullRequest>,
@@ -1991,6 +2001,7 @@ pub struct Shell {
     /// Rebuilt per visit and dropped on leaving, which stops its GitHub
     /// polling and status re-checks.
     archived_page: Option<Entity<ArchivedPage>>,
+    browser_settings_page: Option<Entity<BrowserSettingsPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
     files_settings_page: Option<Entity<FilesSettingsPage>>,
     notifications_page: Option<Entity<NotificationsPage>>,
@@ -2476,6 +2487,7 @@ impl Shell {
             side_chat_creating: false,
             browsers: std::collections::HashMap::new(),
             browser_subs: std::collections::HashMap::new(),
+            browser_agents: None,
             browser_seq: 0,
             chat_pull_requests: std::collections::HashMap::new(),
             chat_pull_request_seq: 0,
@@ -2504,6 +2516,7 @@ impl Shell {
             pull_request_cache: Default::default(),
             devices_page: None,
             archived_page: None,
+            browser_settings_page: None,
             appearance_page: None,
             files_settings_page: None,
             notifications_page: None,
@@ -3800,12 +3813,25 @@ impl Shell {
         if self.active_chat.is_empty() {
             return;
         }
+        self.add_browser_surface_in(self.active_chat.clone(), url, window, cx);
+    }
+
+    /// A browser tab in chat `chat`'s panel, shown there; the chat may be
+    /// one not on screen (an agent's `browser_open`). Its id.
+    fn add_browser_surface_in(
+        &mut self,
+        chat: String,
+        url: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> u64 {
         self.sync_browser_profile(cx);
-        let key = self.panel_key(cx);
+        let key = chat.clone();
+        let shown_chat = chat == self.active_chat;
         let remote = {
             let state = self.state.read(cx);
-            state.selected_chat_row().is_some_and(|chat| {
-                Some(chat.device_id.as_str()) != state.local_device_id.as_deref()
+            state.chats.iter().find(|row| row.id == chat).is_some_and(|row| {
+                Some(row.device_id.as_str()) != state.local_device_id.as_deref()
             })
         };
         self.browser_seq += 1;
@@ -3814,7 +3840,7 @@ impl Shell {
             crate::browser::BrowserSurface::new(self.browser_context.clone(), remote, window, cx)
         });
         if let Some(handle) = self.state.read(cx).engine().cloned() {
-            let chat_id = self.active_chat.clone();
+            let chat_id = chat.clone();
             browser.update(cx, |browser, cx| {
                 browser.watch_previews(handle, chat_id, cx)
             });
@@ -3823,6 +3849,19 @@ impl Shell {
         let sub = cx.subscribe_in(&browser, window, move |this, _, event, window, cx| {
             match event {
                 crate::browser::BrowserEvent::Changed => cx.notify(),
+                // A pick goes to this session's composer; the page's marker
+                // takes the chip's number.
+                crate::browser::BrowserEvent::Annotated { annotation, marker } => {
+                    if this.panel_key(cx) != owner {
+                        return;
+                    }
+                    let index = this.composer.update(cx, |composer, cx| {
+                        composer.add_annotation(annotation.clone(), window, cx)
+                    });
+                    if let (Some(index), Some(browser)) = (index, this.browsers.get(&id)) {
+                        browser.read(cx).label_annotation(*marker, index);
+                    }
+                }
                 crate::browser::BrowserEvent::NewTab(url) => {
                     // A background page cannot open a tab in the wrong session.
                     if this.panel_key(cx) == owner
@@ -3838,11 +3877,23 @@ impl Shell {
         });
         self.browsers.insert(id, browser.clone());
         self.browser_subs.insert(id, sub);
+        // Tabs extensions ask for (`tabs.create`) open beside the chat shown.
+        let (shell, handle) = (cx.entity().downgrade(), window.window_handle());
+        crate::browser::extensions::on_new_tab(move |url, cx| {
+            let shell = shell.clone();
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = shell.update(cx, |shell, cx| shell.add_browser_surface(Some(url), window, cx));
+            });
+        });
         self.right_tabs
             .entry(key)
             .or_default()
             .push(RightSurface::Browser(id));
-        self.set_right_active(RightSurface::Browser(id), cx);
+        if shown_chat {
+            self.set_right_active(RightSurface::Browser(id), cx);
+        } else {
+            self.panels.update(&chat, |p| p.right_active = RightSurface::Browser(id));
+        }
         browser.update(cx, |browser, cx| {
             if let Some(url) = url {
                 browser.navigate(&url, window, cx);
@@ -3850,6 +3901,7 @@ impl Shell {
                 browser.focus_address(window, cx);
             }
         });
+        id
     }
 
     /// The picker's Diffs card / the `+` menu's Diff row: every click opens a
@@ -5506,6 +5558,10 @@ impl Shell {
                 .archived_page
                 .as_ref()
                 .is_some_and(|page| page.update(cx, |page, cx| page.dismiss_on_escape(cx))),
+            SettingsSection::Browser => self
+                .browser_settings_page
+                .as_ref()
+                .is_some_and(|page| page.update(cx, |page, cx| page.dismiss_on_escape(cx))),
             _ => false,
         }
     }
@@ -5826,6 +5882,12 @@ impl Shell {
                     }
                     None => Empty.into_any_element(),
                 }
+            }
+            SettingsSection::Browser => {
+                let page = self
+                    .browser_settings_page
+                    .get_or_insert_with(|| cx.new(BrowserSettingsPage::new));
+                page.clone().into_any_element()
             }
             SettingsSection::Archived => {
                 if self.archived_page.is_none() {
@@ -7735,6 +7797,7 @@ impl Shell {
             SettingsSection::Agents => icons::KEY_MINIMALISTIC,
             SettingsSection::Appearance => icons::TUNING,
             SettingsSection::Files => icons::FOLDER,
+            SettingsSection::Browser => icons::GLOBAL,
             SettingsSection::Notifications => icons::BELL,
             SettingsSection::Shortcuts => icons::KEYBOARD,
             SettingsSection::General => icons::SETTINGS,
@@ -12553,6 +12616,7 @@ impl Render for Shell {
             .unwrap_or_else(|| self.state.read(cx).gate());
 
         self.sync_browser_profile(cx);
+        self.watch_browser_agents(window, cx);
         // Manual tween drive bookkeeping for this pass (see [`WidthTween`]).
         self.reduced_motion = motion::reduced_motion(cx);
         self.motion_active.set(false);
@@ -17671,6 +17735,7 @@ mod settings_modal_regressions {
             ("settings/general", SettingsSection::General),
             ("settings/conversations", SettingsSection::General),
             ("settings/files", SettingsSection::Files),
+            ("settings/browser", SettingsSection::Browser),
             ("settings/appshots", SettingsSection::Appshots),
             ("settings/archived", SettingsSection::Archived),
         ] {

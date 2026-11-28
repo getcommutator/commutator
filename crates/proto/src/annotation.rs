@@ -21,6 +21,7 @@ const MAX_SHORT: usize = 240;
 const MAX_URL: usize = 2_048;
 const MAX_PATH: usize = 8;
 const MAX_STYLES: usize = 24;
+const MAX_INSIDE: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -46,6 +47,20 @@ pub struct BrowserAnnotation {
     pub viewport: [i32; 2],
     /// Non-default computed styles, `[property, value]`.
     pub styles: Vec<[String; 2]>,
+    /// An area dragged out on the page, not an element; its box is in the
+    /// document's CSS pixels.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub area: bool,
+    /// An area's elements, wholly inside it, by their selectors, and how
+    /// many more there are.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inside: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 fn clip(value: &mut String, max: usize) {
@@ -83,6 +98,10 @@ impl BrowserAnnotation {
             clip(step, MAX_SHORT);
         }
         self.styles.truncate(MAX_STYLES);
+        self.inside.truncate(MAX_INSIDE);
+        for selector in &mut self.inside {
+            clip(selector, MAX_SHORT * 2);
+        }
         for [name, value] in &mut self.styles {
             clip(name, 64);
             clip(value, MAX_SHORT);
@@ -141,13 +160,18 @@ impl BrowserAnnotation {
         line("Text", &self.text);
         let [x, y, w, h] = self.rect;
         if w > 0 || h > 0 {
-            line(
-                "Box",
-                &format!(
-                    "x={x} y={y} width={w} height={h} in a {}×{} viewport",
-                    self.viewport[0], self.viewport[1]
-                ),
-            );
+            let of = match self.area {
+                true => "in the document's CSS pixels".to_string(),
+                false => format!("in a {}×{} viewport", self.viewport[0], self.viewport[1]),
+            };
+            line("Box", &format!("x={x} y={y} width={w} height={h} {of}"));
+        }
+        if !self.inside.is_empty() {
+            let rest = match self.more {
+                0 => String::new(),
+                more => format!(" and {more} more"),
+            };
+            line("Elements", &format!("{}{rest}", self.inside.join(", ")));
         }
         if !self.styles.is_empty() {
             let styles: Vec<String> = self
@@ -317,6 +341,7 @@ mod tests {
             rect: [12, 40, 84, 36],
             viewport: [520, 810],
             styles: vec![["display".into(), "inline-flex".into()]],
+            ..Default::default()
         }
     }
 
@@ -358,6 +383,28 @@ mod tests {
             annotation_display(&format!("See {}", sample(3).link())),
             "See Annotation 3"
         );
+    }
+
+    #[test]
+    fn an_area_reads_as_the_document_box_and_its_elements() {
+        let area = BrowserAnnotation {
+            index: 2,
+            url: "http://localhost:3000/".into(),
+            element: "area".into(),
+            area: true,
+            rect: [10, 2000, 300, 200],
+            inside: vec!["#a".into(), "#b".into()],
+            more: 3,
+            ..Default::default()
+        };
+        let prompt = annotation_prompt(&format!("see {}", area.link()));
+        assert!(prompt.contains("Box: x=10 y=2000 width=300 height=200 in the document's CSS pixels\nElements: #a, #b and 3 more\n"), "{prompt}");
+        // An element's token carries none of an area's fields.
+        assert!(!sample(1).link().contains(&hex(r#""area""#)));
+    }
+
+    fn hex(text: &str) -> String {
+        text.bytes().map(|b| format!("{b:02x}")).collect()
     }
 
     #[test]

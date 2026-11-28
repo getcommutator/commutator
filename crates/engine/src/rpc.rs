@@ -922,6 +922,8 @@ pub struct EngineRpc {
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
     /// Viewports' window focus, for desktop banners.
     viewport_focus: crate::desktop_notify::ViewportFocus,
+    /// Agents' calls on the app's browser tabs.
+    browser: crate::browser_bridge::BrowserBridge,
     engine_info: EngineInfo,
 }
 
@@ -981,6 +983,7 @@ impl EngineRpc {
             updater: None,
             harness_updates: None,
             viewport_focus: Default::default(),
+            browser: Default::default(),
             engine_info,
         }
     }
@@ -5550,6 +5553,27 @@ impl RpcService for EngineRpc {
                     "checkedInteractions": report.interactions,
                     "printed": report.logs,
                 }))
+            }
+            methods::BROWSER_CALL => {
+                let chat_id = params["chatId"].as_str().unwrap_or_default().to_string();
+                if !self.sessions.has_run(&chat_id) {
+                    return Err(no_turn_for("the browser tools"));
+                }
+                let request = params.get("request").cloned().unwrap_or_default();
+                let answer = self.browser.call(&chat_id, request).await.map_err(RpcError::Failed)?;
+                Ok(RpcReply::Value(answer))
+            }
+            methods::WATCH_BROWSER_REQUESTS => Ok(RpcReply::Stream(self.browser.watch())),
+            methods::BROWSER_REPLY => {
+                let id = params["id"]
+                    .as_u64()
+                    .ok_or_else(|| RpcError::BadParams("a reply needs its request's id".into()))?;
+                let answer = match params["error"].as_str() {
+                    Some(error) => Err(error.to_string()),
+                    None => Ok(params.get("ok").cloned().unwrap_or_default()),
+                };
+                self.browser.reply(id, answer);
+                Ok(RpcReply::Value(serde_json::json!({})))
             }
             methods::PUBLISH_IMAGE => {
                 use base64::Engine as _;

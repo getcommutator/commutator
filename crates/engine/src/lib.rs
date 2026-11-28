@@ -37,6 +37,7 @@ pub fn build_id() -> &'static str {
     })
 }
 pub mod auth;
+pub mod browser_bridge;
 mod change_request_store;
 pub mod change_requests;
 pub mod checkpoints;
