@@ -357,6 +357,28 @@ impl AppearancePage {
         )
     }
 
+    fn render_compact_mode_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        chat_switch_row(
+            theme,
+            "Compact mode",
+            "Collapse thinking and tools.",
+            crate::settings::transcript_compact_mode(cx),
+            crate::settings::set_transcript_compact_mode,
+            cx,
+        )
+    }
+
+    fn render_code_wrap_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        chat_switch_row(
+            theme,
+            "Wrap code blocks",
+            "Wrap long lines in code blocks instead of scrolling them.",
+            crate::settings::code_fences_fit_content(cx),
+            crate::settings::set_code_fences_fit_content,
+            cx,
+        )
+    }
+
     fn render_turn_changes_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         chat_switch_row(
             theme,
@@ -4037,8 +4059,10 @@ impl Render for AppearancePage {
         let chat_card = widgets::section_card(&theme)
             .mt_0()
             .child(self.render_transcript_width(&theme, window, cx))
-            .child(self.render_rich_composer_row(&theme, cx))
+            .child(self.render_compact_mode_row(&theme, cx))
             .child(self.render_turn_changes_row(&theme, cx))
+            .child(self.render_code_wrap_row(&theme, cx))
+            .child(self.render_rich_composer_row(&theme, cx))
             .children(self.render_math_rows(&theme, cx));
         let mut font_section = widgets::section(&theme, "Fonts and layout", font_rows);
         let cursor_settings = crate::settings::current(cx);

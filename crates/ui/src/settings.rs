@@ -795,6 +795,20 @@ pub fn set_show_turn_changes(enabled: bool, cx: &mut App) {
     }
 }
 
+/// Agent-sent code fences wrap to the chat width instead of scrolling.
+pub fn code_fences_fit_content(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_some_and(|store| store.current.code_fences_fit_content)
+}
+
+pub fn set_code_fences_fit_content(enabled: bool, cx: &mut App) {
+    if update(SavePolicy::Immediate, cx, |settings| {
+        settings.code_fences_fit_content = enabled;
+    }) {
+        cx.refresh_windows();
+    }
+}
+
 pub fn set_transcript_compact_mode(enabled: bool, cx: &mut App) {
     if update(SavePolicy::Immediate, cx, |settings| {
         settings.transcript_compact_mode = enabled;

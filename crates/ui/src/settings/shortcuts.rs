@@ -565,7 +565,6 @@ impl Render for ShortcutsPage {
         let recording = self.recording;
         let escape_stops_active_agent = self.escape_stops_active_agent;
         let send_behavior = self.composer_send_behavior;
-        let compact_mode = crate::settings::transcript_compact_mode(cx);
         let customized = self.keymap != KeymapConfig::default()
             || escape_stops_active_agent
             || send_behavior != ComposerSendBehavior::default();
@@ -603,39 +602,6 @@ impl Render for ShortcutsPage {
                     .child(widgets::row_title(&theme, "Send messages with")),
             )
             .child(send_behavior_control);
-        let compact_mode_row = widgets::card_row(&theme, false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(widgets::row_title(&theme, "Compact mode"))
-                    .child(widgets::meta_line(
-                        &theme,
-                        vec![
-                            div()
-                                .child("Collapse thinking and tools.")
-                                .into_any_element(),
-                        ],
-                    )),
-            )
-            .child(
-                widgets::toggle_switch(&theme, compact_mode, "transcript-compact-mode")
-                    .id("transcript-compact-mode-toggle")
-                    .tab_index(0)
-                    .role(gpui::Role::Switch)
-                    .aria_label("Compact mode")
-                    .aria_toggled(if compact_mode {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        crate::settings::set_transcript_compact_mode(!compact_mode, cx);
-                        cx.notify();
-                    })),
-            );
         let queue_follow_ups = crate::settings::queue_follow_ups(cx);
         let follow_up_row = widgets::card_row(&theme, false)
             .child(
@@ -819,7 +785,6 @@ impl Render for ShortcutsPage {
                                         widgets::section_card(&theme)
                                             .child(send_behavior_row)
                                             .child(follow_up_row)
-                                            .child(compact_mode_row)
                                             .child(compact_model_picker_row)
                                             .child(escape_behavior_row),
                                     )
