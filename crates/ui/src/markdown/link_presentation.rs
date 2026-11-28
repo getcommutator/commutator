@@ -284,9 +284,9 @@ pub(super) fn present(
     })
 }
 
-/// Inline code a step under the text around it, as t3code's `0.85em`, so a
-/// `name` in a sentence doesn't tower over it in a monospace face.
-pub(crate) const INLINE_CODE_SCALE: f32 = 0.85;
+/// Inline code a step under the text around it (13.5 on 15, as new Zeron's),
+/// so a `name` in a sentence doesn't tower over it in a monospace face.
+pub(crate) const INLINE_CODE_SCALE: f32 = 0.9;
 
 /// Set the runs inside inline code at [`INLINE_CODE_SCALE`] of `font_size`
 /// (the paragraph's, known only at layout), and its `pads` at the size that
@@ -726,7 +726,7 @@ mod tests {
         );
         let sized = with_code_size(flat.clone(), &[], None, px(15.0));
         let sizes: Vec<_> = sized.runs.iter().map(|r| r.font.size).collect();
-        assert_eq!(sizes, vec![None, Some(px(12.75)), None]);
+        assert_eq!(sizes, vec![None, Some(px(13.5)), None]);
 
         // Padded: a NBSP slot each side, inside the code's wash, sized so
         // it is 0.35em of the code wide (an NBSP 0.5em of its face here),
@@ -742,7 +742,7 @@ mod tests {
         let sizes: Vec<_> = sized.runs.iter().map(|r| r.font.size).collect();
         assert_eq!(
             sizes,
-            vec![None, Some(px(9.0)), Some(px(12.75)), Some(px(9.0)), None]
+            vec![None, Some(px(9.5)), Some(px(13.5)), Some(px(9.5)), None]
         );
     }
 

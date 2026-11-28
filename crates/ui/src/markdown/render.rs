@@ -1197,6 +1197,8 @@ pub fn inline_code_wash(theme: &Theme) -> Hsla {
 pub const INLINE_CODE_RADIUS: f32 = 4.5;
 pub const INLINE_CODE_PAD_X: f32 = 0.0;
 pub const INLINE_CODE_INSET_Y: f32 = 2.0;
+/// Inline code's wash above and below its glyphs, in ems of the code.
+pub const INLINE_CODE_PAD_Y_EMS: f32 = 0.12;
 
 /// Flatten inline runs into shaped-text inputs. Pure given a theme.
 /// Math sets in the default [`super::math::MathStyle`].
@@ -1482,6 +1484,18 @@ pub(super) fn flat_text_presented_element(
             Some((slot.clone(), color))
         })
         .collect();
+    // Inline code set at its own size (`link_presentation::with_code_size`):
+    // its wash wraps the code's own glyphs, not the prose's line box.
+    let code_font = {
+        let mut at = 0;
+        text_runs.iter().find_map(|run| {
+            let start = at;
+            at += run.len;
+            (run.font.size.is_some()
+                && flat.code_ranges.iter().any(|code| code.start <= start && start < code.end))
+            .then(|| run.font.clone())
+        })
+    };
     let styled = StyledText::new(flat.text.clone()).with_runs(text_runs);
     let layout = styled.layout().clone();
     let math_layout = layout.clone();
@@ -1510,6 +1524,10 @@ pub(super) fn flat_text_presented_element(
             let surface = PAINTING_SURFACE.with(Cell::get);
             for range in &code_ranges {
                 for rect in range_rects(&layout, range, INLINE_CODE_PAD_X, INLINE_CODE_INSET_Y) {
+                    let rect = code_font
+                        .as_ref()
+                        .and_then(|font| code_wash_rect(rect, &layout, range.start, font, window))
+                        .unwrap_or(rect);
                     window.paint_quad(quad(
                         rect,
                         px(INLINE_CODE_RADIUS),
@@ -1643,6 +1661,34 @@ fn link_text_element(
         slots: flat.file_glyphs.clone(),
     }
     .into_any_element()
+}
+
+/// Inline code's wash on one row, wrapping the code's own glyphs: from its
+/// face's ascent above the line's baseline to its descent below, and
+/// [`INLINE_CODE_PAD_Y_EMS`] more each way. `rect` is the row's line box
+/// less [`INLINE_CODE_INSET_Y`].
+fn code_wash_rect(
+    rect: Bounds<gpui::Pixels>,
+    layout: &gpui::TextLayout,
+    ix: usize,
+    font: &gpui::Font,
+    window: &Window,
+) -> Option<Bounds<gpui::Pixels>> {
+    let size = font.size?;
+    let line = layout.line_layout_for_index(ix)?;
+    let (ascent, descent) = (line.unwrapped_layout.ascent, line.unwrapped_layout.descent);
+    // gpui's baseline: the line's ascent below half its leading.
+    let line_top = rect.top() - px(INLINE_CODE_INSET_Y);
+    let baseline = line_top + (layout.line_height() - ascent - descent) / 2.0 + ascent;
+    let text_system = window.text_system();
+    let font_id = text_system.resolve_font(font);
+    let pad = size * INLINE_CODE_PAD_Y_EMS;
+    let top = baseline - text_system.ascent(font_id, size).abs() - pad;
+    let bottom = baseline + text_system.descent(font_id, size).abs() + pad;
+    Some(Bounds::from_corners(
+        point(rect.left(), top.max(line_top)),
+        point(rect.right(), bottom.min(line_top + layout.line_height())),
+    ))
 }
 
 /// Selection tint shared with native inputs and the composer.
