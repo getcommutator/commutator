@@ -1420,11 +1420,14 @@ fn flat_text_element(
     opts: &RenderOptions,
     theme: &Theme,
 ) -> AnyElement {
-    if opts
-        .link
-        .as_ref()
-        .is_some_and(|ui| ui.source_session.is_some())
-        && !flat.links.is_empty()
+    // Inline code takes its size from the paragraph's, known only at layout
+    // (`ResponsiveText` reads it there).
+    if !flat.code_ranges.is_empty()
+        || opts
+            .link
+            .as_ref()
+            .is_some_and(|ui| ui.source_session.is_some())
+            && !flat.links.is_empty()
     {
         return super::link_presentation::ResponsiveText {
             flat: flat.clone(),

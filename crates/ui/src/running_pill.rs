@@ -148,6 +148,7 @@ fn shape_count(
             fallbacks: None,
             weight,
             style: gpui::FontStyle::Normal,
+            size: None,
         },
         color,
         background_color: None,

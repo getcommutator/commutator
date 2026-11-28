@@ -260,7 +260,7 @@ pub(super) fn present(
     window: &Window,
     opts: &RenderOptions,
 ) -> FlatText {
-    let with_glyphs = with_file_link_glyphs(flat, opts);
+    let with_glyphs = with_code_size(with_file_link_glyphs(flat, opts), font_size);
     truncate(&with_glyphs, f32::from(width), |text, runs| {
         window
             .text_system()
@@ -273,6 +273,33 @@ pub(super) fn present(
             })
             .unwrap_or(f32::INFINITY)
     })
+}
+
+/// Inline code a step under the text around it, as t3code's `0.85em`, so a
+/// `name` in a sentence doesn't tower over it in a monospace face.
+pub(crate) const INLINE_CODE_SCALE: f32 = 0.85;
+
+/// Set the runs inside inline code at [`INLINE_CODE_SCALE`] of `font_size`
+/// (the paragraph's, known only at layout). The line keeps its height.
+fn with_code_size(mut flat: FlatText, font_size: Pixels) -> FlatText {
+    if flat.code_ranges.is_empty() {
+        return flat;
+    }
+    // Quarter-point steps keep glyph rasters shared across nearby sizes.
+    let size = px((f32::from(font_size) * INLINE_CODE_SCALE * 4.0).round() / 4.0);
+    let mut at = 0;
+    for run in &mut flat.runs {
+        let range = at..at + run.len;
+        at = range.end;
+        if flat
+            .code_ranges
+            .iter()
+            .any(|code| code.start <= range.start && range.end <= code.end)
+        {
+            run.font.size = Some(size);
+        }
+    }
+    flat
 }
 
 /// The slot reserved before a resolved file link for its file-type icon (as
@@ -613,6 +640,25 @@ mod tests {
     }
     fn measured(text: &str, _: &[TextRun]) -> f32 {
         text.graphemes(true).count() as f32
+    }
+
+    #[test]
+    fn inline_code_runs_take_a_step_under_the_paragraph_size() {
+        let run = |text: &str, code: bool| InlineRun {
+            text: text.into(),
+            style: InlineStyle {
+                code,
+                ..Default::default()
+            },
+        };
+        let flat = flatten_runs(
+            &[run("run ", false), run("cargo check", true), run(" now", false)],
+            &Theme::dark(),
+            false,
+        );
+        let sized = with_code_size(flat, px(15.0));
+        let sizes: Vec<_> = sized.runs.iter().map(|r| r.font.size).collect();
+        assert_eq!(sizes, vec![None, Some(px(12.75)), None]);
     }
 
     #[test]
