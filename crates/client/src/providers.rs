@@ -284,11 +284,17 @@ impl Client {
     }
 
     /// `ListAgentAccounts` on `device_id`: its CLI logins per agent.
-    pub async fn device_agent_accounts(&self, device_id: &str) -> Result<AgentAccountsSnapshot> {
+    /// `force_usage` probes each plan's usage now; otherwise the engine's
+    /// last known (60s cache) or none.
+    pub async fn device_agent_accounts(
+        &self,
+        device_id: &str,
+        force_usage: bool,
+    ) -> Result<AgentAccountsSnapshot> {
         self.accounts_call(
             device_id,
             commutator_rpc::methods::LIST_AGENT_ACCOUNTS,
-            serde_json::json!({}),
+            serde_json::json!({ "forceUsage": force_usage }),
         )
         .await
     }

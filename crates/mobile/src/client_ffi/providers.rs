@@ -180,13 +180,15 @@ impl CoreClient {
         .map(|list| list.into_iter().map(Into::into).collect())
     }
 
-    /// The CLI logins on `device_id`, every agent's.
+    /// The CLI logins on `device_id`, every agent's; `force_usage` probes
+    /// plan usage now (Settings' first load and pull to refresh).
     pub async fn device_agent_accounts(
         &self,
         device_id: String,
+        force_usage: bool,
     ) -> CoreResult<Vec<DeviceAccountInfo>> {
         let client = self.client.clone();
-        on_runtime(async move { client.device_agent_accounts(&device_id).await })
+        on_runtime(async move { client.device_agent_accounts(&device_id, force_usage).await })
             .await
             .map(accounts)
     }

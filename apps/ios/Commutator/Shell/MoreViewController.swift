@@ -39,6 +39,40 @@ final class MoreViewController: SettingsListController {
             devices = all.filter(\.isMachine).sorted { ($0.online ? 0 : 1, $0.name) < ($1.online ? 0 : 1, $1.name) }
             reload()
         }
+        loadUsage()
+    }
+
+    // MARK: Usage
+
+    /// The connected machine's active agent logins that report plan usage.
+    private var usage: [DeviceAccountInfo] = []
+
+    /// Last known usage first (no network), then a fresh probe.
+    private func loadUsage() {
+        guard let client = app.client, let host = app.host?.id else { return }
+        Task { @MainActor in
+            for force in [false, true] {
+                guard let all = try? await client.deviceAgentAccounts(deviceId: host, forceUsage: force) else { return }
+                usage = all.filter { $0.active && (!$0.usage.isEmpty || $0.usageError != nil) }
+                reload()
+            }
+        }
+    }
+
+    private func usageRow(_ a: DeviceAccountInfo) -> Row {
+        let agent = agentLoginRules(harness: a.harness).name
+        let title = [agent.isEmpty ? a.harness : agent, a.email ?? a.displayName].compactMap { $0 }.joined(separator: " · ")
+        let resets = RelativeDateTimeFormatter()
+        resets.unitsStyle = .short
+        let windows = a.usage.map { w in
+            let pct = "\(w.label) \(Int((w.usedFraction * 100).rounded()))%"
+            guard let at = w.resetsAtMs else { return pct }
+            return pct + ", resets " + resets.localizedString(for: Date(timeIntervalSince1970: Double(at) / 1000), relativeTo: Date())
+        }
+        let worst = a.usage.map(\.usedFraction).max() ?? 0
+        // Same thresholds as the desktop's Accounts meters.
+        let tint = worst >= 0.95 ? Palette.danger : worst >= 0.80 ? Palette.warning : Palette.accent
+        return Row(id: "usage:\(a.id)", title: title, subtitle: a.usageError ?? windows.joined(separator: " · "), symbol: "gauge.with.dots.needle.50percent", tint: tint, accessory: .none)
     }
 
     // MARK: Notifications
@@ -87,6 +121,7 @@ final class MoreViewController: SettingsListController {
                 )
             }))
         }
+        if !usage.isEmpty { out.append(("Usage", usage.map(usageRow))) }
         var display = [
             Row(id: "appearance", title: "Appearance", subtitle: AppearanceViewController.summary(traits: traitCollection), symbol: "paintpalette"),
             Row(id: "chat", title: "Chat", subtitle: ChatSettingsViewController.summary, symbol: "text.bubble"),

@@ -68,6 +68,16 @@ fun SettingsScreen(
             devices = all.filter { it.isMachine }.sortedWith(compareBy({ !it.online }, { it.name }))
         }
     }
+    // The connected machine's active agent logins with plan usage: last known first, then a fresh probe.
+    var usage by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(emptyList<uniffi.commutator_core.DeviceAccountInfo>()) }
+    LaunchedEffect(Unit) {
+        val client = model.client.value ?: return@LaunchedEffect
+        val host = model.host?.id ?: return@LaunchedEffect
+        for (force in listOf(false, true)) {
+            val all = runCatching { client.deviceAgentAccounts(host, force) }.getOrNull() ?: return@LaunchedEffect
+            usage = all.filter { it.active && (it.usage.isNotEmpty() || it.usageError != null) }
+        }
+    }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -200,6 +210,14 @@ fun SettingsScreen(
                 }
             }
         }
+        if (usage.isNotEmpty()) {
+            section("Usage")
+            item {
+                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                    usage.forEachIndexed { i, a -> UsageItem(a, segmentedShapes(i, usage.size)) }
+                }
+            }
+        }
         section("About")
         item {
             val update = AppUpdate.available
@@ -267,6 +285,40 @@ fun SettingsScreen(
             dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** One agent login's plan windows, each a meter with its reset time. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun UsageItem(a: uniffi.commutator_core.DeviceAccountInfo, shapes: androidx.compose.material3.ListItemShapes) {
+    val agent = uniffi.commutator_core.agentLoginRules(a.harness).name.ifEmpty { a.harness }
+    val warning = warningColor()
+    val now = System.currentTimeMillis()
+    SegmentedListItem(
+        onClick = {},
+        shapes = shapes,
+        colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+        leadingContent = { IconTile(ZIcons.Context) },
+        supportingContent = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+                a.usageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                a.usage.forEach { w ->
+                    val resets = w.resetsAtMs?.let { ", resets " + android.text.format.DateUtils.getRelativeTimeSpanString(it, now, android.text.format.DateUtils.MINUTE_IN_MILLIS).toString().replaceFirstChar { c -> c.lowercase() } } ?: ""
+                    Text("${w.label} ${(w.usedFraction * 100).toInt()}%$resets")
+                    // Same thresholds as the desktop's Accounts meters.
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { w.usedFraction.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = when {
+                            w.usedFraction >= 0.95f -> MaterialTheme.colorScheme.error
+                            w.usedFraction >= 0.80f -> warning
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                    )
+                }
+            }
+        },
+    ) { Text(listOfNotNull(agent, a.email ?: a.displayName).joinToString(" · ")) }
 }
 
 internal fun LazyListScope.section(title: String) {

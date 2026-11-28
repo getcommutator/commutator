@@ -1128,9 +1128,10 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     func deviceActivateAccount(deviceId: String, harness: String, accountId: String) async throws  -> [DeviceAccountInfo]
     
     /**
-     * The CLI logins on `device_id`, every agent's.
+     * The CLI logins on `device_id`, every agent's; `force_usage` probes
+     * plan usage now (Settings' first load and pull to refresh).
      */
-    func deviceAgentAccounts(deviceId: String) async throws  -> [DeviceAccountInfo]
+    func deviceAgentAccounts(deviceId: String, forceUsage: Bool) async throws  -> [DeviceAccountInfo]
     
     /**
      * Remove a saved login from `device_id`.
@@ -2002,14 +2003,15 @@ open func deviceActivateAccount(deviceId: String, harness: String, accountId: St
 }
     
     /**
-     * The CLI logins on `device_id`, every agent's.
+     * The CLI logins on `device_id`, every agent's; `force_usage` probes
+     * plan usage now (Settings' first load and pull to refresh).
      */
-open func deviceAgentAccounts(deviceId: String)async throws  -> [DeviceAccountInfo]  {
+open func deviceAgentAccounts(deviceId: String, forceUsage: Bool)async throws  -> [DeviceAccountInfo]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_commutator_mobile_fn_method_coreclient_device_agent_accounts(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId),FfiConverterBool.lower(forceUsage)
                 )
             },
             pollFunc: ffi_commutator_mobile_rust_future_poll_rust_buffer,
@@ -20114,7 +20116,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_commutator_mobile_checksum_method_coreclient_device_activate_account() != 54285) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_commutator_mobile_checksum_method_coreclient_device_agent_accounts() != 10656) {
+    if (uniffi_commutator_mobile_checksum_method_coreclient_device_agent_accounts() != 17538) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_commutator_mobile_checksum_method_coreclient_device_forget_account() != 5808) {
