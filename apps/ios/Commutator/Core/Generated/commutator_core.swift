@@ -11812,7 +11812,7 @@ public struct ThemeVariantInfo: Equatable, Hashable {
     public var name: String
     public var dark: Bool
     /**
-     * For the picker: background, text, accent, success (0xAARRGGBB).
+     * For the picker: background, text, accent (0xAARRGGBB).
      */
     public var swatches: [UInt32]
 
@@ -11820,7 +11820,7 @@ public struct ThemeVariantInfo: Equatable, Hashable {
     // declare one manually.
     public init(id: String, name: String, dark: Bool, 
         /**
-         * For the picker: background, text, accent, success (0xAARRGGBB).
+         * For the picker: background, text, accent (0xAARRGGBB).
          */swatches: [UInt32]) {
         self.id = id
         self.name = name

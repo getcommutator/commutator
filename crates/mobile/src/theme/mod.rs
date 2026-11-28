@@ -193,16 +193,19 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
     let tint = |amount: f32| bg.mix(text, amount);
     let pick = |light: f32, dark_: f32| if dark { dark_ } else { light };
 
+    // Light themes as Rex paints them: the page a shade toward the text, cards lifted toward
+    // white, so a card shows even on a white theme. Dark themes keep their background.
+    let page = if dark { bg } else { tint(0.045) };
     let app = AppColors {
-        background: argb(bg),
+        background: argb(page),
         row_active: argb(if dark {
             text.with_alpha(0.06)
         } else {
             c.raised.with_alpha(0.9)
         }),
         // Not the theme's `raised`: on most themes it barely parts from (or clashes with) the
-        // background. Light lifts toward white, dark toward the text, as iOS grouped lists do.
-        elevated: argb(if dark { tint(0.05) } else { bg.mix(Color::WHITE, 0.7) }),
+        // background. Dark cards lift toward the text.
+        elevated: argb(if dark { tint(0.05) } else { bg.mix(Color::WHITE, 0.4) }),
         text: argb(text),
         secondary: argb(c.text_muted),
         tertiary: argb(c.text_faint),
@@ -236,7 +239,7 @@ fn derive(v: &ThemeVariant) -> PhonePalette {
                 TextSecondary => app.secondary,
                 TextTertiary => app.tertiary,
                 // Whole blocks (tool output, diff context) paint in it: keep them readable.
-                TextFaint => argb(c.text_faint.ensure_contrast(bg, 3.5)),
+                TextFaint => argb(c.text_faint.ensure_contrast(page, 3.5)),
                 Link | Accent => argb(accent),
                 Danger => app.danger,
                 Success => app.success,

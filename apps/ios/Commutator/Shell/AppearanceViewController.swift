@@ -161,8 +161,8 @@ final class ThemePickerViewController: UIViewController, UICollectionViewDelegat
     }
 }
 
-/// One theme's preview: its background with "Aa" in its text, a `~/` chip and a cursor in its
-/// accent, and its eight ANSI colours; the name underneath. The selected card is ringed.
+/// One theme's preview: its background with "Aa" in its text, a `~/` chip in its accent and a
+/// cursor, and its eight ANSI colours; the name underneath. The selected card is ringed.
 private final class ThemeCardCell: UICollectionViewCell {
     static let cardHeight: CGFloat = 102
     static let height: CGFloat = cardHeight + 24
@@ -211,10 +211,11 @@ private final class ThemeCardCell: UICollectionViewCell {
         card.backgroundColor = bg
         card.layer.borderColor = UIColor(white: 0.5, alpha: 0.2).cgColor
         sample.textColor = UIColor(argb: p.app.text)
-        chip.textColor = UIColor(argb: p.app.text)
-        chip.backgroundColor = accent.withAlphaComponent(0.2)
-        cursor.backgroundColor = accent
-        cursor.textColor = UIColor(argb: p.app.onAccent)
+        // The accent is the card's biggest colour: a solid chip, the cursor beside it in the text colour.
+        chip.textColor = UIColor(argb: p.app.onAccent)
+        chip.backgroundColor = accent
+        cursor.backgroundColor = UIColor(argb: p.app.text).withAlphaComponent(0.85)
+        cursor.textColor = bg
         dots.colors = p.terminal.ansi.prefix(8).map { UIColor(argb: $0) }
         dots.separator = bg
         // The app's own accent, so the ring reads on the page around the card.

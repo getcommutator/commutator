@@ -124,16 +124,23 @@ class SettingsListController: UIViewController, UICollectionViewDelegate {
     }
 
     /// A row of overlapping colour dots, ringed so they read on any background.
+    /// A theme in miniature: its background as a tile, "Aa" in its text colour and a dot of
+    /// its accent. `colors` is background, text, accent.
     private static func swatchImage(_ colors: [UInt32]) -> UIImage {
-        let d: CGFloat = 16, step: CGFloat = 10
-        let size = CGSize(width: d + step * CGFloat(colors.count - 1), height: d)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            for (i, argb) in colors.enumerated() {
-                let rect = CGRect(x: step * CGFloat(i), y: 0, width: d, height: d).insetBy(dx: 0.5, dy: 0.5)
-                UIColor(argb: argb).setFill()
-                ctx.cgContext.fillEllipse(in: rect)
-                UIColor(white: 0.5, alpha: 0.35).setStroke()
-                ctx.cgContext.strokeEllipse(in: rect)
+        let size = CGSize(width: 38, height: 26)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            let tile = UIBezierPath(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5), cornerRadius: 7)
+            UIColor(argb: colors[0]).setFill()
+            tile.fill()
+            UIColor(white: 0.5, alpha: 0.3).setStroke()
+            tile.lineWidth = 1
+            tile.stroke()
+            let font = Fonts.ui(.sansMedium, 12)
+            let aa = NSAttributedString(string: "Aa", attributes: [.font: font, .foregroundColor: UIColor(argb: colors[1])])
+            aa.draw(at: CGPoint(x: 6, y: (size.height - aa.size().height) / 2))
+            if colors.count > 2 {
+                UIColor(argb: colors[2]).setFill()
+                UIBezierPath(ovalIn: CGRect(x: size.width - 6 - 8, y: (size.height - 8) / 2, width: 8, height: 8)).fill()
             }
         }.withRenderingMode(.alwaysOriginal)
     }

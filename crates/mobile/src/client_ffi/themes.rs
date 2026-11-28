@@ -18,7 +18,7 @@ pub struct ThemeVariantInfo {
     pub id: String,
     pub name: String,
     pub dark: bool,
-    /// For the picker: background, text, accent, success (0xAARRGGBB).
+    /// For the picker: background, text, accent (0xAARRGGBB).
     pub swatches: Vec<u32>,
 }
 
@@ -43,8 +43,7 @@ pub fn theme_families() -> Vec<ThemeFamilyInfo> {
                         swatches: vec![
                             palette.app.background,
                             palette.app.text,
-                            palette.roles[ColorRole::Accent as usize],
-                            palette.app.success,
+                            palette.app.accent,
                         ],
                     }
                 })
