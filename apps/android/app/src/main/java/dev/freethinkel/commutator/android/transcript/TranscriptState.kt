@@ -241,6 +241,12 @@ class TranscriptState {
     fun setVisualSource(client: uniffi.commutator_core.CoreClient, deviceId: String, pixelScale: Float) =
         engine.setVisualSource(client, deviceId, pixelScale)
 
+    /** How formulas lay out (Settings → Chat); the engine re-lays only when it changed. */
+    fun setMath(math: dev.freethinkel.commutator.android.core.MathSettings.State) {
+        if (closed) return
+        engine.setMath(math.render, math.face, math.size.coerceIn(0, UShort.MAX_VALUE.toInt()).toUShort())
+    }
+
     fun close() {
         closed = true
         engine.shutdown()

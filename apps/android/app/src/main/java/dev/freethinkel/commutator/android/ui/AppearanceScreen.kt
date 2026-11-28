@@ -68,7 +68,7 @@ fun appearanceSummary(appearance: Appearance, dark: Boolean): String {
     return "${appearance.mode.name} · $family"
 }
 
-/** Settings → Appearance: light/dark mode, the light and the dark theme, the wallpaper. */
+/** Settings → Appearance: light/dark mode, the light and the dark theme. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun AppearanceScreen(model: AppModel, onBack: () -> Unit) {
@@ -137,8 +137,6 @@ fun AppearanceScreen(model: AppModel, onBack: () -> Unit) {
                 ) { Text("Wallpaper colors") }
             }
         }
-        section("Wallpaper")
-        item { WallpaperSettings(model) }
     }
     picking?.let { dark ->
         ThemePicker(
