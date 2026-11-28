@@ -123,7 +123,9 @@ fun SessionScreen(
         }
         return
     }
-    val transcript = remember(chatId) { TranscriptState() }
+    val transcript = remember(chatId) { TranscriptState().also { it.setMath(model.math.state.value) } }
+    // Settings → Chat's math, live: the engine re-lays formulas when it changes.
+    LaunchedEffect(transcript) { model.math.state.collect { transcript.setMath(it) } }
     val density = LocalDensity.current.density
     DisposableEffect(chatId) {
         transcript.engine.attach(core, chatId)

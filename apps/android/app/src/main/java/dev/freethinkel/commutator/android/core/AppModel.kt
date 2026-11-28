@@ -90,6 +90,8 @@ class AppModel(private val app: Application) {
     private val main = Handler(Looper.getMainLooper())
     val credentials = CredentialStore(app)
     val wallpaper = WallpaperStore(app)
+    /** Transcript math: rendered or source, its face and size (Settings → Chat). */
+    val math = MathSettings(app.getSharedPreferences("settings", 0))
     val push = Push(app, this)
 
     private val _client = MutableStateFlow<CoreClient?>(null)

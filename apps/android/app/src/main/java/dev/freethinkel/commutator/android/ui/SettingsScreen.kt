@@ -52,6 +52,7 @@ fun SettingsScreen(
     model: AppModel,
     onArchived: () -> Unit,
     onAppearance: () -> Unit = {},
+    onChat: () -> Unit = {},
     onNotifications: () -> Unit = {},
     onBack: (() -> Unit)? = null,
 ) {
@@ -109,7 +110,7 @@ fun SettingsScreen(
         }
         section("Display")
         item {
-            val rows = if (model.isDemo) 1 else 2
+            val rows = if (model.isDemo) 2 else 3
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SegmentedListItem(
                     onClick = onAppearance,
@@ -119,11 +120,20 @@ fun SettingsScreen(
                     supportingContent = { Text(appearanceSummary(appearance, dev.freethinkel.commutator.android.design.LocalDarkTheme.current)) },
                     trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
                 ) { Text("Appearance") }
+                val math by model.math.state.collectAsState()
+                SegmentedListItem(
+                    onClick = onChat,
+                    shapes = segmentedShapes(1, rows),
+                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
+                    leadingContent = { IconTile(ZIcons.Chat) },
+                    supportingContent = { Text(chatSummary(math)) },
+                    trailingContent = { ZIcon(ZIcons.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline) },
+                ) { Text("Chat") }
                 if (!model.isDemo) {
                     val notifying by model.push.enabled.collectAsState()
                     SegmentedListItem(
                         onClick = onNotifications,
-                        shapes = segmentedShapes(1, rows),
+                        shapes = segmentedShapes(2, rows),
                         colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
                         leadingContent = { IconTile(ZIcons.Bell) },
                         supportingContent = { Text(if (notifying && model.push.allowed()) "On" else "Off") },
@@ -281,48 +291,3 @@ fun IconTile(
         ZIcon(icon, null, Modifier.size(22.dp), tint = content)
     }
 }
-
-/** Wallpaper: shown behind new sessions and the sessions list (iOS parity). */
-@Composable
-internal fun WallpaperSettings(model: AppModel) {
-    val store = model.wallpaper
-    val state by store.state.collectAsState()
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> if (uri != null) scope.launch { store.set(uri, "Photo") } }
-    var effects by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    val rows = if (state.set) 3 else 1
-    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
-        SegmentedListItem(
-            onClick = {
-                picker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
-            shapes = segmentedShapes(0, rows),
-            colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-            leadingContent = { IconTile(ZIcons.Image) },
-            supportingContent = { Text(if (state.set) state.name ?: "Photo" else "Shown behind new sessions and the sessions list") },
-        ) { Text(if (state.set) "Change wallpaper" else "Choose wallpaper") }
-        if (state.set) {
-            Box {
-                SegmentedListItem(
-                    onClick = { effects = true },
-                    shapes = segmentedShapes(1, rows),
-                    colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                    leadingContent = { IconTile(ZIcons.Magic) },
-                    supportingContent = { Text("${dev.freethinkel.commutator.android.core.WallpaperStore.label(state.effect)} — ${dev.freethinkel.commutator.android.core.WallpaperStore.detail(state.effect)}") },
-                ) { Text("Effect") }
-                ChoiceMenu(effects, { effects = false }, listOf(MenuSection("Effect", dev.freethinkel.commutator.android.core.WallpaperStore.effects.map { e ->
-                    MenuChoice(dev.freethinkel.commutator.android.core.WallpaperStore.label(e), e == state.effect) { store.setEffect(e) }
-                })))
-            }
-            SegmentedListItem(
-                onClick = { store.remove() },
-                shapes = segmentedShapes(2, rows),
-                colors = ListItemDefaults.segmentedColors(containerColor = cardColor()),
-                leadingContent = { IconTile(ZIcons.Delete, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer) },
-            ) { Text("Remove wallpaper", color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
-

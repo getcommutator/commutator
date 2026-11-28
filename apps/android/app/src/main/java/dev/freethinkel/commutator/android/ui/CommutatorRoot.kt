@@ -108,6 +108,7 @@ object Routes {
     const val ARCHIVED = "archived"
     const val PULL_REQUESTS = "pull-requests"
     const val APPEARANCE = "appearance"
+    const val CHAT_SETTINGS = "chat-settings"
     const val NOTIFICATIONS = "notifications"
     const val TERMINAL = "terminal/{chat}?id={id}"
     const val SUBAGENT = "subagent/{parent}/{doc}?title={title}&running={running}"
@@ -230,6 +231,7 @@ private fun MainNav(model: AppModel) {
                     onArchived = { nav.navigate(Routes.ARCHIVED) },
                     onPullRequests = { nav.navigate(Routes.PULL_REQUESTS) },
                     onAppearance = { nav.navigate(Routes.APPEARANCE) },
+                    onChat = { nav.navigate(Routes.CHAT_SETTINGS) },
                     onNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                 )
             } else {
@@ -362,6 +364,7 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
                 model,
                 onArchived = { nav.navigate(Routes.ARCHIVED) },
                 onAppearance = { nav.navigate(Routes.APPEARANCE) },
+                onChat = { nav.navigate(Routes.CHAT_SETTINGS) },
                 onNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                 onBack = ::back,
             )
@@ -375,6 +378,9 @@ private fun androidx.navigation.NavGraphBuilder.settingsGraph(
     }
     composable(Routes.APPEARANCE) {
         AppearanceScreen(model, onBack = ::back)
+    }
+    composable(Routes.CHAT_SETTINGS) {
+        ChatScreen(model, onBack = ::back)
     }
     composable(Routes.NOTIFICATIONS) {
         NotificationsScreen(model, onBack = ::back)
@@ -496,6 +502,7 @@ private fun PhoneTabs(
     onArchived: () -> Unit,
     onPullRequests: () -> Unit,
     onAppearance: () -> Unit,
+    onChat: () -> Unit,
     onNotifications: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
@@ -520,7 +527,7 @@ private fun PhoneTabs(
                 0 -> Home(model, open, onSettings = { tab = 2 }, onSearch = onSearch, onNew = onNew, onArchived = onArchived, onPullRequests = onPullRequests)
                 1 -> PullRequestsScreen()
                 else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    SettingsScreen(model, onArchived = onArchived, onAppearance = onAppearance, onNotifications = onNotifications)
+                    SettingsScreen(model, onArchived = onArchived, onAppearance = onAppearance, onChat = onChat, onNotifications = onNotifications)
                 }
             }
         }
