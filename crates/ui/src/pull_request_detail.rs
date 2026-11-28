@@ -1598,7 +1598,7 @@ impl PullRequestDetailPage {
                     detail
                         .labels
                         .iter()
-                        .map(|l| crate::pull_requests::chip(&l.name, theme).h(px(20.0))),
+                        .map(|l| crate::pull_requests::chip(l, theme).h(px(20.0))),
                 )
                 .into_any_element()
         };

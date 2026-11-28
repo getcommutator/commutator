@@ -977,8 +977,17 @@ pub(crate) fn avatar(url: Option<String>, login: &str, size: f32, theme: &Theme)
     }
 }
 
-/// A label chip.
-pub(crate) fn chip(name: &str, theme: &Theme) -> gpui::Div {
+/// A label chip in its provider colour, as t3code's: a faint wash of the
+/// colour with the name in it, lifted (or darkened) to read on the theme.
+/// A label without a colour falls back to the neutral chip.
+pub(crate) fn chip(label: &commutator_proto::ChangeRequestLabel, theme: &Theme) -> gpui::Div {
+    let (bg, fg) = match label_hsla(&label.color) {
+        Some(c) => {
+            let l = if theme.appearance.is_dark() { c.l.max(0.72) } else { c.l.min(0.38) };
+            (c.alpha(0.16), gpui::Hsla { l, a: 1.0, ..c })
+        }
+        None => (theme.element_hover, theme.text_muted),
+    };
     div()
         .flex_none()
         .max_w(px(180.0))
@@ -986,12 +995,22 @@ pub(crate) fn chip(name: &str, theme: &Theme) -> gpui::Div {
         .px(px(6.0))
         .flex()
         .items_center()
-        .rounded(px(5.0))
-        .bg(theme.element_hover)
-        .text_color(theme.text)
+        .rounded(px(4.0))
+        .bg(bg)
+        .text_color(fg)
         .text_size(px(11.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
         .truncate()
-        .child(SharedString::from(name.to_owned()))
+        .child(SharedString::from(label.name.clone()))
+}
+
+/// GitHub sends `d73a4a`, GitLab `#428BCA`.
+fn label_hsla(color: &str) -> Option<gpui::Hsla> {
+    let hex = color.trim().trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok().map(|v| gpui::rgb(v).into())
 }
 
 pub(crate) fn provider_logo(provider: &str, theme: &Theme) -> AnyElement {
@@ -1707,7 +1726,7 @@ impl PullRequestsPage {
                     .text_color(theme.text_faint)
                     .child(SharedString::from(item.repository.clone())),
             )
-            .children(item.labels.iter().take(3).map(|l| chip(&l.name, theme)))
+            .children(item.labels.iter().take(3).map(|l| chip(l, theme)))
             .when(labels > 3, |el| {
                 el.child(
                     div()
@@ -1937,6 +1956,14 @@ impl Render for PullRequestsPage {
 mod tests {
     use super::*;
     use commutator_proto::{ChangeRequestActor, ChangeRequestLabel};
+
+    #[test]
+    fn label_colours_parse_from_either_provider() {
+        assert!(label_hsla("d73a4a").is_some());
+        assert!(label_hsla("#428BCA").is_some());
+        assert!(label_hsla("").is_none());
+        assert!(label_hsla("blue").is_none());
+    }
 
     fn row(number: u64, authored: Option<bool>, requested: Option<bool>) -> Row {
         Row {
