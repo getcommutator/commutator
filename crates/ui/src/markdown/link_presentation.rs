@@ -260,7 +260,16 @@ pub(super) fn present(
     window: &Window,
     opts: &RenderOptions,
 ) -> FlatText {
-    let with_glyphs = with_code_size(with_file_link_glyphs(flat, opts), font_size);
+    let (padded, pads) = with_code_pads(with_file_link_glyphs(flat, opts));
+    // A pad's NBSP advance per point of its (monospace) face.
+    let pad_advance = pads.first().and_then(|pad| {
+        let run = slice_runs(&padded.runs, pad.clone()).into_iter().next()?;
+        let text_system = window.text_system();
+        let font_id = text_system.resolve_font(&run.font);
+        let advance = f32::from(text_system.layout_width(font_id, px(100.0), '\u{00A0}')) / 100.0;
+        (advance > 0.0).then_some(advance)
+    });
+    let with_glyphs = with_code_size(padded, &pads, pad_advance, font_size);
     truncate(&with_glyphs, f32::from(width), |text, runs| {
         window
             .text_system()
@@ -280,23 +289,34 @@ pub(super) fn present(
 pub(crate) const INLINE_CODE_SCALE: f32 = 0.85;
 
 /// Set the runs inside inline code at [`INLINE_CODE_SCALE`] of `font_size`
-/// (the paragraph's, known only at layout). The line keeps its height.
-fn with_code_size(mut flat: FlatText, font_size: Pixels) -> FlatText {
+/// (the paragraph's, known only at layout), and its `pads` at the size that
+/// makes their NBSP ([`CODE_PAD_EMS`] of the code) as wide, given its
+/// advance per point. The line keeps its height.
+fn with_code_size(
+    mut flat: FlatText,
+    pads: &[Range<usize>],
+    pad_advance: Option<f32>,
+    font_size: Pixels,
+) -> FlatText {
     if flat.code_ranges.is_empty() {
         return flat;
     }
     // Quarter-point steps keep glyph rasters shared across nearby sizes.
-    let size = px((f32::from(font_size) * INLINE_CODE_SCALE * 4.0).round() / 4.0);
+    let quarter = |size: f32| px((size * 4.0).round() / 4.0);
+    let code_size = f32::from(font_size) * INLINE_CODE_SCALE;
+    let pad_size = pad_advance.map(|advance| quarter(CODE_PAD_EMS * code_size / advance));
     let mut at = 0;
     for run in &mut flat.runs {
         let range = at..at + run.len;
         at = range.end;
-        if flat
+        if pads.contains(&range) {
+            run.font.size = pad_size.or(Some(quarter(code_size)));
+        } else if flat
             .code_ranges
             .iter()
             .any(|code| code.start <= range.start && range.end <= code.end)
         {
-            run.font.size = Some(size);
+            run.font.size = Some(quarter(code_size));
         }
     }
     flat
@@ -328,57 +348,75 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
     if insertions.is_empty() {
         return flat.clone();
     }
-    // Positions after an insertion slide by the slot length; an insertion
-    // point itself resolves to its "before" side so a range ending on it
-    // never swallows its own slot.
-    let shift_before = |offset: usize| -> usize {
-        insertions
-            .iter()
-            .filter(|at| **at < offset)
-            .map(|_| FILE_GLYPH_SLOT.len())
-            .sum()
-    };
-    let shift_through = |offset: usize| -> usize {
-        insertions
-            .iter()
-            .filter(|at| **at <= offset)
-            .map(|_| FILE_GLYPH_SLOT.len())
-            .sum()
-    };
-    let map_range = |range: &Range<usize>| {
-        range.start + shift_through(range.start)..range.end + shift_before(range.end)
-    };
-    let slot_run = |at: usize| {
-        let mut run = slice_runs(&flat.runs, at..flat.text.len())
-            .into_iter()
-            .next()
-            .or_else(|| flat.runs.first().cloned())?;
-        run.len = FILE_GLYPH_SLOT.len();
-        run.underline = None;
-        run.strikethrough = None;
-        Some(run)
-    };
-    let Some(slot_runs): Option<Vec<TextRun>> = insertions.iter().map(|at| slot_run(*at)).collect()
+    let Some(slot_runs) = insertions
+        .iter()
+        .map(|at| slot_run(flat, *at, FILE_GLYPH_SLOT))
+        .collect::<Option<Vec<_>>>()
     else {
         return flat.clone();
     };
+    let (mut shown, slots) = insert_slots(flat, &insertions, &slot_runs, FILE_GLYPH_SLOT, false);
+    shown.file_glyphs = slots.into_iter().zip(paths).collect();
+    shown
+}
 
-    let mut text =
-        String::with_capacity(flat.text.len() + insertions.len() * FILE_GLYPH_SLOT.len());
+/// `slot`'s run, styled as the text at `at` without its decorations.
+fn slot_run(flat: &FlatText, at: usize, slot: &str) -> Option<TextRun> {
+    let mut run = slice_runs(&flat.runs, at..flat.text.len())
+        .into_iter()
+        .next()
+        .or_else(|| flat.runs.last().cloned())?;
+    run.len = slot.len();
+    run.underline = None;
+    run.strikethrough = None;
+    Some(run)
+}
+
+/// Insert `slot` at each of the ascending `insertions` (each in its run),
+/// returning the shown text and the slots' ranges in it. Copy and selection
+/// map a slot back to its insertion point, so the raw text survives. A
+/// range edge on an insertion point keeps the slot out, except inline
+/// code's when `code_takes_slots` (its padding sits inside its wash).
+fn insert_slots(
+    flat: &FlatText,
+    insertions: &[usize],
+    slot_runs: &[TextRun],
+    slot: &str,
+    code_takes_slots: bool,
+) -> (FlatText, Vec<Range<usize>>) {
+    // Positions after an insertion slide by the slot length; an insertion
+    // point itself resolves to its "before" side so a range ending on it
+    // never swallows its own slot.
+    let shift_before =
+        |offset: usize| insertions.iter().filter(|at| **at < offset).count() * slot.len();
+    let shift_through =
+        |offset: usize| insertions.iter().filter(|at| **at <= offset).count() * slot.len();
+    let map_range = |range: &Range<usize>| {
+        range.start + shift_through(range.start)..range.end + shift_before(range.end)
+    };
+    let map_code = |range: &Range<usize>| {
+        if code_takes_slots {
+            range.start + shift_before(range.start)..range.end + shift_through(range.end)
+        } else {
+            map_range(range)
+        }
+    };
+
+    let mut text = String::with_capacity(flat.text.len() + insertions.len() * slot.len());
     let mut runs: Vec<TextRun> = Vec::new();
     let mut offsets = OffsetMap::default();
-    let mut glyphs = Vec::with_capacity(insertions.len());
+    let mut slots = Vec::with_capacity(insertions.len());
     let mut at = 0;
     for (ix, insert_at) in insertions.iter().enumerate() {
         text.push_str(&flat.text[at..*insert_at]);
         runs.extend(slice_runs(&flat.runs, at..*insert_at));
         let start = text.len();
-        text.push_str(FILE_GLYPH_SLOT);
+        text.push_str(slot);
         runs.push(slot_runs[ix].clone());
         offsets
             .omissions
             .push((*insert_at..*insert_at, start..text.len()));
-        glyphs.push((start..text.len(), paths[ix].clone()));
+        slots.push(start..text.len());
         at = *insert_at;
     }
     text.push_str(&flat.text[at..]);
@@ -387,7 +425,7 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
         .original
         .as_ref()
         .map(|original| Box::new(original.offsets.clone()));
-    FlatText {
+    let shown = FlatText {
         text: text.into(),
         runs,
         links: flat
@@ -395,8 +433,12 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
             .iter()
             .map(|(range, url)| (map_range(range), url.clone()))
             .collect(),
-        code_ranges: flat.code_ranges.iter().map(&map_range).collect(),
-        file_glyphs: glyphs,
+        code_ranges: flat.code_ranges.iter().map(map_code).collect(),
+        file_glyphs: flat
+            .file_glyphs
+            .iter()
+            .map(|(range, path)| (map_range(range), path.clone()))
+            .collect(),
         math: flat
             .math
             .iter()
@@ -412,7 +454,33 @@ fn with_file_link_glyphs(flat: &FlatText, opts: &RenderOptions) -> FlatText {
                 .map_or_else(|| flat.text.clone(), |original| original.text.clone()),
             offsets,
         }),
+    };
+    (shown, slots)
+}
+
+/// Room inside inline code's wash at each end, as t3code's `0.35em`
+/// padding: one NBSP each side, sized at layout to that width.
+const CODE_PAD_SLOT: &str = "\u{00A0}";
+const CODE_PAD_EMS: f32 = 0.35;
+
+/// Reserve a padding slot at both ends of every inline code span.
+fn with_code_pads(flat: FlatText) -> (FlatText, Vec<Range<usize>>) {
+    let mut insertions = Vec::new();
+    let mut slot_runs = Vec::new();
+    for code in flat.code_ranges.iter().filter(|code| !code.is_empty()) {
+        let (Some(first), Some(last)) = (
+            slot_run(&flat, code.start, CODE_PAD_SLOT),
+            slot_run(&flat, code.end - 1, CODE_PAD_SLOT),
+        ) else {
+            return (flat, Vec::new());
+        };
+        insertions.extend([code.start, code.end]);
+        slot_runs.extend([first, last]);
     }
+    if insertions.is_empty() {
+        return (flat, Vec::new());
+    }
+    insert_slots(&flat, &insertions, &slot_runs, CODE_PAD_SLOT, true)
 }
 
 /// Whether the whole paragraph is one workspace file link: it renders as the
@@ -656,9 +724,26 @@ mod tests {
             &Theme::dark(),
             false,
         );
-        let sized = with_code_size(flat, px(15.0));
+        let sized = with_code_size(flat.clone(), &[], None, px(15.0));
         let sizes: Vec<_> = sized.runs.iter().map(|r| r.font.size).collect();
         assert_eq!(sizes, vec![None, Some(px(12.75)), None]);
+
+        // Padded: a NBSP slot each side, inside the code's wash, sized so
+        // it is 0.35em of the code wide (an NBSP 0.5em of its face here),
+        // and copy still reads the source.
+        let (padded, pads) = with_code_pads(flat);
+        assert_eq!(padded.text.as_ref(), "run \u{a0}cargo check\u{a0} now");
+        assert_eq!(pads.len(), 2);
+        assert_eq!(padded.code_ranges, vec![pads[0].start..pads[1].end]);
+        let map = &padded.original.as_ref().unwrap().offsets;
+        assert_eq!(map.original(pads[0].end), 4);
+        assert_eq!(map.original(pads[1].end), 15);
+        let sized = with_code_size(padded, &pads, Some(0.5), px(15.0));
+        let sizes: Vec<_> = sized.runs.iter().map(|r| r.font.size).collect();
+        assert_eq!(
+            sizes,
+            vec![None, Some(px(9.0)), Some(px(12.75)), Some(px(9.0)), None]
+        );
     }
 
     #[test]

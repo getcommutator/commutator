@@ -1191,10 +1191,11 @@ pub fn inline_code_text(theme: &Theme) -> Hsla {
 pub fn inline_code_wash(theme: &Theme) -> Hsla {
     theme.code_wash
 }
-/// Rounded-wash geometry: small radius on a slightly inset box (paint-only —
-/// x extends 2px past the glyphs, y insets 2px from the 22px line box).
+/// Rounded-wash geometry: small radius on a slightly inset box. Its room at
+/// each end is real text (`link_presentation::with_code_pads`), so the wash
+/// stays on the code's own range; y insets 2px from the line box.
 pub const INLINE_CODE_RADIUS: f32 = 4.5;
-pub const INLINE_CODE_PAD_X: f32 = 2.0;
+pub const INLINE_CODE_PAD_X: f32 = 0.0;
 pub const INLINE_CODE_INSET_Y: f32 = 2.0;
 
 /// Flatten inline runs into shaped-text inputs. Pure given a theme.
@@ -3034,8 +3035,11 @@ mod tests {
         })
     }
 
+    /// Where the source text's `ix` paints (inline code's padding slots
+    /// shift the shown text).
     fn selection_position(key: &str, ix: usize) -> gpui::Point<gpui::Pixels> {
-        let (_, layout, _) = selection_test_snapshot(key);
+        let (_, layout, offsets) = selection_test_snapshot(key);
+        let ix = offsets.map_or(ix, |offsets| offsets.displayed(ix));
         layout.position_for_index(ix).expect("text position")
             + point(px(0.1), layout.line_height() / 2.0)
     }
