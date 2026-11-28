@@ -71,7 +71,7 @@ by Zeron. Their names identify the corresponding palette adaptations.
 | Vesper | `9043f3849b776949445f0cd4990365959cca35a3` | [MIT](https://github.com/raunofreiberg/vesper/blob/9043f3849b776949445f0cd4990365959cca35a3/LICENSE.md) |
 | One Light (VS Code port of Atom's One Light) | `5866e900db932d580e978a58db42f65cde07998b` | [MIT](https://github.com/akamud/vscode-theme-onelight/blob/5866e900db932d580e978a58db42f65cde07998b/LICENSE) |
 | Alucard (Dracula's light theme, palette from the Dracula spec) | [draculatheme.com/spec](https://draculatheme.com/spec), 2026-11-28 | [MIT](https://github.com/dracula/visual-studio-code/blob/1b9ecf4d7e0c8cc2e2e890a7a41ad1db5fff1e6c/LICENSE) |
-| Rex themes (41, from `Rex.app`'s design tokens) | Rex.app, 2026-11-28 | Proprietary to Rex; no license granted yet. Needs the authors' permission before a release ships them |
+| Rex themes (41, adapted from `Rex.app`'s design tokens) | Rex.app, 2026-11-28 | Colour palettes adapted from Rex's built-in themes, with credit to Rex |
 
 The palette values are adapted under the corresponding upstream license. The
 linked license pages contain each project's copyright and permission notice and

@@ -1,4 +1,4 @@
-//! Rex's built-in themes (`Rex.app`, SuperUI design tokens), generated from its
+//! Themes adapted from Rex's built-in ones (`Rex.app`, SuperUI design tokens), generated from its
 //! `themes.json`: UI colours from its CSS variables, syntax from its terminal palette.
 
 use super::{Seeds, source, variant};
@@ -80,7 +80,7 @@ fn abyssal_trench() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -117,7 +117,7 @@ fn alpine_milk() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -154,7 +154,7 @@ fn basalt_shore() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -191,7 +191,7 @@ fn buttercream_diner() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -228,7 +228,7 @@ fn cathode_amber() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -265,7 +265,7 @@ fn charcoal_atelier() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -302,7 +302,7 @@ fn cinder_peak() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -339,7 +339,7 @@ fn coastal_linen() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -376,7 +376,7 @@ fn cobalt_foundry() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -413,7 +413,7 @@ fn ember_hollow() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -450,7 +450,7 @@ fn glacier_mint() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -487,7 +487,7 @@ fn heliotrope_haze() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -524,7 +524,7 @@ fn ink_meridian() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -561,7 +561,7 @@ fn ivory_gallery() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -598,7 +598,7 @@ fn juniper_smoke() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -635,7 +635,7 @@ fn lavender_postcard() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -672,7 +672,7 @@ fn merino_light() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -709,7 +709,7 @@ fn merino_dark() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -746,7 +746,7 @@ fn midnight_tundra() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -783,7 +783,7 @@ fn misty_forest() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -820,7 +820,7 @@ fn moss_cathedral() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -857,7 +857,7 @@ fn neon_arcade() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -894,7 +894,7 @@ fn newsprint_fog() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -931,7 +931,7 @@ fn nocturne_rose() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -968,7 +968,7 @@ fn orchard_breeze() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1005,7 +1005,7 @@ fn oxblood_library() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1042,7 +1042,7 @@ fn peach_veranda() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1079,7 +1079,7 @@ fn petrol_lagoon() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1116,7 +1116,7 @@ fn phosphor_archive() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1153,7 +1153,7 @@ fn polar_aurora() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1190,7 +1190,7 @@ fn porcelain_morning() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1227,7 +1227,7 @@ fn roasted_umber() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1264,7 +1264,7 @@ fn saffron_nightfall() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1301,7 +1301,7 @@ fn silver_point_light() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1338,7 +1338,7 @@ fn silver_point_dark() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1375,7 +1375,7 @@ fn sonoran_dusk() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1412,7 +1412,7 @@ fn static_noir() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1449,7 +1449,7 @@ fn sunlit_parchment() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1486,7 +1486,7 @@ fn terracotta_noon() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1523,7 +1523,7 @@ fn velvet_dusk() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
@@ -1560,7 +1560,7 @@ fn whitby_bay() -> ThemeVariant {
             "rex",
             "/Applications/Rex.app (SuperUI_SuperDesignTokens themes.json)",
             "Rex.app 2026-11-28",
-            "Proprietary (Rex)",
+            "Adapted from Rex",
         ),
     })
 }
